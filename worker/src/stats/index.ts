@@ -24,6 +24,7 @@ const pageCsp = async () => {
 const HEADERS = {
   "Content-Security-Policy": CSP,
   "Referrer-Policy": "no-referrer",
+  "Strict-Transport-Security": "max-age=31536000",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",

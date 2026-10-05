@@ -7,6 +7,7 @@ export function securityHeaders(options: {
   return async (context, next) => {
     await next();
     context.header("Referrer-Policy", options.referrerPolicy);
+    context.header("Strict-Transport-Security", "max-age=31536000");
     context.header("X-Content-Type-Options", "nosniff");
     context.header("X-Frame-Options", "DENY");
     context.header(

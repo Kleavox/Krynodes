@@ -62,6 +62,9 @@ changed. **Run workflow** on the Validate workflow deploys by hand.
   `ALERT_EMAIL`, and variables `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
 - **Bindings.** D1 `DB`, `send_email` `EMAIL` (the operator's address verified
   in Email Routing), static assets `ASSETS`.
+- **HTTPS.** Both Workers send `Strict-Transport-Security: max-age=31536000` on
+  their own hostnames. Set the zone's minimum TLS version to 1.2 in Cloudflare.
+- **GitHub.** CI's token is read-only; only the release workflow may write.
 
 ## Agent
 
@@ -73,7 +76,8 @@ curl -fsSL https://<agent-host>/install.sh | sudo sh -s -- https://<agent-host> 
 ```
 
 It downloads the latest release for the server's architecture, checks its
-SHA-256, installs `/usr/local/bin/kry`, enrolls the node, and starts the
+SHA-256 and its signature against the release key written into the script
+(`openssl`, 1.1.1 or newer), installs `/usr/local/bin/kry`, enrolls the node, and starts the
 `krynodes` systemd service (config in `/etc/kry/config.json`). The node takes
 the server's hostname as its name (**Rename node** changes it) and reports every
 minute. The script is
@@ -89,6 +93,14 @@ Releases are cut by `.github/workflows/agent-release.yml` whenever
 and `krynodes-linux-arm64`, their checksums, ed25519 signatures and build
 provenance. The workflow signs with the repository secret `AGENT_SIGNING_KEY`
 and refuses to publish if it does not match `agent/internal/update/release.pub`.
+The signing job runs in the GitHub environment `release`, which holds the key
+and waits for the owner's approval; a push that does not bump the version never
+reaches it. Every action in the workflows is pinned to a commit SHA
+(`pnpm lint:actions` refuses a tag), and Dependabot proposes updates weekly.
+
+From agent 0.4.1 the agent accepts only TLS 1.3 when it talks to Krynodes or
+downloads a release, and so does the install script (`curl --proto =https
+--tlsv1.3`). HTTP checks still accept whatever the checked site offers.
 
 ### Checks
 

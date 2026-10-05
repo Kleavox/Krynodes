@@ -532,11 +532,7 @@ func selfUpdate() error {
 		Arch:           runtime.GOARCH,
 		CurrentVersion: version,
 		PublicKey:      key,
-		Client: &http.Client{Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			TLSHandshakeTimeout:   30 * time.Second,
-			ResponseHeaderTimeout: time.Minute,
-		}},
+		Client:         updateClient(),
 		Run: func(name string, args ...string) error {
 			return exec.Command(name, args...).Run()
 		},
@@ -632,4 +628,13 @@ func describeResponseError(action string, err error) error {
 		return fmt.Errorf("%s failed with HTTP %d: %s", action, responseError.Status, strings.TrimSpace(responseError.Body))
 	}
 	return fmt.Errorf("%s failed: %w", action, err)
+}
+
+func updateClient() *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		TLSClientConfig:       reporter.TLSConfig(),
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: time.Minute,
+	}}
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -146,5 +148,12 @@ func TestUninstallStopsTheExecutorBeforeRemovingItsState(t *testing.T) {
 	commands := uninstallCommands()
 	if len(commands) < 2 || strings.Join(commands[1], " ") != "systemctl stop krynodes-exec.service" {
 		t.Fatalf("unexpected commands %#v", commands)
+	}
+}
+
+func TestUpdatesNeedTLS13(t *testing.T) {
+	transport := updateClient().Transport.(*http.Transport)
+	if transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatal("release downloads must need TLS 1.3")
 	}
 }

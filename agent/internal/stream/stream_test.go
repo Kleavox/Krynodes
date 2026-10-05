@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -418,5 +419,12 @@ func TestRunSaysGoodbyeBeforeItReturns(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the server never saw a close frame")
+	}
+}
+
+func TestTheStreamNeedsTLS13(t *testing.T) {
+	transport := dialer.Transport.(*http.Transport)
+	if transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatal("the stream must need TLS 1.3")
 	}
 }

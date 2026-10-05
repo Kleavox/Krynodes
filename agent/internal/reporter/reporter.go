@@ -3,6 +3,7 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -160,14 +161,18 @@ func (e *ResponseError) Error() string {
 	return fmt.Sprintf("Krynodes returned HTTP %d", e.Status)
 }
 
+func TLSConfig() *tls.Config {
+	return &tls.Config{MinVersion: tls.VersionTLS13}
+}
+
 func New(endpoint, token, version string) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = TLSConfig()
 	return &Client{
-		endpoint: strings.TrimRight(endpoint, "/"),
-		token:    token,
-		version:  version,
-		httpClient: &http.Client{
-			Timeout: 35 * time.Second,
-		},
+		endpoint:   strings.TrimRight(endpoint, "/"),
+		token:      token,
+		version:    version,
+		httpClient: &http.Client{Timeout: 35 * time.Second, Transport: transport},
 	}
 }
 

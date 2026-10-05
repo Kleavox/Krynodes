@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
 const (
@@ -44,6 +46,7 @@ type conn struct {
 var dialer = &http.Client{
 	Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
+		TLSClientConfig:       reporter.TLSConfig(),
 		ForceAttemptHTTP2:     false,
 		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
 		TLSHandshakeTimeout:   15 * time.Second,

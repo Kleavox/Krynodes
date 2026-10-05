@@ -9,9 +9,10 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
-    "lint": "pnpm format:check && pnpm knip && pnpm lint:async && pnpm lint:patterns",
+    "lint": "pnpm format:check && pnpm knip && pnpm lint:async && pnpm lint:patterns && pnpm lint:actions",
     "lint:async": "node tooling/lint/unhandled-async.mjs",
     "lint:patterns": "node tooling/lint/html-patterns.mjs",
+    "lint:actions": "node tooling/lint/pinned-actions.mjs",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck && tsc -p tsconfig.tooling.json --noEmit --checkers 1",
     "agent:test": "go -C agent test ./...",

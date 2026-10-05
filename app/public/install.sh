@@ -21,6 +21,10 @@ fi
 base="${KRY_DOWNLOAD_BASE:-https://github.com/Kleavox/Krynodes/releases/latest/download}"
 bin="${KRY_BIN:-/usr/local/bin/kry}"
 config="${KRY_CONFIG:-/etc/kry/config.json}"
+release_key="-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
+-----END PUBLIC KEY-----
+"
 
 if [ "$mode" = "enroll" ] && { [ -z "$endpoint" ] || [ -z "$token" ]; }; then
   echo "Usage: curl -fsSL <kry>/install.sh | sudo sh -s -- <endpoint> <enrollment-token>" >&2
@@ -48,7 +52,7 @@ case "$(uname -s)-$(uname -m)" in
     ;;
 esac
 
-for tool in curl sha256sum systemctl install; do
+for tool in curl sha256sum openssl systemctl install; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "$tool is required" >&2
     exit 1
@@ -59,7 +63,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 fetch() {
-  curl -fsSL --retry 5 --retry-delay 3 --speed-limit 1024 --speed-time 60 "$1" -o "$2"
+  curl --proto =https --tlsv1.3 -fsSL --retry 5 --retry-delay 3 --speed-limit 1024 --speed-time 60 "$1" -o "$2"
 }
 
 echo "Downloading $artifact"
@@ -70,6 +74,13 @@ else
 fi
 fetch "$base/$artifact.sha256" "$tmp/$artifact.sha256"
 (cd "$tmp" && sha256sum -c "$artifact.sha256" >/dev/null)
+fetch "$base/$artifact.sig" "$tmp/$artifact.sig"
+printf '%s' "$release_key" >"$tmp/release.pem"
+if ! openssl pkeyutl -verify -pubin -inkey "$tmp/release.pem" -rawin -in "$tmp/$artifact" -sigfile "$tmp/$artifact.sig" >/dev/null 2>&1; then
+  echo "The download is not signed by the Krynodes release key, so nothing was installed." >&2
+  echo "This check needs OpenSSL 1.1.1 or newer." >&2
+  exit 1
+fi
 install -m 0755 "$tmp/$artifact" "$bin"
 
 if [ "$mode" = "enroll" ]; then
