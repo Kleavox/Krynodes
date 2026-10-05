@@ -15,7 +15,7 @@ catalog:
   "@vitejs/plugin-react": "^6.0.4"
   "@cloudflare/workers-types": "^5.20260724.1"
   "@types/node": "^22.19.19"
-  "hono": "^4.12.31"
+  "hono": "^4.13.7"
   "react": "^19.2.8"
   "react-dom": "^19.2.8"
   "typescript": "^7.0.2"
