@@ -3,15 +3,23 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
+  DeployDialog,
+  type DeployRequest,
+} from "@/features/deploy/deploy-dialog";
+import { RemovedList } from "@/features/deploy/removed-list";
+import { StackRow } from "@/features/deploy/stack-list";
+import {
   useDevices,
   useNodeActions,
   useRefreshServices,
   useServices,
 } from "@/lib/api";
-import { groupByServer, refreshPending } from "@/lib/services";
+import { refreshPending } from "@/lib/services";
+import { removedStacks, serverLists } from "@/lib/stacks";
 import type { NodeRecord } from "@/types";
 
 import { ActionDialog, type ActionRequest } from "./action-dialog";
+import { countText } from "./server-list";
 import { ActionRow, ServiceRows, TrustLink } from "./service-list";
 
 const SECTION_TITLE =
@@ -27,13 +35,15 @@ export function NodeServices({
   const services = useServices();
   const refresh = useRefreshServices();
   const [request, setRequest] = useState<ActionRequest | null>(null);
+  const [deploy, setDeploy] = useState<DeployRequest | null>(null);
   const [group] = services.data
-    ? groupByServer(services.data, [node], {
+    ? serverLists(services.data, [node], {
         showSystem: false,
         query: "",
         notRunning: false,
       })
     : [];
+  const removed = services.data ? removedStacks(services.data, [node], "") : [];
   const trusted =
     (services.data?.nodes.find((entry) => entry.id === node.id)?.trust?.access
       .length ?? 0) > 0;
@@ -46,7 +56,7 @@ export function NodeServices({
     <section aria-labelledby="node-services">
       <div className="mb-2 flex min-h-8 items-center gap-2">
         <h2 id="node-services" className={SECTION_TITLE}>
-          Services · {group?.members.length ?? 0}
+          {group ? countText(group) : "Services"}
         </h2>
         {services.data && !trusted && <TrustLink />}
         <Button
@@ -73,10 +83,31 @@ export function NodeServices({
             seen={seen}
             trusted={trusted}
             onRequest={setRequest}
-          />
+          >
+            {group.stacks.map((item) => (
+              <StackRow
+                key={item.member.stack.project}
+                item={item}
+                seen={seen}
+                branch={false}
+                onRequest={setRequest}
+                onDeploy={setDeploy}
+              />
+            ))}
+          </ServiceRows>
+        </div>
+      )}
+      {removed.length > 0 && (
+        <div className="mt-6">
+          <RemovedList items={removed} seen={seen} showServer={false} />
         </div>
       )}
       <ActionDialog request={request} onClose={() => setRequest(null)} />
+      <DeployDialog
+        request={deploy}
+        seen={seen}
+        onClose={() => setDeploy(null)}
+      />
     </section>
   );
 }

@@ -62,7 +62,39 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Restarting…",
       done: "Restarted automatically",
     },
+    edit: { verb: "Edit", doing: "Updating…", done: "Updated" },
+    read: { verb: "View", doing: "Reading…", done: "Read" },
+    export: { verb: "Pack", doing: "Packing…", done: "Packed" },
+    expose: { verb: "Open", doing: "Opening…", done: "Opened" },
+    unexpose: { verb: "Close", doing: "Closing…", done: "Closed" },
+    adopt: {
+      verb: "Move into Krynodes",
+      doing: "Moving…",
+      done: "Moved into Krynodes",
+    },
+    apply: { verb: "Turn on", doing: "Turning on…", done: "Turned on" },
+    undo: { verb: "Turn off", doing: "Turning off…", done: "Turned off" },
+    lockdown: {
+      verb: "Lock down",
+      doing: "Locking down…",
+      done: "Locked down",
+    },
+    unlock: { verb: "Unlock", doing: "Unlocking…", done: "Unlocked" },
+    scan: { verb: "Check", doing: "Checking…", done: "Checked" },
+    store: { verb: "Store", doing: "Storing…", done: "Stored" },
+    release: { verb: "Share", doing: "Sharing…", done: "Shared" },
+    reshare: { verb: "Spread", doing: "Spreading…", done: "Spread" },
+    forget: { verb: "Forget", doing: "Forgetting…", done: "Forgot" },
   };
+
+export const RECIPE_TITLES: Record<string, string> = {
+  "security-updates": "Automatic security updates",
+  "reboot-window": "Restart when needed",
+  "ssh-keys-only": "SSH keys only",
+  fail2ban: "Block repeated login failures",
+  firewall: "Firewall",
+  "free-port-53": "Free port 53",
+};
 
 export const objectOf = (
   action: Pick<ActionRecord, "action" | "kind" | "name">,
@@ -93,7 +125,8 @@ export interface ServerGroup {
 
 export function displayName(kind: ActionKind, name: string): string {
   if (kind === "trust") return "Trusted devices";
-  if (kind === "host") return "server";
+  if (kind === "vault") return "the Cloudflare token";
+  if (kind === "host") return RECIPE_TITLES[name]?.toLowerCase() ?? "server";
   return kind === "systemd" ? name.replace(/\.service$/u, "") : name;
 }
 

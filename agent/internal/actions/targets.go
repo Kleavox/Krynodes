@@ -2,12 +2,17 @@ package actions
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
 var targetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$`)
 
 var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+var Recipes = []string{"security-updates", "reboot-window", "ssh-keys-only", "fail2ban", "firewall", "free-port-53"}
+
+const TunnelContainer = "krynodes-tunnel"
 
 var protectedUnits = compile(
 	`^ssh\.service$`, `^sshd\.service$`,
@@ -53,7 +58,9 @@ func ValidTarget(kind, name string) bool {
 	case "trust":
 		return name == "devices"
 	case "host":
-		return name == "server"
+		return name == "server" || slices.Contains(Recipes, name)
+	case "vault":
+		return name == "cloudflare"
 	}
 	if !targetName.MatchString(name) {
 		return false
@@ -68,6 +75,9 @@ func ValidTarget(kind, name string) bool {
 }
 
 func Protected(kind, name string) bool {
+	if kind == "docker" {
+		return name == TunnelContainer
+	}
 	return kind == "systemd" && matchesAny(protectedUnits, name)
 }
 

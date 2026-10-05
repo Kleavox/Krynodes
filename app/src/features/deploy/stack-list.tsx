@@ -5,20 +5,29 @@ import { Link } from "react-router";
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
-import { ActionOutcome, PendingText } from "@/features/services/service-list";
-import { useCancelActions } from "@/lib/api";
-import { nodeState, timeAgo } from "@/lib/format";
+import type { ActionRequest } from "@/features/services/action-dialog";
+import {
+  ActionOutcome,
+  PendingText,
+  ServiceRows,
+} from "@/features/services/service-list";
+import { useCancelActions, useServices } from "@/lib/api";
+import { orchestrationReady } from "@/lib/devices";
+import { nodeState } from "@/lib/format";
 import { LogsDialog } from "@/features/services/logs-dialog";
 import { canReadLogs, isPending } from "@/lib/services";
 import {
-  containersOf,
   deployBlocker,
   stackCommands,
-  type StackGroup,
+  type ServerStack,
   type StackMember,
 } from "@/lib/stacks";
 import { cn } from "@/lib/utils";
-import type { ServiceEntry } from "@/types";
+import type { WebAddress } from "@/types";
+
+import { ComposeDialog, type StackTarget } from "./compose-dialog";
+import { AdoptDialog, MoveDialog } from "./move-dialog";
+import { CloseAddressDialog, WebAddressDialog } from "./web-address-dialog";
 
 import type { DeployRequest } from "./deploy-dialog";
 import {
@@ -28,7 +37,10 @@ import {
 import { useSignedAction } from "./use-signed-action";
 
 const ROW =
-  "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
+  "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
+
+const BRANCH =
+  "relative before:absolute before:top-0 before:bottom-0 before:left-5 before:w-px before:bg-border-strong last:before:bottom-auto last:before:h-6 after:absolute after:top-6 after:left-5 after:h-px after:w-3 after:bg-border-strong";
 
 const offline = (member: StackMember, seen: number) =>
   nodeState(member.node, seen) === "offline";
@@ -40,10 +52,14 @@ const tone = (member: StackMember) =>
       ? "bad"
       : "warn";
 
-function stackLabel(member: StackMember, seen: number, server: boolean) {
-  const count = `${member.stack.running}/${member.stack.total} running`;
-  const state = offline(member, seen) ? `${count} · offline` : count;
-  return server ? `${state} · ${member.node.name}` : state;
+function stackLabel(member: StackMember) {
+  const access =
+    member.stack.access === "contained"
+      ? " · Contained"
+      : member.stack.access === "full"
+        ? " · Full access"
+        : "";
+  return `Compose · ${member.stack.running}/${member.stack.total} running${access}`;
 }
 
 function LastDeploy({ member }: { member: StackMember }) {
@@ -56,17 +72,38 @@ function LastDeploy({ member }: { member: StackMember }) {
   );
 }
 
-function MemberControls({
+function Addresses({ addresses }: { addresses: WebAddress[] }) {
+  if (addresses.length === 0) return null;
+  return (
+    <span className="col-span-2 flex min-w-0 flex-wrap gap-x-3 font-mono text-xs md:col-span-4">
+      {addresses.map((address) => (
+        <a
+          key={address.hostname}
+          href={`https://${address.hostname}${address.mode === "path" ? (address.path ?? "") : ""}`}
+          target="_blank"
+          rel="noreferrer"
+          className="truncate text-primary underline-offset-4 hover:underline"
+        >
+          {address.hostname}
+          {address.mode === "everyone" ? "" : " · login"}
+        </a>
+      ))}
+    </span>
+  );
+}
+
+type Panel =
+  "compose" | "address" | "close" | "move" | "adopt" | "remove" | "purge";
+
+function StackControls({
   project,
   member,
-  containersOpen,
-  onToggleContainers,
+  peers,
   onRequest,
 }: {
   project: string;
   member: StackMember;
-  containersOpen: boolean;
-  onToggleContainers: () => void;
+  peers: StackMember[];
   onRequest: (request: DeployRequest) => void;
 }) {
   const [reading, setReading] = useState(false);
@@ -80,13 +117,34 @@ function MemberControls({
       action,
       targets: [{ nodeId: member.node.id, kind: "compose", name: project }],
     });
+  const services = useServices();
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const addresses = member.addresses ?? [];
+  const target: StackTarget = {
+    nodeId: member.node.id,
+    nodeName: member.node.name,
+    project,
+    sealKey:
+      services.data?.nodes.find((entry) => entry.id === member.node.id)
+        ?.sealKey ?? null,
+  };
+  const modern =
+    orchestrationReady(member.node) && member.trusted && member.stack.compose;
+  const own = member.stack.access !== null && member.stack.access !== undefined;
   const confirm = (action: StackActionRequest["action"]) =>
-    setConfirming({
-      action,
-      project,
-      node: member.node,
-      directory: member.stack.directory,
-    });
+    action !== "stop" && addresses.length > 0
+      ? setPanel(action)
+      : setConfirming({
+          action,
+          project,
+          node: member.node,
+          directory: member.stack.directory,
+        });
+  const openPanel = (next: Panel) => () => setPanel(next);
+  const panelProps = (name: Panel) => ({
+    open: panel === name,
+    onOpenChange: (open: boolean) => setPanel(open ? name : null),
+  });
   const action = member.action;
   if (action && isPending(action)) {
     return action.status === "queued" ? (
@@ -127,6 +185,7 @@ function MemberControls({
     action.status === "failed" &&
     member.stack.rollback;
   const down = member.stack.running === 0;
+  const everywhere = peers.filter((peer) => deployBlocker(peer) === null);
   return (
     <div className="flex items-center justify-end gap-1">
       <Button
@@ -152,13 +211,44 @@ function MemberControls({
           ...(commands.includes("restart")
             ? [{ label: "Restart", onSelect: () => direct("restart") }]
             : []),
+          ...(everywhere.length > 1
+            ? [
+                {
+                  label: `Deploy on all ${everywhere.length} servers`,
+                  onSelect: () =>
+                    onRequest({ action: "deploy", project, members: peers }),
+                },
+              ]
+            : []),
           ...(canReadLogs(member.node)
             ? [{ label: "Logs", onSelect: () => setReading(true) }]
             : []),
-          {
-            label: containersOpen ? "Hide containers" : "Show containers",
-            onSelect: onToggleContainers,
-          },
+          ...(modern
+            ? [
+                {
+                  label: own ? "Edit compose" : "View compose",
+                  onSelect: openPanel("compose"),
+                },
+                { label: "Web address…", onSelect: openPanel("address") },
+                ...(addresses.length > 0
+                  ? [
+                      {
+                        label: "Close web address…",
+                        onSelect: openPanel("close"),
+                      },
+                    ]
+                  : []),
+                { label: "Move to server…", onSelect: openPanel("move") },
+                ...(own
+                  ? []
+                  : [
+                      {
+                        label: "Move into Krynodes",
+                        onSelect: openPanel("adopt"),
+                      },
+                    ]),
+              ]
+            : []),
           ...(commands.includes("stop")
             ? [
                 {
@@ -188,6 +278,39 @@ function MemberControls({
         request={confirming}
         onClose={() => setConfirming(null)}
       />
+      {modern && (
+        <>
+          <ComposeDialog
+            target={target}
+            editable={own}
+            {...panelProps("compose")}
+          />
+          <WebAddressDialog target={target} {...panelProps("address")} />
+          <CloseAddressDialog
+            target={target}
+            addresses={addresses}
+            {...panelProps("close")}
+          />
+          <CloseAddressDialog
+            target={target}
+            addresses={addresses}
+            disposal="remove"
+            {...panelProps("remove")}
+          />
+          <CloseAddressDialog
+            target={target}
+            addresses={addresses}
+            disposal="purge"
+            {...panelProps("purge")}
+          />
+          <MoveDialog target={target} {...panelProps("move")} />
+          <AdoptDialog
+            target={target}
+            directory={member.stack.directory}
+            {...panelProps("adopt")}
+          />
+        </>
+      )}
       <LogsDialog
         target={{
           nodeId: member.node.id,
@@ -202,200 +325,105 @@ function MemberControls({
   );
 }
 
-function Containers({ entries }: { entries: ServiceEntry[] }) {
-  return (
-    <ul className="space-y-0.5 border-t bg-background/40 px-3 py-2 pl-6 font-mono text-xs text-muted-foreground md:pl-14">
-      {entries.length === 0 ? (
-        <li>No containers named after this stack.</li>
-      ) : (
-        entries.map((entry) => (
-          <li key={entry.name} className="flex gap-2">
-            <span className="truncate text-foreground">{entry.name}</span>
-            <span>{entry.state}</span>
-          </li>
-        ))
-      )}
-    </ul>
-  );
-}
-
-export function StackList({
-  groups,
+export function StackRow({
+  item,
   seen,
-  showServer,
-  services,
+  branch,
+  locked,
   onRequest,
+  onDeploy,
 }: {
-  groups: StackGroup[];
+  item: ServerStack;
   seen: number;
-  showServer: boolean;
-  services: Map<string, ServiceEntry[]>;
-  onRequest: (request: DeployRequest) => void;
+  branch: boolean;
+  locked?: string;
+  onRequest: (request: ActionRequest) => void;
+  onDeploy: (request: DeployRequest) => void;
 }) {
-  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set());
-  const toggle = (key: string) =>
-    setOpen((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  const containers = (member: StackMember, project: string) =>
-    open.has(`containers|${member.node.id}|${project}`) && (
-      <Containers
-        entries={containersOf(project, services.get(member.node.id) ?? [])}
-      />
-    );
+  const [open, setOpen] = useState(false);
+  const { member, containers } = item;
+  const project = member.stack.project;
+  const listId = `containers-${member.node.id}-${project}`;
+  const addresses = member.addresses ?? [];
   return (
-    <ul className="divide-y rounded-lg border bg-card">
-      {groups.map((group) => {
-        const [single] = group.members.length === 1 ? group.members : [];
-        const expanded = open.has(group.project);
-        const listId = `stack-${group.project}`;
-        const deployable = group.members.filter(
-          (member) => deployBlocker(member) === null,
-        );
-        const healthy = group.members.filter(
-          (member) => member.stack.running === member.stack.total,
-        ).length;
-        return (
-          <li key={group.project}>
-            <div
-              className={cn(
-                ROW,
-                "px-3 py-2.5",
-                single && offline(single, seen) && "opacity-60",
-              )}
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                {single ? (
-                  <StatusDot
-                    tone={tone(single)}
-                    pulse={isPending(single.action)}
-                  />
-                ) : (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-9 md:size-8"
-                    aria-expanded={expanded}
-                    aria-controls={listId}
-                    aria-label={`${expanded ? "Hide" : "Show"} servers for ${group.project}`}
-                    onClick={() => toggle(group.project)}
-                  >
-                    <ChevronRight
-                      aria-hidden="true"
-                      className={cn(
-                        "transition-transform",
-                        expanded && "rotate-90",
-                      )}
-                    />
-                  </Button>
-                )}
-                <span className="truncate font-medium">{group.project}</span>
-              </div>
-              <span className="col-span-2 font-mono text-xs text-muted-foreground md:col-span-1">
-                {single
-                  ? stackLabel(single, seen, showServer)
-                  : `Compose · ${healthy}/${group.members.length} fully running`}
-              </span>
-              <span
-                className="col-span-2 min-w-0 font-mono text-xs text-muted-foreground md:col-span-1"
-                aria-live="polite"
-              >
-                {single ? (
-                  <LastDeploy member={single} />
-                ) : (
-                  `${group.members.length} servers`
-                )}
-              </span>
-              <div className="col-start-2 row-start-1 md:col-start-auto md:row-start-auto">
-                {single ? (
-                  <MemberControls
-                    project={group.project}
-                    member={single}
-                    containersOpen={open.has(
-                      `containers|${single.node.id}|${group.project}`,
-                    )}
-                    onToggleContainers={() =>
-                      toggle(`containers|${single.node.id}|${group.project}`)
-                    }
-                    onRequest={onRequest}
-                  />
-                ) : (
-                  <div className="flex justify-end">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-9 md:h-8"
-                      disabled={deployable.length === 0}
-                      aria-label={`Deploy ${group.project} on ${deployable.length} ${deployable.length === 1 ? "server" : "servers"}`}
-                      onClick={() =>
-                        onRequest({
-                          action: "deploy",
-                          project: group.project,
-                          members: group.members,
-                        })
-                      }
-                    >
-                      Deploy
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-            {single && containers(single, group.project)}
-            {!single && expanded && (
-              <ul id={listId} className="divide-y border-t">
-                {group.members.map((member) => (
-                  <li key={member.node.id}>
-                    <div
-                      className={cn(
-                        ROW,
-                        "px-3 py-2",
-                        offline(member, seen) && "opacity-60",
-                      )}
-                    >
-                      <span className="flex min-w-0 items-center gap-2 pl-3 md:pl-10">
-                        <StatusDot
-                          tone={tone(member)}
-                          pulse={isPending(member.action)}
-                        />
-                        <span className="truncate">{member.node.name}</span>
-                      </span>
-                      <span className="col-span-2 pl-3 font-mono text-xs text-muted-foreground md:col-span-1 md:pl-0">
-                        {stackLabel(member, seen, false)}
-                      </span>
-                      <span
-                        className="col-span-2 min-w-0 pl-3 font-mono text-xs text-muted-foreground md:col-span-1 md:pl-0"
-                        aria-live="polite"
-                      >
-                        <LastDeploy member={member} />
-                      </span>
-                      <div className="col-start-2 row-start-1 md:col-start-auto md:row-start-auto">
-                        <MemberControls
-                          project={group.project}
-                          member={member}
-                          containersOpen={open.has(
-                            `containers|${member.node.id}|${group.project}`,
-                          )}
-                          onToggleContainers={() =>
-                            toggle(
-                              `containers|${member.node.id}|${group.project}`,
-                            )
-                          }
-                          onRequest={onRequest}
-                        />
-                      </div>
-                    </div>
-                    {containers(member, group.project)}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+    <li className={cn(branch && BRANCH)}>
+      <div
+        className={cn(
+          ROW,
+          branch && "pl-10",
+          offline(member, seen) && "opacity-60",
+        )}
+      >
+        <span className="flex min-h-8 min-w-0 items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-1.5 size-7 shrink-0"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-label={`${open ? "Hide" : "Show"} containers of ${project}`}
+            onClick={() => setOpen(!open)}
+          >
+            <ChevronRight
+              aria-hidden="true"
+              className={cn("transition-transform", open && "rotate-90")}
+            />
+          </Button>
+          <StatusDot
+            tone={locked ? "idle" : tone(member)}
+            pulse={isPending(member.action)}
+          />
+          <span className="truncate font-medium" title={member.stack.directory}>
+            {project}
+          </span>
+        </span>
+        <span className="col-span-2 truncate font-mono text-xs text-muted-foreground md:col-span-1">
+          {stackLabel(member)}
+        </span>
+        <span
+          className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground md:col-span-1"
+          aria-live="polite"
+        >
+          {locked && !isPending(member.action) ? (
+            <span className="text-warning">{locked}</span>
+          ) : (
+            <LastDeploy member={member} />
+          )}
+        </span>
+        <div className="col-start-2 row-start-1 md:col-start-auto md:row-start-auto">
+          {!locked && (
+            <StackControls
+              project={project}
+              member={member}
+              peers={item.peers}
+              onRequest={onDeploy}
+            />
+          )}
+        </div>
+      </div>
+      {addresses.length > 0 && (
+        <div className={cn("px-3 pb-2", branch ? "pl-16" : "pl-10")}>
+          <Addresses addresses={addresses} />
+        </div>
+      )}
+      {open && (
+        <div id={listId} className={branch ? "pl-6" : "pl-1"}>
+          {containers.length === 0 ? (
+            <p className="px-3 pb-2 pl-10 font-mono text-xs text-muted-foreground">
+              No containers named after this stack.
+            </p>
+          ) : (
+            <ServiceRows
+              members={containers}
+              seen={seen}
+              trusted={member.trusted}
+              branch
+              locked={locked}
+              onRequest={onRequest}
+            />
+          )}
+        </div>
+      )}
+    </li>
   );
 }

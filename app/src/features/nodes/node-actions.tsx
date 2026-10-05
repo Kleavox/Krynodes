@@ -13,20 +13,21 @@ import {
 import { CheckDialog } from "@/features/checks/check-dialog";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import {
-  useDeleteNode,
   useOverview,
   useRefreshServices,
   useRequestAgentUpdate,
   useServices,
 } from "@/lib/api";
 import { agentState } from "@/lib/agent";
-import { canRestartServer } from "@/lib/devices";
+import { canRestartServer, orchestrationReady } from "@/lib/devices";
 import { serverOperation } from "@/lib/operations";
 import type { NodeRecord } from "@/types";
 
+import { DeleteNodeDialog } from "./delete-node-dialog";
 import { EditNodeDialog } from "./edit-node-dialog";
 
-type OpenDialog = "add-check" | "edit" | "delete" | "restart" | null;
+type OpenDialog =
+  "add-check" | "edit" | "delete" | "restart" | "lockdown" | "unlock" | null;
 
 export function NodeActions({
   node,
@@ -42,18 +43,21 @@ export function NodeActions({
   compact?: boolean;
 }) {
   const [dialog, setDialog] = useState<OpenDialog>(restart ? "restart" : null);
-  const remove = useDeleteNode();
   const reboot = useSignedAction(false);
+  const lock = useSignedAction(false);
   const refresh = useRefreshServices();
   const update = useRequestAgentUpdate();
   const services = useServices();
   const release = useOverview().data?.agentRelease;
-  const trust =
-    services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
+  const entry = services.data?.nodes.find((item) => item.id === node.id);
+  const trust = entry?.trust ?? null;
+  const locked = entry?.security?.lockdown ?? false;
   const now = Date.now();
   const busy =
     serverOperation(node, services.data?.actions ?? [], now) !== null;
   const restartable = canRestartServer(node, trust) && !busy;
+  const lockable =
+    orchestrationReady(node) && trust !== null && !!entry?.security && !busy;
   const updatable =
     !busy &&
     release?.version &&
@@ -95,6 +99,14 @@ export function NodeActions({
             Rename node
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          {lockable && (
+            <DropdownMenuItem
+              variant={locked ? "default" : "destructive"}
+              onSelect={() => setDialog(locked ? "unlock" : "lockdown")}
+            >
+              {locked ? "Unlock server" : "Lock down server"}
+            </DropdownMenuItem>
+          )}
           {restartable && (
             <DropdownMenuItem
               variant="destructive"
@@ -142,15 +154,31 @@ export function NodeActions({
       />
 
       <ConfirmDialog
+        open={dialog === "lockdown" || dialog === "unlock"}
+        onOpenChange={(open) => setDialog(open ? dialog : null)}
+        title={
+          dialog === "unlock"
+            ? `Unlock ${node.name}?`
+            : `Lock down ${node.name}?`
+        }
+        description={
+          dialog === "unlock"
+            ? "The containers the lock down stopped start again, its web addresses come back, and SSH goes back to how it was."
+            : "Containers that publish ports to the internet stop, its web addresses go offline, and SSH stops accepting passwords when a key is set up. Unlock brings it all back."
+        }
+        confirmLabel={dialog === "unlock" ? "Unlock server" : "Lock down"}
+        mutation={lock}
+        variables={{
+          action: dialog === "unlock" ? "unlock" : "lockdown",
+          targets: [{ nodeId: node.id, kind: "host", name: "server" }],
+        }}
+      />
+
+      <DeleteNodeDialog
+        node={node}
         open={dialog === "delete"}
         onOpenChange={(open) => setDialog(open ? "delete" : null)}
-        title={`Delete ${node.name}?`}
-        description="Its metrics, checks, check results and incidents are deleted with it, and the agent on the server stops being accepted."
-        confirmLabel="Delete node"
-        guarded
-        mutation={remove}
-        variables={node.id}
-        onDone={onDeleted}
+        onDeleted={onDeleted}
       />
     </>
   );

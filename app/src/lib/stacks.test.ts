@@ -15,6 +15,7 @@ import {
   newStackBlocker,
   ownFolder,
   removedStacks,
+  serverLists,
   stackCommands,
   stackNameProblem,
 } from "./stacks";
@@ -366,5 +367,65 @@ describe("removed stacks", () => {
     expect(ownFolder("/var/lib/kry-exec/compose/kuma")).toBe(true);
     expect(ownFolder("/var/lib/kry-exec/compose/kuma/sub")).toBe(false);
     expect(ownFolder("/home/alice/shop")).toBe(false);
+  });
+});
+
+describe("one list per server", () => {
+  const all = { showSystem: false, query: "", notRunning: false };
+  const shape = (lists: ReturnType<typeof serverLists>) =>
+    lists.map((list) => [
+      list.node.name,
+      list.stacks.map((item) => [
+        item.member.stack.project,
+        item.containers.map((member) => member.entry.name),
+      ]),
+      list.members.map((member) => member.entry.name),
+    ]);
+
+  it("puts each stack's containers under it and the rest beside it", () => {
+    const lists = serverLists(data, nodes, all);
+    expect(shape(lists)).toEqual([
+      [
+        "Callisto",
+        [
+          ["shop", []],
+          ["listmonk", ["listmonk-db-1", "listmonk_app"]],
+        ],
+        ["adguard"],
+      ],
+      ["Pivox", [["listmonk", []]], []],
+    ]);
+    expect(lists[0]!.stacks[1]!.peers.map((peer) => peer.node.name)).toEqual([
+      "Callisto",
+      "Pivox",
+    ]);
+  });
+
+  it("searches stacks, their containers and servers, and filters what is not running", () => {
+    expect(shape(serverLists(data, nodes, { ...all, query: "db" }))).toEqual([
+      ["Callisto", [["listmonk", ["listmonk-db-1", "listmonk_app"]]], []],
+    ]);
+    expect(shape(serverLists(data, nodes, { ...all, query: "PIVOX" }))).toEqual(
+      [["Pivox", [["listmonk", []]], []]],
+    );
+    expect(
+      shape(serverLists(data, nodes, { ...all, notRunning: true })),
+    ).toEqual([["Callisto", [["shop", []]], []]]);
+  });
+
+  it("gives a container to the stack with the longest matching name", () => {
+    const nested: ServicesResponse = {
+      ...data,
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          stacks: [stack("listmonk"), stack("listmonk-db")],
+        },
+      ],
+    };
+    expect(shape(serverLists(nested, nodes, all))[0]![1]).toEqual([
+      ["listmonk", ["listmonk_app"]],
+      ["listmonk-db", ["listmonk-db-1"]],
+    ]);
   });
 });

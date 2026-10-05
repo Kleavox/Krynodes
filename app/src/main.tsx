@@ -8,6 +8,7 @@ import { BrowserRouter, Route, Routes } from "react-router";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ChecksPage } from "@/pages/checks";
+import { CloudflarePage } from "@/pages/cloudflare";
 import { FleetPage } from "@/pages/fleet";
 import { IncidentDetailPage } from "@/pages/incident-detail";
 import { HistoryPage } from "@/pages/history";
@@ -38,6 +39,10 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="checks" element={<ChecksPage />} />
                   <Route path="incidents" element={<IncidentsPage />} />
                   <Route path="history" element={<HistoryPage />} />
+                  <Route
+                    path="settings/cloudflare"
+                    element={<CloudflarePage />}
+                  />
                   <Route
                     path="incidents/:id"
                     element={<IncidentDetailPage />}

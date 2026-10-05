@@ -1,9 +1,7 @@
 package actions
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -203,7 +201,10 @@ func (e Executor) remove(ctx context.Context, request Request, stack Stack) Resu
 
 func (e Executor) create(ctx context.Context, request Request, command Command, snapshot Snapshot) Result {
 	name := request.Name
-	text := command.Compose
+	access, err := accessFrom(command, "contained")
+	if err != nil {
+		return e.refuse(request.ID, err)
+	}
 	switch {
 	case !projectName.MatchString(name):
 		return e.refuse(request.ID, errors.New("the stack name may hold lowercase letters, digits, - and _"))
@@ -213,49 +214,21 @@ func (e Executor) create(ctx context.Context, request Request, command Command, 
 		return e.refuse(request.ID, fmt.Errorf("a stack named %s already runs on this server", name))
 	case e.waiting(name):
 		return e.refuse(request.ID, fmt.Errorf("a stack named %s waits in Removed; restore it or delete it permanently first", name))
-	case strings.TrimSpace(text) == "":
-		return e.refuse(request.ID, errors.New("the compose file is empty"))
-	case len(text) > maxComposeBytes:
-		return e.refuse(request.ID, errors.New("the compose file is larger than 32 KB"))
-	case includeLine.MatchString(text):
-		return e.refuse(request.ID, errors.New("include is not allowed; paste a single compose file"))
+	}
+	if err := checkText(command.Compose, access); err != nil {
+		return e.refuse(request.ID, err)
 	}
 	directory := filepath.Join(e.StateDir, "compose", name)
 	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return e.failed(request, err, "")
 	}
-	source := filepath.Join(directory, "compose.yaml")
-	if err := os.WriteFile(source, []byte(text), 0o640); err != nil {
-		return e.failed(request, err, "")
-	}
-	stack := Stack{Project: name, Directory: directory, Files: []string{source}}
-	output, err := e.docker(ctx, collectTimeout, "read", composeArgs(stack, "config", "--format", "json")...)
-	if err != nil {
-		return e.failed(request, err, "")
-	}
-	var config map[string]any
-	start := bytes.IndexByte(output, '{')
-	if start < 0 || json.Unmarshal(output[start:], &config) != nil {
-		return e.refuse(request.ID, errors.New("compose did not return a readable file"))
-	}
-	if err := vet(config, directory); err != nil {
+	if err := e.prepare(request, command, directory); err != nil {
 		return e.refuse(request.ID, err)
 	}
-	localPorts(config)
-	if err := writeJSON(directory, "compose.krynodes.json", config, 0o640); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "compose.yaml"), []byte(command.Compose), 0o640); err != nil {
 		return e.failed(request, err, "")
 	}
-	stack.Files = []string{filepath.Join(directory, "compose.krynodes.json")}
-	if _, err := e.docker(ctx, pullTimeout, "pull", composeArgs(stack, "pull")...); err != nil {
-		return e.failed(request, err, "")
-	}
-	if _, err := e.docker(ctx, upTimeout, "up", composeArgs(stack, "up", "-d")...); err != nil {
-		return e.failed(request, err, e.states(ctx, stack))
-	}
-	if states, err := e.healthy(ctx, stack); err != nil {
-		return e.failed(request, err, states)
-	}
-	return Result{ID: request.ID, OK: true, Output: "created", FinishedAt: e.stamp()}
+	return e.launch(ctx, request, name, directory, access, "created")
 }
 
 func asMap(value any) map[string]any {

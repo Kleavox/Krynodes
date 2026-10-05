@@ -182,6 +182,64 @@ export async function sendServerEmail(
   });
 }
 
+export async function sendSecurityEmail(
+  env: Env,
+  message: {
+    nodeId: string;
+    nodeName: string;
+    findings: { detail: string }[];
+  },
+): Promise<void> {
+  const { nodeId, nodeName, findings } = message;
+  const heading = `${nodeName}: ${plural(findings.length, "serious security finding")}`;
+  const intro = `The security check on ${nodeName} found something that needs attention.`;
+  await deliver(env, {
+    title: `[Krynodes] ${heading}`,
+    preheader: intro,
+    badge: { label: "Security", color: COLOR.destructive },
+    heading,
+    intro,
+    rows: [
+      ["Server", nodeName],
+      ...findings.map((finding): [string, string] => [
+        "Finding",
+        finding.detail,
+      ]),
+    ],
+    action: {
+      label: `Open ${nodeName}`,
+      href: new URL(`/nodes/${nodeId}`, env.PUBLIC_ORIGIN).toString(),
+    },
+  });
+}
+
+export async function sendTokenEmail(
+  env: Env,
+  message: { expiresAt: string },
+): Promise<void> {
+  const date = new Date(message.expiresAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  const heading = `The Cloudflare token expires on ${date}`;
+  const intro =
+    "After that, Krynodes can no longer open or close Web addresses. Make a new token in Cloudflare and paste it under Settings, Cloudflare.";
+  await deliver(env, {
+    title: `[Krynodes] ${heading}`,
+    preheader: intro,
+    badge: { label: "Token", color: COLOR.primary },
+    heading,
+    intro,
+    rows: [["Expires", date]],
+    action: {
+      label: "Open Cloudflare settings",
+      href: new URL("/settings/cloudflare", env.PUBLIC_ORIGIN).toString(),
+    },
+  });
+}
+
 export async function sendProposalEmail(
   env: Env,
   message: { title: string; openedBy: string },

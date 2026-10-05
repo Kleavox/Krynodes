@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,8 +147,23 @@ func TestTheExecutorIsStartedByRequestsAndATimer(t *testing.T) {
 
 func TestUninstallStopsTheExecutorBeforeRemovingItsState(t *testing.T) {
 	commands := uninstallCommands()
-	if len(commands) < 2 || strings.Join(commands[1], " ") != "systemctl stop krynodes-exec.service" {
+	if len(commands) < 2 || strings.Join(commands[1], " ") != "systemctl stop krynodes-exec.service krynodes-host.service" {
 		t.Fatalf("unexpected commands %#v", commands)
+	}
+}
+
+func TestUninstallLeavesNothingOfKrynodesBehind(t *testing.T) {
+	paths := leftovers("/usr/local/bin/kry")
+	for _, want := range []string{unitPath, updaterPath, watcherPath, execPath, execWatcherPath, execTimerPath, hostPath, hostWatcherPath, "/var/lib/kry", "/etc/kry", "/usr/local/bin/kry"} {
+		if !slices.Contains(paths, want) {
+			t.Errorf("uninstall leaves %s behind", want)
+		}
+	}
+	if err := run([]string{"uninstall-service", "--everything"}); err == nil || !strings.Contains(err.Error(), "--delete-apps") {
+		t.Fatalf("an unknown flag must name the one there is: %v", err)
+	}
+	if err := run([]string{"uninstall-service", "--delete-apps"}); err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("--delete-apps is accepted and still needs root: %v", err)
 	}
 }
 
@@ -155,5 +171,32 @@ func TestUpdatesNeedTLS13(t *testing.T) {
 	transport := updateClient().Transport.(*http.Transport)
 	if transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
 		t.Fatal("release downloads must need TLS 1.3")
+	}
+}
+
+func TestTheHostUnitRunsOnlyTheFixedRecipesWhenAsked(t *testing.T) {
+	unit := hostUnit("/usr/local/bin/kry")
+	for _, want := range []string{"Type=oneshot\n", "ExecStart=/usr/local/bin/kry host-apply\n", "TimeoutStartSec=30min\n", "Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n", "PrivateTmp=true\n"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("host unit is missing %q", want)
+		}
+	}
+	if strings.Contains(unit, "User=") || strings.Contains(unit, "ProtectSystem") {
+		t.Errorf("recipes change system files as root:\n%s", unit)
+	}
+	path := hostPathUnit()
+	for _, want := range []string{"DirectoryNotEmpty=/var/lib/kry-exec/host\n", "Unit=krynodes-host.service\n", "WantedBy=multi-user.target\n"} {
+		if !strings.Contains(path, want) {
+			t.Errorf("host path unit is missing %q", want)
+		}
+	}
+	if !slices.Contains(enabledUnits(), "krynodes-host.path") || !slices.Contains(uninstallCommands()[0], "krynodes-host.path") {
+		t.Fatalf("enabled %v uninstall %v", enabledUnits(), uninstallCommands())
+	}
+}
+
+func TestHostApplyIsACommand(t *testing.T) {
+	if err := run([]string{"host-apply"}); err == nil || strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("host-apply must exist and need root on Linux: %v", err)
 	}
 }

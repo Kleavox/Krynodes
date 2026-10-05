@@ -148,7 +148,7 @@ export function CommandPalette({
                     value={`stack deploy ${group.project} ${member.node.name}`}
                     onSelect={() =>
                       go(
-                        `/services?view=stacks&deploy=${encodeURIComponent(group.project)}&node=${member.node.id}`,
+                        `/services?deploy=${encodeURIComponent(group.project)}&node=${member.node.id}`,
                       )
                     }
                   >

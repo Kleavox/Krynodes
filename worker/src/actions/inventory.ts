@@ -38,7 +38,12 @@ interface StackRow {
   total: number;
   compose: number;
   rollback: number;
+  access: string | null;
+  public: string | null;
 }
+
+const publicOf = (entry: StackEntry) =>
+  entry.public && entry.public.length > 0 ? JSON.stringify(entry.public) : null;
 
 function stackChanged(row: StackRow | undefined, entry: StackEntry): boolean {
   return (
@@ -47,7 +52,9 @@ function stackChanged(row: StackRow | undefined, entry: StackEntry): boolean {
     row.running !== entry.running ||
     row.total !== entry.total ||
     row.compose !== (entry.compose ? 1 : 0) ||
-    row.rollback !== (entry.rollback ? 1 : 0)
+    row.rollback !== (entry.rollback ? 1 : 0) ||
+    row.access !== (entry.access ?? null) ||
+    row.public !== publicOf(entry)
   );
 }
 
@@ -59,7 +66,7 @@ async function stackStatements(
 ): Promise<D1PreparedStatement[]> {
   const existing = await db
     .prepare(
-      "SELECT project, directory, running, total, compose, rollback FROM stacks WHERE node_id = ?",
+      "SELECT project, directory, running, total, compose, rollback, access, public FROM stacks WHERE node_id = ?",
     )
     .bind(nodeId)
     .all<StackRow>();
@@ -71,6 +78,8 @@ async function stackStatements(
       ...stack,
       compose: stack.compose ? 1 : 0,
       rollback: stack.rollback ? 1 : 0,
+      access: stack.access ?? null,
+      public: publicOf(stack),
     }));
   const removed = existing.results
     .filter((row) => !after.has(row.project))
@@ -80,15 +89,17 @@ async function stackStatements(
       ? [
           db
             .prepare(
-              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at)
+              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, public)
                SELECT ?1, json_extract(value, '$.project'), json_extract(value, '$.directory'),
                       json_extract(value, '$.running'), json_extract(value, '$.total'),
-                      json_extract(value, '$.compose'), json_extract(value, '$.rollback'), ?2
+                      json_extract(value, '$.compose'), json_extract(value, '$.rollback'), ?2,
+                      json_extract(value, '$.access'), json_extract(value, '$.public')
                FROM json_each(?3) WHERE true
                ON CONFLICT (node_id, project) DO UPDATE SET
                  directory = excluded.directory, running = excluded.running,
                  total = excluded.total, compose = excluded.compose,
-                 rollback = excluded.rollback, updated_at = excluded.updated_at`,
+                 rollback = excluded.rollback, updated_at = excluded.updated_at,
+                 access = excluded.access, public = excluded.public`,
             )
             .bind(nodeId, at, JSON.stringify(upserts)),
         ]
@@ -209,11 +220,22 @@ export async function applyInventory(
       : []),
     db
       .prepare(
-        `UPDATE nodes SET inventory_hash = ?, inventory_at = ?, refresh_requested_at = NULL,
-           docker = COALESCE(?, docker)
-         WHERE id = ?`,
+        `UPDATE nodes SET inventory_hash = ?1, inventory_at = ?2, refresh_requested_at = NULL,
+           docker = COALESCE(?3, docker), seal_key = COALESCE(?4, seal_key),
+           security = COALESCE(?5, security),
+           vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END
+         WHERE id = ?8`,
       )
-      .bind(inventory.hash, at, inventory.docker ?? null, node.id),
+      .bind(
+        inventory.hash,
+        at,
+        inventory.docker ?? null,
+        inventory.sealKey ?? null,
+        inventory.security ? JSON.stringify(inventory.security) : null,
+        inventory.vault === undefined ? 0 : 1,
+        inventory.vault ? JSON.stringify(inventory.vault) : null,
+        node.id,
+      ),
   ]);
   return inventory.hash;
 }

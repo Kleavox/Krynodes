@@ -625,4 +625,44 @@ describe("FleetHub", () => {
       expect(t.windows()).toEqual([]);
     });
   });
+
+  it("mails a new serious security finding once", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    let id = 1000;
+    const inventory = (hash: string, ids: string[]) =>
+      t.hub.webSocketMessage(
+        ws as unknown as WebSocket,
+        JSON.stringify({
+          id: (id += 1),
+          type: "actions",
+          report: {
+            nodeId: NODE,
+            inventory: {
+              hash: hash.repeat(64),
+              services: [],
+              security: {
+                checkedAt: "2026-10-05T10:00:00.000Z",
+                findings: ids.map((finding) => ({
+                  id: finding,
+                  severity: "serious",
+                  detail: `${finding} detail`,
+                })),
+                recipes: [],
+                lockdown: false,
+                rebootHour: null,
+              },
+            },
+          },
+        }),
+      );
+    await inventory("a", ["ssh-password"]);
+    await inventory("b", ["ssh-password"]);
+    await inventory("c", ["ssh-password", "os-eol"]);
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: 1 serious security finding`,
+      `[Krynodes] ${NODE}: 1 serious security finding`,
+    ]);
+    expect(t.mail[1]!.text).toContain("os-eol detail");
+  });
 });

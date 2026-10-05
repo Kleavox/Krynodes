@@ -7,7 +7,13 @@ let output = "";
 try {
   output = execFileSync(
     "go",
-    ["run", "golang.org/x/tools/cmd/deadcode@latest", "./..."],
+    [
+      "run",
+      "golang.org/x/tools/cmd/deadcode@latest",
+      "-filter",
+      "^github.com/Kleavox/krynodes/agent/(cmd|internal)/[a-z]+$",
+      "./...",
+    ],
     { cwd, encoding: "utf8" },
   );
 } catch (error) {

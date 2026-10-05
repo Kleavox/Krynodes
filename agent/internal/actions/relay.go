@@ -125,6 +125,9 @@ func (r *Relay) Poll(ctx context.Context) error {
 			if changed {
 				services, stacks, trust := inventory.Services, inventory.Stacks, inventory.Trust
 				report.Inventory.Docker = inventory.Docker
+				report.Inventory.SealKey = inventory.SealKey
+				report.Inventory.Security = inventory.Security
+				report.Inventory.Vault = &reporter.VaultSlot{Report: inventory.Vault}
 				removed := inventory.Removed
 				report.Inventory.Removed = &removed
 				report.Inventory.Services = &services

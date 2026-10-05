@@ -6,11 +6,18 @@ import type {
   ServiceEntry,
   ServicesResponse,
   StackEntry,
+  WebAddress,
 } from "../types";
 import { MIN_AGENT_VERSION, STACKS_AGENT } from "@krynodes/protocol/versions";
 
 import { agentCurrent, stacksReady } from "./devices";
 import { nodeState } from "./format";
+import {
+  displayName,
+  groupByServer,
+  type ServerGroup,
+  type ServiceMember,
+} from "./services";
 
 export interface StackMember {
   node: NodeRecord;
@@ -18,6 +25,7 @@ export interface StackMember {
   trusted: boolean;
   trust: NodeTrust | null;
   action: ActionRecord | null;
+  addresses?: WebAddress[];
 }
 
 export interface RemovedMember extends RemovedStack {
@@ -119,6 +127,9 @@ export function groupStacks(
         trusted: (entry.trust?.access.length ?? 0) > 0,
         trust: entry.trust,
         action: latest.get(`${node.id}|${stack.project}`) ?? null,
+        addresses: (entry.webAddresses ?? []).filter(
+          (address) => address.project === stack.project,
+        ),
       });
       groups.set(stack.project, group);
     }
@@ -211,4 +222,106 @@ export function stackNameProblem(
     return `A stack named ${name} waits in Removed. Restore it or delete it permanently first.`;
   }
   return null;
+}
+
+export interface ServerStack {
+  member: StackMember;
+  containers: ServiceMember[];
+  peers: StackMember[];
+}
+
+export interface ServerList extends ServerGroup {
+  stacks: ServerStack[];
+}
+
+const stopped = (member: ServiceMember) => member.entry.state !== "running";
+
+const unhealthy = (item: ServerStack) =>
+  item.member.stack.running < item.member.stack.total ||
+  item.containers.some(stopped);
+
+export function serverLists(
+  data: ServicesResponse,
+  nodes: NodeRecord[],
+  options: { showSystem: boolean; query: string; notRunning: boolean },
+): ServerList[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const base = new Map(
+    groupByServer(data, nodes, {
+      showSystem: options.showSystem,
+      query: "",
+      notRunning: false,
+    }).map((group) => [group.node.id, group]),
+  );
+  const peers = new Map(
+    groupStacks(data, nodes, "").map((group) => [group.project, group.members]),
+  );
+  const needle = options.query.trim().toLowerCase();
+  const lists: ServerList[] = [];
+  for (const inventory of data.nodes) {
+    const node = byId.get(inventory.id);
+    if (!node) continue;
+    const everything = base.get(node.id)?.members ?? [];
+    const projects = inventory.stacks
+      .map((stack) => stack.project)
+      .sort((a, b) => b.length - a.length);
+    const owner = (member: ServiceMember) =>
+      projects.find(
+        (project) => containersOf(project, [member.entry]).length > 0,
+      );
+    const serverMatch = !needle || node.name.toLowerCase().includes(needle);
+    const matches = (member: ServiceMember) =>
+      serverMatch ||
+      displayName(member.entry.kind, member.entry.name)
+        .toLowerCase()
+        .includes(needle);
+    const stacks = inventory.stacks
+      .map((stack) => {
+        const all = peers.get(stack.project) ?? [];
+        return {
+          member: all.find((peer) => peer.node.id === node.id)!,
+          containers: everything.filter(
+            (member) => owner(member) === stack.project,
+          ),
+          peers: all,
+        };
+      })
+      .filter(
+        (item) =>
+          (serverMatch ||
+            item.member.stack.project.includes(needle) ||
+            item.containers.some(matches)) &&
+          (!options.notRunning || unhealthy(item)),
+      )
+      .sort(
+        (a, b) =>
+          Number(unhealthy(b)) - Number(unhealthy(a)) ||
+          a.member.stack.project.localeCompare(b.member.stack.project),
+      );
+    for (const item of stacks) {
+      item.containers.sort((a, b) =>
+        a.entry.name < b.entry.name ? -1 : a.entry.name > b.entry.name ? 1 : 0,
+      );
+    }
+    const members = everything.filter(
+      (member) =>
+        owner(member) === undefined &&
+        matches(member) &&
+        (!options.notRunning || stopped(member)),
+    );
+    if (stacks.length === 0 && members.length === 0) continue;
+    lists.push({
+      node,
+      trusted: (inventory.trust?.access.length ?? 0) > 0,
+      members,
+      stacks,
+    });
+  }
+  const hurt = (list: ServerList) =>
+    list.members.some(stopped) || list.stacks.some(unhealthy);
+  return lists.sort(
+    (a, b) =>
+      Number(hurt(b)) - Number(hurt(a)) ||
+      a.node.name.localeCompare(b.node.name),
+  );
 }

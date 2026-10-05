@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/empty-state";
 import { FilterChips } from "@/components/filter-chips";
 import { Meter } from "@/components/meter";
 import { DockerMark } from "@/components/docker-mark";
+import { SecurityMark } from "@/components/security-mark";
 import { PageHeader } from "@/components/page-header";
 import { Sparkline } from "@/components/sparkline";
 import { NodeStatus, OperationText } from "@/components/node-status";
@@ -717,6 +718,7 @@ function NodeCard({
               {node.name}
             </button>
             <DockerMark nodeId={node.id} />
+            <SecurityMark nodeId={node.id} />
           </h2>
           <NodeStatus
             state={state}
@@ -876,6 +878,7 @@ function FleetTable({
                     {node.name}
                   </button>
                   <DockerMark nodeId={node.id} />
+                  <SecurityMark nodeId={node.id} />
                 </div>
                 <p
                   className={cn(

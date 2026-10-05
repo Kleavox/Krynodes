@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { isValidTarget } from "./targets";
+import { isValidTarget, RECIPES } from "./targets";
 
-export { isProtectedTarget, isValidTarget } from "./targets";
+export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
 export {
   passphraseKeySchema,
   trustChangeSchema,
@@ -17,6 +17,7 @@ export {
   compareVersions,
   LOGS_AGENT,
   MIN_AGENT_VERSION,
+  ORCHESTRATION_AGENT,
   STACKS_AGENT,
   TRUST_AGENT,
 } from "./versions";
@@ -98,7 +99,7 @@ export const signedCommandSchema = z.strictObject({
   signature: b64url,
 });
 
-export const UNSIGNED_VERBS = ["manual", "heal"] as const;
+export const UNSIGNED_VERBS = ["manual", "heal", "scan"] as const;
 
 export const KIND_VERBS = {
   systemd: [
@@ -122,10 +123,19 @@ export const KIND_VERBS = {
     "purge",
     "create",
     "restore",
+    "edit",
+    "read",
+    "export",
+    "expose",
+    "unexpose",
+    "adopt",
   ],
-  host: ["reboot"],
+  host: ["reboot", "apply", "undo", "lockdown", "unlock", "scan"],
   trust: ["trust"],
+  vault: ["store", "release", "reshare", "forget"],
 } as const;
+
+const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
 
 export const signedTrustSchema = z.strictObject({
   change: z
@@ -139,7 +149,7 @@ export const signedTrustSchema = z.strictObject({
 export const agentActionSchema = z
   .strictObject({
     id: z.string().uuid(),
-    kind: z.enum(["systemd", "docker", "compose", "trust", "host"]),
+    kind: z.enum(["systemd", "docker", "compose", "trust", "host", "vault"]),
     name: z.string(),
     action: z.enum([
       "start",
@@ -157,9 +167,30 @@ export const agentActionSchema = z
       "autorestart",
       "manual",
       "heal",
+      "edit",
+      "read",
+      "export",
+      "expose",
+      "unexpose",
+      "adopt",
+      "apply",
+      "undo",
+      "lockdown",
+      "unlock",
+      "scan",
+      "store",
+      "release",
+      "reshare",
+      "forget",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
+    attachment: z
+      .string()
+      .min(1)
+      .max(200000)
+      .regex(/^[A-Za-z0-9_-]+$/u)
+      .optional(),
   })
   .refine((action) => isValidTarget(action.kind, action.name))
   .refine((action) => {
@@ -171,6 +202,12 @@ export const agentActionSchema = z
     }
     const allowed: readonly string[] = KIND_VERBS[action.kind];
     if (!allowed.includes(action.action)) return false;
+    if (
+      action.kind === "host" &&
+      RECIPE_VERBS.includes(action.action) !== (action.name !== "server")
+    ) {
+      return false;
+    }
     return (UNSIGNED_VERBS as readonly string[]).includes(action.action)
       ? action.signed === undefined
       : signedCommandSchema.safeParse(action.signed).success;
@@ -208,8 +245,36 @@ export const stackEntrySchema = z
     total: z.number().int().nonnegative(),
     compose: z.boolean(),
     rollback: z.boolean(),
+    access: z.enum(["contained", "full"]).optional(),
+    public: z
+      .array(z.string().regex(/^\d{1,5}\/(tcp|udp)$/u))
+      .max(64)
+      .optional(),
   })
   .refine((stack) => isValidTarget("compose", stack.project));
+
+export const securityReportSchema = z.strictObject({
+  checkedAt: z.string().datetime(),
+  findings: z
+    .array(
+      z.strictObject({
+        id: z.string().regex(/^[a-z0-9-]{1,40}$/u),
+        severity: z.enum(["serious", "warning", "note"]),
+        detail: z.string().min(1).max(300),
+      }),
+    )
+    .max(50),
+  recipes: z.array(z.enum(RECIPES)).max(RECIPES.length),
+  lockdown: z.boolean(),
+  rebootHour: z.number().int().min(0).max(23).nullable(),
+});
+
+export const vaultReportSchema = z
+  .strictObject({
+    set: z.string().uuid(),
+    holders: z.number().int().min(1).max(100),
+  })
+  .nullable();
 
 const fingerprints = z.array(z.string().regex(/^[0-9a-f]{16}$/u)).max(20);
 
@@ -246,6 +311,12 @@ export const agentActionsRequestSchema = z
         hash: z.string().regex(/^[0-9a-f]{64}$/u),
         docker: z.enum(["ready", "no-compose", "missing"]).optional(),
         removed: z.array(removedStackSchema).max(50).optional(),
+        sealKey: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{87}$/u)
+          .optional(),
+        security: securityReportSchema.optional(),
+        vault: vaultReportSchema.optional(),
         services: z.array(serviceEntrySchema).max(500).optional(),
         stacks: z.array(stackEntrySchema).max(50).optional(),
         trust: trustReportSchema.optional(),

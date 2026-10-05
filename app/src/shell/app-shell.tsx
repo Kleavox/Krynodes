@@ -248,6 +248,9 @@ function AccountMenu({
         <DropdownMenuItem asChild>
           <Link to="/devices">Trusted devices</Link>
         </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/settings/cloudflare">Cloudflare</Link>
+        </DropdownMenuItem>
         {approvals > 0 && (
           <DropdownMenuItem asChild>
             <Link to="/devices">Approvals · {approvals}</Link>

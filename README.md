@@ -255,13 +255,33 @@ The agent never runs anything itself:
   internals, cloudflared or Krynodes; it only reads their logs.
 - It keeps its state in `/var/lib/kry-exec`.
 
-`kry uninstall-service` removes these units and that directory.
+To take Krynodes off a server, first delete the node in the dashboard while
+the server is online (that spreads the Cloudflare token without it and removes
+its tunnel, DNS records and login), then run:
+
+```sh
+sudo kry uninstall-service
+```
+
+It leaves nothing of Krynodes behind: its units, `/usr/local/bin/kry`,
+`/etc/kry`, `/var/lib/kry`, `/var/lib/kry-exec` (seal key and token piece
+included), the `kry` user, the tunnel container and its image, and the
+containment rules of Contained stacks. Every protection it turned on is turned
+off again, with the packages it installed for them, and a server that is
+locked down is unlocked first; it prints what it turned off, such as "SSH
+accepts passwords again". Stacks Krynodes runs keep running: each folder moves
+to `/var/lib/krynodes-stacks/<name>`, with its secrets, and it prints the
+`docker compose` command to manage it. With `--delete-apps` they are deleted
+instead, with their volumes. Stacks you started yourself are never touched.
 
 ### Deploy
 
-From agent 0.2.0 the **Stacks** view of the Services page deploys Docker
-Compose stacks: `docker compose pull`, then `up -d`, in the stack's own
-directory, with its own compose files. A failed deploy keeps the images that
+From agent 0.2.0 the Services page deploys Docker Compose stacks. Each server
+lists its stacks, with their containers folded under them, beside its other
+containers and systemd units; the server page uses the same list. A stack's ⋯
+holds its actions, and **Deploy on all N servers** when the project runs on
+more than one. A deploy runs `docker compose pull`, then `up -d`, in the
+stack's own directory, with its own compose files. A failed deploy keeps the images that
 ran before it, and **Roll back** starts them again.
 
 Servers with Docker and Compose show the Docker logo on Fleet, Services and the
@@ -271,7 +291,7 @@ node page (faded when Compose is missing; agent 0.4.0 reports it). From agent
 container leaves the list as soon as its server confirms.
 
 **Remove** takes a stack's containers and networks down and moves it to
-**Removed**, under the stack list. It waits there for 7 days with its volumes
+**Removed**, under the server lists. It waits there for 7 days with its volumes
 and compose files: **Restore** starts it again (with a fingerprint), and
 **Delete permanently** deletes it at once. After 7 days the server deletes it
 by itself. **Delete permanently**, on a running or a removed stack, deletes its
@@ -280,7 +300,7 @@ elsewhere (a stack you started yourself) stays. Type the name to confirm.
 Images stay. A stack started again outside Krynodes leaves Removed with nothing
 deleted, and New stack refuses a name that waits there.
 
-**New stack** (Stacks view) runs a pasted `compose.yml` on a server, also a
+**New stack** (Services page) runs a pasted `compose.yml` on a server, also a
 project that is not yours. The text is signed into the command. The server
 writes it to `/var/lib/kry-exec/compose/<name>`, resolves it with
 `docker compose config` and refuses, naming the service and the reason, a file
@@ -349,6 +369,109 @@ To start over on a server:
 sudo kry trust --reset
 ```
 
+### Agent 0.5.0: stacks without SSH, secured servers
+
+Everything below needs agent 0.5.0 on every server it involves, is signed with
+a fingerprint and lands in History.
+
+Each agent makes a P-256 seal key in `/var/lib/kry-exec/keys` (root only) and
+reports the public half. The browser encrypts secrets, token pieces and tunnel
+tokens to it, so D1, History and backups only ever hold sealed text. A Worker
+taken over while you use it can still serve changed app code; sealing protects
+stored data, not a live takeover.
+
+**Access level.** New stack, Edit compose and Move ask for one per stack:
+
+- **Contained** (default): the vetting above, plus at most 1 CPU, 1 GB memory
+  and 512 processes per service (set when absent; more is refused), and no way
+  to reach `169.254.169.254` or the server's own addresses. Published ports
+  are bound to `127.0.0.1`.
+- **Full access**: public ports, host network, server folders, builds and
+  devices. Before the fingerprint the dialog lists what the stack opens. It
+  is root-equivalent; use it for stacks you trust like the server itself.
+
+Pulls are refused when the images need more disk than is free (compressed size
+doubled, plus 1 GB kept free).
+
+**Secrets.** Name and value pairs, sealed in the browser to the target server
+and written there as a root-only `.env` beside the compose file. Refer to them
+as `${NAME}`. A reinstalled agent has a new key: enter them again with Edit
+compose.
+
+**Web address.** A stack's ⋯ **Web address…** picks a service and its port and
+opens `<app>-<server>.<zone>` over a Cloudflare Tunnel, with HTTPS and no port
+opened on the server. Who can open it: **Only people I allow** (the same
+Cloudflare Access login as this dashboard), **Login only for a path** (such as
+`/admin`), or **Everyone**. Krynodes makes one tunnel per server
+(`krynodes-<server id>`), runs `cloudflared` as a digest-pinned container on
+the stacks' own networks only, and touches only the DNS records, Access apps
+and tunnels it made. A hostname that already exists is refused. **Close web
+address…**, Remove and Delete permanently remove what it made.
+
+**Cloudflare token** (account menu → Cloudflare). Create one token with
+Account · Cloudflare Tunnel · Edit, Account · Access: Apps and Policies · Edit
+and Zone · DNS · Edit for your zone, expiring in a year, and paste it once. The
+browser splits it with Shamir's scheme: any 2 pieces rebuild it. Every 0.5.0
+server this device reaches gets one piece, sealed to its key; one server keeps
+the whole token, two servers must both be online, three or more need any two.
+A server rebuilds the token only for a signed request, uses it, and erases it.
+Open addresses keep working while servers are down. **Spread again** appears
+when a reachable server holds no piece; **Replace token** splits a new one.
+Krynodes mails 30 days before the token expires.
+
+**Delete node** on a server that holds a piece first spreads the token across
+the other servers, makes the leaving server forget its piece and removes its
+tunnel, DNS records and Access apps, then deletes it. Keep the dialog open
+until it finishes. When the token cannot move (fewer than two pieces online),
+the dialog says why and offers **Delete anyway**; replace the token if the
+server may be in the wrong hands.
+
+**Edit compose / View compose.** Stacks Krynodes runs can be edited: the new
+text is vetted for the stack's access level and started, and the previous one
+stays as the Roll back target. Stacks started elsewhere can only be read until
+they move.
+
+**Move to server…** copies a stack to another server: tick the services that
+move (unticked ones leave `depends_on`, and values that still name them are
+flagged, like a test mailpit), review the compose file, and choose the access
+level there. Images are pinned to the digests that ran, secrets are sealed
+again to the target, and small files beside the compose file (up to 1 MB) come
+along; app data does not. Once the copy runs healthy the original is deleted
+now, moved to Removed, or kept, as you chose; if the copy fails the original
+is untouched.
+
+**Move into Krynodes** copies a stack started elsewhere into
+`/var/lib/kry-exec/compose/<name>`, stops the old one and starts the copy
+under the same project name, so named volumes stay. The old folder is left as
+it was. A stack that mounts server folders moves as Full access.
+
+**Security check.** Every 6 hours, and after every change below, each server
+checks SSH password and root login, SSH keys, ports open to the internet
+(also ones Krynodes did not open), automatic updates, pending updates and
+restarts, privileged containers and `docker.sock` mounts, and OS end of life.
+Fleet shows a shield (green, amber, red); the server page lists the findings
+with **Check now**. A new serious finding is mailed under the quiet rules.
+
+**Protections** on the server page, each with Turn off (Undo):
+
+| Protection                    | What it does                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Automatic security updates    | `unattended-upgrades` for security updates                                                                        |
+| Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action  |
+| SSH keys only                 | no password login over SSH; offered only when root or a sudo user has a key                                       |
+| Block repeated login failures | fail2ban for SSH                                                                                                  |
+| Firewall                      | ufw: SSH and the ports you tick stay open; ports published by Docker are not affected                             |
+| Free port 53                  | stops systemd-resolved holding port 53, for a DNS server such as AdGuard; offered only when port 53 is held by it |
+
+Each one writes its own drop-in file and never edits yours; Turn off removes
+it, and the packages Krynodes installed for it. **Apply
+recommended** turns on the first four with one fingerprint. The agent connects
+outward, so none of them can cut Krynodes off.
+
+**Lock down server** (server menu) stops containers that publish ports to the
+internet and the tunnel, and turns on SSH keys only when a key is set up.
+**Unlock server** brings back exactly what it changed.
+
 ## Data retention
 
 A daily cron (03:17 UTC) keeps the database small enough for the Free plan's
@@ -361,6 +484,7 @@ A daily cron (03:17 UTC) keeps the database small enough for the Free plan's
 | Incidents                          | while open, then 180 days          |
 | Actions (**History**)              | 90 days                            |
 | Log text fetched with **Logs**     | 1 day; the action stays            |
+| Compose text read with **View**    | 1 day; the action stays            |
 | Trust changes (**Recent changes**) | open up to 24 hours, closed 1 year |
 | Removed devices                    | 1 year after removal               |
 | Removed stacks (on each server)    | 7 days, then deleted there         |

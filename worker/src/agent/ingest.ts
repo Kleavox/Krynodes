@@ -25,6 +25,7 @@ export interface AgentNode {
   update_error?: string | null;
   inventory_hash?: string | null;
   refresh_requested_at?: string | null;
+  security?: string | null;
 }
 
 export interface LiveCheck {

@@ -13,7 +13,7 @@ import (
 )
 
 func inventoryOf(services []Service, now time.Time) (Inventory, error) {
-	return NewInventory(services, nil, reporter.TrustReport{}, "", nil, now)
+	return NewInventory(Parts{Services: services}, now)
 }
 
 const unitList = `nginx.service                 loaded    active   running A high performance web server
@@ -281,16 +281,16 @@ func TestComposeAvailabilityIsReported(t *testing.T) {
 }
 
 func TestTheInventoryHashChangesWhenDockerChanges(t *testing.T) {
-	first, _ := NewInventory(nil, nil, reporter.TrustReport{}, "missing", nil, executorNow)
-	second, _ := NewInventory(nil, nil, reporter.TrustReport{}, "ready", nil, executorNow)
+	first, _ := NewInventory(Parts{Docker: "missing"}, executorNow)
+	second, _ := NewInventory(Parts{Docker: "ready"}, executorNow)
 	if first.Hash == second.Hash || second.Docker != "ready" {
 		t.Fatalf("docker must be part of the inventory: %#v %#v", first, second)
 	}
 }
 
 func TestTheInventoryHashChangesWhenAStackIsRemoved(t *testing.T) {
-	first, _ := NewInventory(nil, nil, reporter.TrustReport{}, "ready", nil, executorNow)
-	second, _ := NewInventory(nil, nil, reporter.TrustReport{}, "ready", []reporter.RemovedStack{{Project: "kuma", Directory: "/opt/kuma", RemovedAt: "2026-09-29T10:00:00Z"}}, executorNow)
+	first, _ := NewInventory(Parts{Docker: "ready"}, executorNow)
+	second, _ := NewInventory(Parts{Docker: "ready", Removed: []reporter.RemovedStack{{Project: "kuma", Directory: "/opt/kuma", RemovedAt: "2026-09-29T10:00:00Z"}}}, executorNow)
 	if first.Hash == second.Hash || len(second.Removed) != 1 {
 		t.Fatalf("removed stacks must be part of the inventory: %#v", second)
 	}
@@ -298,10 +298,18 @@ func TestTheInventoryHashChangesWhenAStackIsRemoved(t *testing.T) {
 
 func TestTheInventoryHashChangesWhenAStackChanges(t *testing.T) {
 	stack := reporter.StackEntry{Project: "listmonk", Directory: "/opt/listmonk", Running: 5, Total: 5, Compose: true}
-	first, _ := NewInventory(nil, []reporter.StackEntry{stack}, reporter.TrustReport{}, "", nil, executorNow)
+	first, _ := NewInventory(Parts{Stacks: []reporter.StackEntry{stack}}, executorNow)
 	stack.Running = 4
-	second, _ := NewInventory(nil, []reporter.StackEntry{stack}, reporter.TrustReport{}, "", nil, executorNow)
+	second, _ := NewInventory(Parts{Stacks: []reporter.StackEntry{stack}}, executorNow)
 	if first.Hash == second.Hash {
 		t.Fatal("a stack change must change the hash")
+	}
+}
+
+func TestTheSealKeyIsPartOfTheInventory(t *testing.T) {
+	first, _ := NewInventory(Parts{SealKey: "first"}, executorNow)
+	second, _ := NewInventory(Parts{SealKey: "second"}, executorNow)
+	if first.Hash == second.Hash || first.SealKey != "first" {
+		t.Fatalf("the seal key must be reported: %#v", first)
 	}
 }

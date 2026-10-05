@@ -2,6 +2,7 @@ package reporter
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,16 @@ func TestAHashOnlyReportLeavesServicesOut(t *testing.T) {
 	}
 	if string(encoded) != `{"nodeId":"n","inventory":{"hash":"h"}}` {
 		t.Fatalf("unexpected %s", encoded)
+	}
+}
+
+func TestAnEmptyVaultIsSentAsNull(t *testing.T) {
+	encoded, err := json.Marshal(InventoryReport{Hash: "h", Vault: &VaultSlot{}})
+	if err != nil || !strings.Contains(string(encoded), `"vault":null`) {
+		t.Fatalf("%s %v", encoded, err)
+	}
+	encoded, _ = json.Marshal(InventoryReport{Hash: "h"})
+	if strings.Contains(string(encoded), "vault") {
+		t.Fatalf("an unchanged inventory leaves the vault out: %s", encoded)
 	}
 }

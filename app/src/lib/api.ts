@@ -15,6 +15,7 @@ import type {
   ChangeHistory,
   CheckKind,
   CheckResults,
+  CloudflareSettings,
   DevicesResponse,
   Enrollment,
   EnrollmentStatus,
@@ -253,11 +254,53 @@ export const ACTION_QUERIES = [
 export const postActions = (body: {
   action: Exclude<ActionVerb, "trust" | "heal">;
   mode: BatchMode;
-  targets: (SignedTarget | { nodeId: string; kind: "systemd"; name: string })[];
+  targets: (
+    SignedTarget | { nodeId: string; kind: "systemd" | "host"; name: string }
+  )[];
 }) =>
   apiFetch<{ batchId: string; actions: { id: string }[] }>(
     "/api/actions",
     send("POST", body),
+  );
+
+export interface OperationStep {
+  id: string;
+  nodeId: string;
+  kind: "compose" | "vault";
+  name: string;
+  action: ActionVerb;
+  signed: unknown;
+  attachFrom?: number;
+  attachKey?: string;
+}
+
+export const postOperation = (body: {
+  kind: "move" | "expose" | "unexpose" | "split" | "reshare";
+  steps: OperationStep[];
+  zone?: string;
+}) =>
+  apiFetch<{ batchId: string; actions: { id: string }[] }>(
+    "/api/operations",
+    send("POST", body),
+  );
+
+export function useCloudflare() {
+  return useQuery({
+    queryKey: ["cloudflare"],
+    queryFn: () => apiFetch<CloudflareSettings>("/api/cloudflare"),
+  });
+}
+
+export const useScan = () =>
+  useApiMutation(
+    (nodeId: string) =>
+      postActions({
+        action: "scan",
+        mode: "parallel",
+        targets: [{ nodeId, kind: "host", name: "server" }],
+      }),
+    [...ACTION_QUERIES, queryKeys.overview],
+    true,
   );
 
 export function useManualRestart() {
