@@ -3,11 +3,13 @@ package actions
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,10 +20,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/internal/seal"
 )
 
 const (
-	maxRequestBytes = 64 << 10
+	maxRequestBytes = 256 << 10
 	maxOutputBytes  = 2 << 10
 	commandTimeout  = 2 * time.Minute
 	expirySkew      = time.Minute
@@ -41,6 +44,12 @@ type Executor struct {
 	Run        Runner
 	Collect    func(context.Context, []string) (Snapshot, error)
 	Exists     func(string) bool
+	Free       func(string) (uint64, error)
+	Root       string
+	Audit      bool
+
+	CloudflareBase string
+	CloudflareHTTP *http.Client
 
 	HealthTimeout time.Duration
 	HealthEvery   time.Duration
@@ -70,6 +79,8 @@ func (e Executor) Execute(ctx context.Context) error {
 		ledger = map[string]time.Time{}
 	}
 	reboot := false
+	scanned := false
+	processed := 0
 	for {
 		batch := e.unprocessed(ledger)
 		if len(batch) == 0 {
@@ -80,6 +91,8 @@ func (e Executor) Execute(ctx context.Context) error {
 			if err := e.saveLedger(ledger); err != nil {
 				return err
 			}
+			processed++
+			forwarded := false
 			result := e.refuse(item.id, item.refusal)
 			if item.refusal == nil && item.request.Action == "logs" {
 				result = e.logs(ctx, item.request, snapshot)
@@ -89,9 +102,12 @@ func (e Executor) Execute(ctx context.Context) error {
 					result = e.trustChange(item.request)
 				case item.request.Kind == "compose":
 					result = e.compose(ctx, item.request, snapshot)
+				case item.request.Kind == "vault":
+					result = e.vault(ctx, item.request)
 				case item.request.Kind == "host":
-					result = e.host(item.request)
-					reboot = reboot || result.OK
+					result, forwarded = e.host(item.request)
+					reboot = reboot || (result.OK && item.request.Action == "reboot")
+					scanned = scanned || (result.OK && item.request.Action == "scan")
 				case slices.Contains(autoVerbs, item.request.Action):
 					result = e.autoRestart(ctx, item.request, snapshot, stopped)
 				default:
@@ -104,6 +120,9 @@ func (e Executor) Execute(ctx context.Context) error {
 					}
 				}
 			}
+			if forwarded {
+				continue
+			}
 			if err := writeJSON(filepath.Join(e.StateDir, "results"), item.id+".json", result, 0o640); err != nil {
 				return err
 			}
@@ -112,12 +131,25 @@ func (e Executor) Execute(ctx context.Context) error {
 			return err
 		}
 	}
+	if snapshot.Docker == "ready" && e.hasContained() {
+		e.guard(ctx)
+	}
 	trust, err := LoadTrust(e.StateDir)
 	if err != nil {
 		log.Printf("%v", err)
 	}
 	removed := e.sweepRemoved(ctx, snapshot)
-	inventory, err := NewInventory(snapshot.Services, e.stackEntries(snapshot), trust.Report(), snapshot.Docker, removed, e.Now())
+	sealKey := ""
+	if key, err := e.sealKey(); err != nil {
+		log.Printf("seal key: %v", err)
+	} else {
+		sealKey = seal.Public(key)
+	}
+	var security *reporter.SecurityReport
+	if e.Audit {
+		security = e.security(ctx, scanned)
+	}
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport()}, e.Now())
 	if err != nil {
 		return err
 	}
@@ -127,6 +159,9 @@ func (e Executor) Execute(ctx context.Context) error {
 	if err := e.pruneResults(); err != nil {
 		return err
 	}
+	if !reboot && processed == 0 && e.rebootDue() {
+		reboot = true
+	}
 	if reboot {
 		if _, _, err := e.Run(ctx, "systemctl", "reboot", "--no-block"); err != nil {
 			return fmt.Errorf("reboot: %w", err)
@@ -135,17 +170,8 @@ func (e Executor) Execute(ctx context.Context) error {
 	return nil
 }
 
-func (e Executor) host(request Request) Result {
-	if request.Action != "reboot" || !ValidTarget(request.Kind, request.Name) {
-		return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
-	}
-	if err := expired(request, e.Now()); err != nil {
-		return e.refuse(request.ID, err)
-	}
-	if _, err := e.authorize(request); err != nil {
-		return e.refuse(request.ID, err)
-	}
-	return Result{ID: request.ID, OK: true, Output: "restarting the server", FinishedAt: e.stamp()}
+func (e Executor) sealKey() (*ecdh.PrivateKey, error) {
+	return seal.Load(filepath.Join(e.StateDir, "keys"))
 }
 
 func (e Executor) unprocessed(ledger map[string]time.Time) []pending {
@@ -315,6 +341,7 @@ func (e Executor) stackEntries(snapshot Snapshot) []reporter.StackEntry {
 		entries = append(entries, reporter.StackEntry{
 			Project: stack.Project, Directory: stack.Directory, Running: stack.Running, Total: stack.Total,
 			Compose: snapshot.Compose, Rollback: len(record.Previous) > 0,
+			Access: e.accessOf(stack.Directory), Public: stack.Public,
 		})
 	}
 	return entries

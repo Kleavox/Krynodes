@@ -122,6 +122,18 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 		return e.lifecycle(ctx, request, stack)
 	case "remove", "purge":
 		return e.remove(ctx, request, stack)
+	case "edit":
+		return e.edit(ctx, request, command, stack)
+	case "read":
+		return e.read(ctx, request, stack)
+	case "export":
+		return e.export(request, command, stack)
+	case "adopt":
+		return e.adopt(ctx, request, stack)
+	case "expose":
+		return e.expose(ctx, request, command, stack)
+	case "unexpose":
+		return e.unexpose(ctx, request, command)
 	}
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }

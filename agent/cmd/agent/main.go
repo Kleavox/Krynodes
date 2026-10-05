@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"os/user"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -41,6 +42,8 @@ const (
 	execPath          = "/etc/systemd/system/krynodes-exec.service"
 	execWatcherPath   = "/etc/systemd/system/krynodes-exec.path"
 	execTimerPath     = "/etc/systemd/system/krynodes-exec.timer"
+	hostPath          = "/etc/systemd/system/krynodes-host.service"
+	hostWatcherPath   = "/etc/systemd/system/krynodes-host.path"
 	stateDirectory    = "/var/lib/kry"
 )
 
@@ -71,11 +74,13 @@ func run(args []string) error {
 	case "install-service":
 		return installService(args)
 	case "uninstall-service":
-		return uninstallService()
+		return uninstallService(args)
 	case "self-update":
 		return selfUpdate()
 	case "exec":
 		return execActions()
+	case "host-apply":
+		return hostApply()
 	case "trust":
 		return trustDevices(args)
 	case "version":
@@ -340,6 +345,8 @@ func installService(args []string) error {
 		execPath:        execUnit(executable),
 		execWatcherPath: execPathUnit(),
 		execTimerPath:   execTimerUnit(),
+		hostPath:        hostUnit(executable),
+		hostWatcherPath: hostPathUnit(),
 	}
 	for path, unit := range units {
 		if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
@@ -349,13 +356,44 @@ func installService(args []string) error {
 	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
 		return err
 	}
-	for _, name := range []string{unitName + ".service", unitName + "-update.path", unitName + "-exec.path", unitName + "-exec.timer"} {
+	for _, name := range enabledUnits() {
 		if err := exec.Command("systemctl", "enable", "--now", name).Run(); err != nil {
 			return fmt.Errorf("enable %s: %w", name, err)
 		}
 	}
 	fmt.Printf("Installed and started %s.service\n", unitName)
 	return nil
+}
+
+func enabledUnits() []string {
+	return []string{unitName + ".service", unitName + "-update.path", unitName + "-exec.path", unitName + "-exec.timer", unitName + "-host.path"}
+}
+
+func hostUnit(executable string) string {
+	return fmt.Sprintf(`[Unit]
+Description=Krynodes server recipes
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=%s host-apply
+TimeoutStartSec=30min
+PrivateTmp=true
+Environment=DOCKER_CONFIG=%s/docker
+`, executable, actions.StateDir)
+}
+
+func hostPathUnit() string {
+	return fmt.Sprintf(`[Unit]
+Description=Watch for Krynodes server recipe requests
+
+[Path]
+DirectoryNotEmpty=%s/host
+Unit=%s-host.service
+
+[Install]
+WantedBy=multi-user.target
+`, actions.StateDir, unitName)
 }
 
 func serviceUnit(executable, configPath string) string {
@@ -474,8 +512,17 @@ func execActions() error {
 		Collect: func(ctx context.Context, remembered []string) (actions.Snapshot, error) {
 			return actions.Collect(ctx, actions.RunCommand, remembered)
 		},
+		Audit: true,
 	}
 	return executor.Execute(context.Background())
+}
+
+func hostApply() error {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return fmt.Errorf("host-apply must run as root on Linux")
+	}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	return executor.HostApply(context.Background())
 }
 
 func prepareActionDirectories(uid, gid int) error {
@@ -586,28 +633,56 @@ func ensureServiceUser(configPath string) (int, int, error) {
 	return uid, gid, nil
 }
 
-func uninstallService() error {
+func uninstallService(args []string) error {
+	deleteApps := false
+	for _, arg := range args {
+		if arg != "--delete-apps" {
+			return fmt.Errorf("unknown flag %q; the only one is --delete-apps", arg)
+		}
+		deleteApps = true
+	}
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("uninstall-service must run as root on Linux")
 	}
 	for _, command := range uninstallCommands() {
 		_ = exec.Command(command[0], command[1:]...).Run()
 	}
-	for _, path := range []string{execTimerPath, execWatcherPath, execPath, watcherPath, updaterPath, unitPath} {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	removal := executor.Uninstall(context.Background(), deleteApps)
+	binary, _ := os.Executable()
+	for _, path := range leftovers(binary) {
+		if err := os.RemoveAll(path); err != nil {
+			removal.Problems = append(removal.Problems, fmt.Sprintf("remove %s: %v", path, err))
 		}
 	}
-	if err := os.RemoveAll(actions.StateDir); err != nil {
-		return err
+	_ = exec.Command("userdel", accountName).Run()
+	_ = exec.Command("systemctl", "daemon-reload").Run()
+	fmt.Println("Krynodes is removed from this server.")
+	for _, line := range removal.TurnedOff {
+		fmt.Println("  Turned off: " + line)
 	}
-	return exec.Command("systemctl", "daemon-reload").Run()
+	for _, line := range removal.Apps {
+		fmt.Println("  " + line)
+	}
+	fmt.Println("If this server is still in the dashboard, delete it there too; that also removes its Cloudflare tunnel, DNS records and login.")
+	if len(removal.Problems) > 0 {
+		return fmt.Errorf("some parts need a look:\n  %s", strings.Join(removal.Problems, "\n  "))
+	}
+	return nil
+}
+
+func leftovers(binary string) []string {
+	paths := []string{hostWatcherPath, hostPath, execTimerPath, execWatcherPath, execPath, watcherPath, updaterPath, unitPath, stateDirectory, path.Dir(defaultConfigPath)}
+	if binary != "" {
+		paths = append(paths, binary)
+	}
+	return paths
 }
 
 func uninstallCommands() [][]string {
 	return [][]string{
-		{"systemctl", "disable", "--now", unitName + "-exec.timer", unitName + "-exec.path", unitName + "-update.path", unitName + ".service"},
-		{"systemctl", "stop", unitName + "-exec.service"},
+		{"systemctl", "disable", "--now", unitName + "-host.path", unitName + "-exec.timer", unitName + "-exec.path", unitName + "-update.path", unitName + ".service"},
+		{"systemctl", "stop", unitName + "-exec.service", unitName + "-host.service"},
 	}
 }
 

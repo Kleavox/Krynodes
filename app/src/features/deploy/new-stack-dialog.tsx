@@ -20,11 +20,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAction, useServices } from "@/lib/api";
+import { orchestrationReady } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
+import { toast } from "sonner";
 import { isPending } from "@/lib/services";
 import { newStackBlocker, stackNameProblem } from "@/lib/stacks";
 import type { NodeRecord } from "@/types";
 
+import {
+  AccessChoice,
+  FullAccessSummary,
+  SecretsEditor,
+  sealSecrets,
+  secretsProblem,
+  type Access,
+  type SecretRow,
+} from "./stack-fields";
 import { useSignedAction } from "./use-signed-action";
 
 const LIMIT = 32 * 1024;
@@ -72,10 +83,15 @@ function NewStackForm({
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [touched, setTouched] = useState(false);
+  const [access, setAccess] = useState<Access>("contained");
+  const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  const [sealing, setSealing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const action = useAction(actionId).data?.action;
 
   const chosen = choices.find((choice) => choice.node.id === nodeId);
+  const sealKey = entries.get(nodeId)?.sealKey ?? null;
+  const modern = chosen !== undefined && orchestrationReady(chosen.node);
   const taken = (entries.get(nodeId)?.stacks ?? []).map(
     (stack) => stack.project,
   );
@@ -93,11 +109,23 @@ function NewStackForm({
     chosen !== undefined &&
     chosen.blocker === null &&
     nameProblem === null &&
-    textProblem === null;
+    textProblem === null &&
+    (!modern || secretsProblem(secrets) === null);
 
-  const create = () => {
+  const create = async () => {
     setTouched(true);
     if (!ready) return;
+    setSealing(true);
+    let sealed: string | undefined;
+    try {
+      sealed =
+        modern && sealKey ? await sealSecrets(sealKey, secrets) : undefined;
+    } catch (error) {
+      toast.error(errorMessage(error));
+      return;
+    } finally {
+      setSealing(false);
+    }
     run.mutate(
       {
         action: "create",
@@ -107,6 +135,8 @@ function NewStackForm({
             kind: "compose",
             name: name.trim(),
             compose: text,
+            ...(modern ? { access } : {}),
+            ...(sealed ? { secrets: sealed } : {}),
           },
         ],
       },
@@ -227,28 +257,51 @@ function NewStackForm({
           {touched && textProblem && (
             <p className="text-xs text-destructive">{textProblem}</p>
           )}
-          <ul
-            id="stack-file-notes"
-            className="list-disc space-y-1 pl-4 text-xs text-muted-foreground"
-          >
-            <li>
-              Ready images only; a file that builds from source is refused.
-            </li>
-            <li>
-              Refused too: privileged mode, the server&rsquo;s network or
-              processes, devices, extra capabilities, and mounts outside the
-              stack&rsquo;s own folder.
-            </li>
-            <li>
-              Ports open on the server itself (127.0.0.1). Reach them through a
-              Cloudflare Tunnel.
-            </li>
-            <li>
-              Do not paste passwords you use elsewhere: the file is kept with
-              the action in History for 90 days.
-            </li>
-          </ul>
+          {access === "contained" || !modern ? (
+            <ul
+              id="stack-file-notes"
+              className="list-disc space-y-1 pl-4 text-xs text-muted-foreground"
+            >
+              <li>
+                Ready images only; a file that builds from source is refused.
+              </li>
+              <li>
+                Refused too: privileged mode, the server&rsquo;s network or
+                processes, devices, extra capabilities, and mounts outside the
+                stack&rsquo;s own folder.
+              </li>
+              <li>
+                Ports open on the server itself (127.0.0.1). Open one to your
+                browser with Web address in the stack&rsquo;s menu.
+              </li>
+              <li>
+                The file is kept with the action in History for 90 days; put
+                passwords under Secrets.
+              </li>
+            </ul>
+          ) : (
+            <div id="stack-file-notes">
+              <FullAccessSummary text={text} />
+            </div>
+          )}
         </div>
+        {modern && (
+          <>
+            <div className="space-y-1.5">
+              <Label>Access</Label>
+              <AccessChoice value={access} onChange={setAccess} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Secrets</Label>
+              <SecretsEditor rows={secrets} onChange={setSecrets} />
+              {touched && secretsProblem(secrets) && (
+                <p className="text-xs text-destructive">
+                  {secretsProblem(secrets)}
+                </p>
+              )}
+            </div>
+          </>
+        )}
       </div>
       {run.error && (
         <p role="alert" className="text-sm text-destructive">
@@ -260,8 +313,8 @@ function NewStackForm({
           Cancel
         </Button>
         <Button
-          disabled={run.isPending || (touched && !ready)}
-          onClick={create}
+          disabled={sealing || run.isPending || (touched && !ready)}
+          onClick={() => void create()}
         >
           {!run.isPending && <Fingerprint aria-hidden="true" />}
           {run.isPending ? "Waiting for the fingerprint…" : "Create"}

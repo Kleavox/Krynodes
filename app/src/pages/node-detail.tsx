@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/empty-state";
 import { FilterChips } from "@/components/filter-chips";
 import { MetricChart, type ChartRow } from "@/components/metric-chart";
 import { DockerMark } from "@/components/docker-mark";
+import { SecurityMark } from "@/components/security-mark";
 import { PageHeader } from "@/components/page-header";
 import { NodeStatus } from "@/components/node-status";
 import { StatusDot, checkTone } from "@/components/status";
@@ -13,10 +14,10 @@ import { HeartbeatStrip, newestLatency } from "@/components/strips";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AgentPanel } from "@/features/agent/agent-panel";
-import { NodeStacks } from "@/features/deploy/node-stacks";
 import { NodeServices, RecentActions } from "@/features/services/node-sections";
 import { CheckMenu } from "@/features/checks/check-menu";
 import { NodeActions } from "@/features/nodes/node-actions";
+import { SecurityPanel } from "@/features/nodes/security-panel";
 import {
   useCheckResults,
   useDevices,
@@ -128,6 +129,7 @@ export function NodeDetailPage() {
               offlineDetail={`reported ${timeAgo(node.last_seen_at, now)}`}
             />
             <DockerMark nodeId={node.id} />
+            <SecurityMark nodeId={node.id} />
           </span>
         }
         actions={
@@ -209,6 +211,7 @@ export function NodeDetailPage() {
             release={overview.data.agentRelease}
             now={now}
           />
+          <SecurityPanel node={node} seen={overview.dataUpdatedAt} />
         </aside>
       </div>
 
@@ -216,9 +219,6 @@ export function NodeDetailPage() {
         <div className="contents lg:flex lg:flex-col lg:gap-6">
           <div className="order-1 empty:hidden lg:order-none">
             <NodeServices node={node} seen={overview.dataUpdatedAt} />
-          </div>
-          <div className="order-2 empty:hidden lg:order-none">
-            <NodeStacks node={node} seen={overview.dataUpdatedAt} />
           </div>
         </div>
         <div className="contents lg:flex lg:flex-col lg:gap-6">

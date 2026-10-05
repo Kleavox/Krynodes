@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -101,7 +102,7 @@ func TestPollSendsAChangedInventoryOnceWithItsServices(t *testing.T) {
 
 func TestPollSendsTheDockerState(t *testing.T) {
 	relay, poster := newRelay(t)
-	inventory, err := NewInventory(nil, nil, reporter.TrustReport{}, "ready", nil, executorNow)
+	inventory, err := NewInventory(Parts{Docker: "ready"}, executorNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +223,22 @@ func TestAFailedReportKeepsTheRequest(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(relay.RequestDir, idA+".json")); err != nil {
 		t.Fatal("the request must stay until its result is reported")
+	}
+}
+
+func TestPollSendsTheSealKey(t *testing.T) {
+	relay, poster := newRelay(t)
+	inventory, err := NewInventory(Parts{SealKey: "B" + strings.Repeat("A", 86)}, executorNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(relay.StateDir, "inventory.json", inventory, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.reports) != 1 || poster.reports[0].Inventory == nil || poster.reports[0].Inventory.SealKey != inventory.SealKey {
+		t.Fatalf("unexpected reports %#v", poster.reports)
 	}
 }

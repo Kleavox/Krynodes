@@ -39,6 +39,7 @@ jobs:
               - ".github/workflows/ci.yml"
             agent:
               - "agent/**"
+              - "tooling/lint/go-deadcode.mjs"
               - ".github/workflows/ci.yml"
               - ".github/workflows/agent-release.yml"
 
@@ -92,14 +93,7 @@ jobs:
         working-directory: agent
 
       - name: Dead-code check
-        working-directory: agent
-        run: |
-          output="$(go run golang.org/x/tools/cmd/deadcode@latest ./...)"
-          if [ -n "$output" ]; then
-            echo "Dead Go code found:"
-            echo "$output"
-            exit 1
-          fi
+        run: node tooling/lint/go-deadcode.mjs
 
   validate:
     name: validate

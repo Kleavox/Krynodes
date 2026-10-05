@@ -29,7 +29,7 @@ var collectTimeout = 30 * time.Second
 
 const createdLayout = "2006-01-02 15:04:05 -0700"
 
-const containerFormat = "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}\t{{.CreatedAt}}"
+const containerFormat = "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}\t{{.CreatedAt}}\t{{.Ports}}"
 
 type Stack struct {
 	Project   string
@@ -37,6 +37,7 @@ type Stack struct {
 	Files     []string
 	Running   int
 	Total     int
+	Public    []string
 }
 
 type Snapshot struct {
@@ -47,13 +48,27 @@ type Snapshot struct {
 }
 
 type Inventory struct {
-	Hash     string                  `json:"hash"`
-	TakenAt  string                  `json:"takenAt"`
-	Services []Service               `json:"services"`
-	Stacks   []reporter.StackEntry   `json:"stacks"`
-	Trust    reporter.TrustReport    `json:"trust"`
-	Docker   string                  `json:"docker,omitempty"`
-	Removed  []reporter.RemovedStack `json:"removed"`
+	Hash     string                   `json:"hash"`
+	TakenAt  string                   `json:"takenAt"`
+	Services []Service                `json:"services"`
+	Stacks   []reporter.StackEntry    `json:"stacks"`
+	Trust    reporter.TrustReport     `json:"trust"`
+	Docker   string                   `json:"docker,omitempty"`
+	Removed  []reporter.RemovedStack  `json:"removed"`
+	SealKey  string                   `json:"sealKey,omitempty"`
+	Security *reporter.SecurityReport `json:"security,omitempty"`
+	Vault    *reporter.VaultReport    `json:"vault,omitempty"`
+}
+
+type Parts struct {
+	Services []Service
+	Stacks   []reporter.StackEntry
+	Trust    reporter.TrustReport
+	Docker   string
+	Removed  []reporter.RemovedStack
+	SealKey  string
+	Security *reporter.SecurityReport
+	Vault    *reporter.VaultReport
 }
 
 var unitStates = map[string]string{
@@ -121,6 +136,37 @@ func absolute(path string) bool {
 	return strings.HasPrefix(path, "/") && !strings.ContainsRune(path, 0)
 }
 
+func fieldAt(fields []string, index int) string {
+	if index < len(fields) {
+		return fields[index]
+	}
+	return ""
+}
+
+func publicPorts(text string) []string {
+	var ports []string
+	for item := range strings.SplitSeq(text, ",") {
+		host, inside, found := strings.Cut(strings.TrimSpace(item), "->")
+		if !found {
+			continue
+		}
+		colon := strings.LastIndex(host, ":")
+		_, protocol, _ := strings.Cut(inside, "/")
+		if colon < 0 || (protocol != "tcp" && protocol != "udp") {
+			continue
+		}
+		address := strings.Trim(host[:colon], "[]")
+		if strings.HasPrefix(address, "127.") || address == "::1" {
+			continue
+		}
+		first, _, _ := strings.Cut(host[colon+1:], "-")
+		if port := first + "/" + protocol; !slices.Contains(ports, port) {
+			ports = append(ports, port)
+		}
+	}
+	return ports
+}
+
 func parseContainers(output string) ([]Service, []Stack) {
 	var services []Service
 	found := map[string]*Stack{}
@@ -151,7 +197,7 @@ func parseContainers(output string) ([]Service, []Stack) {
 			continue
 		}
 		var created time.Time
-		if stamp := strings.Fields(fields[len(fields)-1]); len(fields) > 5 && len(stamp) >= 3 {
+		if stamp := strings.Fields(fieldAt(fields, 5)); len(stamp) >= 3 {
 			created, _ = time.Parse(createdLayout, strings.Join(stamp[:3], " "))
 		}
 		if !seen {
@@ -166,6 +212,11 @@ func parseContainers(output string) ([]Service, []Stack) {
 		if state == "running" {
 			stack.Running++
 		}
+		for _, port := range publicPorts(fieldAt(fields, 6)) {
+			if !slices.Contains(stack.Public, port) {
+				stack.Public = append(stack.Public, port)
+			}
+		}
 	}
 	var stacks []Stack
 	for project, stack := range found {
@@ -178,7 +229,8 @@ func parseContainers(output string) ([]Service, []Stack) {
 	return services, stacks
 }
 
-func NewInventory(services []Service, stacks []reporter.StackEntry, trust reporter.TrustReport, docker string, removed []reporter.RemovedStack, now time.Time) (Inventory, error) {
+func NewInventory(parts Parts, now time.Time) (Inventory, error) {
+	services, stacks, trust, docker, removed := parts.Services, parts.Stacks, parts.Trust, parts.Docker, parts.Removed
 	if removed == nil {
 		removed = []reporter.RemovedStack{}
 	}
@@ -207,17 +259,20 @@ func NewInventory(services []Service, stacks []reporter.StackEntry, trust report
 		trust.Access = []string{}
 	}
 	encoded, err := json.Marshal(struct {
-		Services []Service               `json:"services"`
-		Stacks   []reporter.StackEntry   `json:"stacks"`
-		Trust    reporter.TrustReport    `json:"trust"`
-		Docker   string                  `json:"docker"`
-		Removed  []reporter.RemovedStack `json:"removed"`
-	}{sorted, listed, trust, docker, removed})
+		Services []Service                `json:"services"`
+		Stacks   []reporter.StackEntry    `json:"stacks"`
+		Trust    reporter.TrustReport     `json:"trust"`
+		Docker   string                   `json:"docker"`
+		Removed  []reporter.RemovedStack  `json:"removed"`
+		SealKey  string                   `json:"sealKey"`
+		Security *reporter.SecurityReport `json:"security"`
+		Vault    *reporter.VaultReport    `json:"vault"`
+	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault})
 	if err != nil {
 		return Inventory{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed}, nil
+	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault}, nil
 }
 
 func rank(service Service) int {

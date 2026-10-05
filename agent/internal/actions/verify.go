@@ -107,15 +107,19 @@ type grant struct {
 }
 
 type Command struct {
-	V         int    `json:"v"`
-	ID        string `json:"id"`
-	NodeID    string `json:"nodeId"`
-	Kind      string `json:"kind"`
-	Name      string `json:"name"`
-	Action    string `json:"action"`
-	IssuedAt  string `json:"issuedAt"`
-	ExpiresAt string `json:"expiresAt"`
-	Compose   string `json:"compose,omitempty"`
+	V         int               `json:"v"`
+	ID        string            `json:"id"`
+	NodeID    string            `json:"nodeId"`
+	Kind      string            `json:"kind"`
+	Name      string            `json:"name"`
+	Action    string            `json:"action"`
+	IssuedAt  string            `json:"issuedAt"`
+	ExpiresAt string            `json:"expiresAt"`
+	Compose   string            `json:"compose,omitempty"`
+	Access    string            `json:"access,omitempty"`
+	Secrets   string            `json:"secrets,omitempty"`
+	Piece     string            `json:"piece,omitempty"`
+	Args      map[string]string `json:"args,omitempty"`
 }
 
 func strict(raw []byte, value any) error {

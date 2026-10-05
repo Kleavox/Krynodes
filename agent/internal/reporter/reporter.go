@@ -55,12 +55,13 @@ type UpdateInstruction struct {
 }
 
 type ActionRequest struct {
-	ID        string          `json:"id"`
-	Kind      string          `json:"kind"`
-	Name      string          `json:"name"`
-	Action    string          `json:"action"`
-	ExpiresAt string          `json:"expiresAt"`
-	Signed    json.RawMessage `json:"signed,omitempty"`
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	Name       string          `json:"name"`
+	Action     string          `json:"action"`
+	ExpiresAt  string          `json:"expiresAt"`
+	Signed     json.RawMessage `json:"signed,omitempty"`
+	Attachment string          `json:"attachment,omitempty"`
 }
 
 type ActionResult struct {
@@ -80,12 +81,14 @@ type ServiceEntry struct {
 }
 
 type StackEntry struct {
-	Project   string `json:"project"`
-	Directory string `json:"directory"`
-	Running   int    `json:"running"`
-	Total     int    `json:"total"`
-	Compose   bool   `json:"compose"`
-	Rollback  bool   `json:"rollback"`
+	Access    string   `json:"access,omitempty"`
+	Public    []string `json:"public,omitempty"`
+	Project   string   `json:"project"`
+	Directory string   `json:"directory"`
+	Running   int      `json:"running"`
+	Total     int      `json:"total"`
+	Compose   bool     `json:"compose"`
+	Rollback  bool     `json:"rollback"`
 }
 
 type TrustReport struct {
@@ -102,9 +105,39 @@ type RemovedStack struct {
 	RemovedAt string `json:"removedAt"`
 }
 
+type Finding struct {
+	ID       string `json:"id"`
+	Severity string `json:"severity"`
+	Detail   string `json:"detail"`
+}
+
+type SecurityReport struct {
+	CheckedAt  string    `json:"checkedAt"`
+	Findings   []Finding `json:"findings"`
+	Recipes    []string  `json:"recipes"`
+	Lockdown   bool      `json:"lockdown"`
+	RebootHour *int      `json:"rebootHour"`
+}
+
+type VaultReport struct {
+	Set     string `json:"set"`
+	Holders int    `json:"holders"`
+}
+
+type VaultSlot struct {
+	Report *VaultReport
+}
+
+func (s VaultSlot) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.Report)
+}
+
 type InventoryReport struct {
 	Hash     string          `json:"hash"`
 	Docker   string          `json:"docker,omitempty"`
+	SealKey  string          `json:"sealKey,omitempty"`
+	Security *SecurityReport `json:"security,omitempty"`
+	Vault    *VaultSlot      `json:"vault,omitempty"`
 	Removed  *[]RemovedStack `json:"removed,omitempty"`
 	Services *[]ServiceEntry `json:"services,omitempty"`
 	Stacks   *[]StackEntry   `json:"stacks,omitempty"`

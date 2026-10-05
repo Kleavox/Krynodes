@@ -1,4 +1,4 @@
-import { receiveReport } from "../actions/report";
+import { receiveReport, type Finding } from "../actions/report";
 import {
   healStatements,
   heartbeatActions,
@@ -24,7 +24,7 @@ import {
   type MailBox,
   type ServerChanges,
 } from "../incident/notify";
-import { sendServerEmail } from "../lib/mail";
+import { sendSecurityEmail, sendServerEmail } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
 import { agentConfigResponseSchema } from "@krynodes/protocol";
 import {
@@ -39,7 +39,7 @@ import {
 } from "./stream";
 
 const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_requested_at,
-         update_attempts, update_error, inventory_hash, refresh_requested_at
+         update_attempts, update_error, inventory_hash, refresh_requested_at, security
   FROM nodes
   WHERE id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
 
@@ -224,16 +224,15 @@ export class FleetHub {
         }
         const node = await this.node(ws, state);
         if (!node) return;
-        reply({
-          type: "actions",
-          response: await receiveReport(
-            this.env.DB,
-            node,
-            parsed.data,
-            Date.now(),
-          ),
-        });
+        const { alerts, ...response } = await receiveReport(
+          this.env.DB,
+          node,
+          parsed.data,
+          Date.now(),
+        );
+        reply({ type: "actions", response });
         this.announce(["actions", "services"]);
+        if (alerts.length > 0) await this.securityMail(node.id, alerts);
       } else {
         invalid();
       }
@@ -358,6 +357,25 @@ export class FleetHub {
     const send = offline.length > 0 ? await this.notify(offline, now) : [];
     await this.schedule(now);
     await this.mail(send);
+  }
+
+  private async securityMail(nodeId: string, findings: Finding[]) {
+    try {
+      const row = await this.env.DB.prepare(
+        "SELECT name FROM nodes WHERE id = ?",
+      )
+        .bind(nodeId)
+        .first<{ name: string }>();
+      if (row) {
+        await sendSecurityEmail(this.env, {
+          nodeId,
+          nodeName: row.name,
+          findings,
+        });
+      }
+    } catch (error) {
+      console.error("[kry mail]", error);
+    }
   }
 
   private async mail(send: ServerChanges[]) {

@@ -18,7 +18,8 @@
     ["systemd", "getty@tty1.service"],
     ["systemd", "serial-getty@ttyS0.service"],
     ["systemd", "user@1000.service"],
-    ["systemd", "snap.docker.dockerd.service"]
+    ["systemd", "snap.docker.dockerd.service"],
+    ["docker", "krynodes-tunnel"]
   ],
   "allowed": [
     ["systemd", "nginx.service"],
@@ -35,7 +36,14 @@
     ["compose", "listmonk"],
     ["compose", "my_stack-2"],
     ["trust", "devices"],
-    ["host", "server"]
+    ["host", "server"],
+    ["host", "security-updates"],
+    ["host", "reboot-window"],
+    ["host", "ssh-keys-only"],
+    ["host", "fail2ban"],
+    ["host", "firewall"],
+    ["host", "free-port-53"],
+    ["vault", "cloudflare"]
   ],
   "invalid": [
     ["systemd", "nginx"],
@@ -53,6 +61,9 @@
     ["compose", "a/b"],
     ["trust", "other"],
     ["host", "other"],
-    ["host", "Server"]
+    ["host", "Server"],
+    ["host", "rm-rf"],
+    ["vault", "other"],
+    ["vault", "Cloudflare"]
   ]
 }

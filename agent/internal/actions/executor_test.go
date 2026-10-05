@@ -534,3 +534,61 @@ func TestAServerRestartWithAnotherActionIsRefused(t *testing.T) {
 	writeRequest(t, executor.RequestDir, idA+".json", request(t, idA, "host", "server", "stop", executorNow.Add(time.Minute)))
 	refusedWithoutRunning(t, executor, run, "refused: ")
 }
+
+func TestOnlyTheServerItselfCanBeRestarted(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	writeRequest(t, executor.RequestDir, idA+".json", request(t, idA, "host", "firewall", "reboot", executorNow.Add(time.Minute)))
+	refusedWithoutRunning(t, executor, run, "refused: ")
+}
+
+func signedRequest(t *testing.T, command Command) Request {
+	t.Helper()
+	c := *testSigner(t)
+	command.V, command.NodeID, command.IssuedAt, command.ExpiresAt = c.command.V, c.command.NodeID, c.command.IssuedAt, c.command.ExpiresAt
+	c.command = command
+	signed := c.request(t)
+	signed.ID, signed.Kind, signed.Name, signed.Action, signed.ExpiresAt = command.ID, command.Kind, command.Name, command.Action, executorNow.Add(time.Minute).Format(time.RFC3339Nano)
+	return signed
+}
+
+func TestTheExecutorReportsAStableSealKey(t *testing.T) {
+	executor, _ := newTrustedExecutor(t)
+	var keys []string
+	for range 2 {
+		if err := executor.Execute(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		var inventory Inventory
+		if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, inventory.SealKey)
+	}
+	if len(keys[0]) != 87 || keys[0] != keys[1] {
+		t.Fatalf("the seal key must be reported and kept: %q", keys)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "keys", "seal.key")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestARequestCarriesAnAttachmentAndSignedOptions(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	restart := signedRequest(t, Command{ID: idA, Kind: "docker", Name: "adguard", Action: "restart", Access: "full", Secrets: "c2VhbGVk", Piece: "cGllY2U", Args: map[string]string{"op": "x"}})
+	restart.Attachment = strings.Repeat("A", 200<<10)
+	writeRequest(t, executor.RequestDir, idA+".json", restart)
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, executor, idA); !result.OK || len(run.calls) != 1 {
+		t.Fatalf("result %#v calls %q", result, run.calls)
+	}
+}
+
+func TestRequestsLargerThan256KBAreRefused(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	restart := request(t, idA, "docker", "adguard", "restart", executorNow.Add(time.Minute))
+	restart.Attachment = strings.Repeat("A", 257<<10)
+	writeRequest(t, executor.RequestDir, idA+".json", restart)
+	refusedWithoutRunning(t, executor, run, "too large")
+}

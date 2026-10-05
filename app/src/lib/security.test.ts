@@ -1,0 +1,123 @@
+import { describe, expect, it } from "vitest";
+
+import type { SecurityReport } from "../types";
+import {
+  firewallPorts,
+  fromUtcHour,
+  recipeChoices,
+  recommended,
+  toUtcHour,
+  worst,
+} from "./security";
+
+const report = (over: Partial<SecurityReport> = {}): SecurityReport => ({
+  checkedAt: "2026-10-05T10:00:00.000Z",
+  findings: [],
+  recipes: [],
+  lockdown: false,
+  rebootHour: null,
+  ...over,
+});
+
+describe("the security check on screen", () => {
+  it("shows the worst finding as the server's mark", () => {
+    expect(worst(null)).toBeNull();
+    expect(
+      worst(
+        report({
+          findings: [{ id: "ssh-keys", severity: "note", detail: "x" }],
+        }),
+      ),
+    ).toBe("ok");
+    expect(
+      worst(
+        report({
+          findings: [
+            { id: "updates-off", severity: "warning", detail: "x" },
+            { id: "ssh-keys", severity: "note", detail: "x" },
+          ],
+        }),
+      ),
+    ).toBe("warning");
+    expect(
+      worst(
+        report({
+          findings: [
+            { id: "updates-off", severity: "warning", detail: "x" },
+            { id: "ssh-password", severity: "serious", detail: "x" },
+          ],
+        }),
+      ),
+    ).toBe("serious");
+  });
+
+  it("offers each recipe only when it can work", () => {
+    const choices = recipeChoices(
+      report({
+        recipes: ["fail2ban"],
+        findings: [{ id: "ssh-no-keys", severity: "warning", detail: "x" }],
+      }),
+    );
+    expect(
+      choices.map((choice) => [choice.id, choice.applied, choice.blocked]),
+    ).toEqual([
+      ["security-updates", false, null],
+      ["reboot-window", false, null],
+      ["ssh-keys-only", false, "Add an SSH key for root or a sudo user first."],
+      ["fail2ban", true, null],
+      ["firewall", false, null],
+    ]);
+    expect(
+      recipeChoices(
+        report({
+          findings: [{ id: "dns-stub", severity: "note", detail: "x" }],
+        }),
+      ).some((choice) => choice.id === "free-port-53"),
+    ).toBe(true);
+  });
+
+  it("recommends the four safest recipes that are still off and can run", () => {
+    expect(
+      recommended(
+        report({
+          recipes: ["fail2ban"],
+          findings: [{ id: "ssh-no-keys", severity: "warning", detail: "x" }],
+        }),
+      ),
+    ).toEqual(["security-updates", "reboot-window"]);
+    expect(
+      recommended(
+        report({
+          recipes: [
+            "security-updates",
+            "reboot-window",
+            "ssh-keys-only",
+            "fail2ban",
+          ],
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("reads the ports a firewall should keep open", () => {
+    const found = report({
+      findings: [
+        {
+          id: "public-ports",
+          severity: "warning",
+          detail:
+            "Listening on public addresses outside Krynodes: 80/tcp (nginx), 5432/tcp (postgres), 8080/tcp (web-1)",
+        },
+      ],
+    });
+    expect(firewallPorts(found)).toEqual(["80/tcp", "5432/tcp", "8080/tcp"]);
+    expect(firewallPorts(report())).toEqual([]);
+  });
+
+  it("turns a local hour into the server's UTC hour and back", () => {
+    expect(toUtcHour(3, -420)).toBe(20);
+    expect(fromUtcHour(20, -420)).toBe(3);
+    expect(toUtcHour(23, 60)).toBe(0);
+    expect(fromUtcHour(0, 60)).toBe(23);
+  });
+});

@@ -4,11 +4,14 @@ import {
   type AgentActionResult,
 } from "@krynodes/protocol";
 
+import { fromB64url } from "../lib/b64url";
+
 const ACTION_TTL_MS = 10 * 60_000;
 const ABANDON_MS = 15 * 60_000;
 const COMPOSE_ABANDON_MS = 30 * 60_000;
 
-export type ActionKind = "systemd" | "docker" | "compose" | "trust" | "host";
+export type ActionKind =
+  "systemd" | "docker" | "compose" | "trust" | "host" | "vault";
 export type ActionVerb =
   | "start"
   | "stop"
@@ -24,7 +27,22 @@ export type ActionVerb =
   | "create"
   | "autorestart"
   | "manual"
-  | "heal";
+  | "heal"
+  | "edit"
+  | "read"
+  | "export"
+  | "expose"
+  | "unexpose"
+  | "adopt"
+  | "apply"
+  | "undo"
+  | "lockdown"
+  | "unlock"
+  | "scan"
+  | "store"
+  | "release"
+  | "reshare"
+  | "forget";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -35,7 +53,12 @@ interface ActionTarget {
   kind: ActionKind;
   name: string;
   signed?: unknown;
+  action?: ActionVerb;
+  attachFrom?: number;
+  attachKey?: string;
 }
+
+export const SEALED_VERBS: readonly string[] = ["export", "release", "reshare"];
 
 export interface ActionRow {
   id: string;
@@ -56,6 +79,9 @@ export interface ActionRow {
   output: string | null;
   signed: string | null;
   device_id: string | null;
+  attachment?: string | null;
+  attach_from?: number | null;
+  attach_key?: string | null;
 }
 
 export const DELIVER_SQL = `UPDATE actions SET status = 'sent', sent_at = ?1
@@ -63,7 +89,7 @@ export const DELIVER_SQL = `UPDATE actions SET status = 'sent', sent_at = ?1
     SELECT id FROM actions
     WHERE status = 'queued' AND node_id = ?2 AND deliverable_at IS NOT NULL
     ORDER BY rowid LIMIT 10)
-  RETURNING id, kind, name, action, deliverable_at, signed`;
+  RETURNING id, kind, name, action, deliverable_at, signed, attachment`;
 
 export const EXPIRE_SQL = `UPDATE actions SET status = 'expired', finished_at = ?1
   WHERE status = 'queued' AND deliverable_at IS NOT NULL AND deliverable_at < ?2`;
@@ -148,29 +174,37 @@ export function createBatch(
 ) {
   const batchId = crypto.randomUUID();
   const at = iso(input.now);
-  const actions = input.targets.map(({ signed: _, ...target }) => ({
-    ...target,
-    id: target.id ?? crypto.randomUUID(),
-    status: "queued" as const,
-  }));
+  const actions = input.targets.map(
+    ({ signed: _, attachFrom: __, attachKey: ___, ...target }) => ({
+      ...target,
+      id: target.id ?? crypto.randomUUID(),
+      status: "queued" as const,
+    }),
+  );
   const rows = JSON.stringify(
-    actions.map(({ id, nodeId, kind, name }, index) => ({
+    actions.map(({ id, nodeId, kind, name, action }, index) => ({
       id,
       nodeId,
       kind,
       name,
+      action: action ?? null,
       signed: input.targets[index]?.signed ?? null,
+      attachFrom: input.targets[index]?.attachFrom ?? null,
+      attachKey: input.targets[index]?.attachKey ?? null,
     })),
   );
   const statement = db
     .prepare(
       `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name,
-         action, status, requested_by, requested_at, deliverable_at, signed, device_id)
+         action, status, requested_by, requested_at, deliverable_at, signed, device_id,
+         attach_from, attach_key)
        SELECT json_extract(value, '$.id'), ?1, key, ?2,
               json_extract(value, '$.nodeId'), json_extract(value, '$.kind'),
-              json_extract(value, '$.name'), ?3, 'queued', ?4, ?5,
+              json_extract(value, '$.name'), COALESCE(json_extract(value, '$.action'), ?3),
+              'queued', ?4, ?5,
               CASE WHEN ?2 = 'parallel' OR key = 0 THEN ?5 END,
-              json_extract(value, '$.signed'), ?7
+              json_extract(value, '$.signed'), ?7,
+              json_extract(value, '$.attachFrom'), json_extract(value, '$.attachKey')
        FROM json_each(?6)`,
     )
     .bind(
@@ -197,6 +231,7 @@ export async function deliverActions(
     action: ActionVerb;
     deliverable_at: string;
     signed: string | null;
+    attachment: string | null;
   }>();
   return rows.results.map((row) => ({
     id: row.id,
@@ -207,6 +242,7 @@ export async function deliverActions(
     ...(row.signed === null
       ? {}
       : { signed: JSON.parse(row.signed) as unknown }),
+    ...(row.attachment ? { attachment: row.attachment } : {}),
   }));
 }
 
@@ -219,12 +255,99 @@ export async function heartbeatActions(
   return deliverActions(db, nodeId, now);
 }
 
+interface SentAction {
+  id: string;
+  kind: string;
+  name: string;
+  action: string;
+  batch_id: string;
+  position: number;
+  signed: string | null;
+}
+
+function argsOf(action: SentAction): Record<string, string> {
+  if (action.signed === null) return {};
+  try {
+    const signed = JSON.parse(action.signed) as { command?: string };
+    const command = JSON.parse(
+      new TextDecoder().decode(fromB64url(signed.command ?? "")),
+    ) as { args?: Record<string, string> };
+    return command.args ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function expiresOf(output: string): string | null {
+  try {
+    const parsed = JSON.parse(output) as { expires?: unknown };
+    return typeof parsed.expires === "string" && parsed.expires
+      ? parsed.expires
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function followUp(
   db: D1Database,
   nodeId: string,
-  action: { kind: string; name: string; action: string },
+  action: SentAction,
   at: string,
+  output: string,
 ): D1PreparedStatement[] {
+  if (SEALED_VERBS.includes(action.action)) {
+    const attach = db
+      .prepare(
+        `UPDATE actions SET attachment = CASE WHEN attach_key IS NULL THEN ?1
+           ELSE json_extract(?1, '$."' || attach_key || '"') END
+         WHERE batch_id = ?2 AND attach_from = ?3`,
+      )
+      .bind(output, action.batch_id, action.position);
+    if (action.action !== "reshare") return [attach];
+    const set = argsOf(action).set;
+    return set
+      ? [
+          attach,
+          db
+            .prepare(
+              `UPDATE cloudflare SET set_id = ?, updated_at = ?
+               WHERE owner_user_id = (SELECT owner_user_id FROM nodes WHERE id = ?)`,
+            )
+            .bind(set, at, nodeId),
+        ]
+      : [attach];
+  }
+  if (action.action === "expose") {
+    const args = argsOf(action);
+    return [
+      db
+        .prepare(
+          `INSERT OR REPLACE INTO web_addresses
+             (hostname, node_id, project, service, port, mode, path, created_by, created_at, expires_at)
+           SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, requested_by, ?8, ?9 FROM actions WHERE id = ?10`,
+        )
+        .bind(
+          args.hostname ?? "",
+          nodeId,
+          action.name,
+          args.service ?? "",
+          Number(args.port ?? 0),
+          args.mode ?? "allow",
+          args.mode === "path" ? (args.path ?? null) : null,
+          at,
+          expiresOf(output),
+          action.id,
+        ),
+    ];
+  }
+  if (action.action === "unexpose") {
+    return [
+      db
+        .prepare("DELETE FROM web_addresses WHERE hostname = ? AND node_id = ?")
+        .bind(argsOf(action).hostname ?? "", nodeId),
+    ];
+  }
   if (action.action === "autorestart" || action.action === "manual") {
     return [
       db
@@ -275,11 +398,11 @@ export async function actionResultStatements(
 ): Promise<D1PreparedStatement[]> {
   const rows = await db
     .prepare(
-      `SELECT id, kind, name, action FROM actions
+      `SELECT id, kind, name, action, batch_id, position, signed FROM actions
        WHERE node_id = ? AND status = 'sent' AND id IN (SELECT value FROM json_each(?))`,
     )
     .bind(nodeId, JSON.stringify(results.map((result) => result.id)))
-    .all<{ id: string; kind: string; name: string; action: string }>();
+    .all<SentAction>();
   const sent = new Map(rows.results.map((row) => [row.id, row]));
   return results.flatMap((result) => {
     const reported = Date.parse(result.finishedAt);
@@ -288,7 +411,10 @@ export async function actionResultStatements(
     );
     const action = sent.get(result.id);
     const next =
-      action && result.ok ? followUp(db, nodeId, action, finished) : [];
+      action && result.ok
+        ? followUp(db, nodeId, action, finished, result.output)
+        : [];
+    const sealed = action !== undefined && SEALED_VERBS.includes(action.action);
     return [
       db
         .prepare(
@@ -298,7 +424,7 @@ export async function actionResultStatements(
         .bind(
           result.ok ? "done" : "failed",
           result.exitCode,
-          result.output,
+          sealed && result.ok ? null : result.output,
           finished,
           result.id,
           nodeId,

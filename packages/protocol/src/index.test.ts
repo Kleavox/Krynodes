@@ -15,6 +15,7 @@ import {
   SESSION_MS,
   TRUST_CHANGE_MS,
   isValidTarget,
+  ORCHESTRATION_AGENT,
 } from "./index";
 
 describe("Krynodes Agent protocol v1", () => {
@@ -707,5 +708,173 @@ describe("server restart messages", () => {
         name: "adguard",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("orchestration messages of agent 0.5.0", () => {
+  const base = {
+    id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a09",
+    expiresAt: "2026-10-05T10:10:00.000Z",
+    signed: signedCommand,
+  };
+  const parse = (value: object) =>
+    agentActionSchema.safeParse({ ...base, ...value }).success;
+
+  it("carries the new stack verbs, signed", () => {
+    for (const verb of [
+      "edit",
+      "read",
+      "export",
+      "expose",
+      "unexpose",
+      "adopt",
+    ]) {
+      expect(
+        parse({ kind: "compose", name: "listmonk", action: verb }),
+        verb,
+      ).toBe(true);
+    }
+    expect(parse({ kind: "compose", name: "listmonk", action: "apply" })).toBe(
+      false,
+    );
+  });
+
+  it("applies and undoes only known recipes, and keeps the server verbs on server", () => {
+    for (const recipe of [
+      "security-updates",
+      "reboot-window",
+      "ssh-keys-only",
+      "fail2ban",
+      "firewall",
+      "free-port-53",
+    ]) {
+      expect(
+        parse({ kind: "host", name: recipe, action: "apply" }),
+        recipe,
+      ).toBe(true);
+      expect(
+        parse({ kind: "host", name: recipe, action: "undo" }),
+        recipe,
+      ).toBe(true);
+      expect(
+        parse({ kind: "host", name: recipe, action: "reboot" }),
+        recipe,
+      ).toBe(false);
+    }
+    expect(parse({ kind: "host", name: "server", action: "apply" })).toBe(
+      false,
+    );
+    expect(parse({ kind: "host", name: "server", action: "lockdown" })).toBe(
+      true,
+    );
+    expect(parse({ kind: "host", name: "server", action: "unlock" })).toBe(
+      true,
+    );
+    expect(parse({ kind: "host", name: "rm-rf", action: "apply" })).toBe(false);
+  });
+
+  it("checks a server without a signature", () => {
+    const { signed: _, ...unsigned } = base;
+    expect(
+      agentActionSchema.safeParse({
+        ...unsigned,
+        kind: "host",
+        name: "server",
+        action: "scan",
+      }).success,
+    ).toBe(true);
+    expect(parse({ kind: "host", name: "server", action: "scan" })).toBe(false);
+  });
+
+  it("keeps the Cloudflare token pieces behind signed vault verbs", () => {
+    for (const verb of ["store", "release", "reshare", "forget"]) {
+      expect(
+        parse({ kind: "vault", name: "cloudflare", action: verb }),
+        verb,
+      ).toBe(true);
+    }
+    expect(parse({ kind: "vault", name: "other", action: "store" })).toBe(
+      false,
+    );
+    expect(
+      parse({ kind: "vault", name: "cloudflare", action: "restart" }),
+    ).toBe(false);
+  });
+
+  it("delivers a sealed attachment with an action", () => {
+    expect(
+      parse({
+        kind: "compose",
+        name: "listmonk",
+        action: "create",
+        attachment: "eyJ2IjoxfQ",
+      }),
+    ).toBe(true);
+    expect(
+      parse({
+        kind: "compose",
+        name: "listmonk",
+        action: "create",
+        attachment: "not base64url!",
+      }),
+    ).toBe(false);
+  });
+
+  it("reports a seal key, security findings, the vault and stack access", () => {
+    const stack = {
+      project: "adguard",
+      directory: "/var/lib/kry-exec/compose/adguard",
+      running: 1,
+      total: 1,
+      compose: true,
+      rollback: false,
+      access: "full",
+      public: ["53/udp", "53/tcp"],
+    };
+    const security = {
+      checkedAt: "2026-10-05T10:00:00.000Z",
+      findings: [
+        {
+          id: "ssh-password",
+          severity: "serious",
+          detail: "Password login is on",
+        },
+      ],
+      recipes: ["security-updates"],
+      lockdown: false,
+      rebootHour: 3,
+    };
+    const request = (value: object) =>
+      agentActionsRequestSchema.safeParse({
+        nodeId: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a11",
+        inventory: {
+          hash: "a".repeat(64),
+          sealKey: "B" + "A".repeat(86),
+          security,
+          vault: { set: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a10", holders: 3 },
+          stacks: [stack],
+          ...value,
+        },
+      }).success;
+    expect(request({})).toBe(true);
+    expect(request({ vault: null })).toBe(true);
+    expect(request({ sealKey: "short" })).toBe(false);
+    expect(request({ security: { ...security, recipes: ["rm-rf"] } })).toBe(
+      false,
+    );
+    expect(
+      request({
+        security: {
+          ...security,
+          findings: [{ id: "x", severity: "bad", detail: "" }],
+        },
+      }),
+    ).toBe(false);
+    expect(request({ stacks: [{ ...stack, public: ["53"] }] })).toBe(false);
+    expect(request({ stacks: [{ ...stack, access: "root" }] })).toBe(false);
+  });
+
+  it("names the agent that brings orchestration", () => {
+    expect(ORCHESTRATION_AGENT).toBe("0.5.0");
   });
 });

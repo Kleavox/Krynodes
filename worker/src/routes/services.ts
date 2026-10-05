@@ -2,6 +2,8 @@ import { pokeSoon } from "../fleet/client";
 import {
   KIND_VERBS,
   LOGS_AGENT,
+  ORCHESTRATION_AGENT,
+  RECIPES,
   STACKS_AGENT,
   UNSIGNED_VERBS,
   compareVersions,
@@ -17,6 +19,7 @@ import { assertionUv } from "../lib/webauthn";
 import {
   cancelStatement,
   createBatch,
+  SEALED_VERBS,
   sweepStatements,
   UNIT_SQL,
   type ActionRow,
@@ -48,6 +51,14 @@ const actionRequestSchema = z.object({
     "create",
     "autorestart",
     "manual",
+    "edit",
+    "read",
+    "adopt",
+    "apply",
+    "undo",
+    "lockdown",
+    "unlock",
+    "scan",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -73,7 +84,28 @@ const STACK_VERBS = new Set([
   "manual",
 ]);
 
+const ORCHESTRATION_VERBS = new Set([
+  "edit",
+  "read",
+  "export",
+  "expose",
+  "unexpose",
+  "adopt",
+  "apply",
+  "undo",
+  "lockdown",
+  "unlock",
+  "scan",
+  "store",
+  "release",
+  "reshare",
+  "forget",
+]);
+
+const READ_ONLY = new Set(["logs", "read", "scan"]);
+
 function minimumAgent(action: string, kind: string): string | null {
+  if (ORCHESTRATION_VERBS.has(action)) return ORCHESTRATION_AGENT;
   if (action === "logs") return LOGS_AGENT;
   if (STACK_VERBS.has(action)) return STACKS_AGENT;
   if (kind === "compose" && ["start", "stop", "restart"].includes(action)) {
@@ -96,6 +128,7 @@ const refreshSchema = z.object({
 });
 
 function toActionRecord(row: ActionRow) {
+  if (SEALED_VERBS.includes(row.action)) row = { ...row, output: null };
   return {
     id: row.id,
     batchId: row.batch_id,
@@ -117,6 +150,15 @@ function toActionRecord(row: ActionRow) {
   };
 }
 
+function parsed(text: string | null): unknown {
+  if (text === null) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 const targetKey = (target: { nodeId: string; kind: string; name: string }) =>
   `${target.nodeId}|${target.kind}|${target.name}`;
 
@@ -132,7 +174,8 @@ export function registerServiceRoutes(
     const [nodes, services, actions] = await Promise.all([
       db
         .prepare(
-          `SELECT id, inventory_at, refresh_requested_at, trust_report, docker
+          `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
+                  seal_key, security, vault
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL`,
         )
         .bind(owner)
@@ -142,6 +185,9 @@ export function registerServiceRoutes(
           refresh_requested_at: string | null;
           trust_report: string | null;
           docker: string | null;
+          seal_key: string | null;
+          security: string | null;
+          vault: string | null;
         }>(),
       db
         .prepare(
@@ -168,10 +214,10 @@ export function registerServiceRoutes(
         .bind(owner, new Date(now - RECENT_MS).toISOString())
         .all<ActionRow>(),
     ]);
-    const [stacks, removed] = await Promise.all([
+    const [stacks, removed, addresses] = await Promise.all([
       db
         .prepare(
-          `SELECT node_id, project, directory, running, total, compose, rollback FROM stacks
+          `SELECT node_id, project, directory, running, total, compose, rollback, access, public FROM stacks
            WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
            ORDER BY node_id, project`,
         )
@@ -184,6 +230,8 @@ export function registerServiceRoutes(
           total: number;
           compose: number;
           rollback: number;
+          access: string | null;
+          public: string | null;
         }>(),
       db
         .prepare(
@@ -198,6 +246,22 @@ export function registerServiceRoutes(
           directory: string;
           removed_at: string;
         }>(),
+      db
+        .prepare(
+          `SELECT hostname, node_id, project, service, port, mode, path FROM web_addresses
+           WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
+           ORDER BY hostname`,
+        )
+        .bind(owner)
+        .all<{
+          hostname: string;
+          node_id: string;
+          project: string;
+          service: string;
+          port: number;
+          mode: string;
+          path: string | null;
+        }>(),
     ]);
     return context.json({
       nodes: nodes.results.map((node) => ({
@@ -206,6 +270,12 @@ export function registerServiceRoutes(
         refreshRequestedAt: node.refresh_requested_at,
         trust: readReport(node.trust_report),
         docker: node.docker,
+        sealKey: node.seal_key,
+        security: parsed(node.security),
+        vault: parsed(node.vault),
+        webAddresses: addresses.results
+          .filter((address) => address.node_id === node.id)
+          .map(({ node_id: _, ...address }) => address),
         stacks: stacks.results
           .filter((stack) => stack.node_id === node.id)
           .map((stack) => ({
@@ -215,6 +285,8 @@ export function registerServiceRoutes(
             total: stack.total,
             compose: stack.compose === 1,
             rollback: stack.rollback === 1,
+            access: stack.access,
+            public: (parsed(stack.public) as string[] | null) ?? [],
           })),
         removed: removed.results
           .filter((stack) => stack.node_id === node.id)
@@ -234,8 +306,35 @@ export function registerServiceRoutes(
           })),
       })),
       actions: actions.results.map((row) =>
-        toActionRecord(row.action === "logs" ? { ...row, output: null } : row),
+        toActionRecord(
+          READ_ONLY.has(row.action) ? { ...row, output: null } : row,
+        ),
       ),
+    });
+  });
+
+  app.get("/api/cloudflare", requireOperator, async (context) => {
+    const db = context.env.DB;
+    const owner = context.get("identity").id;
+    const [settings, expiry] = await Promise.all([
+      db
+        .prepare("SELECT zone, set_id FROM cloudflare WHERE owner_user_id = ?")
+        .bind(owner)
+        .first<{ zone: string; set_id: string | null }>(),
+      db
+        .prepare(
+          `SELECT MAX(expires_at) AS expires FROM web_addresses
+           WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)`,
+        )
+        .bind(owner)
+        .first<{ expires: string | null }>(),
+    ]);
+    const host = new URL(context.env.PUBLIC_ORIGIN).hostname;
+    return context.json({
+      zone: settings?.zone ?? host.split(".").slice(1).join("."),
+      setId: settings?.set_id ?? null,
+      aud: context.env.ACCESS_AUD ?? null,
+      expiresAt: expiry?.expires ?? null,
     });
   });
 
@@ -260,10 +359,11 @@ export function registerServiceRoutes(
     const page = rows.results.slice(0, HISTORY_PAGE);
     const last = page.at(-1);
     return context.json({
-      actions: page.map((row) => ({
-        ...toActionRecord(row),
-        output: row.action === "logs" ? null : row.output,
-      })),
+      actions: page.map((row) =>
+        toActionRecord(
+          READ_ONLY.has(row.action) ? { ...row, output: null } : row,
+        ),
+      ),
       next:
         rows.results.length > HISTORY_PAGE && last
           ? `${last.requested_at}|${last.id}`
@@ -398,7 +498,13 @@ export function registerServiceRoutes(
     const byId = new Map(nodes.results.map((node) => [node.id, node]));
     for (const target of targets) {
       const node = byId.get(target.nodeId)!;
-      const minimum = minimumAgent(action, target.kind);
+      const command = target.signed
+        ? (decodeJson(target.signed.command) as Record<string, unknown> | null)
+        : null;
+      const minimum =
+        action === "create" && (command?.access || command?.secrets)
+          ? ORCHESTRATION_AGENT
+          : minimumAgent(action, target.kind);
       if (
         minimum &&
         compareVersions(node.agent_version ?? "0.0.0", minimum) < 0
@@ -433,10 +539,10 @@ export function registerServiceRoutes(
       needStacks
         ? db
             .prepare(
-              `SELECT node_id AS nodeId, project AS name, compose, rollback, 0 AS removed FROM stacks
+              `SELECT node_id AS nodeId, project AS name, compose, rollback, 0 AS removed, access FROM stacks
                WHERE node_id IN (SELECT value FROM json_each(?1))
                UNION ALL
-               SELECT node_id, project, 0, 0, 1 FROM removed_stacks
+               SELECT node_id, project, 0, 0, 1, NULL FROM removed_stacks
                WHERE node_id IN (SELECT value FROM json_each(?1))`,
             )
             .bind(nodeIds)
@@ -446,6 +552,7 @@ export function registerServiceRoutes(
               compose: number;
               rollback: number;
               removed: number;
+              access: string | null;
             }>()
         : { results: [] },
       action === "autorestart"
@@ -460,7 +567,7 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT node_id AS nodeId, kind, name FROM actions
-           WHERE status IN ('queued', 'sent') AND action <> 'logs'
+           WHERE status IN ('queued', 'sent') AND action NOT IN ('logs', 'read', 'scan')
              AND node_id IN (SELECT value FROM json_each(?))`,
         )
         .bind(nodeIds)
@@ -512,7 +619,9 @@ export function registerServiceRoutes(
               ? action === "restore" || action === "purge"
               : action !== "restore" &&
                 stack.compose === 1 &&
-                (action !== "rollback" || stack.rollback === 1),
+                (action !== "rollback" || stack.rollback === 1) &&
+                (action !== "edit" || stack.access !== null) &&
+                (action !== "adopt" || stack.access === null),
           )
           .map((stack) =>
             targetKey({
@@ -521,8 +630,10 @@ export function registerServiceRoutes(
               name: stack.name,
             }),
           ),
-        ...nodes.results.map((node) =>
-          targetKey({ nodeId: node.id, kind: "host", name: "server" }),
+        ...nodes.results.flatMap((node) =>
+          ["server", ...RECIPES].map((name) =>
+            targetKey({ nodeId: node.id, kind: "host", name }),
+          ),
         ),
       ]);
       if (targets.some((target) => !present.has(targetKey(target)))) {
@@ -551,7 +662,10 @@ export function registerServiceRoutes(
       }
     }
     const busy = new Set(pending.results.map(targetKey));
-    if (!logs && targets.some((target) => busy.has(targetKey(target)))) {
+    if (
+      !READ_ONLY.has(action) &&
+      targets.some((target) => busy.has(targetKey(target)))
+    ) {
       return context.json(
         {
           code: "ACTION_PENDING",

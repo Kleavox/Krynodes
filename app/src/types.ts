@@ -164,7 +164,7 @@ export interface CheckResults {
 export type ServiceKind = "systemd" | "docker";
 export type ServiceState = "running" | "stopped" | "failed" | "starting";
 export type ServiceAction = "start" | "stop" | "restart";
-export type ActionKind = ServiceKind | "compose" | "trust" | "host";
+export type ActionKind = ServiceKind | "compose" | "trust" | "host" | "vault";
 export type ActionVerb =
   | ServiceAction
   | "deploy"
@@ -178,7 +178,22 @@ export type ActionVerb =
   | "create"
   | "autorestart"
   | "manual"
-  | "heal";
+  | "heal"
+  | "edit"
+  | "read"
+  | "export"
+  | "expose"
+  | "unexpose"
+  | "adopt"
+  | "apply"
+  | "undo"
+  | "lockdown"
+  | "unlock"
+  | "scan"
+  | "store"
+  | "release"
+  | "reshare"
+  | "forget";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
@@ -199,6 +214,43 @@ export interface StackEntry {
   total: number;
   compose: boolean;
   rollback: boolean;
+  access?: "contained" | "full" | null;
+  public?: string[];
+}
+
+export interface Finding {
+  id: string;
+  severity: "serious" | "warning" | "note";
+  detail: string;
+}
+
+export interface SecurityReport {
+  checkedAt: string;
+  findings: Finding[];
+  recipes: string[];
+  lockdown: boolean;
+  rebootHour: number | null;
+}
+
+export interface WebAddress {
+  hostname: string;
+  project: string;
+  service: string;
+  port: number;
+  mode: "allow" | "path" | "everyone";
+  path: string | null;
+}
+
+interface VaultReport {
+  set: string;
+  holders: number;
+}
+
+export interface CloudflareSettings {
+  zone: string;
+  setId: string | null;
+  aud: string | null;
+  expiresAt: string | null;
 }
 
 export interface RemovedStack {
@@ -222,6 +274,10 @@ interface ServiceNode {
   removed?: RemovedStack[];
   trust: NodeTrust | null;
   docker?: DockerState | null;
+  sealKey?: string | null;
+  security?: SecurityReport | null;
+  vault?: VaultReport | null;
+  webAddresses?: WebAddress[];
 }
 
 export interface DeviceRecord {

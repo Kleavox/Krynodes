@@ -9,6 +9,7 @@ import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
 import {
   agentSupported,
   compareVersions,
+  ORCHESTRATION_AGENT,
   STACKS_AGENT,
   TRUST_AGENT,
 } from "@krynodes/protocol/versions";
@@ -60,6 +61,9 @@ export const trustReady = (node: Pick<NodeRecord, "agent_version">) =>
 
 export const stacksReady = (node: Pick<NodeRecord, "agent_version">) =>
   reaches(node, STACKS_AGENT);
+
+export const orchestrationReady = (node: Pick<NodeRecord, "agent_version">) =>
+  reaches(node, ORCHESTRATION_AGENT);
 
 export function canRestartServer(
   node: Pick<NodeRecord, "agent_version">,

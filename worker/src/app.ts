@@ -17,6 +17,7 @@ import { registerEnrollmentRoutes } from "./routes/enrollments";
 import { registerLiveRoutes } from "./routes/live";
 import { registerMetricRoutes } from "./routes/metrics";
 import { registerServiceRoutes } from "./routes/services";
+import { registerOperationRoutes } from "./routes/operations";
 import { registerUsageRoutes } from "./usage/usage";
 import type { KrynodesEnv } from "./routes/shared";
 
@@ -82,6 +83,7 @@ registerCheckResultRoutes(app, requireOperator);
 registerEnrollmentRoutes(app, requireOperator);
 registerAgentUpdateRoutes(app, requireOperator);
 registerServiceRoutes(app, requireOperator);
+registerOperationRoutes(app, requireOperator);
 registerDeviceRoutes(app, requireOperator);
 registerProposalRoutes(app, requireOperator);
 registerUsageRoutes(app, requireOperator);

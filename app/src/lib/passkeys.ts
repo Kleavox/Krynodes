@@ -253,6 +253,10 @@ export interface CommandTarget {
   kind: ActionKind;
   name: string;
   compose?: string;
+  access?: "contained" | "full";
+  secrets?: string;
+  piece?: string;
+  args?: Record<string, string>;
 }
 
 export function actionCommand(
@@ -270,6 +274,10 @@ export function actionCommand(
     issuedAt: iso(now),
     expiresAt: iso(session.expiresAt + COMMAND_GRACE_MS),
     ...(target.compose ? { compose: target.compose } : {}),
+    ...(target.access ? { access: target.access } : {}),
+    ...(target.secrets ? { secrets: target.secrets } : {}),
+    ...(target.piece ? { piece: target.piece } : {}),
+    ...(target.args ? { args: target.args } : {}),
   };
 }
 
@@ -319,8 +327,9 @@ export function signTargets(
   now = Date.now(),
 ): Promise<SignedTarget[]> {
   return Promise.all(
-    targets.map(async ({ nodeId, kind, name, compose }) => {
+    targets.map(async (target) => {
       const id = crypto.randomUUID();
+      const { nodeId, kind, name } = target;
       return {
         id,
         nodeId,
@@ -328,11 +337,7 @@ export function signTargets(
         name,
         signed: await signCommand(
           session,
-          actionCommand(
-            { id, nodeId, kind, name, action, compose },
-            session,
-            now,
-          ),
+          actionCommand({ ...target, id, action }, session, now),
         ),
       };
     }),

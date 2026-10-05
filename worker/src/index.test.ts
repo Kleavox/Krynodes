@@ -146,7 +146,7 @@ describe("Krynodes retention", () => {
     ]);
   });
 
-  it("runs retention and the agent release check from the cron", async () => {
+  it("runs retention, the agent release check and the token reminder from the cron", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("down", { status: 503 })),
@@ -160,7 +160,7 @@ describe("Krynodes retention", () => {
         waitUntil: (promise: Promise<unknown>) => pending.push(promise),
       } as unknown as ExecutionContext,
     );
-    expect(pending).toHaveLength(2);
+    expect(pending).toHaveLength(3);
     await Promise.all(pending);
     vi.unstubAllGlobals();
   });
