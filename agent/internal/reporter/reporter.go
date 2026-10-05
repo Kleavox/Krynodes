@@ -95,8 +95,16 @@ type TrustReport struct {
 	RequireUV  bool     `json:"requireUv,omitempty"`
 }
 
+type RemovedStack struct {
+	Project   string `json:"project"`
+	Directory string `json:"directory"`
+	RemovedAt string `json:"removedAt"`
+}
+
 type InventoryReport struct {
 	Hash     string          `json:"hash"`
+	Docker   string          `json:"docker,omitempty"`
+	Removed  *[]RemovedStack `json:"removed,omitempty"`
 	Services *[]ServiceEntry `json:"services,omitempty"`
 	Stacks   *[]StackEntry   `json:"stacks,omitempty"`
 	Trust    *TrustReport    `json:"trust,omitempty"`

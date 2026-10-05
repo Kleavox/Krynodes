@@ -287,6 +287,15 @@ function CheckRow({
             {publicLabel(check)}
           </Badge>
         )}
+        {check.auto_restart === 1 && (
+          <Badge
+            variant="outline"
+            className="ml-2 font-mono text-[10px]"
+            title="Restarts automatically when this check turns red"
+          >
+            AUTO
+          </Badge>
+        )}
         <span className="ml-2 font-mono text-[10px] text-muted-foreground md:hidden">
           {check.kind}
         </span>

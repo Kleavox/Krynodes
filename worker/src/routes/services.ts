@@ -1,6 +1,9 @@
 import { pokeSoon } from "../fleet/client";
 import {
+  KIND_VERBS,
   LOGS_AGENT,
+  STACKS_AGENT,
+  UNSIGNED_VERBS,
   compareVersions,
   isProtectedTarget,
   isValidTarget,
@@ -15,6 +18,7 @@ import {
   cancelStatement,
   createBatch,
   sweepStatements,
+  UNIT_SQL,
   type ActionRow,
 } from "../actions/store";
 import { decodeJson } from "../lib/b64url";
@@ -38,6 +42,12 @@ const actionRequestSchema = z.object({
     "rollback",
     "reboot",
     "logs",
+    "remove",
+    "purge",
+    "restore",
+    "create",
+    "autorestart",
+    "manual",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -53,6 +63,24 @@ const actionRequestSchema = z.object({
     .min(1)
     .max(50),
 });
+
+const STACK_VERBS = new Set([
+  "remove",
+  "purge",
+  "restore",
+  "create",
+  "autorestart",
+  "manual",
+]);
+
+function minimumAgent(action: string, kind: string): string | null {
+  if (action === "logs") return LOGS_AGENT;
+  if (STACK_VERBS.has(action)) return STACKS_AGENT;
+  if (kind === "compose" && ["start", "stop", "restart"].includes(action)) {
+    return STACKS_AGENT;
+  }
+  return null;
+}
 
 const commandSchema = z.object({
   v: z.literal(1),
@@ -104,7 +132,7 @@ export function registerServiceRoutes(
     const [nodes, services, actions] = await Promise.all([
       db
         .prepare(
-          `SELECT id, inventory_at, refresh_requested_at, trust_report
+          `SELECT id, inventory_at, refresh_requested_at, trust_report, docker
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL`,
         )
         .bind(owner)
@@ -113,6 +141,7 @@ export function registerServiceRoutes(
           inventory_at: string | null;
           refresh_requested_at: string | null;
           trust_report: string | null;
+          docker: string | null;
         }>(),
       db
         .prepare(
@@ -139,28 +168,44 @@ export function registerServiceRoutes(
         .bind(owner, new Date(now - RECENT_MS).toISOString())
         .all<ActionRow>(),
     ]);
-    const stacks = await db
-      .prepare(
-        `SELECT node_id, project, directory, running, total, compose, rollback FROM stacks
-         WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
-         ORDER BY node_id, project`,
-      )
-      .bind(owner)
-      .all<{
-        node_id: string;
-        project: string;
-        directory: string;
-        running: number;
-        total: number;
-        compose: number;
-        rollback: number;
-      }>();
+    const [stacks, removed] = await Promise.all([
+      db
+        .prepare(
+          `SELECT node_id, project, directory, running, total, compose, rollback FROM stacks
+           WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
+           ORDER BY node_id, project`,
+        )
+        .bind(owner)
+        .all<{
+          node_id: string;
+          project: string;
+          directory: string;
+          running: number;
+          total: number;
+          compose: number;
+          rollback: number;
+        }>(),
+      db
+        .prepare(
+          `SELECT node_id, project, directory, removed_at FROM removed_stacks
+           WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
+           ORDER BY node_id, removed_at DESC`,
+        )
+        .bind(owner)
+        .all<{
+          node_id: string;
+          project: string;
+          directory: string;
+          removed_at: string;
+        }>(),
+    ]);
     return context.json({
       nodes: nodes.results.map((node) => ({
         id: node.id,
         inventoryAt: node.inventory_at,
         refreshRequestedAt: node.refresh_requested_at,
         trust: readReport(node.trust_report),
+        docker: node.docker,
         stacks: stacks.results
           .filter((stack) => stack.node_id === node.id)
           .map((stack) => ({
@@ -170,6 +215,13 @@ export function registerServiceRoutes(
             total: stack.total,
             compose: stack.compose === 1,
             rollback: stack.rollback === 1,
+          })),
+        removed: removed.results
+          .filter((stack) => stack.node_id === node.id)
+          .map((stack) => ({
+            project: stack.project,
+            directory: stack.directory,
+            removedAt: stack.removed_at,
           })),
         services: services.results
           .filter((service) => service.node_id === node.id)
@@ -252,23 +304,23 @@ export function registerServiceRoutes(
     const parsed = actionRequestSchema.safeParse(await readJson(context));
     if (!parsed.success) return invalidRequest(context);
     const { action, mode, targets } = parsed.data;
-    const compose = action === "deploy" || action === "rollback";
-    const reboot = action === "reboot";
+    const unsigned = (UNSIGNED_VERBS as readonly string[]).includes(action);
     const logs = action === "logs";
     if (
       new Set(targets.map(targetKey)).size !== targets.length ||
       targets.some(
         (target) =>
           !isValidTarget(target.kind, target.name) ||
-          (!logs && (target.kind === "compose") !== compose) ||
-          (target.kind === "host") !== reboot ||
-          target.signed === undefined ||
-          target.id === undefined,
+          !(KIND_VERBS[target.kind] as readonly string[]).includes(action) ||
+          (unsigned
+            ? target.signed !== undefined
+            : target.signed === undefined || target.id === undefined),
       )
     ) {
       return invalidRequest(context);
     }
     if (
+      !unsigned &&
       targets.some((target) => {
         const command = commandSchema.safeParse(
           decodeJson(target.signed!.command),
@@ -292,6 +344,7 @@ export function registerServiceRoutes(
       );
     }
     if (
+      !unsigned &&
       targets.some(
         (target) => !assertionUv(target.signed!.grant.authenticatorData),
       )
@@ -325,70 +378,85 @@ export function registerServiceRoutes(
     const nodeIds = JSON.stringify([...wanted]);
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version FROM nodes
+        `SELECT id, name, agent_version, docker FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
       .bind(identity.id, nodeIds)
-      .all<{ id: string; name: string; agent_version: string | null }>();
+      .all<{
+        id: string;
+        name: string;
+        agent_version: string | null;
+        docker: string | null;
+      }>();
     if (nodes.results.length !== wanted.size) {
       return context.json(
         { code: "NOT_FOUND", message: "A server was not found." },
         404,
       );
     }
-    const old = logs
-      ? nodes.results.find(
-          (node) =>
-            compareVersions(node.agent_version ?? "0.0.0", LOGS_AGENT) < 0,
-        )
-      : undefined;
-    if (old) {
-      return context.json(
-        {
-          code: "AGENT_TOO_OLD",
-          message: `Update the agent on ${old.name} to ${LOGS_AGENT} or newer to read logs.`,
-        },
-        422,
-      );
+    const byId = new Map(nodes.results.map((node) => [node.id, node]));
+    for (const target of targets) {
+      const node = byId.get(target.nodeId)!;
+      const minimum = minimumAgent(action, target.kind);
+      if (
+        minimum &&
+        compareVersions(node.agent_version ?? "0.0.0", minimum) < 0
+      ) {
+        return context.json(
+          {
+            code: "AGENT_TOO_OLD",
+            message: logs
+              ? `Update the agent on ${node.name} to ${minimum} or newer to read logs.`
+              : `Update the agent on ${node.name} to ${minimum} or newer.`,
+          },
+          422,
+        );
+      }
     }
 
     await db.batch(sweepStatements(db, now));
-    const servers = {
-      results: nodes.results.map((node) => ({
-        nodeId: node.id,
-        kind: "host",
-        name: "server",
-      })),
-    };
-    const [known, pending] = await Promise.all([
-      reboot
-        ? servers
-        : (logs
-            ? db
-                .prepare(
-                  `SELECT node_id AS nodeId, kind, name FROM services
+    const needServices = targets.some(
+      (target) => target.kind === "systemd" || target.kind === "docker",
+    );
+    const needStacks = targets.some((target) => target.kind === "compose");
+    const [services, stacks, watched, pending] = await Promise.all([
+      needServices
+        ? db
+            .prepare(
+              `SELECT node_id AS nodeId, kind, name FROM services
+               WHERE node_id IN (SELECT value FROM json_each(?))`,
+            )
+            .bind(nodeIds)
+            .all<{ nodeId: string; kind: string; name: string }>()
+        : { results: [] },
+      needStacks
+        ? db
+            .prepare(
+              `SELECT node_id AS nodeId, project AS name, compose, rollback, 0 AS removed FROM stacks
                WHERE node_id IN (SELECT value FROM json_each(?1))
                UNION ALL
-               SELECT node_id AS nodeId, 'compose' AS kind, project AS name FROM stacks
-               WHERE node_id IN (SELECT value FROM json_each(?1)) AND compose = 1`,
-                )
-                .bind(nodeIds)
-            : compose
-              ? db
-                  .prepare(
-                    `SELECT node_id AS nodeId, 'compose' AS kind, project AS name FROM stacks
-               WHERE node_id IN (SELECT value FROM json_each(?)) AND compose = 1
-                 AND (? = 'deploy' OR rollback = 1)`,
-                  )
-                  .bind(nodeIds, action)
-              : db
-                  .prepare(
-                    `SELECT node_id AS nodeId, kind, name FROM services
-               WHERE node_id IN (SELECT value FROM json_each(?))`,
-                  )
-                  .bind(nodeIds)
-          ).all<{ nodeId: string; kind: string; name: string }>(),
+               SELECT node_id, project, 0, 0, 1 FROM removed_stacks
+               WHERE node_id IN (SELECT value FROM json_each(?1))`,
+            )
+            .bind(nodeIds)
+            .all<{
+              nodeId: string;
+              name: string;
+              compose: number;
+              rollback: number;
+              removed: number;
+            }>()
+        : { results: [] },
+      action === "autorestart"
+        ? db
+            .prepare(
+              `SELECT node_id AS nodeId, ${UNIT_SQL} AS name FROM checks
+               WHERE kind = 'SERVICE' AND node_id IN (SELECT value FROM json_each(?))`,
+            )
+            .bind(nodeIds)
+            .all<{ nodeId: string; name: string }>()
+        : { results: [] },
       db
         .prepare(
           `SELECT node_id AS nodeId, kind, name FROM actions
@@ -398,15 +466,89 @@ export function registerServiceRoutes(
         .bind(nodeIds)
         .all<{ nodeId: string; kind: string; name: string }>(),
     ]);
-    const present = new Set(known.results.map(targetKey));
-    if (targets.some((target) => !present.has(targetKey(target)))) {
-      return context.json(
-        {
-          code: "UNKNOWN_TARGET",
-          message: "A service is no longer on its server. Refresh the list.",
-        },
-        422,
+
+    if (action === "create") {
+      const taken = new Set(
+        stacks.results.map((stack) => `${stack.nodeId}|${stack.name}`),
       );
+      const used = targets.find((target) =>
+        taken.has(`${target.nodeId}|${target.name}`),
+      );
+      if (used) {
+        const waiting = stacks.results.some(
+          (stack) =>
+            stack.removed === 1 &&
+            stack.nodeId === used.nodeId &&
+            stack.name === used.name,
+        );
+        return context.json(
+          {
+            code: "STACK_EXISTS",
+            message: waiting
+              ? `A stack named ${used.name} waits in Removed on ${byId.get(used.nodeId)!.name}. Restore it or delete it permanently first.`
+              : `${byId.get(used.nodeId)!.name} already runs a stack named ${used.name}.`,
+          },
+          409,
+        );
+      }
+      const bare = targets.find(
+        (target) => byId.get(target.nodeId)!.docker !== "ready",
+      );
+      if (bare) {
+        return context.json(
+          {
+            code: "NO_DOCKER",
+            message: `${byId.get(bare.nodeId)!.name} has no Docker with Compose.`,
+          },
+          422,
+        );
+      }
+    } else if (action !== "manual") {
+      const present = new Set([
+        ...services.results.map(targetKey),
+        ...stacks.results
+          .filter((stack) =>
+            stack.removed === 1
+              ? action === "restore" || action === "purge"
+              : action !== "restore" &&
+                stack.compose === 1 &&
+                (action !== "rollback" || stack.rollback === 1),
+          )
+          .map((stack) =>
+            targetKey({
+              nodeId: stack.nodeId,
+              kind: "compose",
+              name: stack.name,
+            }),
+          ),
+        ...nodes.results.map((node) =>
+          targetKey({ nodeId: node.id, kind: "host", name: "server" }),
+        ),
+      ]);
+      if (targets.some((target) => !present.has(targetKey(target)))) {
+        return context.json(
+          {
+            code: "UNKNOWN_TARGET",
+            message: "A service is no longer on its server. Refresh the list.",
+          },
+          422,
+        );
+      }
+    }
+    if (action === "autorestart") {
+      const checked = new Set(
+        watched.results.map((check) => `${check.nodeId}|systemd|${check.name}`),
+      );
+      if (targets.some((target) => !checked.has(targetKey(target)))) {
+        return context.json(
+          {
+            code: "NO_CHECK",
+            message:
+              "Add a SERVICE check for this unit first; it decides when to restart.",
+          },
+          422,
+        );
+      }
     }
     const busy = new Set(pending.results.map(targetKey));
     if (!logs && targets.some((target) => busy.has(targetKey(target)))) {

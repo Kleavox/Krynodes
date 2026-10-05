@@ -1,5 +1,9 @@
 import { receiveReport } from "../actions/report";
-import { heartbeatActions, inMaintenance } from "../actions/store";
+import {
+  healStatements,
+  heartbeatActions,
+  inMaintenance,
+} from "../actions/store";
 import {
   acceptResults,
   commit,
@@ -424,7 +428,29 @@ export class FleetHub {
       await this.returned(node.id);
     }
     const notices = await commit(this.env, node.id, leading, ingestion);
-    const mails = notices.length > 0 ? await this.notify(notices, now) : [];
+    const heals = await healStatements(
+      db,
+      { id: node.id, agent_version: beat.agentVersion ?? null },
+      notices
+        .filter((notice) => notice.kind === "opened" && notice.checkId)
+        .map((notice) => notice.checkId!),
+      now,
+    );
+    const healing = new Set<string>();
+    if (heals.length > 0) {
+      const done = await db.batch(heals.map((heal) => heal.statement));
+      heals.forEach((heal, index) => {
+        if ((done[index]?.meta.changes ?? 0) > 0) {
+          for (const id of heal.checkIds) healing.add(id);
+        }
+      });
+    }
+    const marked = notices.map((notice) =>
+      notice.checkId && healing.has(notice.checkId)
+        ? { ...notice, healing: true }
+        : notice,
+    );
+    const mails = marked.length > 0 ? await this.notify(marked, now) : [];
     const actions = await heartbeatActions(db, node.id, now);
     ws.serializeAttachment({ ...folded.state, away: false });
     if (current.lastSeen === null || notices.length > 0) {

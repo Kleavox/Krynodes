@@ -45,6 +45,7 @@ const CHECK_KEYS = [
   "last_message",
   "public",
   "public_note",
+  "auto_restart",
   "created_at",
 ];
 const INCIDENT_KEYS = [

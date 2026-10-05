@@ -2,13 +2,14 @@ import type {
   ActionRecord,
   NodeRecord,
   NodeTrust,
+  RemovedStack,
   ServiceEntry,
   ServicesResponse,
   StackEntry,
 } from "../types";
-import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION, STACKS_AGENT } from "@krynodes/protocol/versions";
 
-import { agentCurrent } from "./devices";
+import { agentCurrent, stacksReady } from "./devices";
 import { nodeState } from "./format";
 
 export interface StackMember {
@@ -19,6 +20,15 @@ export interface StackMember {
   action: ActionRecord | null;
 }
 
+export interface RemovedMember extends RemovedStack {
+  node: NodeRecord;
+  action: ActionRecord | null;
+  blocker: string | null;
+}
+
+const KEEP_REMOVED_MS = 7 * 24 * 3_600_000;
+const DAY_MS = 24 * 3_600_000;
+
 export interface StackGroup {
   project: string;
   members: StackMember[];
@@ -27,18 +37,65 @@ export interface StackGroup {
 const healthy = (group: StackGroup) =>
   group.members.every((member) => member.stack.running === member.stack.total);
 
-export function groupStacks(
-  data: ServicesResponse,
-  nodes: NodeRecord[],
-  query: string,
-): StackGroup[] {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
+function latestCompose(data: ServicesResponse) {
   const latest = new Map<string, ActionRecord>();
   for (const action of data.actions) {
     if (action.kind === "compose" && action.action !== "logs") {
       latest.set(`${action.nodeId}|${action.name}`, action);
     }
   }
+  return latest;
+}
+
+export function removedStacks(
+  data: ServicesResponse,
+  nodes: NodeRecord[],
+  query: string,
+): RemovedMember[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const latest = latestCompose(data);
+  const needle = query.trim().toLowerCase();
+  return data.nodes
+    .flatMap((entry) => {
+      const node = byId.get(entry.id);
+      if (!node) return [];
+      return (entry.removed ?? [])
+        .filter(
+          (stack) =>
+            !needle ||
+            stack.project.includes(needle) ||
+            node.name.toLowerCase().includes(needle),
+        )
+        .map((stack) => ({
+          ...stack,
+          node,
+          action: latest.get(`${node.id}|${stack.project}`) ?? null,
+          blocker: newStackBlocker(node, entry),
+        }));
+    })
+    .sort(
+      (a, b) =>
+        Date.parse(b.removedAt) - Date.parse(a.removedAt) ||
+        a.project.localeCompare(b.project),
+    );
+}
+
+export const daysLeft = (removedAt: string, now: number) =>
+  Math.max(
+    0,
+    Math.ceil((Date.parse(removedAt) + KEEP_REMOVED_MS - now) / DAY_MS),
+  );
+
+export const ownFolder = (directory: string) =>
+  /^\/var\/lib\/kry-exec\/compose\/[^/]+$/u.test(directory);
+
+export function groupStacks(
+  data: ServicesResponse,
+  nodes: NodeRecord[],
+  query: string,
+): StackGroup[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const latest = latestCompose(data);
   const needle = query.trim().toLowerCase();
   const groups = new Map<string, StackGroup>();
   for (const entry of data.nodes) {
@@ -109,4 +166,49 @@ export function containersOf(
           service.name.startsWith(`${project}_`)),
     )
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+export type StackCommand = "start" | "stop" | "restart" | "remove" | "purge";
+
+export function stackCommands(member: StackMember): StackCommand[] {
+  if (!stacksReady(member.node) || !member.trusted || !member.stack.compose) {
+    return [];
+  }
+  const { running, total } = member.stack;
+  return [
+    ...(running < total ? (["start"] as const) : []),
+    ...(running > 0 ? (["restart", "stop"] as const) : []),
+    "remove",
+    "purge",
+  ];
+}
+
+export function newStackBlocker(
+  node: NodeRecord,
+  entry: ServicesResponse["nodes"][number] | undefined,
+): string | null {
+  if (!stacksReady(node)) return `Needs agent ${STACKS_AGENT}`;
+  if (!entry?.docker) return "Docker not reported yet";
+  if (entry.docker === "missing") return "No Docker";
+  if (entry.docker === "no-compose") return "Docker without Compose";
+  if ((entry.trust?.access.length ?? 0) === 0) return "Not trusted yet";
+  return null;
+}
+
+export function stackNameProblem(
+  name: string,
+  taken: string[],
+  waiting: string[] = [],
+): string | null {
+  if (!name) return "Give the stack a name.";
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/u.test(name)) {
+    return "Use lowercase letters, digits, - and _, starting with a letter or digit.";
+  }
+  if (taken.includes(name)) {
+    return `This server already runs a stack named ${name}.`;
+  }
+  if (waiting.includes(name)) {
+    return `A stack named ${name} waits in Removed. Restore it or delete it permanently first.`;
+  }
+  return null;
 }

@@ -7,10 +7,11 @@ import { useDeleteCheck, useUpdateCheck } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import type { CheckRecord, NodeRecord } from "@/types";
 
+import { AutoRestartDialog } from "./auto-restart-dialog";
 import { CheckDialog } from "./check-dialog";
 import { StatusPageDialog } from "./status-page-dialog";
 
-type Open = "edit" | "status" | "remove" | null;
+type Open = "edit" | "status" | "remove" | "auto" | null;
 
 export function CheckMenu({
   check,
@@ -48,6 +49,14 @@ export function CheckMenu({
           { label: "Edit", onSelect: () => setOpen("edit") },
           { label: paused ? "Resume" : "Pause", onSelect: togglePause },
           ...(restart ? [{ label: "Restart service", onSelect: restart }] : []),
+          ...(check.kind === "SERVICE"
+            ? [
+                {
+                  label: "Restart automatically",
+                  onSelect: () => setOpen("auto"),
+                },
+              ]
+            : []),
           { label: "Status page", onSelect: () => setOpen("status") },
           {
             label: "Remove",
@@ -61,6 +70,12 @@ export function CheckMenu({
         onOpenChange={(next) => setOpen(next ? "edit" : null)}
         check={check}
         nodes={nodes}
+      />
+      <AutoRestartDialog
+        check={check}
+        node={nodes.find((node) => node.id === check.node_id)}
+        open={open === "auto"}
+        onOpenChange={(next) => setOpen(next ? "auto" : null)}
       />
       <StatusPageDialog
         check={check}

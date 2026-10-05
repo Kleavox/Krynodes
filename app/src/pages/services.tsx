@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
@@ -14,6 +14,8 @@ import {
   DeployDialog,
   type DeployRequest,
 } from "@/features/deploy/deploy-dialog";
+import { NewStackDialog } from "@/features/deploy/new-stack-dialog";
+import { RemovedList } from "@/features/deploy/removed-list";
 import { StackList } from "@/features/deploy/stack-list";
 import {
   ActionDialog,
@@ -22,7 +24,7 @@ import {
 import { ServerServiceList } from "@/features/services/service-list";
 import { useOverview, useRefreshServices, useServices } from "@/lib/api";
 import { groupByServer, refreshPending } from "@/lib/services";
-import { groupStacks } from "@/lib/stacks";
+import { groupStacks, removedStacks } from "@/lib/stacks";
 
 export function ServicesPage() {
   const overview = useOverview();
@@ -32,6 +34,7 @@ export function ServicesPage() {
   const [query, setQuery] = useState("");
   const [request, setRequest] = useState<ActionRequest | null>(null);
   const [deploy, setDeploy] = useState<DeployRequest | null>(null);
+  const [creating, setCreating] = useState(false);
   const stacksView = params.get("view") === "stacks";
   const notRunning = params.get("state") === "down";
   const showSystem = params.get("system") === "1";
@@ -67,6 +70,7 @@ export function ServicesPage() {
     refreshPending(node, services.dataUpdatedAt),
   );
   const stackGroups = groupStacks(services.data, nodes, query);
+  const removed = removedStacks(services.data, nodes, query);
   const linked = params.get("deploy") ?? params.get("rollback");
   const linkedGroup = linked
     ? groupStacks(services.data, nodes, "").find(
@@ -153,6 +157,12 @@ export function ServicesPage() {
                   </div>
                 </>
               )}
+              {stacksView && (
+                <Button onClick={() => setCreating(true)}>
+                  <Plus aria-hidden="true" />
+                  New stack
+                </Button>
+              )}
               <Button
                 variant="outline"
                 disabled={refresh.isPending || refreshing}
@@ -177,23 +187,36 @@ export function ServicesPage() {
           }
         />
       ) : stacksView ? (
-        stackGroups.length === 0 ? (
+        stackGroups.length === 0 && removed.length === 0 ? (
           <EmptyState
             title={query ? "No stacks match" : "No Compose stacks yet"}
             body={
               query
                 ? "Change the search to see the rest."
-                : "Servers list Docker Compose stacks here once their agent reports them."
+                : "Servers list Docker Compose stacks here once their agent reports them, or start one with New stack."
+            }
+            action={
+              query ? undefined : (
+                <Button onClick={() => setCreating(true)}>
+                  <Plus aria-hidden="true" />
+                  New stack
+                </Button>
+              )
             }
           />
         ) : (
-          <StackList
-            groups={stackGroups}
-            seen={seen}
-            showServer
-            services={servicesByNode}
-            onRequest={setDeploy}
-          />
+          <div className="space-y-6">
+            {stackGroups.length > 0 && (
+              <StackList
+                groups={stackGroups}
+                seen={seen}
+                showServer
+                services={servicesByNode}
+                onRequest={setDeploy}
+              />
+            )}
+            <RemovedList items={removed} seen={seen} showServer />
+          </div>
         )
       ) : groups.length === 0 ? (
         <EmptyState
@@ -237,6 +260,11 @@ export function ServicesPage() {
         }}
       />
       <ActionDialog request={request} onClose={() => setRequest(null)} />
+      <NewStackDialog
+        open={creating}
+        onOpenChange={setCreating}
+        nodes={nodes}
+      />
     </>
   );
 }

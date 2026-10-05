@@ -9,6 +9,7 @@ import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
 import {
   agentSupported,
   compareVersions,
+  STACKS_AGENT,
   TRUST_AGENT,
 } from "@krynodes/protocol/versions";
 import { b64url, fromB64url } from "./passkeys";
@@ -49,10 +50,16 @@ export const formatPrint = (print: string) =>
 export const agentCurrent = (node: Pick<NodeRecord, "agent_version">) =>
   agentSupported(node.agent_version);
 
-export const trustReady = (node: Pick<NodeRecord, "agent_version">) =>
+const reaches = (node: Pick<NodeRecord, "agent_version">, version: string) =>
   agentCurrent(node) &&
   (!/^\d+\.\d+\.\d+$/u.test(node.agent_version ?? "") ||
-    compareVersions(node.agent_version!, TRUST_AGENT) >= 0);
+    compareVersions(node.agent_version!, version) >= 0);
+
+export const trustReady = (node: Pick<NodeRecord, "agent_version">) =>
+  reaches(node, TRUST_AGENT);
+
+export const stacksReady = (node: Pick<NodeRecord, "agent_version">) =>
+  reaches(node, STACKS_AGENT);
 
 export function canRestartServer(
   node: Pick<NodeRecord, "agent_version">,

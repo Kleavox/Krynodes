@@ -13,7 +13,7 @@ import (
 )
 
 func inventoryOf(services []Service, now time.Time) (Inventory, error) {
-	return NewInventory(services, nil, reporter.TrustReport{}, now)
+	return NewInventory(services, nil, reporter.TrustReport{}, "", nil, now)
 }
 
 const unitList = `nginx.service                 loaded    active   running A high performance web server
@@ -96,7 +96,7 @@ func TestCollectSurvivesAMissingDocker(t *testing.T) {
 		}
 	}
 	snapshot, err := Collect(context.Background(), run, nil)
-	if err != nil || len(snapshot.Services) != 5 || snapshot.Compose {
+	if err != nil || len(snapshot.Services) != 5 || snapshot.Compose || snapshot.Docker != "missing" {
 		t.Fatalf("collect: %#v, err %v", snapshot, err)
 	}
 	if calls[2] != "docker ps -a --no-trunc --format "+containerFormat || len(calls) != 3 {
@@ -228,22 +228,33 @@ func TestAnInvalidProjectIsLeftOut(t *testing.T) {
 	}
 }
 
-func TestComposeIsOnlyAskedForWhenAStackRuns(t *testing.T) {
-	var calls []string
-	run := func(_ context.Context, name string, args ...string) ([]byte, int, error) {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		if name == "docker" {
-			return []byte("adguard\trunning\t\t\t\t2026-09-30 10:00:00 +0000 UTC\n"), 0, nil
+func TestDockerStateIsReportedEvenWithoutAStack(t *testing.T) {
+	for _, item := range []struct {
+		docker, compose bool
+		want            string
+	}{
+		{true, true, "ready"},
+		{true, false, "no-compose"},
+		{false, false, "missing"},
+	} {
+		run := func(_ context.Context, name string, args ...string) ([]byte, int, error) {
+			if name == "docker" && args[0] == "compose" {
+				if item.compose {
+					return []byte("Docker Compose version v2.29.1"), 0, nil
+				}
+				return nil, 1, errors.New("unknown command compose")
+			}
+			if name == "docker" {
+				if item.docker {
+					return []byte("adguard\trunning\t\t\t\t2026-09-30 10:00:00 +0000 UTC\n"), 0, nil
+				}
+				return nil, -1, errors.New("executable file not found")
+			}
+			return nil, 0, nil
 		}
-		return nil, 0, nil
-	}
-	snapshot, err := Collect(context.Background(), run, nil)
-	if err != nil || len(snapshot.Stacks) != 0 {
-		t.Fatalf("collect %#v err %v", snapshot, err)
-	}
-	for _, call := range calls {
-		if strings.HasPrefix(call, "docker compose") {
-			t.Fatalf("asked for compose without a stack: %q", calls)
+		snapshot, err := Collect(context.Background(), run, nil)
+		if err != nil || snapshot.Docker != item.want || snapshot.Compose != item.compose {
+			t.Fatalf("%s: %#v err %v", item.want, snapshot, err)
 		}
 	}
 }
@@ -269,11 +280,27 @@ func TestComposeAvailabilityIsReported(t *testing.T) {
 	}
 }
 
+func TestTheInventoryHashChangesWhenDockerChanges(t *testing.T) {
+	first, _ := NewInventory(nil, nil, reporter.TrustReport{}, "missing", nil, executorNow)
+	second, _ := NewInventory(nil, nil, reporter.TrustReport{}, "ready", nil, executorNow)
+	if first.Hash == second.Hash || second.Docker != "ready" {
+		t.Fatalf("docker must be part of the inventory: %#v %#v", first, second)
+	}
+}
+
+func TestTheInventoryHashChangesWhenAStackIsRemoved(t *testing.T) {
+	first, _ := NewInventory(nil, nil, reporter.TrustReport{}, "ready", nil, executorNow)
+	second, _ := NewInventory(nil, nil, reporter.TrustReport{}, "ready", []reporter.RemovedStack{{Project: "kuma", Directory: "/opt/kuma", RemovedAt: "2026-09-29T10:00:00Z"}}, executorNow)
+	if first.Hash == second.Hash || len(second.Removed) != 1 {
+		t.Fatalf("removed stacks must be part of the inventory: %#v", second)
+	}
+}
+
 func TestTheInventoryHashChangesWhenAStackChanges(t *testing.T) {
 	stack := reporter.StackEntry{Project: "listmonk", Directory: "/opt/listmonk", Running: 5, Total: 5, Compose: true}
-	first, _ := NewInventory(nil, []reporter.StackEntry{stack}, reporter.TrustReport{}, executorNow)
+	first, _ := NewInventory(nil, []reporter.StackEntry{stack}, reporter.TrustReport{}, "", nil, executorNow)
 	stack.Running = 4
-	second, _ := NewInventory(nil, []reporter.StackEntry{stack}, reporter.TrustReport{}, executorNow)
+	second, _ := NewInventory(nil, []reporter.StackEntry{stack}, reporter.TrustReport{}, "", nil, executorNow)
 	if first.Hash == second.Hash {
 		t.Fatal("a stack change must change the hash")
 	}

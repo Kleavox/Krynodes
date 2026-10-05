@@ -4,6 +4,7 @@ interface CheckChange {
   checkName: string | null;
   summary: string;
   occurredAt: string;
+  healing?: boolean;
 }
 
 const COLOR = {
@@ -168,7 +169,7 @@ export async function sendServerEmail(
         : []),
       ...down.map((change): [string, string] => [
         change.checkName ?? nodeName,
-        `${change.summary} · since ${utcTime(change.occurredAt)}`,
+        `${change.summary} · since ${utcTime(change.occurredAt)}${change.healing ? " · restarting it automatically" : ""}`,
       ]),
     ],
     action:

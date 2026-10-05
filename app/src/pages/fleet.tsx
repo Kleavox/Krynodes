@@ -5,6 +5,7 @@ import { LayoutGrid, List, Search, TriangleAlert, X } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { FilterChips } from "@/components/filter-chips";
 import { Meter } from "@/components/meter";
+import { DockerMark } from "@/components/docker-mark";
 import { PageHeader } from "@/components/page-header";
 import { Sparkline } from "@/components/sparkline";
 import { NodeStatus, OperationText } from "@/components/node-status";
@@ -703,15 +704,19 @@ function NodeCard({
     >
       <div>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="min-w-0 truncate font-medium" title={node.name}>
+          <h2
+            className="flex min-w-0 items-center gap-1.5 font-medium"
+            title={node.name}
+          >
             <button
               type="button"
               onClick={onSelect}
               aria-pressed={selected}
-              className="outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring"
+              className="min-w-0 truncate outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring"
             >
               {node.name}
             </button>
+            <DockerMark nodeId={node.id} />
           </h2>
           <NodeStatus
             state={state}
@@ -870,6 +875,7 @@ function FleetTable({
                   >
                     {node.name}
                   </button>
+                  <DockerMark nodeId={node.id} />
                 </div>
                 <p
                   className={cn(

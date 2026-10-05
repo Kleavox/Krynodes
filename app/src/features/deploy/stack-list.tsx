@@ -13,6 +13,7 @@ import { canReadLogs, isPending } from "@/lib/services";
 import {
   containersOf,
   deployBlocker,
+  stackCommands,
   type StackGroup,
   type StackMember,
 } from "@/lib/stacks";
@@ -20,6 +21,11 @@ import { cn } from "@/lib/utils";
 import type { ServiceEntry } from "@/types";
 
 import type { DeployRequest } from "./deploy-dialog";
+import {
+  StackActionDialog,
+  type StackActionRequest,
+} from "./stack-action-dialog";
+import { useSignedAction } from "./use-signed-action";
 
 const ROW =
   "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
@@ -64,8 +70,23 @@ function MemberControls({
   onRequest: (request: DeployRequest) => void;
 }) {
   const [reading, setReading] = useState(false);
+  const [confirming, setConfirming] = useState<StackActionRequest | null>(null);
+  const run = useSignedAction();
   const cancel = useCancelActions();
   const blocker = deployBlocker(member);
+  const commands = stackCommands(member);
+  const direct = (action: "start" | "restart") =>
+    run.mutate({
+      action,
+      targets: [{ nodeId: member.node.id, kind: "compose", name: project }],
+    });
+  const confirm = (action: StackActionRequest["action"]) =>
+    setConfirming({
+      action,
+      project,
+      node: member.node,
+      directory: member.stack.directory,
+    });
   const action = member.action;
   if (action && isPending(action)) {
     return action.status === "queued" ? (
@@ -125,6 +146,12 @@ function MemberControls({
             : member.stack.rollback
               ? [{ label: "Roll back", onSelect: rollback }]
               : []),
+          ...(commands.includes("start")
+            ? [{ label: "Start", onSelect: () => direct("start") }]
+            : []),
+          ...(commands.includes("restart")
+            ? [{ label: "Restart", onSelect: () => direct("restart") }]
+            : []),
           ...(canReadLogs(member.node)
             ? [{ label: "Logs", onSelect: () => setReading(true) }]
             : []),
@@ -132,7 +159,34 @@ function MemberControls({
             label: containersOpen ? "Hide containers" : "Show containers",
             onSelect: onToggleContainers,
           },
+          ...(commands.includes("stop")
+            ? [
+                {
+                  label: "Stop",
+                  destructive: true,
+                  onSelect: () => confirm("stop"),
+                },
+              ]
+            : []),
+          ...(commands.includes("remove")
+            ? [
+                {
+                  label: "Remove",
+                  destructive: true,
+                  onSelect: () => confirm("remove"),
+                },
+                {
+                  label: "Delete permanently",
+                  destructive: true,
+                  onSelect: () => confirm("purge"),
+                },
+              ]
+            : []),
         ]}
+      />
+      <StackActionDialog
+        request={confirming}
+        onClose={() => setConfirming(null)}
       />
       <LogsDialog
         target={{

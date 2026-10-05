@@ -1,4 +1,8 @@
-import type { AgentActionResult } from "@krynodes/protocol";
+import {
+  STACKS_AGENT,
+  compareVersions,
+  type AgentActionResult,
+} from "@krynodes/protocol";
 
 const ACTION_TTL_MS = 10 * 60_000;
 const ABANDON_MS = 15 * 60_000;
@@ -13,7 +17,14 @@ export type ActionVerb =
   | "rollback"
   | "trust"
   | "reboot"
-  | "logs";
+  | "logs"
+  | "remove"
+  | "purge"
+  | "restore"
+  | "create"
+  | "autorestart"
+  | "manual"
+  | "heal";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -78,6 +89,12 @@ const PROMOTE_SQL = `UPDATE actions SET deliverable_at = ?1
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
+export const UNIT_SQL =
+  "CASE WHEN target LIKE '%.service' THEN target ELSE target || '.service' END";
+
+export const unitOf = (target: string) =>
+  target.endsWith(".service") ? target : `${target}.service`;
+
 export function sweepStatements(
   db: D1Database,
   now: number,
@@ -107,7 +124,7 @@ export async function inMaintenance(
   const row = await db
     .prepare(
       `SELECT 1 AS planned FROM actions
-       WHERE node_id = ?1 AND action <> 'logs' AND (
+       WHERE node_id = ?1 AND action NOT IN ('logs', 'autorestart', 'manual') AND (
          status IN ('queued', 'sent')
          OR (status IN ('done', 'failed') AND finished_at >=
            CASE WHEN action = 'reboot' THEN ?3 ELSE ?2 END))
@@ -202,31 +219,180 @@ export async function heartbeatActions(
   return deliverActions(db, nodeId, now);
 }
 
-export function actionResultStatements(
+function followUp(
+  db: D1Database,
+  nodeId: string,
+  action: { kind: string; name: string; action: string },
+  at: string,
+): D1PreparedStatement[] {
+  if (action.action === "autorestart" || action.action === "manual") {
+    return [
+      db
+        .prepare(
+          `UPDATE checks SET auto_restart = ?
+           WHERE node_id = ? AND kind = 'SERVICE' AND ${UNIT_SQL} = ?`,
+        )
+        .bind(action.action === "autorestart" ? 1 : 0, nodeId, action.name),
+    ];
+  }
+  if (action.kind === "docker" && action.action === "remove") {
+    return [
+      db
+        .prepare(
+          "DELETE FROM services WHERE node_id = ? AND kind = 'docker' AND name = ?",
+        )
+        .bind(nodeId, action.name),
+    ];
+  }
+  if (action.kind !== "compose") return [];
+  const stack = db
+    .prepare("DELETE FROM stacks WHERE node_id = ? AND project = ?")
+    .bind(nodeId, action.name);
+  const removed = db
+    .prepare("DELETE FROM removed_stacks WHERE node_id = ? AND project = ?")
+    .bind(nodeId, action.name);
+  if (action.action === "remove") {
+    return [
+      db
+        .prepare(
+          `INSERT OR REPLACE INTO removed_stacks (node_id, project, directory, removed_at)
+           SELECT node_id, project, directory, ? FROM stacks WHERE node_id = ? AND project = ?`,
+        )
+        .bind(at, nodeId, action.name),
+      stack,
+    ];
+  }
+  if (action.action === "purge") return [stack, removed];
+  if (action.action === "restore") return [removed];
+  return [];
+}
+
+export async function actionResultStatements(
   db: D1Database,
   nodeId: string,
   results: AgentActionResult[],
   now: number,
-): D1PreparedStatement[] {
-  return results.map((result) => {
+): Promise<D1PreparedStatement[]> {
+  const rows = await db
+    .prepare(
+      `SELECT id, kind, name, action FROM actions
+       WHERE node_id = ? AND status = 'sent' AND id IN (SELECT value FROM json_each(?))`,
+    )
+    .bind(nodeId, JSON.stringify(results.map((result) => result.id)))
+    .all<{ id: string; kind: string; name: string; action: string }>();
+  const sent = new Map(rows.results.map((row) => [row.id, row]));
+  return results.flatMap((result) => {
     const reported = Date.parse(result.finishedAt);
     const finished = iso(
       Number.isFinite(reported) ? Math.min(reported, now) : now,
     );
-    return db
-      .prepare(
-        `UPDATE actions SET status = ?, exit_code = ?, output = ?, finished_at = max(sent_at, ?)
-         WHERE id = ? AND node_id = ? AND status = 'sent'`,
-      )
-      .bind(
-        result.ok ? "done" : "failed",
-        result.exitCode,
-        result.output,
-        finished,
-        result.id,
-        nodeId,
-      );
+    const action = sent.get(result.id);
+    const next =
+      action && result.ok ? followUp(db, nodeId, action, finished) : [];
+    return [
+      db
+        .prepare(
+          `UPDATE actions SET status = ?, exit_code = ?, output = ?, finished_at = max(sent_at, ?)
+           WHERE id = ? AND node_id = ? AND status = 'sent'`,
+        )
+        .bind(
+          result.ok ? "done" : "failed",
+          result.exitCode,
+          result.output,
+          finished,
+          result.id,
+          nodeId,
+        ),
+      ...next,
+    ];
   });
+}
+
+const singleAction = (
+  db: D1Database,
+  input: {
+    nodeId: string;
+    name: string;
+    action: "heal" | "manual";
+    requestedBy: string;
+    now: number;
+    unless?: string;
+  },
+) => {
+  const id = crypto.randomUUID();
+  const at = iso(input.now);
+  return db
+    .prepare(
+      `INSERT OR IGNORE INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+         status, requested_by, requested_at, deliverable_at)
+       SELECT ?1, ?1, 0, 'parallel', ?2, 'systemd', ?3, ?4, 'queued', ?5, ?6, ?6
+       WHERE NOT EXISTS (
+         SELECT 1 FROM checks
+         WHERE node_id = ?2 AND kind = 'SERVICE' AND ${UNIT_SQL} = ?3 AND auto_restart = 1
+           AND ?7 IS NOT NULL AND id <> ?7)`,
+    )
+    .bind(
+      id,
+      input.nodeId,
+      input.name,
+      input.action,
+      input.requestedBy,
+      at,
+      input.unless ?? null,
+    );
+};
+
+export function manualStatement(
+  db: D1Database,
+  input: {
+    nodeId: string;
+    name: string;
+    requestedBy: string;
+    now: number;
+    checkId: string;
+  },
+) {
+  return singleAction(db, {
+    ...input,
+    action: "manual",
+    unless: input.checkId,
+  });
+}
+
+export async function healStatements(
+  db: D1Database,
+  node: { id: string; agent_version: string | null },
+  checkIds: string[],
+  now: number,
+): Promise<{ statement: D1PreparedStatement; checkIds: string[] }[]> {
+  if (
+    checkIds.length === 0 ||
+    compareVersions(node.agent_version ?? "0.0.0", STACKS_AGENT) < 0
+  ) {
+    return [];
+  }
+  const rows = await db
+    .prepare(
+      `SELECT id, ${UNIT_SQL} AS unit FROM checks
+       WHERE node_id = ? AND kind = 'SERVICE' AND auto_restart = 1
+         AND id IN (SELECT value FROM json_each(?))`,
+    )
+    .bind(node.id, JSON.stringify(checkIds))
+    .all<{ id: string; unit: string }>();
+  const units = new Map<string, string[]>();
+  for (const row of rows.results) {
+    units.set(row.unit, [...(units.get(row.unit) ?? []), row.id]);
+  }
+  return [...units].map(([unit, ids]) => ({
+    statement: singleAction(db, {
+      nodeId: node.id,
+      name: unit,
+      action: "heal",
+      requestedBy: "Krynodes",
+      now,
+    }),
+    checkIds: ids,
+  }));
 }
 
 export function cancelStatement(

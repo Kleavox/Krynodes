@@ -87,12 +87,22 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
 	}
-	if err := e.authorize(request); err != nil {
+	command, err := e.authorize(request)
+	if err != nil {
 		return e.refuse(request.ID, err)
 	}
+	if request.Action == "create" {
+		return e.create(ctx, request, command, snapshot)
+	}
 	index := slices.IndexFunc(snapshot.Stacks, func(stack Stack) bool { return stack.Project == request.Name })
+	if index < 0 && (request.Action == "restore" || request.Action == "purge") {
+		return e.removedStack(ctx, request, snapshot)
+	}
 	if index < 0 {
 		return e.refuse(request.ID, fmt.Errorf("%s is not on this server", request.Name))
+	}
+	if request.Action == "restore" {
+		return e.refuse(request.ID, fmt.Errorf("%s already runs", request.Name))
 	}
 	if !snapshot.Compose {
 		return e.refuse(request.ID, errors.New("docker compose is not available"))
@@ -103,10 +113,17 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 		return e.refuse(request.ID, err)
 	}
 	stack.Files = files
-	if request.Action == "rollback" {
+	switch request.Action {
+	case "deploy":
+		return e.deploy(ctx, request, stack)
+	case "rollback":
 		return e.rollback(ctx, request, stack)
+	case "start", "stop", "restart":
+		return e.lifecycle(ctx, request, stack)
+	case "remove", "purge":
+		return e.remove(ctx, request, stack)
 	}
-	return e.deploy(ctx, request, stack)
+	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }
 
 func (e Executor) running(ctx context.Context, stack Stack) ([]imageRecord, error) {

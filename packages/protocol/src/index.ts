@@ -17,6 +17,7 @@ export {
   compareVersions,
   LOGS_AGENT,
   MIN_AGENT_VERSION,
+  STACKS_AGENT,
   TRUST_AGENT,
 } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
@@ -89,9 +90,42 @@ const approvalSchema = assertionSchema.extend({ proof: b64url.optional() });
 
 export const signedCommandSchema = z.strictObject({
   grant: approvalSchema.extend({ grant: b64url }),
-  command: b64url,
+  command: z
+    .string()
+    .min(1)
+    .max(65536)
+    .regex(/^[A-Za-z0-9_-]+$/u),
   signature: b64url,
 });
+
+export const UNSIGNED_VERBS = ["manual", "heal"] as const;
+
+export const KIND_VERBS = {
+  systemd: [
+    "start",
+    "stop",
+    "restart",
+    "logs",
+    "autorestart",
+    "manual",
+    "heal",
+  ],
+  docker: ["start", "stop", "restart", "logs", "remove"],
+  compose: [
+    "deploy",
+    "rollback",
+    "logs",
+    "start",
+    "stop",
+    "restart",
+    "remove",
+    "purge",
+    "create",
+    "restore",
+  ],
+  host: ["reboot"],
+  trust: ["trust"],
+} as const;
 
 export const signedTrustSchema = z.strictObject({
   change: z
@@ -116,6 +150,13 @@ export const agentActionSchema = z
       "trust",
       "reboot",
       "logs",
+      "remove",
+      "purge",
+      "create",
+      "restore",
+      "autorestart",
+      "manual",
+      "heal",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -128,16 +169,11 @@ export const agentActionSchema = z
         signedTrustSchema.safeParse(action.signed).success
       );
     }
-    const allowed =
-      action.kind === "compose"
-        ? ["deploy", "rollback", "logs"]
-        : action.kind === "host"
-          ? ["reboot"]
-          : ["start", "stop", "restart", "logs"];
-    return (
-      allowed.includes(action.action) &&
-      signedCommandSchema.safeParse(action.signed).success
-    );
+    const allowed: readonly string[] = KIND_VERBS[action.kind];
+    if (!allowed.includes(action.action)) return false;
+    return (UNSIGNED_VERBS as readonly string[]).includes(action.action)
+      ? action.signed === undefined
+      : signedCommandSchema.safeParse(action.signed).success;
   });
 
 export const heartbeatResponseSchema = z.object({
@@ -185,6 +221,14 @@ export const trustReportSchema = z.strictObject({
   requireUv: z.boolean().optional(),
 });
 
+export const removedStackSchema = z
+  .strictObject({
+    project: z.string(),
+    directory: z.string().min(1).max(4096).startsWith("/"),
+    removedAt: z.string().datetime(),
+  })
+  .refine((stack) => isValidTarget("compose", stack.project));
+
 export const actionResultSchema = z.strictObject({
   id: z.string().uuid(),
   ok: z.boolean(),
@@ -200,6 +244,8 @@ export const agentActionsRequestSchema = z
     inventory: z
       .strictObject({
         hash: z.string().regex(/^[0-9a-f]{64}$/u),
+        docker: z.enum(["ready", "no-compose", "missing"]).optional(),
+        removed: z.array(removedStackSchema).max(50).optional(),
         services: z.array(serviceEntrySchema).max(500).optional(),
         stacks: z.array(stackEntrySchema).max(50).optional(),
         trust: trustReportSchema.optional(),

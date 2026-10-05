@@ -115,6 +115,7 @@ type Command struct {
 	Action    string `json:"action"`
 	IssuedAt  string `json:"issuedAt"`
 	ExpiresAt string `json:"expiresAt"`
+	Compose   string `json:"compose,omitempty"`
 }
 
 func strict(raw []byte, value any) error {

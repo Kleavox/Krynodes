@@ -14,9 +14,17 @@ import { displayName, verb, type ActionTarget } from "@/lib/services";
 import type { ServiceAction } from "@/types";
 
 export interface ActionRequest {
-  action: ServiceAction;
+  action: ServiceAction | "remove";
   target: ActionTarget;
 }
+
+const DESCRIPTION: Record<ActionRequest["action"], string> = {
+  start: "The server runs it at its next report, within about a minute.",
+  restart: "The server runs it at its next report, within about a minute.",
+  stop: "It stays stopped until you start it.",
+  remove:
+    "The container is deleted. One that belongs to a stack comes back on the stack's next Deploy.",
+};
 
 export function ActionDialog({
   request,
@@ -51,11 +59,7 @@ function ActionForm({
           {verb(action)} {displayName(target.kind, target.name)} on{" "}
           {target.nodeName}?
         </AlertDialogTitle>
-        <AlertDialogDescription>
-          {action === "stop"
-            ? "It stays stopped until you start it."
-            : "The server runs it at its next report, within about a minute."}
-        </AlertDialogDescription>
+        <AlertDialogDescription>{DESCRIPTION[action]}</AlertDialogDescription>
       </AlertDialogHeader>
       {run.error && (
         <p role="alert" className="text-sm text-destructive">
@@ -65,7 +69,9 @@ function ActionForm({
       <AlertDialogFooter>
         <AlertDialogCancel>Cancel</AlertDialogCancel>
         <Button
-          variant={action === "stop" ? "destructive" : "default"}
+          variant={
+            action === "stop" || action === "remove" ? "destructive" : "default"
+          }
           disabled={run.isPending}
           onClick={() =>
             run.mutate({ action, targets: [target] }, { onSuccess: onClose })

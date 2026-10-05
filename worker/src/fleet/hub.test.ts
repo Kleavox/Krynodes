@@ -270,6 +270,42 @@ describe("FleetHub", () => {
     expect(t.mail).toHaveLength(1);
   });
 
+  it("says in the failure mail when Krynodes restarts the unit by itself", async () => {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE checks SET kind = 'SERVICE', target = 'nginx', name = 'nginx', auto_restart = 1 WHERE id = ?",
+      )
+      .run(CHECK);
+    const ws = await t.connect();
+    const newer = (beat: AgentHeartbeat) => ({
+      ...beat,
+      agentVersion: "0.4.0",
+    });
+    await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
+    await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
+    expect(t.mail).toHaveLength(1);
+    expect(t.mail[0]!.text).toContain("restarting it automatically");
+  });
+
+  it("does not claim a restart when auto-restart is off", async () => {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE checks SET kind = 'SERVICE', target = 'nginx', name = 'nginx' WHERE id = ?",
+      )
+      .run(CHECK);
+    const ws = await t.connect();
+    const newer = (beat: AgentHeartbeat) => ({
+      ...beat,
+      agentVersion: "0.4.0",
+    });
+    await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
+    await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
+    expect(t.mail).toHaveLength(1);
+    expect(t.mail[0]!.text).not.toContain("automatically");
+  });
+
   it("mails at once when a server stops reporting, once an hour, and never that it is back", async () => {
     const t = setup();
     const ws = await t.connect();

@@ -140,6 +140,8 @@ export function elapsedText(milliseconds: number): string {
 
 const RAN = new Set<ActionStatus>(["queued", "sent", "done", "failed"]);
 
+const NOT_PLANNED = new Set(["logs", "autorestart", "manual"]);
+
 export function maintenanceSpans(
   actions: ActionRecord[],
   nodeId: string,
@@ -148,7 +150,7 @@ export function maintenanceSpans(
     .filter(
       (action) =>
         action.nodeId === nodeId &&
-        action.action !== "logs" &&
+        !NOT_PLANNED.has(action.action) &&
         RAN.has(action.status),
     )
     .map((action) => ({

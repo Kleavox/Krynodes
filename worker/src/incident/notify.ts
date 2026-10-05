@@ -5,6 +5,7 @@ export interface IncidentNotice {
   kind: "opened" | "resolved";
   summary: string;
   occurredAt: string;
+  healing?: boolean;
 }
 
 export interface ServerChanges {

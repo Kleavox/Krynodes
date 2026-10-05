@@ -25,6 +25,8 @@ import {
   type ServiceMember,
 } from "@/lib/services";
 import { cn } from "@/lib/utils";
+import { DockerMark } from "@/components/docker-mark";
+import { stacksReady } from "@/lib/devices";
 import type { ActionRecord, ServiceAction, ServiceState } from "@/types";
 
 import type { ActionRequest } from "./action-dialog";
@@ -193,6 +195,15 @@ function MemberControls({
             destructive: true,
             onSelect: () => onRequest({ action: "stop", target }),
           },
+          ...(member.entry.kind === "docker" && stacksReady(member.node)
+            ? [
+                {
+                  label: "Remove",
+                  destructive: true,
+                  onSelect: () => onRequest({ action: "remove", target }),
+                },
+              ]
+            : []),
         ]}
       />
       <LogsDialog target={target} open={reading} onOpenChange={setReading} />
@@ -357,6 +368,7 @@ export function ServerServiceList({
                   <span className="min-w-0 truncate font-medium">
                     {group.node.name}
                   </span>
+                  <DockerMark nodeId={group.node.id} />
                   <span className="font-mono text-xs font-normal text-muted-foreground">
                     {count} {count === 1 ? "service" : "services"}
                     {down > 0 && ` · ${down} not running`}

@@ -57,5 +57,13 @@ describe("history", () => {
     expect(historyText(action({ action: "logs" }))).toBe(
       "Read logs of adguard",
     );
+    expect(
+      historyText(action({ kind: "compose", name: "kuma", action: "purge" })),
+    ).toBe("Delete kuma permanently");
+    expect(
+      historyText(
+        action({ kind: "systemd", name: "nginx.service", action: "heal" }),
+      ),
+    ).toBe("Auto-restart nginx");
   });
 });

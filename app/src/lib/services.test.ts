@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ActionRecord, NodeRecord, ServicesResponse } from "../types";
 import {
+  autoRestartBlocker,
   actionText,
   canReadLogs,
   displayName,
@@ -207,9 +208,17 @@ describe("grouping services by server", () => {
 
 describe("action labels", () => {
   it("describes every stage", () => {
-    expect(actionText(action({}), "PIVOX")).toBe("Waiting for PIVOX");
+    expect(actionText(action({}), "PIVOX")).toBe(
+      "Waiting for PIVOX to restart",
+    );
     expect(actionText(action({ deliverableAt: null }), "PIVOX")).toBe(
-      "Waiting for its turn",
+      "Waiting for its turn to restart",
+    );
+    expect(
+      actionText(action({ kind: "compose", action: "restore" }), "pivox"),
+    ).toBe("Waiting for pivox to restore");
+    expect(actionText(action({ action: "autorestart" }), "pivox")).toBe(
+      "Waiting for pivox to turn on auto-restart",
     );
     expect(actionText(action({ status: "sent" }), "PIVOX")).toBe("Restarting…");
     expect(
@@ -357,5 +366,120 @@ describe("logs", () => {
     expect(canReadLogs({ ...node("n1", "pivox"), agent_version: null })).toBe(
       false,
     );
+  });
+});
+
+describe("words for agent 0.4.0 commands", () => {
+  const unit = (overrides: Partial<ActionRecord>) =>
+    action({ kind: "systemd", name: "nginx.service", ...overrides });
+
+  it("reads an automatic restart and the switch plainly", () => {
+    expect(
+      outcomeText(unit({ action: "heal", status: "done" }), "pivox"),
+    ).toEqual({ ok: true, text: "nginx restarted automatically on pivox" });
+    expect(runningText(unit({ action: "heal", status: "sent" }), "pivox")).toBe(
+      "Restarting nginx on pivox",
+    );
+    expect(
+      outcomeText(unit({ action: "autorestart", status: "done" }), "pivox"),
+    ).toEqual({ ok: true, text: "nginx now restarts automatically on pivox" });
+    expect(
+      outcomeText(unit({ action: "manual", status: "done" }), "pivox"),
+    ).toEqual({
+      ok: true,
+      text: "nginx no longer restarts automatically on pivox",
+    });
+  });
+
+  it("names a permanent delete and a restore", () => {
+    expect(
+      outcomeText(
+        action({
+          kind: "compose",
+          name: "kuma",
+          action: "purge",
+          status: "failed",
+          exitCode: 1,
+        }),
+        "pivox",
+      ),
+    ).toEqual({
+      ok: false,
+      text: "Could not delete kuma permanently on pivox (exit 1)",
+    });
+    expect(
+      outcomeText(
+        action({
+          kind: "compose",
+          name: "kuma",
+          action: "restore",
+          status: "done",
+        }),
+        "pivox",
+      ),
+    ).toEqual({ ok: true, text: "kuma restored on pivox" });
+  });
+});
+
+describe("restart automatically", () => {
+  const check = {
+    kind: "SERVICE" as const,
+    target: "nginx",
+    node_id: "n1",
+  };
+  const entry = (
+    overrides: Partial<ServicesResponse["nodes"][number]> = {},
+  ) => ({
+    ...data,
+    nodes: [
+      {
+        ...data.nodes[0]!,
+        services: [
+          {
+            kind: "systemd" as const,
+            name: "nginx.service",
+            state: "running" as const,
+            since: null,
+            system: false,
+          },
+        ],
+        trust: {
+          version: 1,
+          core: ["0123456789abcdef"],
+          access: ["0123456789abcdef"],
+        },
+        ...overrides,
+      },
+    ],
+  });
+
+  it("says why it cannot be turned on", () => {
+    expect(
+      autoRestartBlocker(check, node("n1", "pivox", "0.4.0"), entry()),
+    ).toBeNull();
+    expect(
+      autoRestartBlocker(check, node("n1", "pivox", "0.3.5"), entry()),
+    ).toBe("Needs agent 0.4.0");
+    expect(
+      autoRestartBlocker(
+        { ...check, target: "ssh" },
+        node("n1", "pivox", "0.4.0"),
+        entry(),
+      ),
+    ).toBe("Krynodes never restarts this unit");
+    expect(
+      autoRestartBlocker(
+        check,
+        node("n1", "pivox", "0.4.0"),
+        entry({ services: [] }),
+      ),
+    ).toBe("The unit is not on this server");
+    expect(
+      autoRestartBlocker(
+        check,
+        node("n1", "pivox", "0.4.0"),
+        entry({ trust: null }),
+      ),
+    ).toBe("Not trusted yet");
   });
 });

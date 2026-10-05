@@ -84,14 +84,16 @@ func (e Executor) Execute(ctx context.Context) error {
 			if item.refusal == nil && item.request.Action == "logs" {
 				result = e.logs(ctx, item.request, snapshot)
 			} else if item.refusal == nil {
-				switch item.request.Kind {
-				case "trust":
+				switch {
+				case item.request.Kind == "trust":
 					result = e.trustChange(item.request)
-				case "compose":
+				case item.request.Kind == "compose":
 					result = e.compose(ctx, item.request, snapshot)
-				case "host":
+				case item.request.Kind == "host":
 					result = e.host(item.request)
 					reboot = reboot || result.OK
+				case slices.Contains(autoVerbs, item.request.Action):
+					result = e.autoRestart(ctx, item.request, snapshot, stopped)
 				default:
 					result = e.execute(ctx, item.request, snapshot.Services)
 					if result.OK && item.request.Kind == "systemd" {
@@ -114,7 +116,8 @@ func (e Executor) Execute(ctx context.Context) error {
 	if err != nil {
 		log.Printf("%v", err)
 	}
-	inventory, err := NewInventory(snapshot.Services, e.stackEntries(snapshot), trust.Report(), e.Now())
+	removed := e.sweepRemoved(ctx, snapshot)
+	inventory, err := NewInventory(snapshot.Services, e.stackEntries(snapshot), trust.Report(), snapshot.Docker, removed, e.Now())
 	if err != nil {
 		return err
 	}
@@ -139,7 +142,7 @@ func (e Executor) host(request Request) Result {
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
 	}
-	if err := e.authorize(request); err != nil {
+	if _, err := e.authorize(request); err != nil {
 		return e.refuse(request.ID, err)
 	}
 	return Result{ID: request.ID, OK: true, Output: "restarting the server", FinishedAt: e.stamp()}
@@ -231,8 +234,9 @@ func readRequest(root *os.Root, name string) (Request, error) {
 }
 
 func check(request Request, now time.Time, services []Service) error {
-	switch request.Action {
-	case "start", "stop", "restart":
+	switch {
+	case request.Action == "start", request.Action == "stop", request.Action == "restart":
+	case request.Action == "remove" && request.Kind == "docker":
 	default:
 		return fmt.Errorf("unknown action %q", request.Action)
 	}
@@ -257,23 +261,22 @@ func check(request Request, now time.Time, services []Service) error {
 	return fmt.Errorf("%s is not on this server", request.Name)
 }
 
-func (e Executor) authorize(request Request) error {
+func (e Executor) authorize(request Request) (Command, error) {
 	trust, err := LoadTrust(e.StateDir)
 	if err != nil {
-		return err
+		return Command{}, err
 	}
 	if len(trust.Core) == 0 {
-		return errors.New("no trusted devices")
+		return Command{}, errors.New("no trusted devices")
 	}
-	_, err = VerifyCommand(trust, request, e.Now())
-	return err
+	return VerifyCommand(trust, request, e.Now())
 }
 
 func (e Executor) execute(ctx context.Context, request Request, services []Service) Result {
 	if err := check(request, e.Now(), services); err != nil {
 		return e.refuse(request.ID, err)
 	}
-	if err := e.authorize(request); err != nil {
+	if _, err := e.authorize(request); err != nil {
 		return e.refuse(request.ID, err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
@@ -290,7 +293,11 @@ func (e Executor) execute(ctx context.Context, request Request, services []Servi
 			action = "unpause"
 		}
 	}
-	output, code, err := e.Run(ctx, program, action, "--", request.Name)
+	args := []string{action, "--", request.Name}
+	if request.Kind == "docker" && action == "remove" {
+		args = []string{"rm", "-f", "--", request.Name}
+	}
+	output, code, err := e.Run(ctx, program, args...)
 	result := Result{ID: request.ID, OK: err == nil, Output: clean(output), FinishedAt: e.stamp()}
 	if code >= 0 {
 		result.ExitCode = &code

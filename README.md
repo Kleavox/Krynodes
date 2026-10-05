@@ -103,6 +103,15 @@ target or server) or pausing starts the status fresh and closes an open
 incident; the history stays. A server with a live connection (below) runs the
 changed check within seconds; others at their next report.
 
+From agent 0.4.0 a SERVICE check's menu has **Restart automatically**: one
+switch. When the check turns red (an incident opens; never while it is yellow
+or during planned work) the Worker queues a restart of its unit, once per
+incident. The server only restarts a unit it was told to with a fingerprint,
+that is not running, that you did not stop from Krynodes, and at most 3 times
+an hour. Turning it on needs a fingerprint, turning it off does not; the row
+shows `AUTO`, and the failure mail says the unit is being restarted. Removing
+the check or pointing it at another unit turns it off.
+
 Removing a check, pausing it or changing its kind, target or server asks for
 a trusted device's fingerprint (see Deploy), like deleting a server or creating
 an install command. One fingerprint covers 5 minutes of such work. An owner
@@ -226,7 +235,10 @@ The agent never runs anything itself:
   `krynodes-exec.timer` start it, the timer every 5 minutes to refresh the list of
   services.
 - `kry exec` refuses anything but a signed start, stop, restart or log read of
-  a service that is present on the server.
+  a service that is present on the server; from agent 0.4.0 also a signed stack
+  start, stop, restart or removal, a container removal, a new stack (checked
+  first, see below) and the auto-restart list. The only unsigned requests it
+  takes are turning auto-restart off and restarting a listed unit that is down.
 - It never starts, stops or restarts ssh, the network, Docker itself, systemd
   internals, cloudflared or Krynodes; it only reads their logs.
 - It keeps its state in `/var/lib/kry-exec`.
@@ -239,6 +251,34 @@ From agent 0.2.0 the **Stacks** view of the Services page deploys Docker
 Compose stacks: `docker compose pull`, then `up -d`, in the stack's own
 directory, with its own compose files. A failed deploy keeps the images that
 ran before it, and **Roll back** starts them again.
+
+Servers with Docker and Compose show the Docker logo on Fleet, Services and the
+node page (faded when Compose is missing; agent 0.4.0 reports it). From agent
+0.4.0 a stack's menu also has **Start**, **Stop**, **Restart**, **Remove** and
+**Delete permanently**, and a container's menu has **Remove**. A removed
+container leaves the list as soon as its server confirms.
+
+**Remove** takes a stack's containers and networks down and moves it to
+**Removed**, under the stack list. It waits there for 7 days with its volumes
+and compose files: **Restore** starts it again (with a fingerprint), and
+**Delete permanently** deletes it at once. After 7 days the server deletes it
+by itself. **Delete permanently**, on a running or a removed stack, deletes its
+containers, networks and volumes, and the folder Krynodes made for it; a folder
+elsewhere (a stack you started yourself) stays. Type the name to confirm.
+Images stay. A stack started again outside Krynodes leaves Removed with nothing
+deleted, and New stack refuses a name that waits there.
+
+**New stack** (Stacks view) runs a pasted `compose.yml` on a server, also a
+project that is not yours. The text is signed into the command. The server
+writes it to `/var/lib/kry-exec/compose/<name>`, resolves it with
+`docker compose config` and refuses, naming the service and the reason, a file
+that builds from source, asks for privileged mode, extra capabilities or
+devices, shares the server's network, processes or namespaces, turns off
+confinement, mounts anything outside its own folder (also through a symlink),
+uses an external or host network or volume, or includes other files. Published
+ports are bound to `127.0.0.1`; reach them through a Cloudflare Tunnel. Then
+it pulls, starts and health-checks the stack like a deploy. Do not paste
+passwords you use elsewhere: the text is kept with the action in History.
 
 Deploys, like start, stop and restart, need a fingerprint. On **Trusted
 devices** (account menu) you register a passkey on your laptop or phone; each
@@ -311,6 +351,7 @@ A daily cron (03:17 UTC) keeps the database small enough for the Free plan's
 | Log text fetched with **Logs**     | 1 day; the action stays            |
 | Trust changes (**Recent changes**) | open up to 24 hours, closed 1 year |
 | Removed devices                    | 1 year after removal               |
+| Removed stacks (on each server)    | 7 days, then deleted there         |
 | Enrollment tokens                  | 1 day after they expire            |
 | Mail throttle (Durable Object)     | 1 hour                             |
 

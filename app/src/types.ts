@@ -58,6 +58,7 @@ export interface CheckRecord {
   last_message: string | null;
   public: number;
   public_note: string | null;
+  auto_restart?: number;
   created_at: string;
 }
 
@@ -165,7 +166,20 @@ export type ServiceState = "running" | "stopped" | "failed" | "starting";
 export type ServiceAction = "start" | "stop" | "restart";
 export type ActionKind = ServiceKind | "compose" | "trust" | "host";
 export type ActionVerb =
-  ServiceAction | "deploy" | "rollback" | "trust" | "reboot" | "logs";
+  | ServiceAction
+  | "deploy"
+  | "rollback"
+  | "trust"
+  | "reboot"
+  | "logs"
+  | "remove"
+  | "purge"
+  | "restore"
+  | "create"
+  | "autorestart"
+  | "manual"
+  | "heal";
+export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -187,6 +201,12 @@ export interface StackEntry {
   rollback: boolean;
 }
 
+export interface RemovedStack {
+  project: string;
+  directory: string;
+  removedAt: string;
+}
+
 export interface NodeTrust {
   version: number;
   core: string[];
@@ -199,7 +219,9 @@ interface ServiceNode {
   refreshRequestedAt: string | null;
   services: ServiceEntry[];
   stacks: StackEntry[];
+  removed?: RemovedStack[];
   trust: NodeTrust | null;
+  docker?: DockerState | null;
 }
 
 export interface DeviceRecord {

@@ -152,7 +152,7 @@ describe("elapsed time", () => {
 });
 
 describe("maintenance spans", () => {
-  it("covers planned work on a server, two minutes after it ends, ten after a restart", () => {
+  it("covers planned work on a server, two minutes after it ends, ten after a restart, but not the auto-restart switch", () => {
     const spans = maintenanceSpans(
       [
         action({
@@ -165,6 +165,8 @@ describe("maintenance spans", () => {
         action({ id: "m3", action: "logs", sentAt: ago(5) }),
         reboot({ sentAt: ago(20), finishedAt: ago(19), status: "done" }),
         action({ id: "m4", sentAt: ago(1) }),
+        action({ id: "m5", action: "autorestart", sentAt: ago(3) }),
+        action({ id: "m6", action: "manual", sentAt: ago(2) }),
       ],
       "n1",
     );

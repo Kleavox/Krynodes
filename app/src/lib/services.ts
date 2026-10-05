@@ -10,7 +10,14 @@ import type {
   ServicesResponse,
   ServiceState,
 } from "../types";
-import { LOGS_AGENT, compareVersions } from "@krynodes/protocol/versions";
+import { isProtectedTarget } from "@krynodes/protocol/targets";
+import {
+  LOGS_AGENT,
+  STACKS_AGENT,
+  compareVersions,
+} from "@krynodes/protocol/versions";
+
+import { stacksReady } from "./devices";
 
 import { clockTime, nodeState, parseTimestamp } from "./format";
 import { untilWindowSettles } from "./series";
@@ -32,7 +39,37 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
     trust: { verb: "Update", doing: "Updating…", done: "Updated" },
     reboot: { verb: "Restart", doing: "Restarting…", done: "Restarted" },
     logs: { verb: "Logs", doing: "Fetching logs…", done: "Fetched logs" },
+    remove: { verb: "Remove", doing: "Removing…", done: "Removed" },
+    purge: {
+      verb: "Delete",
+      doing: "Deleting…",
+      done: "Deleted permanently",
+    },
+    restore: { verb: "Restore", doing: "Restoring…", done: "Restored" },
+    create: { verb: "Create", doing: "Creating…", done: "Created" },
+    autorestart: {
+      verb: "Turn on auto-restart for",
+      doing: "Turning on auto-restart for…",
+      done: "Now restarts automatically",
+    },
+    manual: {
+      verb: "Turn off auto-restart for",
+      doing: "Turning off auto-restart for…",
+      done: "No longer restarts automatically",
+    },
+    heal: {
+      verb: "Auto-restart",
+      doing: "Restarting…",
+      done: "Restarted automatically",
+    },
   };
+
+export const objectOf = (
+  action: Pick<ActionRecord, "action" | "kind" | "name">,
+) =>
+  action.action === "purge"
+    ? `${displayName(action.kind, action.name)} permanently`
+    : displayName(action.kind, action.name);
 
 export interface ActionTarget {
   nodeId: string;
@@ -142,9 +179,7 @@ export function actionText(action: ActionRecord, nodeName: string): string {
   const words = WORDS[action.action];
   switch (action.status) {
     case "queued":
-      return action.deliverableAt
-        ? `Waiting for ${nodeName}`
-        : "Waiting for its turn";
+      return `Waiting for ${action.deliverableAt ? nodeName : "its turn"} to ${words.verb.toLowerCase().replace(/ for$/u, "")}`;
     case "sent":
       return words.doing;
     case "done":
@@ -239,8 +274,26 @@ export function outcomeText(
           : `exit ${action.exitCode}`;
     return {
       ok: false,
-      text: `Could not ${words.verb.toLowerCase()} ${name} on ${nodeName} (${why})`,
+      text: `Could not ${words.verb.toLowerCase()} ${objectOf(action)} on ${nodeName} (${why})`,
     };
   }
+  return null;
+}
+
+export function autoRestartBlocker(
+  check: Pick<CheckRecord, "kind" | "target" | "node_id">,
+  node: NodeRecord | undefined,
+  data: ServicesResponse | undefined,
+): string | null {
+  if (!node || !stacksReady(node)) return `Needs agent ${STACKS_AGENT}`;
+  const unit = check.target.endsWith(".service")
+    ? check.target
+    : `${check.target}.service`;
+  if (isProtectedTarget("systemd", unit)) {
+    return "Krynodes never restarts this unit";
+  }
+  if (!serviceForCheck(check, data)) return "The unit is not on this server";
+  const entry = data?.nodes.find((item) => item.id === check.node_id);
+  if ((entry?.trust?.access.length ?? 0) === 0) return "Not trusted yet";
   return null;
 }

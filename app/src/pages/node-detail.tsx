@@ -5,6 +5,7 @@ import { errorMessage } from "@/lib/http";
 import { EmptyState } from "@/components/empty-state";
 import { FilterChips } from "@/components/filter-chips";
 import { MetricChart, type ChartRow } from "@/components/metric-chart";
+import { DockerMark } from "@/components/docker-mark";
 import { PageHeader } from "@/components/page-header";
 import { NodeStatus } from "@/components/node-status";
 import { StatusDot, checkTone } from "@/components/status";
@@ -116,11 +117,18 @@ export function NodeDetailPage() {
         }
         title={node.name}
         meta={
-          <NodeStatus
-            state={state}
-            operation={serverOperation(node, services.data?.actions ?? [], now)}
-            offlineDetail={`reported ${timeAgo(node.last_seen_at, now)}`}
-          />
+          <span className="flex items-center gap-2">
+            <NodeStatus
+              state={state}
+              operation={serverOperation(
+                node,
+                services.data?.actions ?? [],
+                now,
+              )}
+              offlineDetail={`reported ${timeAgo(node.last_seen_at, now)}`}
+            />
+            <DockerMark nodeId={node.id} />
+          </span>
         }
         actions={
           <>

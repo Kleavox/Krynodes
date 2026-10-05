@@ -214,3 +214,69 @@ describe("editing a check", () => {
     expect(t.incident().status).toBe("OPEN");
   });
 });
+
+describe("auto-restart follows its check", () => {
+  function watched() {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: NODE });
+    sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
+      .run(NODE);
+    sqlite
+      .prepare(
+        "INSERT INTO checks (id, node_id, name, kind, target, enabled, auto_restart) VALUES (?, ?, 'nginx', 'SERVICE', 'nginx', 1, 1)",
+      )
+      .run(CHECK, NODE);
+    const env = { DB: db } as unknown as Env;
+    const call = (method: string, body?: unknown) =>
+      app.request(
+        `https://kry.example.test/api/checks/${CHECK}`,
+        {
+          method,
+          headers: { "content-type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        },
+        env,
+      );
+    const manual = () =>
+      sqlite
+        .prepare("SELECT name, status FROM actions WHERE action = 'manual'")
+        .all();
+    const flag = () =>
+      (
+        sqlite
+          .prepare("SELECT auto_restart FROM checks WHERE id = ?")
+          .get(CHECK) as { auto_restart: number }
+      ).auto_restart;
+    return { sqlite, call, manual, flag };
+  }
+
+  it("turns it off on the server when the check is removed", async () => {
+    const t = watched();
+    expect((await t.call("DELETE")).status).toBeLessThan(300);
+    expect(t.manual()).toEqual([{ name: "nginx.service", status: "queued" }]);
+  });
+
+  it("turns it off when the check watches another unit, not on a rename", async () => {
+    const t = watched();
+    expect((await t.call("PATCH", { name: "web" })).status).toBe(200);
+    expect(t.manual()).toEqual([]);
+    expect(t.flag()).toBe(1);
+    expect((await t.call("PATCH", { target: "caddy.service" })).status).toBe(
+      200,
+    );
+    expect(t.flag()).toBe(0);
+    expect(t.manual()).toEqual([{ name: "nginx.service", status: "queued" }]);
+  });
+
+  it("keeps the unit listed while another check still restarts it", async () => {
+    const t = watched();
+    t.sqlite
+      .prepare(
+        "INSERT INTO checks (id, node_id, name, kind, target, enabled, auto_restart) VALUES ('other', ?, 'nginx again', 'SERVICE', 'nginx.service', 1, 1)",
+      )
+      .run(NODE);
+    expect((await t.call("DELETE")).status).toBeLessThan(300);
+    expect(t.manual()).toEqual([]);
+  });
+});

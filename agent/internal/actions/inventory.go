@@ -43,14 +43,17 @@ type Snapshot struct {
 	Services []Service
 	Stacks   []Stack
 	Compose  bool
+	Docker   string
 }
 
 type Inventory struct {
-	Hash     string                `json:"hash"`
-	TakenAt  string                `json:"takenAt"`
-	Services []Service             `json:"services"`
-	Stacks   []reporter.StackEntry `json:"stacks"`
-	Trust    reporter.TrustReport  `json:"trust"`
+	Hash     string                  `json:"hash"`
+	TakenAt  string                  `json:"takenAt"`
+	Services []Service               `json:"services"`
+	Stacks   []reporter.StackEntry   `json:"stacks"`
+	Trust    reporter.TrustReport    `json:"trust"`
+	Docker   string                  `json:"docker,omitempty"`
+	Removed  []reporter.RemovedStack `json:"removed"`
 }
 
 var unitStates = map[string]string{
@@ -175,7 +178,10 @@ func parseContainers(output string) ([]Service, []Stack) {
 	return services, stacks
 }
 
-func NewInventory(services []Service, stacks []reporter.StackEntry, trust reporter.TrustReport, now time.Time) (Inventory, error) {
+func NewInventory(services []Service, stacks []reporter.StackEntry, trust reporter.TrustReport, docker string, removed []reporter.RemovedStack, now time.Time) (Inventory, error) {
+	if removed == nil {
+		removed = []reporter.RemovedStack{}
+	}
 	sorted := slices.Clone(services)
 	if sorted == nil {
 		sorted = []Service{}
@@ -201,15 +207,17 @@ func NewInventory(services []Service, stacks []reporter.StackEntry, trust report
 		trust.Access = []string{}
 	}
 	encoded, err := json.Marshal(struct {
-		Services []Service             `json:"services"`
-		Stacks   []reporter.StackEntry `json:"stacks"`
-		Trust    reporter.TrustReport  `json:"trust"`
-	}{sorted, listed, trust})
+		Services []Service               `json:"services"`
+		Stacks   []reporter.StackEntry   `json:"stacks"`
+		Trust    reporter.TrustReport    `json:"trust"`
+		Docker   string                  `json:"docker"`
+		Removed  []reporter.RemovedStack `json:"removed"`
+	}{sorted, listed, trust, docker, removed})
 	if err != nil {
 		return Inventory{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust}, nil
+	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed}, nil
 }
 
 func rank(service Service) int {
@@ -234,15 +242,15 @@ func Collect(ctx context.Context, run Runner, remembered []string) (Snapshot, er
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("list unit files: %w", err)
 	}
-	snapshot := Snapshot{Services: parseUnits(string(units), string(files), remembered)}
+	snapshot := Snapshot{Services: parseUnits(string(units), string(files), remembered), Docker: "missing"}
 	if containers, err := step("docker", "ps", "-a", "--no-trunc", "--format", containerFormat); err == nil {
 		services, stacks := parseContainers(string(containers))
 		snapshot.Services = append(snapshot.Services, services...)
 		snapshot.Stacks = stacks
-		if len(stacks) > 0 {
-			if _, err := step("docker", "compose", "version"); err == nil {
-				snapshot.Compose = true
-			}
+		snapshot.Docker = "no-compose"
+		if _, err := step("docker", "compose", "version"); err == nil {
+			snapshot.Compose = true
+			snapshot.Docker = "ready"
 		}
 	}
 	return snapshot, nil

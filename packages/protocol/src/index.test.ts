@@ -238,6 +238,89 @@ describe("service action messages", () => {
     expect(agentActionSchema.safeParse(unsigned).success).toBe(false);
   });
 
+  it("carries the stack and container commands of agent 0.4.0, signed", () => {
+    for (const verb of [
+      "start",
+      "stop",
+      "restart",
+      "remove",
+      "purge",
+      "create",
+      "restore",
+    ]) {
+      expect(
+        agentActionSchema.safeParse({
+          ...action,
+          kind: "compose",
+          name: "uptime-kuma",
+          action: verb,
+        }).success,
+        verb,
+      ).toBe(true);
+    }
+    expect(
+      agentActionSchema.safeParse({ ...action, action: "remove" }).success,
+    ).toBe(true);
+    expect(
+      agentActionSchema.safeParse({ ...action, action: "purge" }).success,
+    ).toBe(false);
+    expect(
+      agentActionSchema.safeParse({
+        ...action,
+        kind: "systemd",
+        name: "nginx.service",
+        action: "remove",
+      }).success,
+    ).toBe(false);
+    const { signed: _, ...unsigned } = action;
+    expect(
+      agentActionSchema.safeParse({
+        ...unsigned,
+        kind: "compose",
+        name: "uptime-kuma",
+        action: "create",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("turns auto-restart on only with a signature; off and heal need none", () => {
+    const unit = { ...action, kind: "systemd", name: "nginx.service" };
+    const { signed: _, ...bare } = unit;
+    expect(
+      agentActionSchema.safeParse({ ...unit, action: "autorestart" }).success,
+    ).toBe(true);
+    expect(
+      agentActionSchema.safeParse({ ...bare, action: "autorestart" }).success,
+    ).toBe(false);
+    expect(
+      agentActionSchema.safeParse({ ...bare, action: "manual" }).success,
+    ).toBe(true);
+    expect(
+      agentActionSchema.safeParse({ ...bare, action: "heal" }).success,
+    ).toBe(true);
+    expect(
+      agentActionSchema.safeParse({
+        ...bare,
+        kind: "docker",
+        name: "adguard",
+        action: "heal",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("lets a signed command carry a compose file of up to 32 KB", () => {
+    const command = "a".repeat(60_000);
+    expect(
+      agentActionSchema.safeParse({
+        ...action,
+        kind: "compose",
+        name: "uptime-kuma",
+        action: "create",
+        signed: { ...signedCommand, command },
+      }).success,
+    ).toBe(true);
+  });
+
   it("carries a result of up to 64 KiB, enough for the last log lines", () => {
     const result = {
       id,
@@ -315,6 +398,38 @@ describe("service action messages", () => {
         inventory: { hash: "a".repeat(64) },
       }).success,
     ).toBe(true);
+    for (const docker of ["ready", "no-compose", "missing"]) {
+      expect(
+        agentActionsRequestSchema.safeParse({
+          nodeId,
+          inventory: { ...inventory, docker },
+        }).success,
+        docker,
+      ).toBe(true);
+    }
+    expect(
+      agentActionsRequestSchema.safeParse({
+        nodeId,
+        inventory: { ...inventory, docker: "maybe" },
+      }).success,
+    ).toBe(false);
+    const removed = {
+      project: "kuma",
+      directory: "/var/lib/kry-exec/compose/kuma",
+      removedAt: "2026-10-05T10:00:00.000Z",
+    };
+    expect(
+      agentActionsRequestSchema.safeParse({
+        nodeId,
+        inventory: { ...inventory, removed: [removed] },
+      }).success,
+    ).toBe(true);
+    expect(
+      agentActionsRequestSchema.safeParse({
+        nodeId,
+        inventory: { ...inventory, removed: [{ ...removed, project: "Kuma" }] },
+      }).success,
+    ).toBe(false);
     expect(agentActionsRequestSchema.safeParse({ nodeId }).success).toBe(false);
     expect(
       agentActionsRequestSchema.safeParse({
@@ -421,7 +536,7 @@ describe("deploy messages", () => {
     inventory: { hash: "a".repeat(64), ...extra },
   });
 
-  it("accepts a signed compose deploy and refuses it unsigned or with a service action", () => {
+  it("accepts a signed compose deploy and refuses it unsigned or with a server action", () => {
     expect(agentActionSchema.safeParse(deploy).success).toBe(true);
     expect(
       agentActionSchema.safeParse({ ...deploy, action: "rollback" }).success,
@@ -429,7 +544,7 @@ describe("deploy messages", () => {
     const { signed: _, ...unsigned } = deploy;
     expect(agentActionSchema.safeParse(unsigned).success).toBe(false);
     expect(
-      agentActionSchema.safeParse({ ...deploy, action: "restart" }).success,
+      agentActionSchema.safeParse({ ...deploy, action: "reboot" }).success,
     ).toBe(false);
     expect(
       agentActionSchema.safeParse({

@@ -252,6 +252,7 @@ export interface CommandTarget {
   nodeId: string;
   kind: ActionKind;
   name: string;
+  compose?: string;
 }
 
 export function actionCommand(
@@ -268,6 +269,7 @@ export function actionCommand(
     action: target.action,
     issuedAt: iso(now),
     expiresAt: iso(session.expiresAt + COMMAND_GRACE_MS),
+    ...(target.compose ? { compose: target.compose } : {}),
   };
 }
 
@@ -317,7 +319,7 @@ export function signTargets(
   now = Date.now(),
 ): Promise<SignedTarget[]> {
   return Promise.all(
-    targets.map(async ({ nodeId, kind, name }) => {
+    targets.map(async ({ nodeId, kind, name, compose }) => {
       const id = crypto.randomUUID();
       return {
         id,
@@ -326,7 +328,11 @@ export function signTargets(
         name,
         signed: await signCommand(
           session,
-          actionCommand({ id, nodeId, kind, name, action }, session, now),
+          actionCommand(
+            { id, nodeId, kind, name, action, compose },
+            session,
+            now,
+          ),
         ),
       };
     }),

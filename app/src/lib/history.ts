@@ -1,6 +1,6 @@
 import type { ActionRecord } from "../types";
 import { shortDate } from "./format";
-import { displayName, verb } from "./services";
+import { displayName, objectOf, verb } from "./services";
 
 const dayOf = (at: number, offset = 0) => {
   const date = new Date(at);
@@ -37,5 +37,5 @@ export function historyText(action: ActionRecord): string {
   const name = displayName(action.kind, action.name);
   return action.action === "logs"
     ? `Read logs of ${name}`
-    : `${verb(action.action)} ${name}`;
+    : `${verb(action.action)} ${objectOf(action)}`;
 }

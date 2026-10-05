@@ -99,6 +99,24 @@ func TestPollSendsAChangedInventoryOnceWithItsServices(t *testing.T) {
 	}
 }
 
+func TestPollSendsTheDockerState(t *testing.T) {
+	relay, poster := newRelay(t)
+	inventory, err := NewInventory(nil, nil, reporter.TrustReport{}, "ready", nil, executorNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(relay.StateDir, "inventory.json", inventory, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	poster.hash = inventory.Hash
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.reports) != 1 || poster.reports[0].Inventory == nil || poster.reports[0].Inventory.Docker != "ready" {
+		t.Fatalf("unexpected reports %#v", poster.reports)
+	}
+}
+
 func TestAfterARefreshTheHashIsSentEvenWhenNothingChanged(t *testing.T) {
 	relay, poster := newRelay(t)
 	inventory := writeInventory(t, relay, nil, executorNow)

@@ -25,6 +25,7 @@ export interface CheckRow {
   last_checked_at: string | null;
   consecutive_failures: number;
   last_message: string | null;
+  auto_restart?: number;
 }
 
 export async function readJson(context: KrynodesContext): Promise<unknown> {

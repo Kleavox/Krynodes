@@ -21,7 +21,7 @@ func (e Executor) logs(ctx context.Context, request Request, snapshot Snapshot) 
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
 	}
-	if err := e.authorize(request); err != nil {
+	if _, err := e.authorize(request); err != nil {
 		return e.refuse(request.ID, err)
 	}
 	command, err := e.logCommand(request, snapshot)

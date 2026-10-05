@@ -185,7 +185,7 @@ describe("compose actions", () => {
     expect((await deploy("deploy", command({ nodeId: B }))).status).toBe(400);
   });
 
-  it("refuses an unsigned deploy, a restart signed as a deploy and mixed kinds", async () => {
+  it("refuses an unsigned deploy, a restart signed as a deploy, and a stack restart on an older agent", async () => {
     const { call, command, deploy } = setup();
     expect((await deploy("deploy", undefined)).status).toBe(400);
     expect(
@@ -198,9 +198,11 @@ describe("compose actions", () => {
         })
       ).status,
     ).toBe(400);
-    expect(
-      (await deploy("restart", command({ action: "restart" }))).status,
-    ).toBe(400);
+    const restart = await deploy("restart", command({ action: "restart" }));
+    expect(restart.status).toBe(422);
+    expect(((await restart.json()) as { code: string }).code).toBe(
+      "AGENT_TOO_OLD",
+    );
   });
 
   it("refuses a missing stack and a rollback with nothing kept", async () => {

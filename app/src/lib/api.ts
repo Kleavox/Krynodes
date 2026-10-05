@@ -251,14 +251,28 @@ export const ACTION_QUERIES = [
 ] as const;
 
 export const postActions = (body: {
-  action: Exclude<ActionVerb, "trust">;
+  action: Exclude<ActionVerb, "trust" | "heal">;
   mode: BatchMode;
-  targets: SignedTarget[];
+  targets: (SignedTarget | { nodeId: string; kind: "systemd"; name: string })[];
 }) =>
   apiFetch<{ batchId: string; actions: { id: string }[] }>(
     "/api/actions",
     send("POST", body),
   );
+
+export function useManualRestart() {
+  return useApiMutation(
+    (target: { nodeId: string; name: string }) =>
+      postActions({
+        action: "manual",
+        mode: "parallel",
+        targets: [
+          { nodeId: target.nodeId, kind: "systemd", name: target.name },
+        ],
+      }),
+    [...ACTION_QUERIES, queryKeys.overview],
+  );
+}
 
 export function useAction(id: string | null) {
   return useQuery({

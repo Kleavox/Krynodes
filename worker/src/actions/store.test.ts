@@ -56,9 +56,9 @@ function setup() {
         status: string;
       }
     ).status;
-  const finish = (nodeId: string, id: string, ok: boolean, now: number) =>
+  const finish = async (nodeId: string, id: string, ok: boolean, now: number) =>
     db.batch([
-      ...actionResultStatements(
+      ...(await actionResultStatements(
         db,
         nodeId,
         [
@@ -71,7 +71,7 @@ function setup() {
           },
         ],
         now,
-      ),
+      )),
       ...sweepStatements(db, now),
     ]);
   return { db, sqlite, queue, sweep, status, finish };
@@ -206,9 +206,9 @@ describe("action batches", () => {
     await deliverActions(db, B, NOW);
     await deliverActions(db, C, NOW);
     const [a, b, c] = actions;
-    const report = (nodeId: string, id: string, finishedAt: string) =>
+    const report = async (nodeId: string, id: string, finishedAt: string) =>
       db.batch(
-        actionResultStatements(
+        await actionResultStatements(
           db,
           nodeId,
           [{ id, ok: true, exitCode: 0, output: "", finishedAt }],

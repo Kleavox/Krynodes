@@ -601,3 +601,205 @@ describe("cancel, refresh, history and retention", () => {
     ]);
   });
 });
+
+describe("stack, container and auto-restart commands (agent 0.4.0)", () => {
+  function newer() {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE nodes SET agent_version = '0.4.0', docker = 'ready' WHERE id IN (?, ?)",
+      )
+      .run(A, B);
+    t.sqlite.prepare("UPDATE nodes SET docker = 'missing' WHERE id = ?").run(B);
+    t.sqlite
+      .prepare(
+        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'kuma', '/var/lib/kry-exec/compose/kuma', 1, 1, 1, 0, datetime('now'))",
+      )
+      .run(A);
+    t.sqlite
+      .prepare(
+        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'systemd', 'nginx.service', 'running')",
+      )
+      .run(A);
+    const send = (
+      action: string,
+      target: { nodeId: string; kind: string; name: string },
+      signed = true,
+    ) => {
+      const id = crypto.randomUUID();
+      return t.call("POST", "/api/actions", {
+        action,
+        targets: [
+          {
+            ...target,
+            id,
+            ...(signed ? { signed: signedFor({ ...target, id, action }) } : {}),
+          },
+        ],
+      });
+    };
+    return { ...t, send };
+  }
+
+  it("starts, stops, restarts and removes a stack, only on agent 0.4.0", async () => {
+    const t = newer();
+    for (const verb of ["start", "stop", "restart", "remove"]) {
+      const response = await t.send(verb, {
+        nodeId: A,
+        kind: "compose",
+        name: "kuma",
+      });
+      expect(response.status, verb).toBe(201);
+      t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    }
+    t.sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.3.5' WHERE id = ?")
+      .run(A);
+    const old = await t.send("restart", {
+      nodeId: A,
+      kind: "compose",
+      name: "kuma",
+    });
+    expect(old.status).toBe(422);
+    expect((await reply(old)).code).toBe("AGENT_TOO_OLD");
+  });
+
+  it("removes a container but never a unit", async () => {
+    const t = newer();
+    expect(
+      (await t.send("remove", { nodeId: A, kind: "docker", name: "adguard" }))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await t.send("remove", {
+          nodeId: A,
+          kind: "systemd",
+          name: "nginx.service",
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("creates a stack only under a free name on a server with Docker", async () => {
+    const t = newer();
+    expect(
+      (await t.send("create", { nodeId: A, kind: "compose", name: "uptime" }))
+        .status,
+    ).toBe(201);
+    const taken = await t.send("create", {
+      nodeId: A,
+      kind: "compose",
+      name: "kuma",
+    });
+    expect(taken.status).toBe(409);
+    expect((await reply(taken)).code).toBe("STACK_EXISTS");
+    const missing = await t.send("create", {
+      nodeId: B,
+      kind: "compose",
+      name: "uptime",
+    });
+    expect(missing.status).toBe(422);
+    expect((await reply(missing)).code).toBe("NO_DOCKER");
+    expect(
+      (
+        await t.send(
+          "create",
+          { nodeId: A, kind: "compose", name: "other" },
+          false,
+        )
+      ).status,
+    ).toBe(400);
+  });
+
+  it("turns auto-restart on with a signature for a unit a SERVICE check watches, and off without one", async () => {
+    const t = newer();
+    const unit = { nodeId: A, kind: "systemd", name: "nginx.service" };
+    const unwatched = await t.send("autorestart", unit);
+    expect(unwatched.status).toBe(422);
+    expect((await reply(unwatched)).code).toBe("NO_CHECK");
+    t.sqlite
+      .prepare(
+        "INSERT INTO checks (id, node_id, name, kind, target, enabled) VALUES ('c1', ?, 'nginx', 'SERVICE', 'nginx', 1)",
+      )
+      .run(A);
+    expect((await t.send("autorestart", unit, false)).status).toBe(400);
+    expect((await t.send("autorestart", unit)).status).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    expect((await t.send("manual", unit, false)).status).toBe(201);
+    expect(
+      t.sqlite
+        .prepare(
+          "SELECT action, signed IS NULL AS bare FROM actions ORDER BY requested_at, action",
+        )
+        .all(),
+    ).toEqual([
+      { action: "autorestart", bare: 0 },
+      { action: "manual", bare: 1 },
+    ]);
+  });
+});
+
+describe("removed stacks", () => {
+  function withRemoved() {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE nodes SET agent_version = '0.4.0', docker = 'ready' WHERE id = ?",
+      )
+      .run(A);
+    t.sqlite
+      .prepare(
+        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'kuma', '/var/lib/kry-exec/compose/kuma', 1, 1, 1, 0, datetime('now'))",
+      )
+      .run(A);
+    t.sqlite
+      .prepare(
+        "INSERT INTO removed_stacks (node_id, project, directory, removed_at) VALUES (?, 'old', '/home/alice/old', '2026-10-04T10:00:00.000Z')",
+      )
+      .run(A);
+    const send = (action: string, name: string) => {
+      const id = crypto.randomUUID();
+      const target = { nodeId: A, kind: "compose", name };
+      return t.call("POST", "/api/actions", {
+        action,
+        targets: [
+          { ...target, id, signed: signedFor({ ...target, id, action }) },
+        ],
+      });
+    };
+    return { ...t, send };
+  }
+
+  it("lists removed stacks with each server", async () => {
+    const t = withRemoved();
+    const body = (await (await t.call("GET", "/api/services")).json()) as {
+      nodes: { id: string; removed: unknown[] }[];
+    };
+    expect(body.nodes.find((node) => node.id === A)!.removed).toEqual([
+      {
+        project: "old",
+        directory: "/home/alice/old",
+        removedAt: "2026-10-04T10:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("restores and deletes a removed stack, never restores a running one", async () => {
+    const t = withRemoved();
+    expect((await t.send("restore", "old")).status).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    expect((await t.send("purge", "old")).status).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    const running = await t.send("restore", "kuma");
+    expect(running.status).toBe(422);
+    expect((await reply(running)).code).toBe("UNKNOWN_TARGET");
+  });
+
+  it("keeps New stack away from a name waiting in Removed", async () => {
+    const t = withRemoved();
+    const taken = await t.send("create", "old");
+    expect(taken.status).toBe(409);
+    expect((await reply(taken)).code).toBe("STACK_EXISTS");
+  });
+});

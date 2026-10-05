@@ -25,7 +25,7 @@ export function useSignedAction(toastErrors = true) {
       mode = "rolling",
       targets,
     }: {
-      action: Exclude<ActionVerb, "trust">;
+      action: Exclude<ActionVerb, "trust" | "heal" | "manual">;
       mode?: BatchMode;
       targets: CommandTarget[];
     }) => {

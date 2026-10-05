@@ -229,6 +229,45 @@ describe("passkeys", () => {
     });
   });
 
+  it("signs a new stack's compose file into its command, and nothing else carries one", async () => {
+    authenticator();
+    const session = await createSession(["ZGV2aWNl"], "kry.example.test", T);
+    const compose = "services:\n  web:\n    image: nginx\n";
+    const [created, restarted] = await Promise.all([
+      signTargets(
+        session,
+        "create",
+        [
+          {
+            nodeId: "11111111-1111-4111-8111-111111111111",
+            kind: "compose",
+            name: "web",
+            compose,
+          },
+        ],
+        T + MINUTE,
+      ),
+      signTargets(
+        session,
+        "restart",
+        [
+          {
+            nodeId: "11111111-1111-4111-8111-111111111111",
+            kind: "docker",
+            name: "adguard",
+          },
+        ],
+        T + MINUTE,
+      ),
+    ]);
+    expect(decode(created[0]!.signed.command)).toMatchObject({
+      action: "create",
+      compose,
+    });
+    expect(created[0]).not.toHaveProperty("compose");
+    expect(decode(restarted[0]!.signed.command)).not.toHaveProperty("compose");
+  });
+
   it("always asks for a fingerprint, the device's own first", async () => {
     const asked: CredentialRequestOptions[] = [];
     vi.stubGlobal("navigator", {

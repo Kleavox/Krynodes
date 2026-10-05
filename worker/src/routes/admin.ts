@@ -6,6 +6,7 @@ import { readAgentRelease } from "../agent/releases";
 import { fleetLive, mergeLive, pokeSoon } from "../fleet/client";
 import { validateCheckTarget } from "../lib/checks";
 import { confirmed } from "../trust/intent";
+import { manualStatement, unitOf } from "../actions/store";
 import {
   agentOrigin,
   findOwnedNode,
@@ -39,7 +40,7 @@ export function registerAdminRoutes(
         `SELECT c.id, c.node_id, c.name, c.kind, c.target, c.enabled,
               c.status, c.timeout_seconds, c.latency_ms, c.last_checked_at,
               c.consecutive_failures, c.last_message, c.public, c.public_note,
-              c.created_at
+              c.auto_restart, c.created_at
        FROM checks c
        JOIN nodes n ON n.id = c.node_id
        WHERE n.owner_user_id = ?
@@ -253,6 +254,11 @@ export function registerAdminRoutes(
     if (change.publicNote !== undefined) {
       set("public_note", change.publicNote || null);
     }
+    const moved =
+      kind !== check.kind ||
+      target !== check.target ||
+      nodeId !== check.node_id;
+    if (moved && check.auto_restart === 1) set("auto_restart", 0);
     if (fresh) {
       set("node_id", nodeId);
       set("kind", kind);
@@ -280,6 +286,17 @@ export function registerAdminRoutes(
         ).bind(new Date().toISOString(), check.id),
       );
     }
+    if (moved && check.auto_restart === 1 && check.node_id) {
+      statements.push(
+        manualStatement(context.env.DB, {
+          nodeId: check.node_id,
+          name: unitOf(check.target),
+          requestedBy: context.get("identity").email,
+          now: Date.now(),
+          checkId: check.id,
+        }),
+      );
+    }
     await context.env.DB.batch(statements);
     pokeSoon(context, context.get("identity").id, [
       ...new Set([check.node_id ?? nodeId, nodeId]),
@@ -292,9 +309,20 @@ export function registerAdminRoutes(
     if (!check) return context.json({ code: "NOT_FOUND" }, 404);
     const refused = await confirmed(context, "check.delete", check.id);
     if (refused) return refused;
-    await context.env.DB.prepare("DELETE FROM checks WHERE id = ?")
-      .bind(check.id)
-      .run();
+    await context.env.DB.batch([
+      ...(check.auto_restart === 1 && check.node_id
+        ? [
+            manualStatement(context.env.DB, {
+              nodeId: check.node_id,
+              name: unitOf(check.target),
+              requestedBy: context.get("identity").email,
+              now: Date.now(),
+              checkId: check.id,
+            }),
+          ]
+        : []),
+      context.env.DB.prepare("DELETE FROM checks WHERE id = ?").bind(check.id),
+    ]);
     if (check.node_id) {
       pokeSoon(context, context.get("identity").id, [check.node_id]);
     }
@@ -314,7 +342,7 @@ async function ownedCheck(context: KrynodesContext): Promise<CheckRow | null> {
   return context.env.DB.prepare(
     `SELECT c.id, c.node_id, c.name, c.kind, c.target, c.enabled,
             c.status, c.timeout_seconds, c.latency_ms, c.last_checked_at,
-            c.consecutive_failures, c.last_message
+            c.consecutive_failures, c.last_message, c.auto_restart
      FROM checks c JOIN nodes n ON n.id = c.node_id
      WHERE c.id = ? AND n.owner_user_id = ? LIMIT 1`,
   )

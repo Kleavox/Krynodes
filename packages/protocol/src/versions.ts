@@ -1,6 +1,7 @@
 export const MIN_AGENT_VERSION = "0.3.1";
 export const LOGS_AGENT = "0.3.3";
 export const TRUST_AGENT = "0.3.5";
+export const STACKS_AGENT = "0.4.0";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 

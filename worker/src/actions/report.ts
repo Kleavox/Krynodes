@@ -12,7 +12,7 @@ export async function receiveReport(
 ): Promise<{ ok: true; inventoryHash: string | null }> {
   if (report.results && report.results.length > 0) {
     await db.batch([
-      ...actionResultStatements(db, node.id, report.results, now),
+      ...(await actionResultStatements(db, node.id, report.results, now)),
       ...sweepStatements(db, now),
     ]);
   }

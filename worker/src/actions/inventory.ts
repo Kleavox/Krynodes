@@ -185,6 +185,21 @@ export async function applyInventory(
     ...(inventory.stacks
       ? await stackStatements(db, node.id, inventory.stacks, at)
       : []),
+    ...(inventory.removed
+      ? [
+          db
+            .prepare("DELETE FROM removed_stacks WHERE node_id = ?")
+            .bind(node.id),
+          db
+            .prepare(
+              `INSERT INTO removed_stacks (node_id, project, directory, removed_at)
+               SELECT ?1, json_extract(value, '$.project'), json_extract(value, '$.directory'),
+                      json_extract(value, '$.removedAt')
+               FROM json_each(?2)`,
+            )
+            .bind(node.id, JSON.stringify(inventory.removed)),
+        ]
+      : []),
     ...(inventory.trust
       ? [
           db
@@ -194,10 +209,11 @@ export async function applyInventory(
       : []),
     db
       .prepare(
-        `UPDATE nodes SET inventory_hash = ?, inventory_at = ?, refresh_requested_at = NULL
+        `UPDATE nodes SET inventory_hash = ?, inventory_at = ?, refresh_requested_at = NULL,
+           docker = COALESCE(?, docker)
          WHERE id = ?`,
       )
-      .bind(inventory.hash, at, node.id),
+      .bind(inventory.hash, at, inventory.docker ?? null, node.id),
   ]);
   return inventory.hash;
 }
