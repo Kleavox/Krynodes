@@ -7,16 +7,80 @@ if [ "${1:-}" = "--update" ]; then
 fi
 endpoint="${1:-}"
 token="${2:-}"
+trust=""
 trust_origin=""
-if [ "$mode" = "enroll" ] && [ "${3:-}" = "--trust" ]; then
-  trust_origin="${4:-}"
-  if [ -z "$trust_origin" ] || [ -z "${5:-}" ]; then
-    echo "--trust needs the dashboard origin and at least one device" >&2
+setup=""
+reboot_hour=""
+if [ "$mode" = "enroll" ] && [ $# -ge 2 ]; then
+  shift 2
+  if [ "${1:-}" = "--trust" ]; then
+    trust="yes"
+    trust_origin="${2:-}"
+    shift
+    if [ $# -gt 0 ]; then
+      shift
+    fi
+  fi
+  count=$#
+  index=0
+  while [ "$index" -lt "$count" ]; do
+    arg="$1"
+    shift
+    index=$((index + 1))
+    case "$arg" in
+      --setup | --reboot-hour)
+        if [ "$index" -ge "$count" ]; then
+          echo "$arg needs a value" >&2
+          exit 1
+        fi
+        if [ "$arg" = "--setup" ]; then
+          setup="$1"
+        else
+          reboot_hour="$1"
+        fi
+        shift
+        index=$((index + 1))
+        ;;
+      *) set -- "$@" "$arg" ;;
+    esac
+  done
+  if [ -n "$trust" ]; then
+    case "$trust_origin" in
+      "" | --*)
+        echo "--trust needs the dashboard origin and at least one device" >&2
+        exit 1
+        ;;
+    esac
+    if [ $# -eq 0 ]; then
+      echo "--trust needs the dashboard origin and at least one device" >&2
+      exit 1
+    fi
+  elif [ $# -gt 0 ]; then
+    echo "Unexpected argument: $1" >&2
     exit 1
   fi
-  shift 4
 else
   set --
+fi
+setup_flags=""
+for item in $(echo "$setup" | tr ',' ' '); do
+  case "$item" in
+    recommended) setup_flags="$setup_flags --recommended" ;;
+    docker) setup_flags="$setup_flags --docker" ;;
+    *)
+      echo "--setup takes recommended, docker or both" >&2
+      exit 1
+      ;;
+  esac
+done
+if [ -n "$reboot_hour" ]; then
+  case "$reboot_hour" in
+    [0-9] | 1[0-9] | 2[0-3]) setup_flags="$setup_flags --reboot-hour $reboot_hour" ;;
+    *)
+      echo "--reboot-hour is 0 to 23" >&2
+      exit 1
+      ;;
+  esac
 fi
 base="${KRY_DOWNLOAD_BASE:-https://github.com/Kleavox/Krynodes/releases/latest/download}"
 bin="${KRY_BIN:-/usr/local/bin/kry}"
@@ -89,6 +153,11 @@ fi
 "$bin" install-service
 if [ -n "$trust_origin" ]; then
   "$bin" trust --initial --origin "$trust_origin" "$@"
+fi
+if [ -n "$setup" ]; then
+  if ! "$bin" setup $setup_flags; then
+    echo "Setup did not finish; turn the rest on from the dashboard."
+  fi
 fi
 systemctl restart krynodes.service
 

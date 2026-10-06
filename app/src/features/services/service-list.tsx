@@ -12,7 +12,6 @@ import { historyText } from "@/lib/history";
 import { handleOf } from "@/lib/operations";
 import {
   actionText,
-  canReadLogs,
   displayName,
   durationText,
   isPending,
@@ -22,7 +21,7 @@ import {
   type ServiceMember,
 } from "@/lib/services";
 import { cn } from "@/lib/utils";
-import { stacksReady } from "@/lib/devices";
+import { agentCurrent } from "@/lib/devices";
 import type { ActionRecord, ServiceAction, ServiceState } from "@/types";
 
 import type { ActionRequest } from "./action-dialog";
@@ -183,7 +182,7 @@ function MemberControls({
             ? []
             : [{ label: "Start", onSelect: () => direct("start") }]),
           { label: "Restart", onSelect: () => direct("restart") },
-          ...(canReadLogs(member.node)
+          ...(agentCurrent(member.node)
             ? [{ label: "Logs", onSelect: () => setReading(true) }]
             : []),
           {
@@ -191,7 +190,7 @@ function MemberControls({
             destructive: true,
             onSelect: () => onRequest({ action: "stop", target }),
           },
-          ...(member.entry.kind === "docker" && stacksReady(member.node)
+          ...(member.entry.kind === "docker" && agentCurrent(member.node)
             ? [
                 {
                   label: "Remove",

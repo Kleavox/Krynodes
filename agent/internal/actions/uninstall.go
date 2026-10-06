@@ -16,6 +16,7 @@ type Removal struct {
 	TurnedOff []string
 	Apps      []string
 	Problems  []string
+	Docker    string
 }
 
 var turnedOff = map[string]string{
@@ -38,10 +39,7 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	}
 	env := recipes.Env{Root: e.Root, Run: recipes.Runner(e.Run)}
 	if state, err := readState[lockdownState](e.StateDir, "lockdown.json"); err == nil && !state.At.IsZero() {
-		if len(state.Containers) > 0 {
-			_, err := e.docker(ctx, upTimeout, "start", append([]string{"start"}, state.Containers...)...)
-			problem("start what Lock down stopped", err)
-		}
+		problem("start what Lock down stopped", e.reopen(ctx, state))
 		if state.SSH && !problem("SSH keys only", recipes.Undo(ctx, env, "ssh-keys-only", nil)) {
 			removal.TurnedOff = append(removal.TurnedOff, turnedOff["ssh-keys-only"])
 		}
@@ -58,6 +56,13 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 		ruleCtx, cancel := context.WithTimeout(ctx, collectTimeout)
 		e.Run(ruleCtx, rule[0], append([]string{"-D"}, rule[1:]...)...)
 		cancel()
+	}
+	if _, err := os.Stat(filepath.Join(e.StateDir, "docker.json")); err == nil {
+		remove := "sudo apt-get purge "
+		if recipes.Detect(env).Family == recipes.RHEL {
+			remove = "sudo dnf remove "
+		}
+		removal.Docker = "Docker stays for your apps. Krynodes installed it; remove it with: " + remove + "docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
 	}
 	composeDir := filepath.Join(e.StateDir, "compose")
 	keepDir := filepath.Join(filepath.Dir(e.StateDir), "krynodes-stacks")

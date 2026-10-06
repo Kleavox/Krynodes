@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   exposeSteps,
+  addressProblem,
   hostnameFor,
   moveSteps,
   pieceJson,
@@ -133,6 +134,23 @@ describe("web addresses", () => {
     expect(hostnameFor("Listmonk_App", "VM-0-10-debian", "kleavox.xyz")).toBe(
       "listmonk-app-vm-0-10-debian.kleavox.xyz",
     );
+  });
+
+  it("never ends a long name with a hyphen", () => {
+    const name = hostnameFor(`${"a".repeat(62)}-b`, "pivox", "kleavox.xyz");
+    expect(name).toBe(`${"a".repeat(62)}.kleavox.xyz`);
+  });
+
+  it("says what is wrong with an address before the fingerprint", () => {
+    expect(addressProblem("listmonk-pivox", "9000")).toBeNull();
+    for (const label of ["", "-listmonk", "listmonk-", "a".repeat(64)]) {
+      expect(addressProblem(label, "9000")).toMatch(/lowercase letters/u);
+    }
+    for (const port of ["", "0", "65536"]) {
+      expect(addressProblem("listmonk", port)).toBe(
+        "The port must be 1 to 65535.",
+      );
+    }
   });
 
   it("opens with a piece from another server, or alone when one server holds the token", () => {
@@ -379,6 +397,28 @@ describe("removing a server that holds a piece", () => {
         { nodeId: C, sealKey: "key-3" },
       ],
       forgets: [A],
+    });
+  });
+
+  it("still cleans Cloudflare for a server with web addresses but no piece", () => {
+    const plain = planRemoval(
+      [node(A), node(B), node(C, { vault: null })],
+      C,
+      SET,
+    );
+    expect(plain).toEqual({ ok: true, needed: false });
+    expect(
+      planRemoval([node(A), node(B), node(C, { vault: null })], C, SET, true),
+    ).toEqual({
+      ok: true,
+      needed: true,
+      assembler: A,
+      releaser: B,
+      holders: [
+        { nodeId: A, sealKey: "key-1" },
+        { nodeId: B, sealKey: "key-2" },
+      ],
+      forgets: [],
     });
   });
 

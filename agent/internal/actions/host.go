@@ -29,10 +29,15 @@ type recipeState struct {
 	Applied map[string]appliedRecipe `json:"applied"`
 }
 
+type dockerState struct {
+	InstalledAt time.Time `json:"installedAt"`
+}
+
 type lockdownState struct {
-	Containers []string  `json:"containers"`
-	SSH        bool      `json:"ssh"`
-	At         time.Time `json:"at"`
+	Containers []string          `json:"containers"`
+	Restart    map[string]string `json:"restart,omitempty"`
+	SSH        bool              `json:"ssh"`
+	At         time.Time         `json:"at"`
 }
 
 func (e Executor) readRecipes() recipeState {
@@ -71,6 +76,7 @@ func (e Executor) host(request Request) (Result, bool) {
 	case request.Name == "reboot-window" && (request.Action == "apply" || request.Action == "undo"):
 		return e.rebootSetting(request), false
 	case (server && (request.Action == "lockdown" || request.Action == "unlock")) ||
+		(request.Name == "docker" && request.Action == "install") ||
 		(!server && slices.Contains(Recipes, request.Name) && (request.Action == "apply" || request.Action == "undo")):
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
@@ -104,7 +110,7 @@ func (e Executor) rebootSetting(request Request) Result {
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("restarts at %02d:00 UTC when an update needs it", hour), FinishedAt: e.stamp()}
 }
 
-func (e Executor) rebootDue() bool {
+func (e Executor) rebootDue(ctx context.Context) bool {
 	window, err := readState[rebootWindow](e.StateDir, "reboot.json")
 	if err != nil || window.Hour == nil {
 		return false
@@ -114,7 +120,7 @@ func (e Executor) rebootDue() bool {
 	if now.Hour() != *window.Hour || window.Last == today {
 		return false
 	}
-	if _, err := os.Stat(e.path("/var/run/reboot-required")); err != nil {
+	if needed, _ := recipes.RebootNeeded(ctx, e.recipeEnv()); !needed {
 		return false
 	}
 	window.Last = today
@@ -170,7 +176,7 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	env := recipes.Env{Root: e.Root, Run: recipes.Runner(e.Run)}
+	env := e.recipeEnv()
 	state := e.readRecipes()
 	save := func(output string) Result {
 		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
@@ -195,6 +201,20 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		}
 		delete(state.Applied, request.Name)
 		return save("undone")
+	case "install":
+		if request.Name != "docker" {
+			return e.refuse(request.ID, fmt.Errorf("%s cannot be installed", request.Name))
+		}
+		result, err := recipes.InstallDocker(ctx, env, command.Args)
+		if err != nil {
+			return e.refuse(request.ID, err)
+		}
+		if result.Installed {
+			if err := writeJSON(e.StateDir, "docker.json", dockerState{InstalledAt: e.Now()}, 0o640); err != nil {
+				return e.failed(request, err, "")
+			}
+		}
+		return Result{ID: request.ID, OK: true, Output: result.Message, FinishedAt: e.stamp()}
 	case "lockdown":
 		return e.lockdown(ctx, request, env)
 	case "unlock":
@@ -220,6 +240,26 @@ func (e Executor) lockdown(ctx context.Context, request Request, env recipes.Env
 			}
 		}
 	}
+	state.Restart = map[string]string{}
+	var held []string
+	for _, id := range state.Containers {
+		output, _ := e.docker(ctx, collectTimeout, "inspect", "inspect", "--format", "{{.HostConfig.RestartPolicy.Name}}:{{.HostConfig.RestartPolicy.MaximumRetryCount}}", id)
+		name, retries, _ := strings.Cut(strings.TrimSpace(string(output)), ":")
+		switch {
+		case name == "" || name == "no":
+			continue
+		case name == "on-failure" && retries != "" && retries != "0":
+			state.Restart[id] = name + ":" + retries
+		default:
+			state.Restart[id] = name
+		}
+		held = append(held, id)
+	}
+	if len(held) > 0 {
+		if _, err := e.docker(ctx, collectTimeout, "hold", append([]string{"update", "--restart", "no"}, held...)...); err != nil {
+			return e.failed(request, err, "")
+		}
+	}
 	if len(state.Containers) > 0 {
 		if _, err := e.docker(ctx, upTimeout, "stop", append([]string{"stop"}, state.Containers...)...); err != nil {
 			return e.failed(request, err, "")
@@ -238,6 +278,36 @@ func (e Executor) lockdown(ctx context.Context, request Request, env recipes.Env
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("locked down: %d containers stopped", len(state.Containers)), FinishedAt: e.stamp()}
 }
 
+func (e Executor) reopen(ctx context.Context, state lockdownState) error {
+	for _, id := range state.Containers {
+		if policy := state.Restart[id]; policy != "" {
+			if _, err := e.docker(ctx, collectTimeout, "restore restart", "update", "--restart", policy, id); err != nil && !gone(err) {
+				return err
+			}
+		}
+	}
+	if len(state.Containers) == 0 {
+		return nil
+	}
+	if _, err := e.docker(ctx, upTimeout, "start", append([]string{"start"}, state.Containers...)...); err != nil && !gone(err) {
+		return err
+	}
+	return nil
+}
+
+func gone(err error) bool {
+	var failed stepError
+	if !errors.As(err, &failed) {
+		return false
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(failed.output)), "\n") {
+		if !strings.Contains(line, "No such container") && !strings.HasPrefix(line, "Error: failed to start containers") {
+			return false
+		}
+	}
+	return true
+}
+
 func (e Executor) unlock(ctx context.Context, request Request, env recipes.Env) Result {
 	state, err := readState[lockdownState](e.StateDir, "lockdown.json")
 	if err != nil {
@@ -246,10 +316,8 @@ func (e Executor) unlock(ctx context.Context, request Request, env recipes.Env) 
 	if state.At.IsZero() {
 		return e.refuse(request.ID, errors.New("the server is not locked down"))
 	}
-	if len(state.Containers) > 0 {
-		if _, err := e.docker(ctx, upTimeout, "start", append([]string{"start"}, state.Containers...)...); err != nil {
-			return e.failed(request, err, "")
-		}
+	if err := e.reopen(ctx, state); err != nil {
+		return e.failed(request, err, "")
 	}
 	if state.SSH {
 		if err := recipes.Undo(ctx, env, "ssh-keys-only", nil); err != nil {

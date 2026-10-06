@@ -43,6 +43,7 @@
     ["host", "fail2ban"],
     ["host", "firewall"],
     ["host", "free-port-53"],
+    ["host", "docker"],
     ["vault", "cloudflare"]
   ],
   "invalid": [

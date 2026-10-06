@@ -6,13 +6,7 @@ import {
 } from "@krynodes/protocol/summary";
 
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
-import {
-  agentSupported,
-  compareVersions,
-  ORCHESTRATION_AGENT,
-  STACKS_AGENT,
-  TRUST_AGENT,
-} from "@krynodes/protocol/versions";
+import { agentSupported, compareVersions } from "@krynodes/protocol/versions";
 import { b64url, fromB64url } from "./passkeys";
 
 const CHANGE_MS = 24 * 3_600_000;
@@ -50,20 +44,6 @@ export const formatPrint = (print: string) =>
 
 export const agentCurrent = (node: Pick<NodeRecord, "agent_version">) =>
   agentSupported(node.agent_version);
-
-const reaches = (node: Pick<NodeRecord, "agent_version">, version: string) =>
-  agentCurrent(node) &&
-  (!/^\d+\.\d+\.\d+$/u.test(node.agent_version ?? "") ||
-    compareVersions(node.agent_version!, version) >= 0);
-
-export const trustReady = (node: Pick<NodeRecord, "agent_version">) =>
-  reaches(node, TRUST_AGENT);
-
-export const stacksReady = (node: Pick<NodeRecord, "agent_version">) =>
-  reaches(node, STACKS_AGENT);
-
-export const orchestrationReady = (node: Pick<NodeRecord, "agent_version">) =>
-  reaches(node, ORCHESTRATION_AGENT);
 
 export function canRestartServer(
   node: Pick<NodeRecord, "agent_version">,
@@ -115,7 +95,7 @@ export const trustedServers = (view: FleetView) =>
   view.servers.filter((server) => (server.trust?.core.length ?? 0) > 0);
 
 export function serverState(view: FleetView, server: FleetServer): ServerState {
-  if (!trustReady(server.node)) return "update";
+  if (!agentCurrent(server.node)) return "update";
   if (!server.trust || server.trust.core.length === 0) return "empty";
   const core = coreOf(view).map((device) => device.fingerprint);
   return sameSet(server.trust.core, core) ? "current" : "behind";

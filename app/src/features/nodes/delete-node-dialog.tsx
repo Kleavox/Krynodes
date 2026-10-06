@@ -52,7 +52,13 @@ export function DeleteNodeDialog({
     services.data && overview.data
       ? vaultNodes(services.data, overview.data.nodes, fingerprint, seen)
       : [];
-  const plan = planRemoval(nodesFor(null), node.id, setId);
+  const addresses =
+    (services.data?.nodes.find((entry) => entry.id === node.id)?.webAddresses
+      ?.length ?? 0) > 0;
+  const piece =
+    setId !== null &&
+    nodesFor(null).find((item) => item.id === node.id)?.vault?.set === setId;
+  const plan = planRemoval(nodesFor(null), node.id, setId, addresses);
   const status = tracked.data?.action.status;
   const spreadFailed = status !== undefined && ENDED.includes(status);
 
@@ -85,7 +91,7 @@ export function DeleteNodeDialog({
         reach: [],
         build: (fingerprint) => {
           const all = nodesFor(fingerprint);
-          const chosen = planRemoval(all, node.id, setId);
+          const chosen = planRemoval(all, node.id, setId, addresses);
           if (!chosen.ok) throw new Error(chosen.reason);
           if (!chosen.needed) throw new Error("Nothing to spread.");
           return reshareSteps({
@@ -127,18 +133,19 @@ export function DeleteNodeDialog({
               </p>
               {holds && plan.ok && (
                 <p>
-                  {node.name} holds a piece of the Cloudflare token. Krynodes
-                  first spreads the token across the other servers and removes
-                  the tunnel of {node.name} from Cloudflare, then deletes it.
+                  {piece
+                    ? `${node.name} holds a piece of the Cloudflare token. Krynodes first spreads the token across the other servers and removes the tunnel of ${node.name} from Cloudflare, then deletes it.`
+                    : `${node.name} has web addresses. Krynodes first removes its tunnel, DNS records and logins from Cloudflare, then deletes it.`}
                 </p>
               )}
               {!plan.ok && (
                 <p>
-                  {node.name} holds a piece of the Cloudflare token, and it
-                  cannot move now: {plan.reason}
+                  {piece
+                    ? `${node.name} holds a piece of the Cloudflare token, and it cannot move now: ${plan.reason}`
+                    : `${node.name} has web addresses, and Krynodes cannot reach Cloudflare now: ${plan.reason} Deleting anyway leaves them in Cloudflare.`}
                 </p>
               )}
-              {(!plan.ok || spreadFailed) && (
+              {piece && (!plan.ok || spreadFailed) && (
                 <p>
                   If {node.name} may be in the wrong hands, replace the token
                   under{" "}
@@ -186,7 +193,9 @@ export function DeleteNodeDialog({
                 ? "Waiting for the fingerprint…"
                 : spreading
                   ? "Spreading…"
-                  : "Spread and delete"}
+                  : piece
+                    ? "Spread and delete"
+                    : "Clean up and delete"}
             </Button>
           ) : (
             <Button

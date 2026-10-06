@@ -12,12 +12,13 @@ import {
   ServiceRows,
 } from "@/features/services/service-list";
 import { useCancelActions, useServices } from "@/lib/api";
-import { orchestrationReady } from "@/lib/devices";
+import { agentCurrent } from "@/lib/devices";
 import { nodeState } from "@/lib/format";
 import { LogsDialog } from "@/features/services/logs-dialog";
-import { canReadLogs, isPending } from "@/lib/services";
+import { isPending } from "@/lib/services";
 import {
   deployBlocker,
+  ownFolder,
   stackCommands,
   type ServerStack,
   type StackMember,
@@ -129,8 +130,8 @@ function StackControls({
         ?.sealKey ?? null,
   };
   const modern =
-    orchestrationReady(member.node) && member.trusted && member.stack.compose;
-  const own = member.stack.access !== null && member.stack.access !== undefined;
+    agentCurrent(member.node) && member.trusted && member.stack.compose;
+  const own = ownFolder(member.stack.directory);
   const confirm = (action: StackActionRequest["action"]) =>
     action !== "stop" && addresses.length > 0
       ? setPanel(action)
@@ -220,7 +221,7 @@ function StackControls({
                 },
               ]
             : []),
-          ...(canReadLogs(member.node)
+          ...(agentCurrent(member.node)
             ? [{ label: "Logs", onSelect: () => setReading(true) }]
             : []),
           ...(modern
@@ -303,7 +304,11 @@ function StackControls({
             disposal="purge"
             {...panelProps("purge")}
           />
-          <MoveDialog target={target} {...panelProps("move")} />
+          <MoveDialog
+            target={target}
+            addresses={addresses}
+            {...panelProps("move")}
+          />
           <AdoptDialog
             target={target}
             directory={member.stack.directory}

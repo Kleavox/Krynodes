@@ -87,6 +87,7 @@ func TestASecurityCheckNamesWhatIsWrong(t *testing.T) {
 		"ssh-password": "serious", "ssh-root": "serious", "ssh-no-keys": "warning", "os-eol": "serious",
 		"updates-off": "warning", "updates-pending": "warning", "reboot-pending": "warning", "risky-container": "serious",
 		"public-ports": "warning", "firewall-off": "note", "fail2ban-off": "note", "dns-stub": "note",
+		"os-unverified": "note",
 	}
 	for id, severity := range want {
 		if found[id].Severity != severity {
@@ -214,7 +215,7 @@ func TestHostApplyRunsTheRecipeAndReports(t *testing.T) {
 	if err := executor.HostApply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if result := readResult(t, executor, idA); !result.OK || !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get install -y -q unattended-upgrades") {
+	if result := readResult(t, executor, idA); !result.OK || !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q unattended-upgrades") {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	if entries, _ := os.ReadDir(filepath.Join(executor.StateDir, "host")); len(entries) != 0 {
@@ -256,7 +257,7 @@ func TestAProtectionThatIsOnIsNotAppliedAgain(t *testing.T) {
 	}
 	installs := 0
 	for _, call := range run.calls {
-		if strings.Contains(call, "apt-get install -y -q unattended-upgrades") {
+		if strings.Contains(call, "install -y -q unattended-upgrades") {
 			installs++
 		}
 	}
@@ -321,6 +322,73 @@ func TestTheRebootWindowRestartsOnlyWhenNeededAndOnceADay(t *testing.T) {
 	}
 }
 
+func TestLockdownSurvivesARestartAndUnlockGivesThePoliciesBack(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	const policy = "docker inspect --format {{.HostConfig.RestartPolicy.Name}}:{{.HostConfig.RestartPolicy.MaximumRetryCount}} "
+	run.respond["docker ps --format {{.ID}}\t{{.Names}}\t{{.Ports}}"] = "w1\tweb-1\t0.0.0.0:80->80/tcp\nq1\tqueue-1\t0.0.0.0:5672->5672/tcp\nn1\tnone-1\t0.0.0.0:81->81/tcp\n"
+	run.respond[policy+"w1"] = "always:0\n"
+	run.respond[policy+"q1"] = "on-failure:5\n"
+	run.respond[policy+"n1"] = "no:0\n"
+	for _, step := range []struct{ id, action string }{{idA, "lockdown"}, {idB, "unlock"}} {
+		writeRequest(t, executor.RequestDir, step.id+".json", hostRequest(t, step.id, "server", step.action, nil))
+		if err := executor.Execute(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.HostApply(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if result := readResult(t, executor, step.id); !result.OK {
+			t.Fatalf("%s %#v", step.action, result)
+		}
+	}
+	stop := slices.Index(run.calls, "docker stop w1 q1 n1")
+	start := slices.Index(run.calls, "docker start w1 q1 n1")
+	for _, call := range []string{"docker update --restart no w1 q1"} {
+		if index := slices.Index(run.calls, call); index < 0 || index > stop {
+			t.Fatalf("%q must come before the stop in %q", call, run.calls)
+		}
+	}
+	for _, call := range []string{"docker update --restart always w1", "docker update --restart on-failure:5 q1"} {
+		if index := slices.Index(run.calls, call); index < 0 || index > start {
+			t.Fatalf("%q must come before the start in %q", call, run.calls)
+		}
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasSuffix(call, " n1") && strings.Contains(call, "update") }) {
+		t.Fatalf("a container without a policy keeps none: %q", run.calls)
+	}
+}
+
+func TestUnlockSkipsContainersThatAreGoneButNotOtherFailures(t *testing.T) {
+	executor, run := securityExecutor(t)
+	unlock := func(id string) reporter.ActionResult {
+		t.Helper()
+		if err := writeJSON(executor.StateDir, "lockdown.json", lockdownState{Containers: []string{"w1", "q1"}, Restart: map[string]string{"q1": "always"}, At: executorNow}, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		writeRequest(t, executor.RequestDir, id+".json", hostRequest(t, id, "server", "unlock", nil))
+		if err := executor.Execute(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := executor.HostApply(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return readResult(t, executor, id)
+	}
+	run.failing["docker update --restart always q1"] = "Error response from daemon: No such container: q1\n"
+	run.failing["docker start w1 q1"] = "Error response from daemon: No such container: q1\nError: failed to start containers: q1\n"
+	if result := unlock(idA); !result.OK {
+		t.Fatalf("a container that is gone must not keep the server locked: %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "lockdown.json")); !os.IsNotExist(err) {
+		t.Fatal("the lock is lifted")
+	}
+	run.failing["docker start w1 q1"] = "Error response from daemon: cannot start: permission denied\n"
+	if result := unlock(idB); result.OK {
+		t.Fatalf("other failures still count: %#v", result)
+	}
+}
+
 func TestLockdownStopsWhatIsOpenAndUnlockStartsItAgain(t *testing.T) {
 	executor, run := securityExecutor(t)
 	healthyServer(t, executor, run)
@@ -362,5 +430,165 @@ func TestLockdownStopsWhatIsOpenAndUnlockStartsItAgain(t *testing.T) {
 	}
 	if _, err := os.Stat(executor.path("/etc/ssh/sshd_config.d/10-krynodes.conf")); !os.IsNotExist(err) {
 		t.Fatal("unlock gives SSH back as it was")
+	}
+}
+
+const rockyRelease = "NAME=\"Rocky Linux\"\nVERSION_ID=\"9.4\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nPRETTY_NAME=\"Rocky Linux 9.4 (Blue Onyx)\"\n"
+
+func rhelServer(t *testing.T, executor Executor, run *fakeRun) {
+	t.Helper()
+	rootFile(t, executor, "/etc/os-release", rockyRelease)
+	rootFile(t, executor, "/etc/passwd", "root:x:0:0:root:/root:/bin/bash\n")
+	rootFile(t, executor, "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA laptop\n")
+	run.respond["sshd -T"] = "passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin without-password\nport 22\n"
+	run.respond[listening] = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n"
+	run.respond["firewall-cmd --state"] = "running\n"
+	run.respond["dnf needs-restarting -r"] = "No core libraries or services have been updated since boot-up.\nReboot should not be necessary.\n"
+}
+
+func TestARHELServerIsCheckedWithItsOwnTools(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rhelServer(t, executor, run)
+	for _, timer := range []string{"krynodes-security-updates.timer", "dnf-automatic-install.timer", "dnf-automatic.timer", "dnf5-automatic.timer"} {
+		run.failing["systemctl is-enabled --quiet "+timer] = ""
+	}
+	run.failing["ufw status"] = ""
+	run.respond["dnf -q updateinfo list --security --cacheonly"] = "RHSA-2026:1 Important/Sec. openssl-3.0.7-1.el9.x86_64\nRHSA-2026:2 Moderate/Sec. vim-9.0-1.el9.x86_64\n"
+	run.respond["dnf needs-restarting -r"] = "Core libraries or services have been updated since boot-up:\n  * kernel\n\nReboot is required to fully utilize these updates.\n"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found := findingsOf(t, executor)
+	if found["updates-off"].Severity != "warning" || found["updates-pending"].Detail != "2 security updates are waiting" || found["reboot-pending"].Detail != "A restart is waiting" {
+		t.Fatalf("findings %#v", found)
+	}
+	if _, off := found["firewall-off"]; off {
+		t.Fatalf("firewalld is running: %#v", found)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool {
+		return strings.Contains(call, "dpkg-query") || strings.Contains(call, "apt-get")
+	}) {
+		t.Fatalf("no Debian tools on RHEL: %q", run.calls)
+	}
+	executor, run = securityExecutor(t)
+	rhelServer(t, executor, run)
+	delete(run.respond, "firewall-cmd --state")
+	run.failing["firewall-cmd --state"] = "not running"
+	run.failing["ufw status"] = ""
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found = findingsOf(t, executor)
+	if _, off := found["updates-off"]; off || found["firewall-off"].Detail != "No firewall is active (firewalld)" {
+		t.Fatalf("findings %#v", found)
+	}
+}
+
+func TestTheReportNamesThePlatformAndAnUnverifiedVersion(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rhelServer(t, executor, run)
+	rootFile(t, executor, "/etc/os-release", strings.ReplaceAll(rockyRelease, "9.4", "11.0"))
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var inventory Inventory
+	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	platform := inventory.Security.Platform
+	if platform == nil || platform.Family == nil || *platform.Family != "rhel" || platform.Name != "Rocky Linux 11.0" || platform.Verified || platform.Checked != "8 to 10" {
+		t.Fatalf("platform %#v", platform)
+	}
+	if found := findingsOf(t, executor)["os-unverified"]; found.Severity != "note" || found.Detail != "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10)." {
+		t.Fatalf("finding %#v", found)
+	}
+	executor, run = securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/os-release", "NAME=\"Alpine Linux\"\nID=alpine\nVERSION_ID=3.20.3\n")
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	if platform := inventory.Security.Platform; platform == nil || platform.Family != nil || platform.Name != "Alpine Linux 3.20.3" {
+		t.Fatalf("platform %#v", platform)
+	}
+}
+
+func TestEndOfLifeComesFromTheSharedTable(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/os-release", "NAME=\"Ubuntu\"\nVERSION_ID=\"25.10\"\nID=ubuntu\nID_LIKE=debian\n")
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if found := findingsOf(t, executor)["os-eol"]; found.Severity != "serious" || found.Detail != "Ubuntu 25.10 no longer gets security updates (since 1 Jul 2026)" {
+		t.Fatalf("finding %#v", found)
+	}
+}
+
+func TestRebootWindowUsesTheFamilyCheck(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rhelServer(t, executor, run)
+	now := executorNow
+	executor.Now = func() time.Time { return now }
+	if result := runRequest(t, executor, hostRequest(t, idA, "reboot-window", "apply", map[string]string{"hour": "11"})); !result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	now = now.Add(time.Hour)
+	reboots := func() int { return strings.Count(strings.Join(run.calls, "\n"), "systemctl reboot --no-block") }
+	if err := executor.Execute(context.Background()); err != nil || reboots() != 0 {
+		t.Fatalf("no restart without need: %v %d", err, reboots())
+	}
+	run.respond["dnf needs-restarting -r"] = "Reboot is required to fully utilize these updates.\n"
+	if err := executor.Execute(context.Background()); err != nil || reboots() != 1 {
+		t.Fatalf("restart when dnf asks: %v %d", err, reboots())
+	}
+}
+
+func TestInstallDockerGoesToTheHostUnitSigned(t *testing.T) {
+	executor, _ := securityExecutor(t)
+	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "docker", "install", nil))
+	unsigned := hostRequest(t, idB, "docker", "install", nil)
+	unsigned.Signed = nil
+	writeRequest(t, executor.RequestDir, idB+".json", unsigned)
+	writeRequest(t, executor.RequestDir, idC+".json", hostRequest(t, idC, "fail2ban", "install", nil))
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "host", idA+".json")); err != nil {
+		t.Fatal("install docker waits for the host unit")
+	}
+	for _, id := range []string{idB, idC} {
+		if result := readResult(t, executor, id); result.OK {
+			t.Fatalf("%s %#v", id, result)
+		}
+	}
+}
+
+func TestInstallDockerRunsInTheHostUnit(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION_CODENAME=trixie\nID=debian\n")
+	run.failing["docker --version"] = ""
+	run.respond["dpkg --print-architecture"] = "amd64\n"
+	run.respond["docker version --format {{.Client.Version}}"] = "28.4.0\n"
+	executor.Fetch = func(context.Context, string) ([]byte, error) { return []byte("KEY"), nil }
+	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "docker", "install", nil))
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, executor, idA); !result.OK || result.Output != "Docker 28.4.0 with Compose" {
+		t.Fatalf("result %#v", result)
+	}
+	if !slices.Contains(run.calls, "systemctl enable --now docker") {
+		t.Fatalf("calls %q", run.calls)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "docker.json")); err != nil {
+		t.Fatal("Krynodes remembers it installed Docker")
 	}
 }

@@ -58,7 +58,7 @@ func ValidTarget(kind, name string) bool {
 	case "trust":
 		return name == "devices"
 	case "host":
-		return name == "server" || slices.Contains(Recipes, name)
+		return name == "server" || name == "docker" || slices.Contains(Recipes, name)
 	case "vault":
 		return name == "cloudflare"
 	}

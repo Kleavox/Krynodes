@@ -30,9 +30,11 @@ import {
 } from "@/components/ui/select";
 import { useOverview, useServices } from "@/lib/api";
 import { moveCompose, servicesOf } from "@/lib/compose";
-import { orchestrationReady } from "@/lib/devices";
+import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
+import { moveBlocker } from "@/lib/stacks";
 import { moveSteps } from "@/lib/vault";
+import type { WebAddress } from "@/types";
 
 import { Reading, SHEET, type StackTarget } from "./compose-dialog";
 import {
@@ -72,25 +74,35 @@ const AREA =
 
 export function MoveDialog({
   target,
+  addresses,
   open,
   onOpenChange,
 }: {
   target: StackTarget;
+  addresses: WebAddress[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {open && <MoveForm source={target} onClose={() => onOpenChange(false)} />}
+      {open && (
+        <MoveForm
+          source={target}
+          addresses={addresses}
+          onClose={() => onOpenChange(false)}
+        />
+      )}
     </Dialog>
   );
 }
 
 function MoveForm({
   source,
+  addresses,
   onClose,
 }: {
   source: StackTarget;
+  addresses: WebAddress[];
   onClose: () => void;
 }) {
   const { read, failure, retry } = useComposeRead({
@@ -108,7 +120,7 @@ function MoveForm({
     return (
       node.id !== source.nodeId &&
       node.enrolled_at !== null &&
-      orchestrationReady(node) &&
+      agentCurrent(node) &&
       entry?.docker === "ready" &&
       entry.sealKey &&
       !entry.stacks.some((stack) => stack.project === source.project) &&
@@ -130,6 +142,7 @@ function MoveForm({
   const [original, setOriginal] = useState<Original>("later");
   const [sealing, setSealing] = useState(false);
   const problem = secretsProblem(secrets);
+  const blocked = moveBlocker(addresses, original);
   const targetKey = entries.get(chosen)?.sealKey ?? "";
 
   const toggle = (name: string) => {
@@ -142,7 +155,7 @@ function MoveForm({
   };
 
   const move = async () => {
-    if (!read || !chosen || problem || kept.length === 0) return;
+    if (!read || !chosen || problem || blocked || kept.length === 0) return;
     setSealing(true);
     let sealed: string | undefined;
     try {
@@ -288,6 +301,7 @@ function MoveForm({
                 </span>
               </label>
             ))}
+            {blocked && <p className="text-sm text-destructive">{blocked}</p>}
           </div>
         </div>
       )}
@@ -306,6 +320,7 @@ function MoveForm({
             !chosen ||
             kept.length === 0 ||
             problem !== null ||
+            blocked !== null ||
             sealing ||
             operate.isPending
           }

@@ -12,12 +12,11 @@ import type {
 } from "../types";
 import { isProtectedTarget } from "@krynodes/protocol/targets";
 import {
-  LOGS_AGENT,
-  STACKS_AGENT,
+  MIN_AGENT_VERSION,
   compareVersions,
 } from "@krynodes/protocol/versions";
 
-import { stacksReady } from "./devices";
+import { agentCurrent } from "./devices";
 
 import { clockTime, nodeState, parseTimestamp } from "./format";
 import { untilWindowSettles } from "./series";
@@ -85,6 +84,7 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
     release: { verb: "Share", doing: "Sharing…", done: "Shared" },
     reshare: { verb: "Spread", doing: "Spreading…", done: "Spread" },
     forget: { verb: "Forget", doing: "Forgetting…", done: "Forgot" },
+    install: { verb: "Install", doing: "Installing…", done: "Installed" },
   };
 
 export const RECIPE_TITLES: Record<string, string> = {
@@ -126,6 +126,7 @@ export interface ServerGroup {
 export function displayName(kind: ActionKind, name: string): string {
   if (kind === "trust") return "Trusted devices";
   if (kind === "vault") return "the Cloudflare token";
+  if (kind === "host" && name === "docker") return "Docker";
   if (kind === "host") return RECIPE_TITLES[name]?.toLowerCase() ?? "server";
   return kind === "systemd" ? name.replace(/\.service$/u, "") : name;
 }
@@ -137,9 +138,6 @@ export function verb(action: ActionVerb): string {
 export function isPending(action: ActionRecord | null | undefined): boolean {
   return action?.status === "queued" || action?.status === "sent";
 }
-
-export const canReadLogs = (node: NodeRecord) =>
-  compareVersions(node.agent_version ?? "0.0.0", LOGS_AGENT) >= 0;
 
 export function primaryAction(state: ServiceState): ServiceAction {
   return state === "running" || state === "starting" ? "restart" : "start";
@@ -278,7 +276,9 @@ export function serviceForCheck(
 
 export function runningText(action: ActionRecord, nodeName?: string): string {
   const doing = WORDS[action.action].doing.replace(/…$/u, "");
-  if (action.kind === "host") return `${doing} ${nodeName ?? "server"}`;
+  if (action.kind === "host" && action.name === "server") {
+    return `${doing} ${nodeName ?? "server"}`;
+  }
   const target = `${doing} ${displayName(action.kind, action.name)}`;
   return nodeName ? `${target} on ${nodeName}` : target;
 }
@@ -293,7 +293,7 @@ export function outcomeText(
     return {
       ok: true,
       text:
-        action.kind === "host"
+        action.kind === "host" && action.name === "server"
           ? `${nodeName} ${words.done.toLowerCase()}`
           : `${name} ${words.done.toLowerCase()} on ${nodeName}`,
     };
@@ -318,7 +318,7 @@ export function autoRestartBlocker(
   node: NodeRecord | undefined,
   data: ServicesResponse | undefined,
 ): string | null {
-  if (!node || !stacksReady(node)) return `Needs agent ${STACKS_AGENT}`;
+  if (!node || !agentCurrent(node)) return `Needs agent ${MIN_AGENT_VERSION}`;
   const unit = check.target.endsWith(".service")
     ? check.target
     : `${check.target}.service`;

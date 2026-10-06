@@ -53,10 +53,10 @@ const reply = async (response: Response | Promise<Response>) =>
 function setup() {
   const { db, sqlite } = createTestDb();
   for (const [id, version, owner] of [
-    [A, "0.1.0", undefined],
-    [B, "0.1.0", undefined],
-    [C, "0.1.0", undefined],
-    [FOREIGN, "0.1.0", "someone-else"],
+    [A, "0.5.0", undefined],
+    [B, "0.5.0", undefined],
+    [C, "0.5.0", undefined],
+    [FOREIGN, "0.5.0", "someone-else"],
   ] as const) {
     seedNode(sqlite, { id, owner });
     sqlite
@@ -375,11 +375,8 @@ describe("logs", () => {
     });
   };
 
-  it("reads logs from agents 0.3.3 and newer, for protected units too, without blocking a restart", async () => {
+  it("reads logs, for protected units too, without blocking a restart", async () => {
     const { call, sqlite, restart } = setup();
-    sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.3.3' WHERE id = ?")
-      .run(A);
     sqlite
       .prepare(
         "INSERT INTO services (node_id, kind, name, state, system) VALUES (?, 'systemd', 'ssh.service', 'running', 1)",
@@ -400,9 +397,6 @@ describe("logs", () => {
 
   it("keeps log text out of lists and serves it by id", async () => {
     const { call, sqlite, restart } = setup();
-    sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.3.3' WHERE id = ?")
-      .run(A);
     await restart([{ nodeId: A }]);
     const created = await reply(logs(call, A, "docker", "adguard"));
     const id = created.actions![0]!.id as string;
@@ -429,13 +423,31 @@ describe("logs", () => {
 
   it("refuses logs from older agents and for the server itself", async () => {
     const { call, sqlite } = setup();
+    sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.4.1' WHERE id = ?")
+      .run(B);
     const old = await logs(call, B, "docker", "adguard");
     expect(old.status).toBe(422);
     expect((await reply(old)).code).toBe("AGENT_TOO_OLD");
-    sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.3.3' WHERE id = ?")
-      .run(A);
     expect((await logs(call, A, "host", "server")).status).toBe(400);
+  });
+});
+
+describe("agents before 0.5.0", () => {
+  it("are refused every action, a plain restart too", async () => {
+    const { restart, sqlite } = setup();
+    sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.4.1' WHERE id = ?")
+      .run(B);
+    const old = await restart([{ nodeId: A }, { nodeId: B }]);
+    expect(old.status).toBe(422);
+    expect(await reply(old)).toMatchObject({
+      code: "AGENT_TOO_OLD",
+      message: expect.stringContaining("0.5.0"),
+    });
+    expect(sqlite.prepare("SELECT COUNT(*) AS n FROM actions").get()).toEqual({
+      n: 0,
+    });
   });
 });
 
@@ -602,12 +614,12 @@ describe("cancel, refresh, history and retention", () => {
   });
 });
 
-describe("stack, container and auto-restart commands (agent 0.4.0)", () => {
+describe("stack, container and auto-restart commands", () => {
   function newer() {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.4.0', docker = 'ready' WHERE id IN (?, ?)",
+        "UPDATE nodes SET agent_version = '0.5.0', docker = 'ready' WHERE id IN (?, ?)",
       )
       .run(A, B);
     t.sqlite.prepare("UPDATE nodes SET docker = 'missing' WHERE id = ?").run(B);
@@ -641,7 +653,7 @@ describe("stack, container and auto-restart commands (agent 0.4.0)", () => {
     return { ...t, send };
   }
 
-  it("starts, stops, restarts and removes a stack, only on agent 0.4.0", async () => {
+  it("starts, stops, restarts and removes a stack, only on a current agent", async () => {
     const t = newer();
     for (const verb of ["start", "stop", "restart", "remove"]) {
       const response = await t.send(verb, {
@@ -653,7 +665,7 @@ describe("stack, container and auto-restart commands (agent 0.4.0)", () => {
       t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
     }
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.3.5' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.4.1' WHERE id = ?")
       .run(A);
     const old = await t.send("restart", {
       nodeId: A,
@@ -745,7 +757,7 @@ describe("removed stacks", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.4.0', docker = 'ready' WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.5.0', docker = 'ready' WHERE id = ?",
       )
       .run(A);
     t.sqlite

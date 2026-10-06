@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { ActionRecord, NodeRecord, ServicesResponse } from "../types";
+import { historyText } from "./history";
 import {
   autoRestartBlocker,
   actionText,
-  canReadLogs,
   displayName,
   durationText,
   groupByServer,
@@ -358,17 +358,6 @@ describe("announcements and bulk order", () => {
   });
 });
 
-describe("logs", () => {
-  it("are readable from agents 0.3.3 and newer", () => {
-    expect(canReadLogs(node("n1", "pivox", "0.3.3"))).toBe(true);
-    expect(canReadLogs(node("n1", "pivox", "0.4.0"))).toBe(true);
-    expect(canReadLogs(node("n1", "pivox", "0.3.2"))).toBe(false);
-    expect(canReadLogs({ ...node("n1", "pivox"), agent_version: null })).toBe(
-      false,
-    );
-  });
-});
-
 describe("words for agent 0.4.0 commands", () => {
   const unit = (overrides: Partial<ActionRecord>) =>
     action({ kind: "systemd", name: "nginx.service", ...overrides });
@@ -455,31 +444,56 @@ describe("restart automatically", () => {
 
   it("says why it cannot be turned on", () => {
     expect(
-      autoRestartBlocker(check, node("n1", "pivox", "0.4.0"), entry()),
+      autoRestartBlocker(check, node("n1", "pivox", "0.5.0"), entry()),
     ).toBeNull();
     expect(
-      autoRestartBlocker(check, node("n1", "pivox", "0.3.5"), entry()),
-    ).toBe("Needs agent 0.4.0");
+      autoRestartBlocker(check, node("n1", "pivox", "0.4.1"), entry()),
+    ).toBe("Needs agent 0.5.0");
     expect(
       autoRestartBlocker(
         { ...check, target: "ssh" },
-        node("n1", "pivox", "0.4.0"),
+        node("n1", "pivox", "0.5.0"),
         entry(),
       ),
     ).toBe("Krynodes never restarts this unit");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.4.0"),
+        node("n1", "pivox", "0.5.0"),
         entry({ services: [] }),
       ),
     ).toBe("The unit is not on this server");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.4.0"),
+        node("n1", "pivox", "0.5.0"),
         entry({ trust: null }),
       ),
     ).toBe("Not trusted yet");
+  });
+});
+
+describe("words for host work", () => {
+  it("names Docker and a protection, and keeps the server short", () => {
+    const install = action({ kind: "host", name: "docker", action: "install" });
+    expect(historyText(install)).toBe("Install Docker");
+    expect(runningText({ ...install, status: "sent" }, "pivox")).toBe(
+      "Installing Docker on pivox",
+    );
+    expect(outcomeText({ ...install, status: "done" }, "pivox")).toEqual({
+      ok: true,
+      text: "Docker installed on pivox",
+    });
+    const recipe = action({ kind: "host", name: "fail2ban", action: "apply" });
+    expect(runningText({ ...recipe, status: "sent" }, "pivox")).toBe(
+      "Turning on block repeated login failures on pivox",
+    );
+    const reboot = action({
+      kind: "host",
+      name: "server",
+      action: "reboot",
+      status: "sent",
+    });
+    expect(runningText(reboot, "pivox")).toBe("Restarting pivox");
   });
 });

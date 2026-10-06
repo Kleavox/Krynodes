@@ -450,6 +450,39 @@ describe("single steps of agent 0.5.0", () => {
     });
   };
 
+  it("installs Docker only where it is missing, signed, and pairs host verbs with their names", async () => {
+    const t = routes();
+    const install = (nodeId: string) =>
+      single(t, { nodeId, kind: "host", name: "docker", action: "install" });
+    expect(await code(await install(A))).toBe("UNKNOWN_TARGET");
+    t.sqlite.prepare("UPDATE nodes SET docker = 'missing' WHERE id = ?").run(A);
+    t.sqlite
+      .prepare("UPDATE nodes SET docker = 'no-compose' WHERE id = ?")
+      .run(B);
+    expect((await install(A)).status).toBe(201);
+    expect((await install(B)).status).toBe(201);
+    expect(
+      (
+        await single(
+          t,
+          { nodeId: C, kind: "host", name: "docker", action: "install" },
+          false,
+        )
+      ).status,
+    ).toBe(400);
+    for (const [name, action] of [
+      ["docker", "apply"],
+      ["server", "apply"],
+      ["fail2ban", "lockdown"],
+      ["fail2ban", "install"],
+    ] as const) {
+      expect(
+        (await single(t, { nodeId: C, kind: "host", name, action })).status,
+        `${name} ${action}`,
+      ).toBe(400);
+    }
+  });
+
   it("applies and undoes recipes, locks a server down and checks it unsigned", async () => {
     const t = routes();
     expect(
@@ -552,6 +585,36 @@ describe("single steps of agent 0.5.0", () => {
         }),
       ),
     ).toBe("UNKNOWN_TARGET");
+  });
+
+  it("knows a stack Krynodes made before access levels by its folder", async () => {
+    const t = routes();
+    t.sqlite
+      .prepare(
+        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'kuma', '/var/lib/kry-exec/compose/kuma', 1, 1, 1, 0, datetime('now'))",
+      )
+      .run(A);
+    expect(
+      await code(
+        await single(t, {
+          nodeId: A,
+          kind: "compose",
+          name: "kuma",
+          action: "adopt",
+        }),
+      ),
+    ).toBe("UNKNOWN_TARGET");
+    expect(
+      (
+        await single(t, {
+          nodeId: A,
+          kind: "compose",
+          name: "kuma",
+          action: "edit",
+          compose: "services: {}\n",
+        })
+      ).status,
+    ).toBe(201);
   });
 
   it("needs agent 0.5.0 for a stack with an access level or secrets", async () => {

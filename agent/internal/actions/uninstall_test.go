@@ -65,7 +65,7 @@ func TestUninstallTurnsProtectionsOffAndKeepsAppsRunning(t *testing.T) {
 	}
 	for _, call := range []string{
 		"docker start abc",
-		"env DEBIAN_FRONTEND=noninteractive apt-get purge -y -q unattended-upgrades",
+		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q unattended-upgrades",
 		"docker rm -f krynodes-tunnel",
 		"docker image rm " + cloudflaredImage,
 		"iptables -D DOCKER-USER -i " + guardBridges + " -d " + metadataAddress + " -j DROP",
@@ -122,6 +122,22 @@ func TestUninstallKeepsAStackItCouldNotMove(t *testing.T) {
 		t.Fatal("everything else in the state directory goes")
 	}
 	if len(removal.Problems) != 1 || !strings.Contains(removal.Problems[0], directory) {
+		t.Fatalf("removal %#v", removal)
+	}
+}
+
+func TestUninstallSaysHowToRemoveTheDockerItInstalled(t *testing.T) {
+	executor, _ := securityExecutor(t)
+	if removal := executor.Uninstall(context.Background(), false); removal.Docker != "" {
+		t.Fatalf("no word about a Docker Krynodes did not install: %#v", removal)
+	}
+	executor, _ = securityExecutor(t)
+	rootFile(t, executor, "/etc/os-release", "NAME=\"Rocky Linux\"\nVERSION_ID=\"9.4\"\nID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\n")
+	if err := writeJSON(executor.StateDir, "docker.json", dockerState{InstalledAt: executorNow}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	removal := executor.Uninstall(context.Background(), false)
+	if removal.Docker != "Docker stays for your apps. Krynodes installed it; remove it with: sudo dnf remove docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" {
 		t.Fatalf("removal %#v", removal)
 	}
 }

@@ -1,6 +1,6 @@
 import {
-  ORCHESTRATION_AGENT,
-  compareVersions,
+  MIN_AGENT_VERSION,
+  agentSupported,
   isValidTarget,
   signedCommandSchema,
 } from "@krynodes/protocol";
@@ -263,14 +263,13 @@ export function registerOperationRoutes(
     }
     const byId = new Map(nodes.results.map((node) => [node.id, node]));
     const old = nodes.results.find(
-      (node) =>
-        compareVersions(node.agent_version ?? "0.0.0", ORCHESTRATION_AGENT) < 0,
+      (node) => !agentSupported(node.agent_version),
     );
     if (old) {
       return context.json(
         {
           code: "AGENT_TOO_OLD",
-          message: `Update the agent on ${old.name} to ${ORCHESTRATION_AGENT} or newer.`,
+          message: `Update the agent on ${old.name} to ${MIN_AGENT_VERSION} or newer.`,
         },
         422,
       );

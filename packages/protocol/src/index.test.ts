@@ -15,7 +15,6 @@ import {
   SESSION_MS,
   TRUST_CHANGE_MS,
   isValidTarget,
-  ORCHESTRATION_AGENT,
 } from "./index";
 
 describe("Krynodes Agent protocol v1", () => {
@@ -773,6 +772,22 @@ describe("orchestration messages of agent 0.5.0", () => {
     expect(parse({ kind: "host", name: "rm-rf", action: "apply" })).toBe(false);
   });
 
+  it("installs only Docker, and Docker only by install", () => {
+    expect(parse({ kind: "host", name: "docker", action: "install" })).toBe(
+      true,
+    );
+    for (const verb of ["apply", "undo", "reboot", "lockdown"]) {
+      expect(parse({ kind: "host", name: "docker", action: verb }), verb).toBe(
+        false,
+      );
+    }
+    for (const name of ["server", "fail2ban"]) {
+      expect(parse({ kind: "host", name, action: "install" }), name).toBe(
+        false,
+      );
+    }
+  });
+
   it("checks a server without a signature", () => {
     const { signed: _, ...unsigned } = base;
     expect(
@@ -857,6 +872,23 @@ describe("orchestration messages of agent 0.5.0", () => {
         },
       }).success;
     expect(request({})).toBe(true);
+    const platform = {
+      family: "rhel",
+      name: "Rocky Linux 11.0",
+      verified: false,
+      checked: "8 to 10",
+    };
+    expect(request({ security: { ...security, platform } })).toBe(true);
+    expect(
+      request({
+        security: { ...security, platform: { ...platform, family: null } },
+      }),
+    ).toBe(true);
+    expect(
+      request({
+        security: { ...security, platform: { ...platform, family: "arch" } },
+      }),
+    ).toBe(false);
     expect(request({ vault: null })).toBe(true);
     expect(request({ sealKey: "short" })).toBe(false);
     expect(request({ security: { ...security, recipes: ["rm-rf"] } })).toBe(
@@ -872,9 +904,5 @@ describe("orchestration messages of agent 0.5.0", () => {
     ).toBe(false);
     expect(request({ stacks: [{ ...stack, public: ["53"] }] })).toBe(false);
     expect(request({ stacks: [{ ...stack, access: "root" }] })).toBe(false);
-  });
-
-  it("names the agent that brings orchestration", () => {
-    expect(ORCHESTRATION_AGENT).toBe("0.5.0");
   });
 });

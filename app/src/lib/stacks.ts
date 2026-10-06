@@ -8,9 +8,9 @@ import type {
   StackEntry,
   WebAddress,
 } from "../types";
-import { MIN_AGENT_VERSION, STACKS_AGENT } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
-import { agentCurrent, stacksReady } from "./devices";
+import { agentCurrent } from "./devices";
 import { nodeState } from "./format";
 import {
   displayName,
@@ -145,6 +145,14 @@ export function groupStacks(
   );
 }
 
+export const moveBlocker = (
+  addresses: WebAddress[],
+  original: "now" | "later" | "keep",
+) =>
+  addresses.length > 0 && original !== "keep"
+    ? "Its web addresses still point here. Close web address… first, or keep the original."
+    : null;
+
 export function deployBlocker(member: StackMember): string | null {
   if (!agentCurrent(member.node)) return `Needs agent ${MIN_AGENT_VERSION}`;
   if (!member.stack.compose) return "Docker Compose is not installed";
@@ -182,7 +190,7 @@ export function containersOf(
 export type StackCommand = "start" | "stop" | "restart" | "remove" | "purge";
 
 export function stackCommands(member: StackMember): StackCommand[] {
-  if (!stacksReady(member.node) || !member.trusted || !member.stack.compose) {
+  if (!agentCurrent(member.node) || !member.trusted || !member.stack.compose) {
     return [];
   }
   const { running, total } = member.stack;
@@ -198,7 +206,7 @@ export function newStackBlocker(
   node: NodeRecord,
   entry: ServicesResponse["nodes"][number] | undefined,
 ): string | null {
-  if (!stacksReady(node)) return `Needs agent ${STACKS_AGENT}`;
+  if (!agentCurrent(node)) return `Needs agent ${MIN_AGENT_VERSION}`;
   if (!entry?.docker) return "Docker not reported yet";
   if (entry.docker === "missing") return "No Docker";
   if (entry.docker === "no-compose") return "Docker without Compose";

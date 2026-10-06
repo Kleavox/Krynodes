@@ -12,6 +12,7 @@ import {
   daysLeft,
   deployBlocker,
   groupStacks,
+  moveBlocker,
   newStackBlocker,
   ownFolder,
   removedStacks,
@@ -20,7 +21,7 @@ import {
   stackNameProblem,
 } from "./stacks";
 
-const node = (id: string, name: string, agent = "0.3.1") =>
+const node = (id: string, name: string, agent = "0.5.0") =>
   ({
     id,
     name,
@@ -156,9 +157,9 @@ describe("stacks", () => {
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
-        node: node("n1", "Callisto", "0.3.0"),
+        node: node("n1", "Callisto", "0.4.1"),
       }),
-    ).toBe("Needs agent 0.3.1");
+    ).toBe("Needs agent 0.5.0");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
@@ -216,8 +217,8 @@ describe("stacks", () => {
   });
 });
 
-describe("stack commands of agent 0.4.0", () => {
-  const member = (running: number, total: number, agent = "0.4.0") => ({
+describe("stack commands", () => {
+  const member = (running: number, total: number, agent = "0.5.0") => ({
     node: node("n1", "pivox", agent),
     stack: stack("kuma", { running, total }),
     trusted: true,
@@ -240,7 +241,7 @@ describe("stack commands of agent 0.4.0", () => {
       "purge",
     ]);
     expect(stackCommands(member(0, 2))).toEqual(["start", "remove", "purge"]);
-    expect(stackCommands(member(2, 2, "0.3.5"))).toEqual([]);
+    expect(stackCommands(member(2, 2, "0.4.1"))).toEqual([]);
     expect(stackCommands({ ...member(2, 2), trusted: false })).toEqual([]);
   });
 
@@ -255,22 +256,22 @@ describe("stack commands of agent 0.4.0", () => {
       docker,
     });
     expect(
-      newStackBlocker(node("n1", "pivox", "0.4.0"), entry("ready")),
+      newStackBlocker(node("n1", "pivox", "0.5.0"), entry("ready")),
     ).toBeNull();
-    expect(newStackBlocker(node("n1", "pivox", "0.3.5"), entry("ready"))).toBe(
-      "Needs agent 0.4.0",
+    expect(newStackBlocker(node("n1", "pivox", "0.4.1"), entry("ready"))).toBe(
+      "Needs agent 0.5.0",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.4.0"), entry("missing")),
+      newStackBlocker(node("n1", "pivox", "0.5.0"), entry("missing")),
     ).toBe("No Docker");
     expect(
-      newStackBlocker(node("n1", "pivox", "0.4.0"), entry("no-compose")),
+      newStackBlocker(node("n1", "pivox", "0.5.0"), entry("no-compose")),
     ).toBe("Docker without Compose");
-    expect(newStackBlocker(node("n1", "pivox", "0.4.0"), entry(null))).toBe(
+    expect(newStackBlocker(node("n1", "pivox", "0.5.0"), entry(null))).toBe(
       "Docker not reported yet",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.4.0"), {
+      newStackBlocker(node("n1", "pivox", "0.5.0"), {
         ...entry("ready"),
         trust: null,
       }),
@@ -335,7 +336,7 @@ describe("removed stacks", () => {
       },
     ],
   };
-  const fleet = [node("n1", "Callisto", "0.4.0"), node("n2", "Pivox", "0.4.0")];
+  const fleet = [node("n1", "Callisto"), node("n2", "Pivox")];
 
   it("lists the newest first with what blocks a restore", () => {
     const list = removedStacks(bin, fleet, "");
@@ -427,5 +428,23 @@ describe("one list per server", () => {
       ["listmonk", ["listmonk_app"]],
       ["listmonk-db", ["listmonk-db-1"]],
     ]);
+  });
+});
+
+describe("moving a stack with web addresses", () => {
+  const address = {
+    hostname: "listmonk-pivox.kleavox.xyz",
+    project: "listmonk",
+    service: "app",
+    port: 9000,
+    mode: "allow" as const,
+    path: null,
+  };
+
+  it("keeps the original until its addresses are closed", () => {
+    expect(moveBlocker([address], "now")).toMatch(/Close web address/u);
+    expect(moveBlocker([address], "later")).toMatch(/Close web address/u);
+    expect(moveBlocker([address], "keep")).toBeNull();
+    expect(moveBlocker([], "now")).toBeNull();
   });
 });

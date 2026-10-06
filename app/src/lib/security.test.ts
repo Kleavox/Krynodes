@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { SecurityReport } from "../types";
 import {
+  firewallName,
   firewallPorts,
   fromUtcHour,
+  protectionDetail,
+  protectionsNotice,
   recipeChoices,
   recommended,
   toUtcHour,
@@ -119,5 +122,79 @@ describe("the security check on screen", () => {
     expect(fromUtcHour(20, -420)).toBe(3);
     expect(toUtcHour(23, 60)).toBe(0);
     expect(fromUtcHour(0, 60)).toBe(23);
+  });
+});
+
+describe("protections on other systems", () => {
+  const rocky = {
+    family: "rhel" as const,
+    name: "Rocky Linux 11.0",
+    verified: false,
+    checked: "8 to 10",
+  };
+
+  it("says when protections cannot run or must be confirmed", () => {
+    expect(protectionsNotice(report())).toBeNull();
+    expect(
+      protectionsNotice(
+        report({
+          platform: {
+            family: null,
+            name: "Alpine Linux 3.20.3",
+            verified: false,
+            checked: "",
+          },
+        }),
+      ),
+    ).toBe("Protections support Debian, Ubuntu and RHEL-family servers.");
+    expect(
+      protectionsNotice(
+        report({
+          platform: rocky,
+          findings: [
+            {
+              id: "os-unverified",
+              severity: "note",
+              detail:
+                "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10).",
+            },
+          ],
+        }),
+      ),
+    ).toBe(
+      "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10). Turning a protection on asks you to confirm.",
+    );
+    expect(
+      protectionsNotice(report({ platform: { ...rocky, verified: true } })),
+    ).toBeNull();
+  });
+
+  it("names the firewall of the family", () => {
+    expect(firewallName(report())).toBe("ufw");
+    expect(firewallName(report({ platform: rocky }))).toBe("firewalld");
+  });
+});
+
+describe("what each protection does, per system", () => {
+  it("names the tools of the server's family", () => {
+    const rhel = report({
+      platform: {
+        family: "rhel",
+        name: "Rocky Linux 9.4",
+        verified: true,
+        checked: "8 to 10",
+      },
+    });
+    expect(protectionDetail("security-updates", report())).toBe(
+      "Installs security updates every day with unattended-upgrades.",
+    );
+    expect(protectionDetail("security-updates", rhel)).toBe(
+      "Installs security updates every day with dnf.",
+    );
+    expect(protectionDetail("firewall", rhel)).toMatch(/^Turns on firewalld /u);
+    expect(protectionDetail("fail2ban", rhel)).toBe(
+      "Blocks addresses that keep failing to log in over SSH. Installs fail2ban from EPEL where the system needs it.",
+    );
+    expect(protectionDetail("firewall", report())).toMatch(/^Turns on ufw /u);
   });
 });

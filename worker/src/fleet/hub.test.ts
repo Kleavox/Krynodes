@@ -20,7 +20,7 @@ const heartbeat = (
   hostname: "pivox",
   operatingSystem: "linux",
   architecture: "amd64",
-  agentVersion: "0.3.0",
+  agentVersion: "0.5.0",
   metrics: {
     cpuPercent: cpu,
     memoryUsedBytes: 4,
@@ -280,7 +280,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.4.0",
+      agentVersion: "0.5.0",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -298,7 +298,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.4.0",
+      agentVersion: "0.5.0",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -525,13 +525,13 @@ describe("FleetHub", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET update_requested_version = '0.3.1', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
+        "UPDATE nodes SET update_requested_version = '0.5.1', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
       )
       .run(new Date(BASE - 16 * 60_000).toISOString(), NODE);
     const ws = await t.connect();
     await t.send(ws, BASE + 5_000, {
       ...heartbeat(10),
-      update: { version: "0.3.1", message: "download stalled" },
+      update: { version: "0.5.1", message: "download stalled" },
     });
     const row = t.sqlite
       .prepare(
@@ -550,7 +550,7 @@ describe("FleetHub", () => {
     expect(ws.replies().at(-1)).toMatchObject({
       response: {
         update: {
-          version: "0.3.1",
+          version: "0.5.1",
           requestedAt: new Date(BASE + 5_000).toISOString(),
         },
       },

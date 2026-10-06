@@ -49,7 +49,7 @@ const sha256 = async (bytes: Uint8Array<ArrayBuffer>) =>
 const encode = (value: unknown) =>
   toB64url(new TextEncoder().encode(JSON.stringify(value)));
 
-function setup(agent = "0.3.5") {
+function setup(agent = "0.5.0") {
   const { db, sqlite } = createTestDb();
   for (const id of [A, B, C]) {
     seedNode(sqlite, { id });
@@ -763,7 +763,7 @@ describe("fingerprint rule", () => {
     [C]: keys,
   });
 
-  async function touchAndPhone(agent = "0.3.5", requireUv = false) {
+  async function touchAndPhone(agent = "0.5.0", requireUv = false) {
     const t = setup(agent);
     const [laptop, phone] = await fleet(2);
     t.touchOnly(laptop!);
@@ -781,8 +781,8 @@ describe("fingerprint rule", () => {
     return { t, laptop: laptop!, phone: phone! };
   }
 
-  it("needs agent 0.3.5 on every server to change the devices or the rule", async () => {
-    const { t, phone } = await touchAndPhone("0.3.4");
+  it("needs agent 0.5.0 on every server to change the devices or the rule", async () => {
+    const { t, phone } = await touchAndPhone("0.4.1");
     const text = t.change({
       core: [phone],
       requireUv: true,
@@ -792,21 +792,22 @@ describe("fingerprint rule", () => {
     expect(response.status).toBe(422);
     expect(await reply(response)).toMatchObject({
       code: "NEEDS_AGENT",
-      message: expect.stringContaining("0.3.5"),
+      message: expect.stringContaining("0.5.0"),
     });
   });
 
-  it("changes which servers a device reaches on older agents too", async () => {
-    const { t, laptop, phone } = await touchAndPhone("0.3.4");
+  it("does not change which servers a device reaches on older agents either", async () => {
+    const { t, laptop, phone } = await touchAndPhone("0.4.1");
     const text = t.change({
       access: { [A]: [phone], [B]: [laptop, phone], [C]: [laptop, phone] },
     });
     const response = await t.open(text, await t.approval(phone, text));
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(422);
+    expect((await reply(response)).code).toBe("NEEDS_AGENT");
   });
 
   it("refuses a passphrase once fingerprints are required", async () => {
-    const { t, phone, laptop } = await touchAndPhone("0.3.5", true);
+    const { t, phone, laptop } = await touchAndPhone("0.5.0", true);
     const passphrase = await testPassphrase();
     const text = t.change({
       access: everywhere([laptop, phone]),
@@ -818,7 +819,7 @@ describe("fingerprint rule", () => {
   });
 
   it("refuses to admit or register a device without a fingerprint once required", async () => {
-    const { t, phone } = await touchAndPhone("0.3.5", true);
+    const { t, phone } = await touchAndPhone("0.5.0", true);
     for (const id of [A, B, C])
       await t.report(id, [phone], [phone], 1, false, true);
     const [, , tablet, helper] = await fleet(4);
@@ -845,7 +846,7 @@ describe("fingerprint rule", () => {
   });
 
   it("gives a new server the rule with its first trust", async () => {
-    const { t, phone } = await touchAndPhone("0.3.5", true);
+    const { t, phone } = await touchAndPhone("0.5.0", true);
     for (const id of [A, B])
       await t.report(id, [phone], [phone], 1, false, true);
     t.sqlite

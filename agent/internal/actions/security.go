@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
+
+var applyUpdates = regexp.MustCompile(`(?m)^\s*apply_updates\s*=\s*(yes|true|1)\s*$`)
 
 const (
 	checkEvery  = 6 * time.Hour
@@ -22,12 +25,6 @@ const (
 type securityState struct {
 	CheckedAt time.Time          `json:"checkedAt"`
 	Findings  []reporter.Finding `json:"findings"`
-}
-
-var endOfLife = map[string]string{
-	"debian 9": "2022-06-30", "debian 10": "2024-06-30", "debian 11": "2026-08-31", "debian 12": "2028-06-30", "debian 13": "2030-06-30",
-	"ubuntu 16.04": "2021-04-30", "ubuntu 18.04": "2023-05-31", "ubuntu 20.04": "2025-05-31", "ubuntu 22.04": "2027-06-01",
-	"ubuntu 23.10": "2024-07-11", "ubuntu 24.04": "2029-05-31", "ubuntu 24.10": "2025-07-10", "ubuntu 25.04": "2026-01-15", "ubuntu 25.10": "2026-07-09",
 }
 
 func (e Executor) path(name string) string {
@@ -53,7 +50,7 @@ func (e Executor) security(ctx context.Context, force bool) *reporter.SecurityRe
 	if findings == nil {
 		findings = []reporter.Finding{}
 	}
-	report := &reporter.SecurityReport{CheckedAt: state.CheckedAt.UTC().Format(time.RFC3339Nano), Recipes: e.appliedRecipes()}
+	report := &reporter.SecurityReport{CheckedAt: state.CheckedAt.UTC().Format(time.RFC3339Nano), Recipes: e.appliedRecipes(), Platform: platformReport(recipes.Detect(e.recipeEnv()))}
 	if _, err := os.Stat(filepath.Join(e.StateDir, "lockdown.json")); err == nil {
 		report.Lockdown = true
 		findings = append(findings, reporter.Finding{ID: "lockdown", Severity: "warning", Detail: "This server is locked down"})
@@ -87,28 +84,35 @@ func (e Executor) findings(ctx context.Context) []reporter.Finding {
 	} else {
 		add("ssh-keys", "note", "SSH keys for "+strings.Join(users, ", "))
 	}
-	if name, date, ok := e.release(); ok {
+	platform := recipes.Detect(e.recipeEnv())
+	if date := platform.EndOfLife; !date.IsZero() {
 		switch {
 		case e.Now().After(date):
-			add("os-eol", "serious", fmt.Sprintf("%s no longer gets security updates (since %s)", name, date.Format("2 Jan 2006")))
+			add("os-eol", "serious", fmt.Sprintf("%s no longer gets security updates (since %s)", platform.Name, date.Format("2 Jan 2006")))
 		case date.Sub(e.Now()) <= eolWarning:
-			add("os-eol", "warning", fmt.Sprintf("%s stops getting security updates on %s", name, date.Format("2 Jan 2006")))
+			add("os-eol", "warning", fmt.Sprintf("%s stops getting security updates on %s", platform.Name, date.Format("2 Jan 2006")))
 		}
 	}
-	if !e.automaticUpdates(ctx) {
+	if sentence := platform.Unverified(); sentence != "" {
+		add("os-unverified", "note", sentence)
+	}
+	if !e.automaticUpdates(ctx, platform.Family) {
 		add("updates-off", "warning", "Security updates are not installed automatically")
 	}
-	if waiting := e.securityUpdates(ctx); waiting == 1 {
+	if waiting := e.securityUpdates(ctx, platform.Family); waiting == 1 {
 		add("updates-pending", "warning", "1 security update is waiting")
 	} else if waiting > 1 {
 		add("updates-pending", "warning", fmt.Sprintf("%d security updates are waiting", waiting))
 	}
-	if info, err := os.Stat(e.path("/var/run/reboot-required")); err == nil {
-		severity := "note"
-		if e.Now().Sub(info.ModTime()) >= staleReboot {
-			severity = "warning"
+	if needed, since := recipes.RebootNeeded(ctx, e.recipeEnv()); needed {
+		switch {
+		case since.IsZero():
+			add("reboot-pending", "note", "A restart is waiting")
+		case e.Now().Sub(since) >= staleReboot:
+			add("reboot-pending", "warning", "A restart has been waiting since "+since.UTC().Format("2 Jan"))
+		default:
+			add("reboot-pending", "note", "A restart has been waiting since "+since.UTC().Format("2 Jan"))
 		}
-		add("reboot-pending", severity, "A restart has been waiting since "+info.ModTime().UTC().Format("2 Jan"))
 	}
 	if risky := e.riskyContainers(ctx); len(risky) > 0 {
 		add("risky-container", "serious", "Containers with full control of the server: "+strings.Join(risky, ", "))
@@ -118,8 +122,16 @@ func (e Executor) findings(ctx context.Context) []reporter.Finding {
 	if len(public) > 0 {
 		add("public-ports", "warning", "Listening on public addresses outside Krynodes: "+strings.Join(public, ", "))
 	}
-	if status, ok := e.output(ctx, "ufw", "status"); !ok || !strings.Contains(status, "Status: active") {
-		add("firewall-off", "note", "No firewall is active (ufw)")
+	ufw, _ := e.output(ctx, "ufw", "status")
+	firewall := strings.Contains(ufw, "Status: active")
+	tool := "ufw"
+	if platform.Family == recipes.RHEL {
+		state, _ := e.output(ctx, "firewall-cmd", "--state")
+		firewall = firewall || strings.TrimSpace(state) == "running"
+		tool = "firewalld"
+	}
+	if !firewall {
+		add("firewall-off", "note", "No firewall is active ("+tool+")")
 	}
 	if _, ok := e.output(ctx, "systemctl", "is-active", "--quiet", "fail2ban"); !ok {
 		add("fail2ban-off", "note", "Repeated SSH login failures are not blocked")
@@ -152,31 +164,22 @@ func (e Executor) sshSettings(ctx context.Context) (map[string]string, bool) {
 	return settings, true
 }
 
-func (e Executor) release() (string, time.Time, bool) {
-	values := map[string]string{}
-	raw, err := os.ReadFile(e.path("/etc/os-release"))
-	if err != nil {
-		return "", time.Time{}, false
-	}
-	for line := range strings.SplitSeq(string(raw), "\n") {
-		if key, value, found := strings.Cut(strings.TrimSpace(line), "="); found {
-			values[key] = strings.Trim(value, `"'`)
-		}
-	}
-	key := strings.ToLower(values["ID"]) + " " + values["VERSION_ID"]
-	stamp, known := endOfLife[key]
-	if !known {
-		return "", time.Time{}, false
-	}
-	date, err := time.Parse("2006-01-02", stamp)
-	if err != nil {
-		return "", time.Time{}, false
-	}
-	name := strings.ToUpper(values["ID"][:1]) + values["ID"][1:] + " " + values["VERSION_ID"]
-	return name, date, true
+func (e Executor) recipeEnv() recipes.Env {
+	return recipes.Env{Root: e.Root, Run: recipes.Runner(e.Run), Fetch: e.Fetch}
 }
 
-func (e Executor) automaticUpdates(ctx context.Context) bool {
+func (e Executor) automaticUpdates(ctx context.Context, family recipes.Family) bool {
+	if family == recipes.RHEL {
+		for _, timer := range []string{"krynodes-security-updates.timer", "dnf-automatic-install.timer"} {
+			if _, ok := e.output(ctx, "systemctl", "is-enabled", "--quiet", timer); ok {
+				return true
+			}
+		}
+		_, classic := e.output(ctx, "systemctl", "is-enabled", "--quiet", "dnf-automatic.timer")
+		_, five := e.output(ctx, "systemctl", "is-enabled", "--quiet", "dnf5-automatic.timer")
+		config, _ := os.ReadFile(e.path("/etc/dnf/automatic.conf"))
+		return (classic || five) && applyUpdates.Match(config)
+	}
 	status, ok := e.output(ctx, "dpkg-query", "-W", "-f", "${Status}", "unattended-upgrades")
 	if !ok || !strings.Contains(status, "install ok installed") {
 		return false
@@ -194,7 +197,20 @@ func (e Executor) automaticUpdates(ctx context.Context) bool {
 	return false
 }
 
-func (e Executor) securityUpdates(ctx context.Context) int {
+func (e Executor) securityUpdates(ctx context.Context, family recipes.Family) int {
+	if family == recipes.RHEL {
+		output, ok := e.output(ctx, "dnf", "-q", "updateinfo", "list", "--security", "--cacheonly")
+		if !ok {
+			return 0
+		}
+		count := 0
+		for line := range strings.SplitSeq(output, "\n") {
+			if strings.TrimSpace(line) != "" {
+				count++
+			}
+		}
+		return count
+	}
 	output, ok := e.output(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=1", "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "upgrade")
 	if !ok {
 		return 0
@@ -206,6 +222,15 @@ func (e Executor) securityUpdates(ctx context.Context) int {
 		}
 	}
 	return count
+}
+
+func platformReport(platform recipes.Platform) *reporter.Platform {
+	report := &reporter.Platform{Name: platform.Name, Verified: platform.Verified, Checked: platform.Checked}
+	if platform.Family != "" {
+		family := string(platform.Family)
+		report.Family = &family
+	}
+	return report
 }
 
 func (e Executor) fullAccess(project string) bool {

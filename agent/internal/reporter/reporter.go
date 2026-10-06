@@ -111,12 +111,20 @@ type Finding struct {
 	Detail   string `json:"detail"`
 }
 
+type Platform struct {
+	Family   *string `json:"family"`
+	Name     string  `json:"name"`
+	Verified bool    `json:"verified"`
+	Checked  string  `json:"checked"`
+}
+
 type SecurityReport struct {
 	CheckedAt  string    `json:"checkedAt"`
 	Findings   []Finding `json:"findings"`
 	Recipes    []string  `json:"recipes"`
 	Lockdown   bool      `json:"lockdown"`
 	RebootHour *int      `json:"rebootHour"`
+	Platform   *Platform `json:"platform,omitempty"`
 }
 
 type VaultReport struct {

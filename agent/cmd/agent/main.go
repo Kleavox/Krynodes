@@ -81,6 +81,8 @@ func run(args []string) error {
 		return execActions()
 	case "host-apply":
 		return hostApply()
+	case "setup":
+		return setupCommand(args)
 	case "trust":
 		return trustDevices(args)
 	case "version":
@@ -663,6 +665,9 @@ func uninstallService(args []string) error {
 	}
 	for _, line := range removal.Apps {
 		fmt.Println("  " + line)
+	}
+	if removal.Docker != "" {
+		fmt.Println("  " + removal.Docker)
 	}
 	fmt.Println("If this server is still in the dashboard, delete it there too; that also removes its Cloudflare tunnel, DNS records and login.")
 	if len(removal.Problems) > 0 {

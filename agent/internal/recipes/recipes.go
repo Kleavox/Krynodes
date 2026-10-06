@@ -15,8 +15,9 @@ import (
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, int, error)
 
 type Env struct {
-	Root string
-	Run  Runner
+	Root  string
+	Run   Runner
+	Fetch Fetcher
 }
 
 const (
@@ -76,19 +77,6 @@ func (e Env) remove(name string) error {
 		return err
 	}
 	return nil
-}
-
-func (e Env) install(ctx context.Context, packages ...string) (string, error) {
-	var fresh []string
-	for _, name := range packages {
-		if status, err := e.output(ctx, "dpkg-query", "-W", "-f", "${Status}", name); err != nil || !strings.Contains(status, "install ok installed") {
-			fresh = append(fresh, name)
-		}
-	}
-	if err := e.run(ctx, "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "update", "-q"); err != nil {
-		return "", err
-	}
-	return strings.Join(fresh, " "), e.run(ctx, "env", append([]string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q"}, packages...)...)
 }
 
 func installed(fresh string) map[string]string {
@@ -152,15 +140,35 @@ func sshPorts(ctx context.Context, env Env) []string {
 }
 
 func reloadSSH(ctx context.Context, env Env) error {
+	if Detect(env).Family == RHEL {
+		return env.run(ctx, "systemctl", "reload", "sshd")
+	}
 	if err := env.run(ctx, "systemctl", "reload", "ssh"); err != nil {
 		return env.run(ctx, "systemctl", "reload", "sshd")
 	}
 	return nil
 }
 
+func Hold(env Env, args map[string]string) error {
+	platform := Detect(env)
+	if platform.Family == "" {
+		return ErrUnsupported
+	}
+	if sentence := platform.Unverified(); sentence != "" && args["anyway"] != "yes" {
+		return errors.New(sentence + " Confirm to run it anyway.")
+	}
+	return nil
+}
+
 func Apply(ctx context.Context, env Env, id string, args map[string]string) (map[string]string, error) {
+	if err := Hold(env, args); err != nil {
+		return nil, err
+	}
 	switch id {
 	case "security-updates":
+		if Detect(env).Family == RHEL {
+			return rhelUpdates(ctx, env)
+		}
 		fresh, err := env.install(ctx, "unattended-upgrades")
 		if err != nil {
 			return nil, err
@@ -183,7 +191,13 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		}
 		return nil, reloadSSH(ctx, env)
 	case "fail2ban":
-		fresh, err := env.install(ctx, "fail2ban", "python3-systemd")
+		var fresh string
+		var err error
+		if Detect(env).Family == RHEL {
+			fresh, err = rhelFail2ban(ctx, env)
+		} else {
+			fresh, err = env.install(ctx, "fail2ban", "python3-systemd")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -212,6 +226,9 @@ func firewall(ctx context.Context, env Env, chosen string) (map[string]string, e
 			return nil, fmt.Errorf("%q is not a port like 80/tcp", port)
 		}
 		extra = append(extra, port)
+	}
+	if Detect(env).Family == RHEL {
+		return firewalld(ctx, env, extra)
 	}
 	saved := map[string]string{}
 	if _, err := env.output(ctx, "ufw", "version"); err != nil {
@@ -275,7 +292,7 @@ func Undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 		return err
 	}
 	if packages := strings.Fields(saved["installed"]); len(packages) > 0 {
-		return env.run(ctx, "env", append([]string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "purge", "-y", "-q"}, packages...)...)
+		return env.purge(ctx, packages...)
 	}
 	return nil
 }
@@ -283,6 +300,9 @@ func Undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 func undo(ctx context.Context, env Env, id string, saved map[string]string) error {
 	switch id {
 	case "security-updates":
+		if Detect(env).Family == RHEL {
+			return undoRHELUpdates(ctx, env)
+		}
 		return env.remove(autoUpgrades)
 	case "ssh-keys-only":
 		if err := env.remove(sshDropIn); err != nil {
@@ -298,6 +318,9 @@ func undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 		}
 		return env.run(ctx, "systemctl", "disable", "--now", "fail2ban")
 	case "firewall":
+		if Detect(env).Family == RHEL {
+			return undoFirewalld(ctx, env, saved)
+		}
 		for rule := range strings.SplitSeq(saved["rules"], ",") {
 			if rule != "" {
 				if err := env.run(ctx, "ufw", "--force", "delete", "allow", rule); err != nil {

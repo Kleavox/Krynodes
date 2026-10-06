@@ -49,7 +49,7 @@ function setup() {
     seedNode(sqlite, { id, owner });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.2.0', last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.5.0', last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(id);
   }
@@ -186,7 +186,7 @@ describe("compose actions", () => {
   });
 
   it("refuses an unsigned deploy, a restart signed as a deploy, and a stack restart on an older agent", async () => {
-    const { call, command, deploy } = setup();
+    const { call, command, deploy, sqlite } = setup();
     expect((await deploy("deploy", undefined)).status).toBe(400);
     expect(
       (
@@ -198,6 +198,9 @@ describe("compose actions", () => {
         })
       ).status,
     ).toBe(400);
+    sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.4.1' WHERE id = ?")
+      .run(A);
     const restart = await deploy("restart", command({ action: "restart" }));
     expect(restart.status).toBe(422);
     expect(((await restart.json()) as { code: string }).code).toBe(

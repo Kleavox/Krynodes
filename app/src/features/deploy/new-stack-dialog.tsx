@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAction, useServices } from "@/lib/api";
-import { orchestrationReady } from "@/lib/devices";
+import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import { toast } from "sonner";
 import { isPending } from "@/lib/services";
@@ -91,7 +91,7 @@ function NewStackForm({
 
   const chosen = choices.find((choice) => choice.node.id === nodeId);
   const sealKey = entries.get(nodeId)?.sealKey ?? null;
-  const modern = chosen !== undefined && orchestrationReady(chosen.node);
+  const modern = chosen !== undefined && agentCurrent(chosen.node);
   const taken = (entries.get(nodeId)?.stacks ?? []).map(
     (stack) => stack.project,
   );

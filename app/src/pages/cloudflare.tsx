@@ -78,6 +78,10 @@ export function CloudflarePage() {
       : [];
   const setId = settings.data?.setId ?? null;
   const chosenZone = zone ?? settings.data?.zone ?? "";
+  const zoneProblem =
+    chosenZone && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/u.test(chosenZone)
+      ? "Enter the domain only, such as kleavox.xyz."
+      : null;
   const holding = nodes.filter(
     (node) => setId !== null && node.vault?.set === setId,
   );
@@ -196,6 +200,12 @@ export function CloudflarePage() {
             In Cloudflare, make an API token with only these permissions and an
             end date a year from now:
           </p>
+          {setId && (
+            <p className="text-sm text-muted-foreground">
+              Once the new token is split, delete the old one in Cloudflare:
+              servers that were offline still hold pieces of it.
+            </p>
+          )}
           <ul className="list-disc space-y-1 pl-5 font-mono text-xs">
             {PERMISSIONS.map((permission) => (
               <li key={permission}>{permission}</li>
@@ -216,8 +226,13 @@ export function CloudflarePage() {
               id="cloudflare-zone"
               value={chosenZone}
               autoComplete="off"
-              onChange={(event) => setZone(event.target.value.trim())}
+              onChange={(event) =>
+                setZone(event.target.value.trim().toLowerCase())
+              }
             />
+            {zoneProblem && (
+              <p className="text-xs text-destructive">{zoneProblem}</p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="cloudflare-token">Token</Label>
@@ -236,7 +251,10 @@ export function CloudflarePage() {
           )}
           <Button
             disabled={
-              operate.isPending || token.trim().length < 20 || !chosenZone
+              operate.isPending ||
+              token.trim().length < 20 ||
+              !chosenZone ||
+              zoneProblem !== null
             }
             onClick={split}
           >

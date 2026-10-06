@@ -19,15 +19,23 @@ import {
   useServices,
 } from "@/lib/api";
 import { agentState } from "@/lib/agent";
-import { canRestartServer, orchestrationReady } from "@/lib/devices";
+import { agentCurrent, canRestartServer } from "@/lib/devices";
 import { serverOperation } from "@/lib/operations";
 import type { NodeRecord } from "@/types";
 
 import { DeleteNodeDialog } from "./delete-node-dialog";
 import { EditNodeDialog } from "./edit-node-dialog";
+import { InstallDockerDialog } from "./install-docker-dialog";
 
 type OpenDialog =
-  "add-check" | "edit" | "delete" | "restart" | "lockdown" | "unlock" | null;
+  | "add-check"
+  | "edit"
+  | "delete"
+  | "restart"
+  | "lockdown"
+  | "unlock"
+  | "docker"
+  | null;
 
 export function NodeActions({
   node,
@@ -57,7 +65,12 @@ export function NodeActions({
     serverOperation(node, services.data?.actions ?? [], now) !== null;
   const restartable = canRestartServer(node, trust) && !busy;
   const lockable =
-    orchestrationReady(node) && trust !== null && !!entry?.security && !busy;
+    agentCurrent(node) && trust !== null && !!entry?.security && !busy;
+  const platform = entry?.security?.platform;
+  const dockerless =
+    entry?.docker === "missing" || entry?.docker === "no-compose";
+  const installable =
+    !!platform?.family && dockerless && trust !== null && !busy;
   const updatable =
     !busy &&
     release?.version &&
@@ -99,6 +112,13 @@ export function NodeActions({
             Rename node
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          {installable && (
+            <DropdownMenuItem onSelect={() => setDialog("docker")}>
+              {entry?.docker === "no-compose"
+                ? "Add Compose"
+                : "Install Docker"}
+            </DropdownMenuItem>
+          )}
           {lockable && (
             <DropdownMenuItem
               variant={locked ? "default" : "destructive"}
@@ -164,7 +184,7 @@ export function NodeActions({
         description={
           dialog === "unlock"
             ? "The containers the lock down stopped start again, its web addresses come back, and SSH goes back to how it was."
-            : "Containers that publish ports to the internet stop, its web addresses go offline, and SSH stops accepting passwords when a key is set up. Unlock brings it all back."
+            : "Containers that publish ports to the internet stop and stay stopped after a restart, its web addresses go offline, and SSH stops accepting passwords when a key is set up. Unlock brings it all back."
         }
         confirmLabel={dialog === "unlock" ? "Unlock server" : "Lock down"}
         mutation={lock}
@@ -173,6 +193,16 @@ export function NodeActions({
           targets: [{ nodeId: node.id, kind: "host", name: "server" }],
         }}
       />
+
+      {platform && (
+        <InstallDockerDialog
+          node={node}
+          platform={platform}
+          composeOnly={entry?.docker === "no-compose"}
+          open={dialog === "docker"}
+          onOpenChange={(open) => setDialog(open ? "docker" : null)}
+        />
+      )}
 
       <DeleteNodeDialog
         node={node}

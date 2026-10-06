@@ -16,7 +16,7 @@ const node = (overrides: Partial<NodeRecord> = {}) =>
   ({
     id: "n1",
     name: "pivox",
-    agent_version: "0.3.3",
+    agent_version: "0.5.0",
     update_requested_version: null,
     update_requested_at: null,
     update_attempts: 0,
@@ -103,8 +103,8 @@ describe("server operations", () => {
     expect(
       serverOperation(
         node({
-          agent_version: "0.3.2",
-          update_requested_version: "0.3.3",
+          agent_version: "0.5.0",
+          update_requested_version: "0.5.1",
           update_requested_at: ago(4),
           update_attempts: 2,
         }),
@@ -113,7 +113,7 @@ describe("server operations", () => {
       ),
     ).toEqual({
       kind: "updating",
-      version: "0.3.3",
+      version: "0.5.1",
       attempt: 2,
       since: NOW - 4 * 60_000,
     });

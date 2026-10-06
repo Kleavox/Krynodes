@@ -167,6 +167,27 @@ func TestUninstallLeavesNothingOfKrynodesBehind(t *testing.T) {
 	}
 }
 
+func TestSetupChecksItsFlagsBeforeAnythingElse(t *testing.T) {
+	for args, want := range map[string]string{
+		"--everything":                   "flag provided but not defined",
+		"":                               "choose --recommended, --docker or both",
+		"--recommended --reboot-hour 24": "--reboot-hour is 0 to 23",
+		"--docker extra":                 `unexpected argument "extra"`,
+		"--recommended --docker":         "root",
+	} {
+		err := run(append([]string{"setup"}, strings.Fields(args)...))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+	if got := setupCommandLine(true, true, 20); got != "kry setup --recommended --docker --reboot-hour 20" {
+		t.Fatalf("command %q", got)
+	}
+	if got := setupCommandLine(false, true, 20); got != "kry setup --docker" {
+		t.Fatalf("command %q", got)
+	}
+}
+
 func TestUpdatesNeedTLS13(t *testing.T) {
 	transport := updateClient().Transport.(*http.Transport)
 	if transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {

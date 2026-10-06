@@ -34,7 +34,11 @@ export function isValidTarget(kind: string, name: string): boolean {
   if (kind === "compose") return PROJECT_NAME.test(name);
   if (kind === "trust") return name === "devices";
   if (kind === "host") {
-    return name === "server" || (RECIPES as readonly string[]).includes(name);
+    return (
+      name === "server" ||
+      name === "docker" ||
+      (RECIPES as readonly string[]).includes(name)
+    );
   }
   if (kind === "vault") return name === "cloudflare";
   if (!TARGET_NAME.test(name)) return false;

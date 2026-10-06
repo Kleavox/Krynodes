@@ -49,7 +49,7 @@ async function setup() {
   return { call, hub };
 }
 
-describe("agents before 0.3.1", () => {
+describe("older agents", () => {
   it("get 410 on the HTTP report routes, which no longer exist", async () => {
     const t = await setup();
     for (const [method, path] of [
@@ -77,11 +77,11 @@ describe("agents before 0.3.1", () => {
         upgrade: "websocket",
         "user-agent": agent,
       });
-    const old = await open("kry-agent/0.3.0");
+    const old = await open("kry-agent/0.4.1");
     expect(old.status).toBe(426);
     expect(await old.json()).toMatchObject({ code: "AGENT_UPDATE_REQUIRED" });
     expect(t.hub).toHaveLength(0);
-    expect(await (await open("kry-agent/0.3.1")).text()).toBe("from hub");
+    expect(await (await open("kry-agent/0.5.0")).text()).toBe("from hub");
     expect(await (await open("kry-agent/dev")).text()).toBe("from hub");
   });
 

@@ -17,7 +17,6 @@ import {
   predictMissing,
   removeChange,
   serverState,
-  trustReady,
   twinOf,
   signersFor,
   syncChange,
@@ -30,7 +29,7 @@ const N1 = "11111111-1111-4111-8111-111111111111";
 const N2 = "22222222-2222-4222-8222-222222222222";
 const N3 = "33333333-3333-4333-8333-333333333333";
 
-const node = (id: string, agent = "0.3.5") =>
+const node = (id: string, agent = "0.5.0") =>
   ({
     id,
     name: id.slice(0, 2),
@@ -111,8 +110,8 @@ describe("access", () => {
 
   it("offers a server restart to a current agent with access", () => {
     const own = trust(1, [laptop], [laptop]);
-    expect(canRestartServer(node(N1, "0.3.5"), own)).toBe(true);
-    expect(canRestartServer(node(N1, "0.3.0"), own)).toBe(false);
+    expect(canRestartServer(node(N1, "0.5.0"), own)).toBe(true);
+    expect(canRestartServer(node(N1, "0.4.1"), own)).toBe(false);
     expect(canRestartServer(node(N1), trust(1, [laptop], []))).toBe(false);
     expect(canRestartServer(node(N1), null)).toBe(false);
   });
@@ -123,7 +122,7 @@ describe("server state", () => {
     const fleet = view(
       [laptop, phone],
       [
-        { node: node(N1, "0.2.3"), trust: trust(1, [laptop], [laptop]) },
+        { node: node(N1, "0.4.1"), trust: trust(1, [laptop], [laptop]) },
         { node: node(N2), trust: null },
         { node: node(N3), trust: trust(2, [laptop], [laptop]) },
       ],
@@ -140,16 +139,18 @@ describe("server state", () => {
     expect(serverState(current, current.servers[0]!)).toBe("current");
   });
 
-  it("asks for agent 0.3.5 before devices can change", () => {
-    expect(trustReady(node(N1, "0.3.5"))).toBe(true);
-    expect(trustReady(node(N1, "0.4.0"))).toBe(true);
-    expect(trustReady(node(N1, "dev"))).toBe(true);
-    expect(trustReady(node(N1, "0.3.4"))).toBe(false);
+  it("asks for agent 0.5.0 before devices can change", () => {
     const fleet = view(
       [laptop, phone],
-      [{ node: node(N1, "0.3.4"), trust: trust(3, [laptop, phone], []) }],
+      [
+        { node: node(N1, "0.4.1"), trust: trust(3, [laptop, phone], []) },
+        { node: node(N2, "dev"), trust: trust(3, [laptop, phone], []) },
+      ],
     );
-    expect(serverState(fleet, fleet.servers[0]!)).toBe("update");
+    expect(fleet.servers.map((entry) => serverState(fleet, entry))).toEqual([
+      "update",
+      "current",
+    ]);
   });
 
   it("the next version beats every server", () => {

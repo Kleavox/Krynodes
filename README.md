@@ -88,6 +88,41 @@ sudo systemctl status krynodes
 sudo kry status
 ```
 
+The Enroll dialog can also set the server up in the same command: **Apply
+recommended protections** (with a restart hour in your time) and **Install
+Docker** add `--setup recommended,docker --reboot-hour <UTC hour>`. After
+enrolling, the script runs `kry setup`, which prints what it found and did:
+
+```text
+Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
+✓ Automatic security updates
+✓ Restart when needed · 20:00 UTC
+– SSH keys only skipped: add an SSH key for root or a sudo user first
+✓ Block repeated login failures
+✓ Docker 28.4.0 with Compose
+```
+
+A step that fails is printed and the next one runs; the server is enrolled
+either way, and the dashboard can turn the rest on later. `sudo kry setup
+--recommended --docker --reboot-hour 20` runs it again by hand.
+
+Supported systems, and the versions Krynodes has checked:
+
+| System                                     | Tools                | Checked        |
+| ------------------------------------------ | -------------------- | -------------- |
+| Debian                                     | apt, ufw             | 11 to 13       |
+| Ubuntu (and systems based on it)           | apt, ufw             | 22.04 to 26.04 |
+| RHEL, Rocky Linux, AlmaLinux, Oracle Linux | dnf, firewalld, EPEL | 8 to 10        |
+| CentOS Stream                              | dnf, firewalld, EPEL | 9 to 10        |
+| Fedora                                     | dnf, firewalld       | 41 to 44       |
+
+On a version outside that list (a newer release, an older one, or a system
+based on one of these), the Security check says so, `kry setup` asks before it
+runs (`--anyway` skips the question), and the dashboard's Protections and
+Install Docker ask for a "Run it anyway" tick. Turning a protection off never
+asks. Other systems run the agent, the checks and the Security check, but not
+Protections or Docker setup.
+
 Releases are cut by `.github/workflows/agent-release.yml` whenever
 `agent/VERSION` changes on `main`, as `agent-v<version>` with `krynodes-linux-amd64`
 and `krynodes-linux-arm64`, their checksums, ed25519 signatures and build
@@ -98,7 +133,7 @@ and waits for the owner's approval; a push that does not bump the version never
 reaches it. Every action in the workflows is pinned to a commit SHA
 (`pnpm lint:actions` refuses a tag), and Dependabot proposes updates weekly.
 
-From agent 0.4.1 the agent accepts only TLS 1.3 when it talks to Krynodes or
+The agent accepts only TLS 1.3 when it talks to Krynodes or
 downloads a release, and so does the install script (`curl --proto =https
 --tlsv1.3`). HTTP checks still accept whatever the checked site offers.
 
@@ -106,7 +141,7 @@ downloads a release, and so does the install script (`curl --proto =https
 
 Checks run on the agent of the server they belong to: HTTP (down on errors,
 timeouts and 5xx answers), TCP (down when the connection fails) and systemd
-(up while the unit is active). From agent 0.3.4 a failing check is tried twice
+(up while the unit is active). A failing check is tried twice
 more, 5 seconds apart, before the agent reports it down, and an incident opens
 only at the second such report in a row. A check's menu on the Checks page or the node
 page has **Edit** (name, server, kind, target, timeout), **Pause** / **Resume**,
@@ -115,7 +150,7 @@ target or server) or pausing starts the status fresh and closes an open
 incident; the history stays. A server with a live connection (below) runs the
 changed check within seconds; others at their next report.
 
-From agent 0.4.0 a SERVICE check's menu has **Restart automatically**: one
+A SERVICE check's menu has **Restart automatically**: one
 switch. When the check turns red (an incident opens; never while it is yellow
 or during planned work) the Worker queues a restart of its unit, once per
 incident. The server only restarts a unit it was told to with a fingerprint,
@@ -144,8 +179,8 @@ and the status page use the browser's time zone.
 ### Live connection
 
 Each server keeps one WebSocket open to the Worker (`/api/agent/stream`), held
-by a Durable Object (`FleetHub`, one per owner, SQLite class, Free plan). From
-agent 0.3.1 everything travels over it: reports, config and action results.
+by a Durable Object (`FleetHub`, one per owner, SQLite class, Free plan).
+Everything travels over it: reports, config and action results.
 The dashboard can wake a server at once: queued actions, check changes, update
 and refresh requests, and applied trust changes reach it in seconds instead of
 up to a minute.
@@ -160,11 +195,10 @@ up to a minute.
   a connection that stays silent for 75 seconds and reconnects after 1 second,
   doubling to 1 minute (with jitter). Cloudflare closes every connection on a
   deploy or restart; agents are back within seconds and report at once.
-- Agents before 0.3.1 are not supported. The live connection refuses them
-  (426) and the old HTTP report routes answer 410 `AGENT_UPDATE_REQUIRED`; the
-  node page shows the command to update such a server by hand.
-- At a 60-second interval a server costs about 870 D1 writes a day on a live
-  connection and about 2,000 on HTTP (was about 4,900).
+- Agents before 0.5.0 are not supported. The live connection refuses them
+  (426), the Worker refuses every action for them, and the node page shows the
+  command to update such a server by hand.
+- At a 60-second interval a server costs about 870 D1 writes a day.
 
 Dashboards use the same hub: each tab opens `GET /api/live`, a WebSocket that
 only says what changed (servers, checks, actions, services). The tab then
@@ -197,7 +231,7 @@ with an arrow when it is behind, and the **Updates** filter lists them.
   `kry self-update`, which downloads the release from this repository, checks
   the SHA-256 and the signature against the key built into the agent, refuses
   downgrades, keeps the old binary as `kry.previous` and restarts.
-- From agent 0.3.1 the download suits slow links: it fetches the gzip asset
+- The download suits slow links: it fetches the gzip asset
   (about 2.6 MB instead of 6.5 MB), gives up on an attempt only after a minute
   without data, resumes where it stopped, and tries five times. The new binary
   must print its version before it is installed, and if the agent does not stay
@@ -219,10 +253,10 @@ curl -fsSL https://<agent-host>/install.sh | sudo sh -s -- --update
 The dashboard's **Services** page lists each server's systemd units and Docker
 containers, grouped by server, and starts, stops or restarts them. The node
 page and Ctrl K offer the same actions, and a SERVICE check's menu has
-**Restart service**. From agent 0.2.1 every one of them needs a fingerprint,
-like a deploy (see below): a server that trusts no device refuses them.
+**Restart service**. Every one of them needs a fingerprint, like a deploy
+(see below): a server that trusts no device refuses them.
 
-From agent 0.2.2 the node page's **Actions** menu (and Ctrl K) also has
+The node page's **Actions** menu (and Ctrl K) also has
 **Restart server**: after a confirmation and the same fingerprint, `kry exec`
 reports "restarting the server" and then runs `systemctl reboot --no-block`.
 Each server on the Services page carries the same menu.
@@ -236,7 +270,7 @@ days by day, with who asked, from which device, the outcome and how long it
 took, and filters by server; trust updates stay in **Recent changes**. There
 are no pop-up toasts for other people's work.
 
-From agent 0.3.3 a service's or stack's menu has **Logs**: the last 300 lines
+A service's or stack's menu has **Logs**: the last 300 lines
 (`journalctl -u`, `docker logs`, `docker compose logs`), at most 64 KiB, signed
 like any action and allowed for protected units because it only reads.
 
@@ -246,11 +280,10 @@ The agent never runs anything itself:
 - The root oneshot `kry exec` does the work. The units `krynodes-exec.path` and
   `krynodes-exec.timer` start it, the timer every 5 minutes to refresh the list of
   services.
-- `kry exec` refuses anything but a signed start, stop, restart or log read of
-  a service that is present on the server; from agent 0.4.0 also a signed stack
-  start, stop, restart or removal, a container removal, a new stack (checked
-  first, see below) and the auto-restart list. The only unsigned requests it
-  takes are turning auto-restart off and restarting a listed unit that is down.
+- `kry exec` refuses anything that is not signed by a trusted device and
+  aimed at something present on the server. The only unsigned requests it
+  takes are turning auto-restart off, restarting a listed unit that is down
+  and running the Security check.
 - It never starts, stops or restarts ssh, the network, Docker itself, systemd
   internals, cloudflared or Krynodes; it only reads their logs.
 - It keeps its state in `/var/lib/kry-exec`.
@@ -276,7 +309,7 @@ instead, with their volumes. Stacks you started yourself are never touched.
 
 ### Deploy
 
-From agent 0.2.0 the Services page deploys Docker Compose stacks. Each server
+The Services page deploys Docker Compose stacks. Each server
 lists its stacks, with their containers folded under them, beside its other
 containers and systemd units; the server page uses the same list. A stack's ⋯
 holds its actions, and **Deploy on all N servers** when the project runs on
@@ -285,8 +318,7 @@ stack's own directory, with its own compose files. A failed deploy keeps the ima
 ran before it, and **Roll back** starts them again.
 
 Servers with Docker and Compose show the Docker logo on Fleet, Services and the
-node page (faded when Compose is missing; agent 0.4.0 reports it). From agent
-0.4.0 a stack's menu also has **Start**, **Stop**, **Restart**, **Remove** and
+node page (faded when Compose is missing). A stack's menu also has **Start**, **Stop**, **Restart**, **Remove** and
 **Delete permanently**, and a container's menu has **Remove**. A removed
 container leaves the list as soon as its server confirms.
 
@@ -322,8 +354,8 @@ phone screen off) and is checked against the clock before every signature, so
 a laptop that slept needs a new fingerprint. Nothing on screen shows whether a
 session is open. Agents and the Worker accept sessions of at most 15 minutes.
 
-From agent 0.3.0 one admin login can be shared safely by several people, and
-from agent 0.3.5 the rules are these:
+One admin login can be shared safely by several people, and the rules are
+these:
 
 - **Trusted devices** are the passkeys every server knows. Each one reaches
   (may run actions on) only the servers it is given. A device someone
@@ -340,8 +372,6 @@ from agent 0.3.5 the rules are these:
   other trusted device (two when there are more than two). Servers enrolled
   later start with the devices and nobody reaching them.
 - A passkey already registered, under any name, cannot be set up again.
-- Servers below agent 0.3.5 still take server changes, but adding or removing
-  devices waits until every server runs it.
 - Changes wait under **Waiting for approval** for up to 24 hours. Each approval
   signs the exact change; the dialog shows new devices' key fingerprints for
   you to compare with the new device's screen.
@@ -351,7 +381,7 @@ from agent 0.3.5 the rules are these:
 - Every approval, session and confirmation needs a passkey that verifies you:
   the fingerprint by default, a face on Windows Hello, a Mac or an iPhone, or a
   security key such as a YubiKey. A touch alone ("a finger is there") is
-  refused by the browser, the Worker and every server (agent 0.3.5); a passkey
+  refused by the browser, the Worker and every server; a passkey
   that only takes a touch (such as Microsoft Password Manager) cannot join, and
   one trusted earlier reads **Cannot sign** until it is removed and set up
   again. There is no passphrase and no setting to turn this off.
@@ -369,10 +399,9 @@ To start over on a server:
 sudo kry trust --reset
 ```
 
-### Agent 0.5.0: stacks without SSH, secured servers
+### Stacks without SSH, secured servers
 
-Everything below needs agent 0.5.0 on every server it involves, is signed with
-a fingerprint and lands in History.
+Everything below is signed with a fingerprint and lands in History.
 
 Each agent makes a P-256 seal key in `/var/lib/kry-exec/keys` (root only) and
 reports the public half. The browser encrypts secrets, token pieces and tunnel
@@ -456,11 +485,11 @@ with **Check now**. A new serious finding is mailed under the quiet rules.
 
 | Protection                    | What it does                                                                                                      |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Automatic security updates    | `unattended-upgrades` for security updates                                                                        |
+| Automatic security updates    | `unattended-upgrades` (Debian, Ubuntu); a daily Krynodes timer running `dnf -y upgrade --security` (RHEL family)  |
 | Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action  |
 | SSH keys only                 | no password login over SSH; offered only when root or a sudo user has a key                                       |
-| Block repeated login failures | fail2ban for SSH                                                                                                  |
-| Firewall                      | ufw: SSH and the ports you tick stay open; ports published by Docker are not affected                             |
+| Block repeated login failures | fail2ban for SSH (from EPEL on RHEL, Rocky, AlmaLinux, Oracle Linux and CentOS Stream)                            |
+| Firewall                      | ufw or firewalld: SSH and the ports you tick stay open; ports published by Docker are not affected                |
 | Free port 53                  | stops systemd-resolved holding port 53, for a DNS server such as AdGuard; offered only when port 53 is held by it |
 
 Each one writes its own drop-in file and never edits yours; Turn off removes
@@ -471,6 +500,11 @@ outward, so none of them can cut Krynodes off.
 **Lock down server** (server menu) stops containers that publish ports to the
 internet and the tunnel, and turns on SSH keys only when a key is set up.
 **Unlock server** brings back exactly what it changed.
+
+**Install Docker** (server menu, for a server without Docker or Compose) adds
+Docker's own repository and installs Docker with Compose, or only the Compose
+plugin when Docker is there. It refuses next to Podman. A repository the owner
+added already is used as it is.
 
 ## Data retention
 

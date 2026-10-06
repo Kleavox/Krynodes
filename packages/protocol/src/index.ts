@@ -12,15 +12,7 @@ export {
   type TrustKeyRecord,
 } from "./change";
 export { summarizeChange, type ChangeSummary } from "./summary";
-export {
-  agentSupported,
-  compareVersions,
-  LOGS_AGENT,
-  MIN_AGENT_VERSION,
-  ORCHESTRATION_AGENT,
-  STACKS_AGENT,
-  TRUST_AGENT,
-} from "./versions";
+export { agentSupported, compareVersions, MIN_AGENT_VERSION } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
 
 export const agentHostSchema = z.object({
@@ -130,12 +122,18 @@ export const KIND_VERBS = {
     "unexpose",
     "adopt",
   ],
-  host: ["reboot", "apply", "undo", "lockdown", "unlock", "scan"],
+  host: ["reboot", "apply", "undo", "lockdown", "unlock", "scan", "install"],
   trust: ["trust"],
   vault: ["store", "release", "reshare", "forget"],
 } as const;
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
+
+export function hostVerbFits(name: string, action: string): boolean {
+  if (name === "docker") return action === "install";
+  const recipe = (RECIPES as readonly string[]).includes(name);
+  return action !== "install" && RECIPE_VERBS.includes(action) === recipe;
+}
 
 export const signedTrustSchema = z.strictObject({
   change: z
@@ -182,6 +180,7 @@ export const agentActionSchema = z
       "release",
       "reshare",
       "forget",
+      "install",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -202,10 +201,7 @@ export const agentActionSchema = z
     }
     const allowed: readonly string[] = KIND_VERBS[action.kind];
     if (!allowed.includes(action.action)) return false;
-    if (
-      action.kind === "host" &&
-      RECIPE_VERBS.includes(action.action) !== (action.name !== "server")
-    ) {
+    if (action.kind === "host" && !hostVerbFits(action.name, action.action)) {
       return false;
     }
     return (UNSIGNED_VERBS as readonly string[]).includes(action.action)
@@ -267,6 +263,14 @@ export const securityReportSchema = z.strictObject({
   recipes: z.array(z.enum(RECIPES)).max(RECIPES.length),
   lockdown: z.boolean(),
   rebootHour: z.number().int().min(0).max(23).nullable(),
+  platform: z
+    .strictObject({
+      family: z.enum(["debian", "rhel"]).nullable(),
+      name: z.string().max(120),
+      verified: z.boolean(),
+      checked: z.string().max(40),
+    })
+    .optional(),
 });
 
 export const vaultReportSchema = z

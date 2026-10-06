@@ -1,8 +1,4 @@
-import {
-  TRUST_AGENT,
-  agentSupported,
-  compareVersions,
-} from "@krynodes/protocol";
+import { agentSupported } from "@krynodes/protocol";
 
 import { fingerprint } from "../lib/webauthn";
 
@@ -58,11 +54,6 @@ export function readReport(text: string | null): TrustReport | null {
 
 export const agentCurrent = (node: FleetNode) =>
   agentSupported(node.agentVersion);
-
-export const trustCurrent = (node: FleetNode) =>
-  agentCurrent(node) &&
-  (!/^\d+\.\d+\.\d+$/u.test(node.agentVersion ?? "") ||
-    compareVersions(node.agentVersion!, TRUST_AGENT) >= 0);
 
 export async function loadFleet(
   db: D1Database,

@@ -1,12 +1,11 @@
 import { pokeSoon } from "../fleet/client";
 import {
   KIND_VERBS,
-  LOGS_AGENT,
-  ORCHESTRATION_AGENT,
+  MIN_AGENT_VERSION,
   RECIPES,
-  STACKS_AGENT,
   UNSIGNED_VERBS,
-  compareVersions,
+  agentSupported,
+  hostVerbFits,
   isProtectedTarget,
   isValidTarget,
   signedCommandSchema,
@@ -59,6 +58,7 @@ const actionRequestSchema = z.object({
     "lockdown",
     "unlock",
     "scan",
+    "install",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -75,44 +75,9 @@ const actionRequestSchema = z.object({
     .max(50),
 });
 
-const STACK_VERBS = new Set([
-  "remove",
-  "purge",
-  "restore",
-  "create",
-  "autorestart",
-  "manual",
-]);
-
-const ORCHESTRATION_VERBS = new Set([
-  "edit",
-  "read",
-  "export",
-  "expose",
-  "unexpose",
-  "adopt",
-  "apply",
-  "undo",
-  "lockdown",
-  "unlock",
-  "scan",
-  "store",
-  "release",
-  "reshare",
-  "forget",
-]);
+const OWN_STACK = /^\/var\/lib\/kry-exec\/compose\/[^/]+$/u;
 
 const READ_ONLY = new Set(["logs", "read", "scan"]);
-
-function minimumAgent(action: string, kind: string): string | null {
-  if (ORCHESTRATION_VERBS.has(action)) return ORCHESTRATION_AGENT;
-  if (action === "logs") return LOGS_AGENT;
-  if (STACK_VERBS.has(action)) return STACKS_AGENT;
-  if (kind === "compose" && ["start", "stop", "restart"].includes(action)) {
-    return STACKS_AGENT;
-  }
-  return null;
-}
 
 const commandSchema = z.object({
   v: z.literal(1),
@@ -412,6 +377,7 @@ export function registerServiceRoutes(
         (target) =>
           !isValidTarget(target.kind, target.name) ||
           !(KIND_VERBS[target.kind] as readonly string[]).includes(action) ||
+          (target.kind === "host" && !hostVerbFits(target.name, action)) ||
           (unsigned
             ? target.signed !== undefined
             : target.signed === undefined || target.id === undefined),
@@ -496,29 +462,17 @@ export function registerServiceRoutes(
       );
     }
     const byId = new Map(nodes.results.map((node) => [node.id, node]));
-    for (const target of targets) {
-      const node = byId.get(target.nodeId)!;
-      const command = target.signed
-        ? (decodeJson(target.signed.command) as Record<string, unknown> | null)
-        : null;
-      const minimum =
-        action === "create" && (command?.access || command?.secrets)
-          ? ORCHESTRATION_AGENT
-          : minimumAgent(action, target.kind);
-      if (
-        minimum &&
-        compareVersions(node.agent_version ?? "0.0.0", minimum) < 0
-      ) {
-        return context.json(
-          {
-            code: "AGENT_TOO_OLD",
-            message: logs
-              ? `Update the agent on ${node.name} to ${minimum} or newer to read logs.`
-              : `Update the agent on ${node.name} to ${minimum} or newer.`,
-          },
-          422,
-        );
-      }
+    const old = nodes.results.find(
+      (node) => !agentSupported(node.agent_version),
+    );
+    if (old) {
+      return context.json(
+        {
+          code: "AGENT_TOO_OLD",
+          message: `Update the agent on ${old.name} to ${MIN_AGENT_VERSION} or newer.`,
+        },
+        422,
+      );
     }
 
     await db.batch(sweepStatements(db, now));
@@ -539,10 +493,10 @@ export function registerServiceRoutes(
       needStacks
         ? db
             .prepare(
-              `SELECT node_id AS nodeId, project AS name, compose, rollback, 0 AS removed, access FROM stacks
+              `SELECT node_id AS nodeId, project AS name, compose, rollback, 0 AS removed, directory FROM stacks
                WHERE node_id IN (SELECT value FROM json_each(?1))
                UNION ALL
-               SELECT node_id, project, 0, 0, 1, NULL FROM removed_stacks
+               SELECT node_id, project, 0, 0, 1, directory FROM removed_stacks
                WHERE node_id IN (SELECT value FROM json_each(?1))`,
             )
             .bind(nodeIds)
@@ -552,7 +506,7 @@ export function registerServiceRoutes(
               compose: number;
               rollback: number;
               removed: number;
-              access: string | null;
+              directory: string;
             }>()
         : { results: [] },
       action === "autorestart"
@@ -620,8 +574,8 @@ export function registerServiceRoutes(
               : action !== "restore" &&
                 stack.compose === 1 &&
                 (action !== "rollback" || stack.rollback === 1) &&
-                (action !== "edit" || stack.access !== null) &&
-                (action !== "adopt" || stack.access === null),
+                (action !== "edit" || OWN_STACK.test(stack.directory)) &&
+                (action !== "adopt" || !OWN_STACK.test(stack.directory)),
           )
           .map((stack) =>
             targetKey({
@@ -631,9 +585,13 @@ export function registerServiceRoutes(
             }),
           ),
         ...nodes.results.flatMap((node) =>
-          ["server", ...RECIPES].map((name) =>
-            targetKey({ nodeId: node.id, kind: "host", name }),
-          ),
+          [
+            "server",
+            ...RECIPES,
+            ...(node.docker === "missing" || node.docker === "no-compose"
+              ? ["docker"]
+              : []),
+          ].map((name) => targetKey({ nodeId: node.id, kind: "host", name })),
         ),
       ]);
       if (targets.some((target) => !present.has(targetKey(target)))) {

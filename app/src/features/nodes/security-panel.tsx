@@ -24,35 +24,24 @@ import {
 } from "@/components/ui/select";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useScan, useServices } from "@/lib/api";
-import { orchestrationReady } from "@/lib/devices";
+import { agentCurrent } from "@/lib/devices";
 import { timeAgo } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
 import {
   firewallPorts,
+  protectionDetail,
+  protectionsNotice,
   fromUtcHour,
   recipeChoices,
   recommended,
   toUtcHour,
   type RecipeChoice,
 } from "@/lib/security";
+import { cn } from "@/lib/utils";
 import type { Finding, NodeRecord } from "@/types";
 
 const sectionTitle =
   "mb-3 text-[11px] tracking-wider text-muted-foreground uppercase";
-
-const DETAIL: Record<string, string> = {
-  "security-updates":
-    "Installs security updates every day with Debian's own unattended-upgrades.",
-  "reboot-window":
-    "When an update needs a restart, the server restarts at the hour you choose, at most once a day.",
-  "ssh-keys-only":
-    "SSH stops accepting passwords; keys keep working. If you get locked out, Krynodes can turn passwords back on.",
-  fail2ban: "Blocks addresses that keep failing to log in over SSH.",
-  firewall:
-    "Turns on ufw and keeps SSH and the ports you tick open. Ports published by Docker are not affected.",
-  "free-port-53":
-    "Stops systemd-resolved from holding port 53, so a DNS server such as AdGuard can use it.",
-};
 
 const tone = (finding: Finding) =>
   finding.severity === "serious"
@@ -84,6 +73,8 @@ function RecipeDialog({
   )?.security;
   const [hour, setHour] = useState("3");
   const [ticked, setTicked] = useState<string[] | null>(null);
+  const [anyway, setAnyway] = useState(false);
+  const platform = report?.platform;
   const suggested = report
     ? [...new Set([...firewallPorts(report), ...internet])]
     : internet;
@@ -95,12 +86,21 @@ function RecipeDialog({
   const ids = recommend ?? [choice!.id];
   const needsHour = turnOn && ids.includes("reboot-window");
   const firewall = turnOn && ids.includes("firewall");
-  const argsFor = (id: string): Record<string, string> | undefined =>
-    id === "reboot-window"
-      ? { hour: String(Math.floor(toUtcHour(Number(hour), offset()))) }
-      : id === "firewall"
-        ? { ports: ports.join(",") }
-        : undefined;
+  const needsAnyway =
+    turnOn &&
+    !!platform &&
+    !platform.verified &&
+    ids.some((id) => id !== "reboot-window");
+  const argsFor = (id: string): Record<string, string> | undefined => {
+    const args = {
+      ...(id === "reboot-window"
+        ? { hour: String(Math.floor(toUtcHour(Number(hour), offset()))) }
+        : {}),
+      ...(id === "firewall" ? { ports: ports.join(",") } : {}),
+      ...(anyway ? { anyway: "yes" } : {}),
+    };
+    return Object.keys(args).length > 0 ? args : undefined;
+  };
   const submit = () =>
     run.mutate(
       {
@@ -132,7 +132,7 @@ function RecipeDialog({
           <AlertDialogDescription asChild>
             <div className="space-y-2">
               {ids.map((id) => (
-                <p key={id}>{DETAIL[id]}</p>
+                <p key={id}>{report ? protectionDetail(id, report) : null}</p>
               ))}
               {!turnOn && (
                 <p>The file Krynodes added is removed; nothing else changes.</p>
@@ -192,6 +192,17 @@ function RecipeDialog({
             </p>
           </fieldset>
         )}
+        {needsAnyway && (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={anyway}
+              onChange={() => setAnyway(!anyway)}
+            />
+            Run it on {platform.name} anyway
+          </label>
+        )}
         {run.error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(run.error)}
@@ -201,7 +212,7 @@ function RecipeDialog({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <Button
             variant={turnOn ? "default" : "destructive"}
-            disabled={run.isPending}
+            disabled={run.isPending || (needsAnyway && !anyway)}
             onClick={submit}
           >
             {!run.isPending && <Fingerprint aria-hidden="true" />}
@@ -231,12 +242,14 @@ export function SecurityPanel({
   const [pending, setPending] = useState<Pending | null>(null);
   const entry = services.data?.nodes.find((item) => item.id === node.id);
   const report = entry?.security;
-  if (!orchestrationReady(node) || !report) return null;
+  if (!agentCurrent(node) || !report) return null;
   const choices = recipeChoices(report);
   const steps = recommended(report);
   const internet = (entry?.stacks ?? []).flatMap((stack) =>
     stack.access === "full" ? (stack.public ?? []) : [],
   );
+  const notice = protectionsNotice(report);
+  const unsupported = report.platform?.family === null;
   const order = { serious: 0, warning: 1, note: 2 };
   const findings = [...report.findings].sort(
     (a, b) => order[a.severity] - order[b.severity],
@@ -274,7 +287,13 @@ export function SecurityPanel({
       <h3 className="mt-4 mb-2 text-xs font-medium text-muted-foreground">
         Protections
       </h3>
-      <ul className="divide-y rounded-md border text-sm">
+      {notice && <p className="mb-2 text-xs text-muted-foreground">{notice}</p>}
+      <ul
+        className={cn(
+          "divide-y rounded-md border text-sm",
+          unsupported && "hidden",
+        )}
+      >
         {choices.map((choice) => (
           <li key={choice.id} className="flex items-center gap-2 px-3 py-2">
             <span className="min-w-0 flex-1">
@@ -327,7 +346,7 @@ export function SecurityPanel({
           </li>
         ))}
       </ul>
-      {steps.length > 0 && (
+      {steps.length > 0 && !unsupported && (
         <Button
           className="mt-3 w-full"
           variant="outline"
@@ -337,6 +356,7 @@ export function SecurityPanel({
         </Button>
       )}
       <RecipeDialog
+        key={JSON.stringify(pending)}
         node={node}
         pending={pending}
         internet={internet}

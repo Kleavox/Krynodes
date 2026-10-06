@@ -25,6 +25,7 @@ import { useCloudflare, useOverview, useServices } from "@/lib/api";
 import { portsOf, servicesOf } from "@/lib/compose";
 import { errorMessage } from "@/lib/http";
 import {
+  addressProblem,
   exposeSteps,
   hostnameFor,
   planAddress,
@@ -141,7 +142,9 @@ function OpenForm({
       ? plan.reason
       : needsLogin && !settings.aud
         ? "Krynodes runs without Cloudflare Access here, so a login cannot be reused. Choose Everyone."
-        : null;
+        : read
+          ? addressProblem(label ?? suggested, chosenPort)
+          : null;
 
   const submit = () => {
     if (!plan?.ok || !settings) return;

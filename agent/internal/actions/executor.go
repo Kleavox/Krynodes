@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"io"
 	"log"
 	"net/http"
@@ -54,6 +55,7 @@ type Executor struct {
 	HealthTimeout time.Duration
 	HealthEvery   time.Duration
 	HealthSettle  time.Duration
+	Fetch         recipes.Fetcher
 }
 
 type pending struct {
@@ -159,7 +161,7 @@ func (e Executor) Execute(ctx context.Context) error {
 	if err := e.pruneResults(); err != nil {
 		return err
 	}
-	if !reboot && processed == 0 && e.rebootDue() {
+	if !reboot && processed == 0 && e.rebootDue(ctx) {
 		reboot = true
 	}
 	if reboot {

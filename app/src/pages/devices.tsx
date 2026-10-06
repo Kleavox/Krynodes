@@ -1,4 +1,4 @@
-import { TRUST_AGENT } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { Fingerprint } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -64,7 +64,6 @@ import {
   removeChange,
   serverState,
   syncChange,
-  trustReady,
   twinOf,
   type FleetServer,
   type ServerState,
@@ -78,7 +77,7 @@ const SECTION = "rounded-lg border bg-card";
 
 const STATE: Record<ServerState, { label: string; tone: string }> = {
   update: {
-    label: `Needs agent ${TRUST_AGENT}`,
+    label: `Needs agent ${MIN_AGENT_VERSION}`,
     tone: "text-muted-foreground",
   },
   empty: { label: "Not trusted yet", tone: "text-warning" },
@@ -713,7 +712,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
   const behind = fleet.servers.filter(
     (server) => states.get(server.node.id) === "behind",
   );
-  const old = fleet.trusted.filter((server) => !trustReady(server.node));
+  const old = fleet.trusted.filter((server) => !agentCurrent(server.node));
   const admitting = new Set(
     fleet.open.flatMap((proposal) =>
       (decodeChange(proposal.change)?.core ?? []).map((key) => key.id),
@@ -754,16 +753,16 @@ function Manage({ fleet }: { fleet: Fleet }) {
         </Notice>
       ) : (
         <Notice tone="warning">
-          Update your servers to agent {TRUST_AGENT}, then trust this device on
-          them.
+          Update your servers to agent {MIN_AGENT_VERSION}, then trust this
+          device on them.
         </Notice>
       );
   } else if (old.length > 0) {
     notice = (
       <Notice tone="warning">
         Update {old.map((server) => server.node.name).join(", ")} to agent{" "}
-        {TRUST_AGENT}. Devices cannot be added or removed until every server
-        runs it.
+        {MIN_AGENT_VERSION}. Devices cannot be added or removed until every
+        server runs it.
       </Notice>
     );
   } else if (fleet.core.length === 1 && fleet.pending.length === 0) {

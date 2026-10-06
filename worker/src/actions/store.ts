@@ -1,8 +1,4 @@
-import {
-  STACKS_AGENT,
-  compareVersions,
-  type AgentActionResult,
-} from "@krynodes/protocol";
+import { agentSupported, type AgentActionResult } from "@krynodes/protocol";
 
 import { fromB64url } from "../lib/b64url";
 
@@ -42,7 +38,8 @@ export type ActionVerb =
   | "store"
   | "release"
   | "reshare"
-  | "forget";
+  | "forget"
+  | "install";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -491,10 +488,7 @@ export async function healStatements(
   checkIds: string[],
   now: number,
 ): Promise<{ statement: D1PreparedStatement; checkIds: string[] }[]> {
-  if (
-    checkIds.length === 0 ||
-    compareVersions(node.agent_version ?? "0.0.0", STACKS_AGENT) < 0
-  ) {
+  if (checkIds.length === 0 || !agentSupported(node.agent_version)) {
     return [];
   }
   const rows = await db

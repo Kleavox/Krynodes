@@ -107,7 +107,17 @@ const slug = (text: string) =>
     .replace(/^-+|-+$/gu, "");
 
 export function hostnameFor(project: string, server: string, zone: string) {
-  return `${slug(`${slug(project)}-${slug(server)}`).slice(0, 63)}.${zone}`;
+  return `${slug(slug(`${slug(project)}-${slug(server)}`).slice(0, 63))}.${zone}`;
+}
+
+export function addressProblem(label: string, port: string): string | null {
+  if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)) {
+    return "Use 1 to 63 lowercase letters, digits and -, not starting or ending with -.";
+  }
+  const number = Number(port);
+  return /^\d+$/u.test(port) && number >= 1 && number <= 65535
+    ? null
+    : "The port must be 1 to 65535.";
 }
 
 export function exposeSteps(input: {
@@ -288,6 +298,7 @@ export function planRemoval(
   nodes: VaultNode[],
   removed: string,
   setId: string | null,
+  addresses = false,
 ): Plan<
   | { needed: false }
   | {
@@ -299,7 +310,7 @@ export function planRemoval(
     }
 > {
   const gone = nodes.find((node) => node.id === removed);
-  if (!gone || setId === null || gone.vault?.set !== setId) {
+  if (!gone || setId === null || (gone.vault?.set !== setId && !addresses)) {
     return { ok: true, needed: false };
   }
   const plan = planSpread(
@@ -321,7 +332,7 @@ export function planRemoval(
     holders,
     forgets: [
       ...plan.forgets,
-      ...(gone.reachable && gone.online ? [removed] : []),
+      ...(gone.vault && gone.reachable && gone.online ? [removed] : []),
     ],
   };
 }

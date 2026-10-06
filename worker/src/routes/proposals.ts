@@ -1,6 +1,5 @@
 import {
   MIN_AGENT_VERSION,
-  TRUST_AGENT,
   evaluateQuorum,
   summarizeChange,
   trustChangeSchema,
@@ -15,12 +14,7 @@ import type { Env } from "../env";
 import { fromB64url } from "../lib/b64url";
 import { sendProposalEmail } from "../lib/mail";
 import { Refusal, verifyApproval } from "../trust/approval";
-import {
-  agentCurrent,
-  loadFleet,
-  trustCurrent,
-  type Fleet,
-} from "../trust/fleet";
+import { agentCurrent, loadFleet, type Fleet } from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
@@ -148,11 +142,11 @@ function checkChange(env: Env, fleet: Fleet, change: TrustChange, now: number) {
   for (const nodeId of targets) {
     const node = fleet.nodes.find((entry) => entry.id === nodeId);
     if (!node) throw new Refusal(404, "NOT_FOUND", "A server was not found.");
-    if (!agentCurrent(node) || (devicesOrRule && !trustCurrent(node))) {
+    if (!agentCurrent(node)) {
       throw new Refusal(
         422,
         "NEEDS_AGENT",
-        `Update ${node.name} to agent ${agentCurrent(node) ? TRUST_AGENT : MIN_AGENT_VERSION} first.`,
+        `Update ${node.name} to agent ${MIN_AGENT_VERSION} first.`,
       );
     }
     if ((node.report?.core.length ?? 0) === 0) {

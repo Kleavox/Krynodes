@@ -193,7 +193,8 @@ export type ActionVerb =
   | "store"
   | "release"
   | "reshare"
-  | "forget";
+  | "forget"
+  | "install";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
@@ -224,12 +225,20 @@ export interface Finding {
   detail: string;
 }
 
+export interface Platform {
+  family: "debian" | "rhel" | null;
+  name: string;
+  verified: boolean;
+  checked: string;
+}
+
 export interface SecurityReport {
   checkedAt: string;
   findings: Finding[];
   recipes: string[];
   lockdown: boolean;
   rebootHour: number | null;
+  platform?: Platform;
 }
 
 export interface WebAddress {

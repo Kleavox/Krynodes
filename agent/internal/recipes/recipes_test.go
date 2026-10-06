@@ -29,7 +29,9 @@ func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, i
 func newEnv(t *testing.T) (Env, *fakeRun) {
 	t.Helper()
 	run := &fakeRun{respond: map[string]string{}, failing: map[string]bool{}}
-	return Env{Root: t.TempDir(), Run: run.run}, run
+	env := Env{Root: t.TempDir(), Run: run.run}
+	write(t, env, "/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION_CODENAME=bookworm\nID=debian\n")
+	return env, run
 }
 
 func write(t *testing.T, env Env, path, body string) {
@@ -68,7 +70,7 @@ func TestAutomaticSecurityUpdates(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "security-updates", nil); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get install -y -q unattended-upgrades") {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q unattended-upgrades") {
 		t.Fatalf("calls %q", run.calls)
 	}
 	if !strings.Contains(read(env, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades"), `APT::Periodic::Unattended-Upgrade "1";`) {
@@ -144,7 +146,7 @@ func TestRepeatedLoginFailuresAreBlocked(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "fail2ban", nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range []string{"env DEBIAN_FRONTEND=noninteractive apt-get install -y -q fail2ban python3-systemd", "systemctl enable --now fail2ban", "systemctl restart fail2ban"} {
+	for _, call := range []string{"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q fail2ban python3-systemd", "systemctl enable --now fail2ban", "systemctl restart fail2ban"} {
 		if !slices.Contains(run.calls, call) {
 			t.Fatalf("missing %q in %q", call, run.calls)
 		}
@@ -259,7 +261,7 @@ func TestUndoRemovesOnlyThePackagesItInstalled(t *testing.T) {
 	if err := Undo(context.Background(), env, "fail2ban", saved); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get purge -y -q fail2ban") {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q fail2ban") {
 		t.Fatalf("calls %q", run.calls)
 	}
 	kept, err := Apply(context.Background(), env, "security-updates", nil)
