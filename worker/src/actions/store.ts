@@ -88,15 +88,18 @@ export const DELIVER_SQL = `UPDATE actions SET status = 'sent', sent_at = ?1
     ORDER BY rowid LIMIT 10)
   RETURNING id, kind, name, action, deliverable_at, signed, attachment`;
 
-export const EXPIRE_SQL = `UPDATE actions SET status = 'expired', finished_at = ?1
+export const EXPIRE_SQL = `UPDATE actions SET status = 'expired', finished_at = ?1,
+    attachment = NULL
   WHERE status = 'queued' AND deliverable_at IS NOT NULL AND deliverable_at < ?2`;
 
 const ABANDON_SQL = `UPDATE actions
-  SET status = 'failed', finished_at = ?1, output = 'No result from the server'
+  SET status = 'failed', finished_at = ?1, output = 'No result from the server',
+    attachment = NULL
   WHERE status = 'sent'
     AND sent_at < CASE WHEN kind = 'compose' THEN ?3 ELSE ?2 END`;
 
-const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1
+const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
+    attachment = NULL
   WHERE status = 'queued' AND deliverable_at IS NULL AND EXISTS (
     SELECT 1 FROM actions earlier
     WHERE earlier.batch_id = actions.batch_id
@@ -135,7 +138,7 @@ export function sweepStatements(
 }
 
 const SETTLE_MS = 2 * 60_000;
-const REBOOT_MS = 10 * 60_000;
+export const REBOOT_MS = 10 * 60_000;
 
 export async function inMaintenance(
   db: D1Database,
@@ -301,19 +304,22 @@ function followUp(
          WHERE batch_id = ?2 AND attach_from = ?3`,
       )
       .bind(output, action.batch_id, action.position);
-    if (action.action !== "reshare") return [attach];
-    const set = argsOf(action).set;
-    return set
-      ? [
-          attach,
-          db
-            .prepare(
-              `UPDATE cloudflare SET set_id = ?, updated_at = ?
-               WHERE owner_user_id = (SELECT owner_user_id FROM nodes WHERE id = ?)`,
-            )
-            .bind(set, at, nodeId),
-        ]
-      : [attach];
+    return [attach];
+  }
+  if (action.action === "store") {
+    const { set, holders } = argsOf(action);
+    if (!set) return [];
+    return [
+      db
+        .prepare(
+          `UPDATE cloudflare SET set_id = ?1, updated_at = ?2
+           WHERE owner_user_id = (SELECT owner_user_id FROM nodes WHERE id = ?3)
+             AND set_id IS NOT ?1
+             AND (SELECT COUNT(*) FROM actions
+                  WHERE batch_id = ?4 AND action = 'store' AND status = 'done') >= ?5`,
+        )
+        .bind(set, at, nodeId, action.batch_id, Number(holders) > 1 ? 2 : 1),
+    ];
   }
   if (action.action === "expose") {
     const args = argsOf(action);
@@ -415,7 +421,8 @@ export async function actionResultStatements(
     return [
       db
         .prepare(
-          `UPDATE actions SET status = ?, exit_code = ?, output = ?, finished_at = max(sent_at, ?)
+          `UPDATE actions SET status = ?, exit_code = ?, output = ?, finished_at = max(sent_at, ?),
+             attachment = NULL
            WHERE id = ? AND node_id = ? AND status = 'sent'`,
         )
         .bind(
@@ -523,7 +530,7 @@ export function cancelStatement(
 ): D1PreparedStatement {
   return db
     .prepare(
-      `UPDATE actions SET status = 'cancelled', finished_at = ?
+      `UPDATE actions SET status = 'cancelled', finished_at = ?, attachment = NULL
        WHERE batch_id = ? AND status = 'queued'
          AND node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)`,
     )

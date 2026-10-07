@@ -15,6 +15,8 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 )
 
+const hostUnit = "krynodes-host.service"
+
 type rebootWindow struct {
 	Hour *int   `json:"hour"`
 	Last string `json:"last,omitempty"`
@@ -121,6 +123,12 @@ func (e Executor) rebootDue(ctx context.Context) bool {
 		return false
 	}
 	if needed, _ := recipes.RebootNeeded(ctx, e.recipeEnv()); !needed {
+		return false
+	}
+	if queued, _ := os.ReadDir(filepath.Join(e.StateDir, "host")); len(queued) > 0 {
+		return false
+	}
+	if state, _ := e.output(ctx, "systemctl", "is-active", hostUnit); slices.Contains([]string{"active", "activating", "reloading"}, strings.TrimSpace(state)) {
 		return false
 	}
 	window.Last = today

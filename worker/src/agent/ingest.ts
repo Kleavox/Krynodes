@@ -4,7 +4,7 @@ import type { Env } from "../env";
 import type { IncidentNotice } from "../incident/notify";
 import type { CheckKind } from "../lib/checks";
 import { sha256 } from "../lib/crypto";
-import { compareVersions } from "@krynodes/protocol";
+import { agentSupported, compareVersions } from "@krynodes/protocol";
 import {
   mergeChecks,
   parseChecks,
@@ -135,6 +135,42 @@ export function updateRetry(
           node.id,
           requested,
         ),
+    ],
+  };
+}
+
+export function forcedUpdate(
+  db: D1Database,
+  node: AgentNode,
+  agentVersion: string,
+  release: string | null,
+  now: number,
+): { node: AgentNode; statements: D1PreparedStatement[] } {
+  if (
+    agentSupported(agentVersion) ||
+    node.update_requested_version ||
+    !release ||
+    compareVersions(agentVersion, release) >= 0
+  ) {
+    return { node, statements: [] };
+  }
+  const requestedAt = new Date(now).toISOString();
+  return {
+    node: {
+      ...node,
+      update_requested_version: release,
+      update_requested_at: requestedAt,
+      update_attempts: 1,
+      update_error: null,
+    },
+    statements: [
+      db
+        .prepare(
+          `UPDATE nodes SET update_requested_version = ?, update_requested_at = ?,
+             update_attempts = 1, update_error = NULL
+           WHERE id = ? AND update_requested_version IS NULL`,
+        )
+        .bind(release, requestedAt, node.id),
     ],
   };
 }

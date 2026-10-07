@@ -167,13 +167,16 @@ with no trusted device yet is not asked.
 Incident mail goes out the moment a failure is confirmed, one mail per server
 for that report ("pivox: 2 checks down — Health, API"). A server that stops
 reporting mails at once too ("pivox: offline"), at the moment the dashboard
-turns it Offline: no report for three intervals, at least 90 seconds. Each
+turns it Offline: nothing heard for three intervals, at least 90 seconds. The
+agent's keepalive ping counts, so a report Krynodes fails to store does not
+make a live server offline. Each
 check and each server mails its first failure in an hour; later failures in
 that hour, recoveries and "back online" never mail. While an action runs on a
 server and for 2 minutes after it (10 minutes after a restart, until the agent
 is back), failing checks there open no incident, a silent server is not called
 offline, and the bars read "maintenance"; anything still down afterwards mails
-then. Actions and deploys never mail. Mail shows times in UTC; the dashboard
+then. A restart by **Restart when needed** gets the same 10 minutes when the
+server's last check said a restart was waiting. Actions and deploys never mail. Mail shows times in UTC; the dashboard
 and the status page use the browser's time zone.
 
 ### Live connection
@@ -195,9 +198,10 @@ up to a minute.
   a connection that stays silent for 75 seconds and reconnects after 1 second,
   doubling to 1 minute (with jitter). Cloudflare closes every connection on a
   deploy or restart; agents are back within seconds and report at once.
-- Agents before 0.5.0 are not supported. The live connection refuses them
-  (426), the Worker refuses every action for them, and the node page shows the
-  command to update such a server by hand.
+- Agents before 0.6.0 are not supported. A 0.5.x agent still connects and
+  is told to update at once to the published release; older agents are
+  refused (426), the Worker refuses every action for them, and the node page
+  shows the command to update such a server by hand.
 - At a 60-second interval a server costs about 870 D1 writes a day.
 
 Dashboards use the same hub: each tab opens `GET /api/live`, a WebSocket that
@@ -440,9 +444,13 @@ address…**, Remove and Delete permanently remove what it made.
 **Cloudflare token** (account menu → Cloudflare). Create one token with
 Account · Cloudflare Tunnel · Edit, Account · Access: Apps and Policies · Edit
 and Zone · DNS · Edit for your zone, expiring in a year, and paste it once. The
-browser splits it with Shamir's scheme: any 2 pieces rebuild it. Every 0.5.0
-server this device reaches gets one piece, sealed to its key; one server keeps
-the whole token, two servers must both be online, three or more need any two.
+browser splits it with Shamir's scheme: any 2 pieces rebuild it. Every
+online server this device reaches gets one piece, sealed to its key; one
+server keeps the whole token, two servers must both be online, three or more
+need any two. A new split takes over only once two of its pieces are stored,
+and each server keeps its piece of the split in use until then, so a spread
+that stops half way leaves the token as it was. One token change runs at a
+time; the page shows how many steps are left.
 A server rebuilds the token only for a signed request, uses it, and erases it.
 Open addresses keep working while servers are down. **Spread again** appears
 when a reachable server holds no piece; **Replace token** splits a new one.
@@ -483,14 +491,14 @@ with **Check now**. A new serious finding is mailed under the quiet rules.
 
 **Protections** on the server page, each with Turn off (Undo):
 
-| Protection                    | What it does                                                                                                      |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Automatic security updates    | `unattended-upgrades` (Debian, Ubuntu); a daily Krynodes timer running `dnf -y upgrade --security` (RHEL family)  |
-| Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action  |
-| SSH keys only                 | no password login over SSH; offered only when root or a sudo user has a key                                       |
-| Block repeated login failures | fail2ban for SSH (from EPEL on RHEL, Rocky, AlmaLinux, Oracle Linux and CentOS Stream)                            |
-| Firewall                      | ufw or firewalld: SSH and the ports you tick stay open; ports published by Docker are not affected                |
-| Free port 53                  | stops systemd-resolved holding port 53, for a DNS server such as AdGuard; offered only when port 53 is held by it |
+| Protection                    | What it does                                                                                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automatic security updates    | `unattended-upgrades` (Debian, Ubuntu); a daily Krynodes timer running `dnf -y upgrade --security` (RHEL family)                                   |
+| Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action, a protection or a Docker install |
+| SSH keys only                 | no password login over SSH; offered only when root or a sudo user has a key                                                                        |
+| Block repeated login failures | fail2ban for SSH (from EPEL on RHEL, Rocky, AlmaLinux, Oracle Linux and CentOS Stream)                                                             |
+| Firewall                      | ufw or firewalld: SSH and the ports you tick stay open; ports published by Docker are not affected                                                 |
+| Free port 53                  | stops systemd-resolved holding port 53, for a DNS server such as AdGuard; offered only when port 53 is held by it                                  |
 
 Each one writes its own drop-in file and never edits yours; Turn off removes
 it, and the packages Krynodes installed for it. **Apply

@@ -128,6 +128,12 @@ type SecurityReport struct {
 }
 
 type VaultReport struct {
+	Set      string         `json:"set"`
+	Holders  int            `json:"holders"`
+	Previous *VaultPrevious `json:"previous,omitempty"`
+}
+
+type VaultPrevious struct {
 	Set     string `json:"set"`
 	Holders int    `json:"holders"`
 }

@@ -5,6 +5,8 @@ export class FakeSocket {
   attachment: unknown = null;
   sent: string[] = [];
   closed: { code: number; reason: string } | null = null;
+  lingers = false;
+  pinged: number | null = null;
   serializeAttachment(value: unknown) {
     this.attachment = structuredClone(value);
   }
@@ -12,6 +14,9 @@ export class FakeSocket {
     return structuredClone(this.attachment);
   }
   send(message: string) {
+    if (this.closed) {
+      throw new TypeError("Can't call WebSocket send() after close().");
+    }
     this.sent.push(message);
   }
   close(code: number, reason: string) {
@@ -60,9 +65,14 @@ export function hubHarness(env: Partial<Env>) {
     getWebSockets(tag?: string) {
       return accepted
         .filter(
-          (entry) => !entry.ws.closed && (!tag || entry.tags.includes(tag)),
+          (entry) =>
+            (!entry.ws.closed || entry.ws.lingers) &&
+            (!tag || entry.tags.includes(tag)),
         )
         .map((entry) => entry.ws);
+    },
+    getWebSocketAutoResponseTimestamp(ws: FakeSocket) {
+      return ws.pinged === null ? null : new Date(ws.pinged);
     },
     setWebSocketAutoResponse() {},
     storage: new FakeStorage(),

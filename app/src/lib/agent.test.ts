@@ -34,7 +34,8 @@ describe("agentState", () => {
     expect(agentState(node("0.5.1"), "0.5.2", NOW)).toBe("available");
   });
 
-  it("calls an agent before 0.3.1 unsupported, since it can no longer connect", () => {
+  it("calls an agent before 0.5.0 unsupported, since it can no longer connect", () => {
+    expect(agentState(node("0.4.1"), "0.6.2", NOW)).toBe("unsupported");
     expect(agentState(node("0.3.0"), "0.5.2", NOW)).toBe("unsupported");
     expect(agentState(node("0.2.4", "0.5.2", ago(3)), "0.5.2", NOW)).toBe(
       "unsupported",

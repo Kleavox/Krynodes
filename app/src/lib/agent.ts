@@ -1,4 +1,4 @@
-import { agentSupported, compareVersions } from "@krynodes/protocol/versions";
+import { agentUpdatable, compareVersions } from "@krynodes/protocol/versions";
 
 import type { NodeRecord } from "../types";
 
@@ -22,7 +22,7 @@ export function agentState(
   now: number,
 ): AgentState {
   const version = node.agent_version;
-  if (version && VERSION.test(version) && !agentSupported(version)) {
+  if (version && VERSION.test(version) && !agentUpdatable(version)) {
     return "unsupported";
   }
   const requested = node.update_requested_version;

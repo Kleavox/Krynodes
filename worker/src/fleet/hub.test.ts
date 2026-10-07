@@ -20,7 +20,7 @@ const heartbeat = (
   hostname: "pivox",
   operatingSystem: "linux",
   architecture: "amd64",
-  agentVersion: "0.5.0",
+  agentVersion: "0.6.0",
   metrics: {
     cpuPercent: cpu,
     memoryUsedBytes: 4,
@@ -54,9 +54,14 @@ function setup() {
     getWebSockets(tag?: string) {
       return accepted
         .filter(
-          (entry) => !entry.ws.closed && (!tag || entry.tags.includes(tag)),
+          (entry) =>
+            (!entry.ws.closed || entry.ws.lingers) &&
+            (!tag || entry.tags.includes(tag)),
         )
         .map((entry) => entry.ws);
+    },
+    getWebSocketAutoResponseTimestamp(ws: FakeSocket) {
+      return ws.pinged === null ? null : new Date(ws.pinged);
     },
     setWebSocketAutoResponse() {},
     storage: new FakeStorage(),
@@ -280,7 +285,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.5.0",
+      agentVersion: "0.6.0",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -298,7 +303,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.5.0",
+      agentVersion: "0.6.0",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -337,6 +342,96 @@ describe("FleetHub", () => {
       `[Krynodes] ${NODE}: offline`,
     );
     expect(t.mail).toHaveLength(2);
+  });
+
+  it("follows the newest connection when a replaced one lingers while closing", async () => {
+    const t = setup();
+    const old = await t.connect();
+    old.lingers = true;
+    await t.send(old, BASE + 5_000, heartbeat(10));
+    const fresh = await t.connect();
+    await t.send(fresh, BASE + 120_000, heartbeat(10));
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail).toEqual([]);
+  });
+
+  it("counts the agent's keepalive pings, so a report that fails to store is no outage", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    ws.pinged = BASE + 170_000;
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail).toEqual([]);
+    expect(t.storage.alarm).toBe(BASE + 350_000);
+
+    vi.setSystemTime(BASE + 360_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
+  it("keeps the newer report when a replaced connection finally closes", async () => {
+    const t = setup();
+    const old = await t.connect();
+    old.lingers = true;
+    await t.send(old, BASE + 5_000, heartbeat(10));
+    const fresh = await t.connect();
+    await t.send(fresh, BASE + 30_000, heartbeat(20));
+    vi.setSystemTime(BASE + 60_000);
+    await t.hub.webSocketClose(old as unknown as WebSocket);
+    expect(t.node().cpu_percent).toBe(20);
+  });
+
+  it("pokes the newest connection past one that is still closing", async () => {
+    const t = setup();
+    const old = await t.connect();
+    old.lingers = true;
+    const fresh = await t.connect();
+    const poke = await t.hub.fetch(
+      new Request("https://fleet/poke", {
+        method: "POST",
+        body: JSON.stringify({ nodeIds: [NODE] }),
+      }),
+    );
+    expect(await poke.json()).toEqual({ poked: 1 });
+    expect(fresh.replies()).toEqual([{ type: "poke" }]);
+  });
+
+  it("waits while the server restarts in its reboot window, then mails if it stays away", async () => {
+    const t = setup();
+    t.sqlite.prepare("UPDATE nodes SET security = ? WHERE id = ?").run(
+      JSON.stringify({
+        checkedAt: new Date(BASE).toISOString(),
+        findings: [
+          {
+            id: "reboot-pending",
+            severity: "note",
+            detail: "A restart is waiting",
+          },
+        ],
+        recipes: [],
+        lockdown: false,
+        rebootHour: new Date(BASE).getUTCHours(),
+      }),
+      NODE,
+    );
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    ws.close(1006, "rebooting");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail).toEqual([]);
+
+    vi.setSystemTime(BASE + 660_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
   });
 
   it("waits while a restart from the dashboard runs, then mails if the server stays away", async () => {
@@ -521,17 +616,45 @@ describe("FleetHub", () => {
     });
   });
 
+  it("tells an agent below the minimum to update at once, and no one else", async () => {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('agent_release', '0.6.2', ?)",
+      )
+      .run(new Date(BASE).toISOString());
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    expect(ws.replies().at(-1)).not.toMatchObject({
+      response: { update: expect.anything() },
+    });
+    await t.send(ws, BASE + 65_000, {
+      ...heartbeat(10),
+      agentVersion: "0.5.1",
+    });
+    expect(ws.replies().at(-1)).toMatchObject({
+      response: { update: { version: "0.6.2" } },
+    });
+    expect(
+      t.sqlite
+        .prepare(
+          "SELECT update_requested_version, update_attempts FROM nodes WHERE id = ?",
+        )
+        .get(NODE),
+    ).toEqual({ update_requested_version: "0.6.2", update_attempts: 1 });
+  });
+
   it("asks again for a stalled update and keeps the agent's reason, like the HTTP route", async () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET update_requested_version = '0.5.1', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
+        "UPDATE nodes SET update_requested_version = '0.6.1', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
       )
       .run(new Date(BASE - 16 * 60_000).toISOString(), NODE);
     const ws = await t.connect();
     await t.send(ws, BASE + 5_000, {
       ...heartbeat(10),
-      update: { version: "0.5.1", message: "download stalled" },
+      update: { version: "0.6.1", message: "download stalled" },
     });
     const row = t.sqlite
       .prepare(
@@ -550,7 +673,7 @@ describe("FleetHub", () => {
     expect(ws.replies().at(-1)).toMatchObject({
       response: {
         update: {
-          version: "0.5.1",
+          version: "0.6.1",
           requestedAt: new Date(BASE + 5_000).toISOString(),
         },
       },

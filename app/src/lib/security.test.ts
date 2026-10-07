@@ -197,4 +197,22 @@ describe("what each protection does, per system", () => {
     );
     expect(protectionDetail("firewall", report())).toMatch(/^Turns on ufw /u);
   });
+
+  it("names the accounts that keep SSH when passwords stop", () => {
+    const keyed = report({
+      findings: [
+        {
+          id: "ssh-keys",
+          severity: "note",
+          detail: "SSH keys for root, deploy",
+        },
+      ],
+    });
+    expect(protectionDetail("ssh-keys-only", keyed)).toBe(
+      "SSH stops accepting passwords. root and deploy keep logging in with their keys; an account without a key loses SSH. If you get locked out, Krynodes can turn passwords back on.",
+    );
+    expect(protectionDetail("ssh-keys-only", report())).toBe(
+      "SSH stops accepting passwords; keys keep working. If you get locked out, Krynodes can turn passwords back on.",
+    );
+  });
 });

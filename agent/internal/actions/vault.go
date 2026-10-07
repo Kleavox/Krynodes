@@ -31,10 +31,27 @@ type vaultPiece struct {
 	Piece []byte `json:"piece"`
 }
 
-type vaultFile struct {
+type vaultHeld struct {
 	Set     string `json:"set"`
 	Holders int    `json:"holders"`
 	Piece   []byte `json:"piece"`
+}
+
+type vaultFile struct {
+	Set      string     `json:"set"`
+	Holders  int        `json:"holders"`
+	Piece    []byte     `json:"piece"`
+	Previous *vaultHeld `json:"previous,omitempty"`
+}
+
+func (f vaultFile) pieceFor(set string) (vaultHeld, error) {
+	switch {
+	case set == "" || set == f.Set:
+		return vaultHeld{Set: f.Set, Holders: f.Holders, Piece: f.Piece}, nil
+	case f.Previous != nil && f.Previous.Set == set:
+		return *f.Previous, nil
+	}
+	return vaultHeld{}, errors.New("this server holds no piece of that split; spread the token again")
 }
 
 type webAddress struct {
@@ -63,15 +80,23 @@ func (e Executor) vaultReport() *reporter.VaultReport {
 	if err != nil {
 		return nil
 	}
-	return &reporter.VaultReport{Set: file.Set, Holders: file.Holders}
+	report := &reporter.VaultReport{Set: file.Set, Holders: file.Holders}
+	if file.Previous != nil {
+		report.Previous = &reporter.VaultPrevious{Set: file.Previous.Set, Holders: file.Previous.Holders}
+	}
+	return report
 }
 
 func (e Executor) cloudflare(token []byte) *cloudflare.Client {
 	return &cloudflare.Client{Token: string(token), Base: e.CloudflareBase, HTTP: e.CloudflareHTTP}
 }
 
-func (e Executor) token(request Request) ([]byte, error) {
-	own, err := e.readVault()
+func (e Executor) token(request Request, command Command) ([]byte, error) {
+	file, err := e.readVault()
+	if err != nil {
+		return nil, err
+	}
+	own, err := file.pieceFor(command.Args["source"])
 	if err != nil {
 		return nil, err
 	}
@@ -114,17 +139,26 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 		if err != nil || holders < 1 || !setPattern.MatchString(command.Args["set"]) || piece.Set != command.Args["set"] || len(piece.Piece) < 2 {
 			return e.refuse(request.ID, errors.New("the piece belongs to another split"))
 		}
-		if err := writeJSON(e.StateDir, "vault.json", vaultFile{Set: piece.Set, Holders: holders, Piece: piece.Piece}, 0o600); err != nil {
+		next := vaultFile{Set: piece.Set, Holders: holders, Piece: piece.Piece}
+		if source := command.Args["source"]; source != "" && source != piece.Set {
+			if current, err := e.readVault(); err == nil {
+				if kept, err := current.pieceFor(source); err == nil {
+					next.Previous = &kept
+				}
+			}
+		}
+		if err := writeJSON(e.StateDir, "vault.json", next, 0o600); err != nil {
 			return e.failed(request, err, "")
 		}
 		return ok("stored")
 	case "release":
-		own, err := e.readVault()
+		file, err := e.readVault()
 		if err != nil {
 			return e.refuse(request.ID, err)
 		}
-		if set := command.Args["set"]; set != "" && set != own.Set {
-			return e.refuse(request.ID, errors.New("this server holds a piece of another split"))
+		own, err := file.pieceFor(command.Args["set"])
+		if err != nil {
+			return e.refuse(request.ID, err)
 		}
 		encoded, _ := json.Marshal(vaultPiece{Set: own.Set, Piece: own.Piece})
 		sealed, err := seal.Seal(command.Args["key"], encoded)
@@ -156,7 +190,7 @@ func (e Executor) reshare(ctx context.Context, request Request, command Command)
 		}
 		holders = append(holders, holder{node, key})
 	}
-	token, err := e.token(request)
+	token, err := e.token(request, command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -212,7 +246,7 @@ func (e Executor) expose(ctx context.Context, request Request, command Command, 
 	case mode == "path" && !pathPattern.MatchString(args["path"]):
 		return e.refuse(request.ID, errors.New("the path must start with /"))
 	}
-	token, err := e.token(request)
+	token, err := e.token(request, command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -323,7 +357,7 @@ func (e Executor) unexpose(ctx context.Context, request Request, command Command
 	if !hostnamePattern.MatchString(hostname) {
 		return e.refuse(request.ID, fmt.Errorf("%q is not a name", hostname))
 	}
-	token, err := e.token(request)
+	token, err := e.token(request, command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}

@@ -29,7 +29,7 @@ const N1 = "11111111-1111-4111-8111-111111111111";
 const N2 = "22222222-2222-4222-8222-222222222222";
 const N3 = "33333333-3333-4333-8333-333333333333";
 
-const node = (id: string, agent = "0.5.0") =>
+const node = (id: string, agent = "0.6.0") =>
   ({
     id,
     name: id.slice(0, 2),
@@ -110,7 +110,7 @@ describe("access", () => {
 
   it("offers a server restart to a current agent with access", () => {
     const own = trust(1, [laptop], [laptop]);
-    expect(canRestartServer(node(N1, "0.5.0"), own)).toBe(true);
+    expect(canRestartServer(node(N1, "0.6.0"), own)).toBe(true);
     expect(canRestartServer(node(N1, "0.4.1"), own)).toBe(false);
     expect(canRestartServer(node(N1), trust(1, [laptop], []))).toBe(false);
     expect(canRestartServer(node(N1), null)).toBe(false);
@@ -139,7 +139,7 @@ describe("server state", () => {
     expect(serverState(current, current.servers[0]!)).toBe("current");
   });
 
-  it("asks for agent 0.5.0 before devices can change", () => {
+  it("asks for agent 0.6.0 before devices can change", () => {
     const fleet = view(
       [laptop, phone],
       [

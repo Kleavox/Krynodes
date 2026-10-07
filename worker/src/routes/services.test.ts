@@ -53,10 +53,10 @@ const reply = async (response: Response | Promise<Response>) =>
 function setup() {
   const { db, sqlite } = createTestDb();
   for (const [id, version, owner] of [
-    [A, "0.5.0", undefined],
-    [B, "0.5.0", undefined],
-    [C, "0.5.0", undefined],
-    [FOREIGN, "0.5.0", "someone-else"],
+    [A, "0.6.0", undefined],
+    [B, "0.6.0", undefined],
+    [C, "0.6.0", undefined],
+    [FOREIGN, "0.6.0", "someone-else"],
   ] as const) {
     seedNode(sqlite, { id, owner });
     sqlite
@@ -433,7 +433,7 @@ describe("logs", () => {
   });
 });
 
-describe("agents before 0.5.0", () => {
+describe("agents before 0.6.0", () => {
   it("are refused every action, a plain restart too", async () => {
     const { restart, sqlite } = setup();
     sqlite
@@ -443,7 +443,7 @@ describe("agents before 0.5.0", () => {
     expect(old.status).toBe(422);
     expect(await reply(old)).toMatchObject({
       code: "AGENT_TOO_OLD",
-      message: expect.stringContaining("0.5.0"),
+      message: expect.stringContaining("0.6.0"),
     });
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM actions").get()).toEqual({
       n: 0,
@@ -619,7 +619,7 @@ describe("stack, container and auto-restart commands", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.5.0', docker = 'ready' WHERE id IN (?, ?)",
+        "UPDATE nodes SET agent_version = '0.6.0', docker = 'ready' WHERE id IN (?, ?)",
       )
       .run(A, B);
     t.sqlite.prepare("UPDATE nodes SET docker = 'missing' WHERE id = ?").run(B);
@@ -757,7 +757,7 @@ describe("removed stacks", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.5.0', docker = 'ready' WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.6.0', docker = 'ready' WHERE id = ?",
       )
       .run(A);
     t.sqlite

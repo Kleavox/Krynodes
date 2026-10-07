@@ -21,7 +21,7 @@ import {
   stackNameProblem,
 } from "./stacks";
 
-const node = (id: string, name: string, agent = "0.5.0") =>
+const node = (id: string, name: string, agent = "0.6.0") =>
   ({
     id,
     name,
@@ -159,7 +159,7 @@ describe("stacks", () => {
         ...listmonk!.members[0]!,
         node: node("n1", "Callisto", "0.4.1"),
       }),
-    ).toBe("Needs agent 0.5.0");
+    ).toBe("Needs agent 0.6.0");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
@@ -218,7 +218,7 @@ describe("stacks", () => {
 });
 
 describe("stack commands", () => {
-  const member = (running: number, total: number, agent = "0.5.0") => ({
+  const member = (running: number, total: number, agent = "0.6.0") => ({
     node: node("n1", "pivox", agent),
     stack: stack("kuma", { running, total }),
     trusted: true,
@@ -256,22 +256,22 @@ describe("stack commands", () => {
       docker,
     });
     expect(
-      newStackBlocker(node("n1", "pivox", "0.5.0"), entry("ready")),
+      newStackBlocker(node("n1", "pivox", "0.6.0"), entry("ready")),
     ).toBeNull();
     expect(newStackBlocker(node("n1", "pivox", "0.4.1"), entry("ready"))).toBe(
-      "Needs agent 0.5.0",
+      "Needs agent 0.6.0",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.5.0"), entry("missing")),
+      newStackBlocker(node("n1", "pivox", "0.6.0"), entry("missing")),
     ).toBe("No Docker");
     expect(
-      newStackBlocker(node("n1", "pivox", "0.5.0"), entry("no-compose")),
+      newStackBlocker(node("n1", "pivox", "0.6.0"), entry("no-compose")),
     ).toBe("Docker without Compose");
-    expect(newStackBlocker(node("n1", "pivox", "0.5.0"), entry(null))).toBe(
+    expect(newStackBlocker(node("n1", "pivox", "0.6.0"), entry(null))).toBe(
       "Docker not reported yet",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.5.0"), {
+      newStackBlocker(node("n1", "pivox", "0.6.0"), {
         ...entry("ready"),
         trust: null,
       }),

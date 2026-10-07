@@ -8,8 +8,10 @@ import {
   pieceJson,
   planAddress,
   planRemoval,
+  pendingTokenSteps,
   planSpread,
   reshareSteps,
+  splitHolders,
   splitSteps,
   unexposeSteps,
 } from "./vault";
@@ -46,7 +48,7 @@ describe("the Cloudflare token in pieces", () => {
       { nodeId: A, sealKey: await serverKey() },
       { nodeId: B, sealKey: await serverKey() },
     ];
-    const steps = await splitSteps(" cf-token ", holders, SET);
+    const steps = await splitSteps(" cf-token ", holders, SET, "old-set");
     expect(
       steps.map(({ piece, ...step }) => ({
         ...step,
@@ -58,7 +60,7 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: SET, holders: "2" },
+        args: { set: SET, holders: "2", source: "old-set" },
         sealed: true,
       },
       {
@@ -66,7 +68,7 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: SET, holders: "2" },
+        args: { set: SET, holders: "2", source: "old-set" },
         sealed: true,
       },
     ]);
@@ -82,6 +84,7 @@ describe("the Cloudflare token in pieces", () => {
       ],
       keyOf: { [A]: "KA", [B]: "KB", [C]: "KC" },
       set: "next-set",
+      source: SET,
       cleanup: B,
       zone: "kleavox.xyz",
       forgets: [],
@@ -92,7 +95,7 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: "KA" },
+        args: { to: A, key: "KA", set: SET },
       },
       {
         nodeId: A,
@@ -102,6 +105,7 @@ describe("the Cloudflare token in pieces", () => {
         args: {
           holders: `${A}:KA,${C}:KC`,
           set: "next-set",
+          source: SET,
           cleanup: B,
           zone: "kleavox.xyz",
         },
@@ -112,7 +116,7 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: "next-set", holders: "2" },
+        args: { set: "next-set", holders: "2", source: SET },
         attachFrom: 1,
         attachKey: A,
       },
@@ -121,7 +125,7 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: "next-set", holders: "2" },
+        args: { set: "next-set", holders: "2", source: SET },
         attachFrom: 1,
         attachKey: C,
       },
@@ -165,6 +169,7 @@ describe("web addresses", () => {
       path: "/admin",
       zone: "kleavox.xyz",
       aud: "aud-1",
+      source: SET,
     };
     expect(exposeSteps({ ...address, releaser: B })).toEqual([
       {
@@ -172,7 +177,7 @@ describe("web addresses", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: "KA" },
+        args: { to: A, key: "KA", set: SET },
       },
       {
         nodeId: A,
@@ -187,6 +192,7 @@ describe("web addresses", () => {
           path: "/admin",
           zone: "kleavox.xyz",
           aud: "aud-1",
+          source: SET,
         },
         attachFrom: 0,
       },
@@ -204,6 +210,7 @@ describe("web addresses", () => {
           mode: "allow",
           zone: "kleavox.xyz",
           aud: "aud-1",
+          source: SET,
         },
       },
     ]);
@@ -216,6 +223,7 @@ describe("web addresses", () => {
         zone: "kleavox.xyz",
         releaser: B,
         disposal: "purge",
+        source: SET,
       }).map((step) => step.action),
     ).toEqual(["release", "unexpose", "purge"]);
   });
@@ -282,7 +290,11 @@ describe("moving a stack", () => {
 const node = (
   id: string,
   over: Partial<{
-    vault: { set: string; holders: number } | null;
+    vault: {
+      set: string;
+      holders: number;
+      previous?: { set: string; holders: number };
+    } | null;
     reachable: boolean;
     online: boolean;
     sealKey: string | null;
@@ -298,6 +310,56 @@ const node = (
 });
 
 describe("planning the pieces", () => {
+  it("rebuilds from a piece a server keeps from the split still in use", () => {
+    const kept = node(A, {
+      vault: { set: "next", holders: 2, previous: { set: SET, holders: 3 } },
+    });
+    expect(planSpread([kept, node(B)], SET)).toMatchObject({
+      ok: true,
+      assembler: A,
+      releaser: B,
+    });
+    expect(planAddress([kept, node(B)], A, SET)).toEqual({
+      ok: true,
+      releaser: B,
+    });
+    expect(
+      planAddress(
+        [
+          node(A, {
+            vault: {
+              set: "next",
+              holders: 2,
+              previous: { set: SET, holders: 1 },
+            },
+          }),
+        ],
+        A,
+        SET,
+      ),
+    ).toEqual({ ok: true, releaser: null });
+  });
+
+  it("gives pieces only to servers that are reachable and online now", () => {
+    expect(
+      splitHolders([
+        node(A),
+        node(B, { online: false }),
+        node(C, { reachable: false }),
+        node("44444444-4444-4444-8444-444444444444", { sealKey: null }),
+      ]),
+    ).toEqual([{ nodeId: A, sealKey: "key-1" }]);
+    expect(
+      planSpread([node(A), node(B), node(C, { online: false })], SET),
+    ).toMatchObject({
+      ok: true,
+      holders: [
+        { nodeId: A, sealKey: "key-1" },
+        { nodeId: B, sealKey: "key-2" },
+      ],
+    });
+  });
+
   it("re-splits through two online holders and forgets a holder that drops out", () => {
     const plan = planSpread(
       [node(A), node(B), node(C, { reachable: false })],
@@ -392,10 +454,7 @@ describe("removing a server that holds a piece", () => {
       ok: true,
       assembler: B,
       releaser: A,
-      holders: [
-        { nodeId: B, sealKey: "key-2" },
-        { nodeId: C, sealKey: "key-3" },
-      ],
+      holders: [{ nodeId: B, sealKey: "key-2" }],
       forgets: [A],
     });
   });
@@ -431,7 +490,24 @@ describe("removing a server that holds a piece", () => {
     ).toEqual({
       ok: false,
       reason:
-        "No other server with agent 0.5.0 that this device reaches can take the token.",
+        "No other server with agent 0.6.0 that this device reaches can take the token.",
     });
+  });
+});
+
+describe("a token change on its way", () => {
+  it("counts the token steps still queued or running", () => {
+    const step = (kind: string, action: string, status: string) =>
+      ({ kind, action, status }) as Parameters<typeof pendingTokenSteps>[0][0];
+    expect(
+      pendingTokenSteps([
+        step("vault", "store", "queued"),
+        step("vault", "reshare", "sent"),
+        step("vault", "release", "queued"),
+        step("vault", "store", "done"),
+        step("vault", "forget", "failed"),
+        step("compose", "expose", "queued"),
+      ]),
+    ).toBe(2);
   });
 });

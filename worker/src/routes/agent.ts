@@ -1,4 +1,4 @@
-import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol";
+import { agentUpdatable, MIN_AGENT_VERSION } from "@krynodes/protocol";
 
 import type { AgentNode } from "../agent/ingest";
 import { hubFor, streamsOn } from "../fleet/client";
@@ -102,7 +102,7 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     const announced = /^kry-agent\/(\S+)/u.exec(
       context.req.header("user-agent") ?? "",
     )?.[1];
-    if (announced && !agentSupported(announced)) {
+    if (announced && !agentUpdatable(announced)) {
       return updateRequired(context, 426);
     }
     const node = await authenticateAgent(context);

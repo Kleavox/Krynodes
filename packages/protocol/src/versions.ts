@@ -1,4 +1,5 @@
-export const MIN_AGENT_VERSION = "0.5.0";
+export const MIN_AGENT_VERSION = "0.6.0";
+export const UPDATABLE_FROM = "0.5.0";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 
@@ -12,9 +13,12 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-export function agentSupported(version: string | null | undefined): boolean {
-  if (!version) return false;
-  return (
-    !RELEASE.test(version) || compareVersions(version, MIN_AGENT_VERSION) >= 0
-  );
-}
+const reaches = (version: string | null | undefined, floor: string) =>
+  Boolean(version) &&
+  (!RELEASE.test(version!) || compareVersions(version!, floor) >= 0);
+
+export const agentSupported = (version: string | null | undefined) =>
+  reaches(version, MIN_AGENT_VERSION);
+
+export const agentUpdatable = (version: string | null | undefined) =>
+  reaches(version, UPDATABLE_FROM);

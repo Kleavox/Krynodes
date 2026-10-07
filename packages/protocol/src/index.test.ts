@@ -890,6 +890,28 @@ describe("orchestration messages of agent 0.5.0", () => {
       }),
     ).toBe(false);
     expect(request({ vault: null })).toBe(true);
+    const previous = {
+      set: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a20",
+      holders: 2,
+    };
+    expect(
+      request({
+        vault: {
+          set: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a10",
+          holders: 3,
+          previous,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      request({
+        vault: {
+          set: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a10",
+          holders: 3,
+          previous: { ...previous, set: "x" },
+        },
+      }),
+    ).toBe(false);
     expect(request({ sealKey: "short" })).toBe(false);
     expect(request({ security: { ...security, recipes: ["rm-rf"] } })).toBe(
       false,

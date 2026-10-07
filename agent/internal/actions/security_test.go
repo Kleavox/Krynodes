@@ -547,6 +547,37 @@ func TestRebootWindowUsesTheFamilyCheck(t *testing.T) {
 	}
 }
 
+func TestRebootWindowWaitsForHostWork(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rhelServer(t, executor, run)
+	now := executorNow
+	executor.Now = func() time.Time { return now }
+	if result := runRequest(t, executor, hostRequest(t, idA, "reboot-window", "apply", map[string]string{"hour": "11"})); !result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	now = now.Add(time.Hour)
+	run.respond["dnf needs-restarting -r"] = "Reboot is required to fully utilize these updates.\n"
+	reboots := func() int { return strings.Count(strings.Join(run.calls, "\n"), "systemctl reboot --no-block") }
+	queued := filepath.Join(executor.StateDir, "host", idB+".json")
+	if err := writeJSON(filepath.Dir(queued), idB+".json", hostRequest(t, idB, "docker", "install", nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Execute(context.Background()); err != nil || reboots() != 0 {
+		t.Fatalf("no restart while host work is queued: %v %d", err, reboots())
+	}
+	if err := os.Remove(queued); err != nil {
+		t.Fatal(err)
+	}
+	run.respond["systemctl is-active krynodes-host.service"] = "activating\n"
+	if err := executor.Execute(context.Background()); err != nil || reboots() != 0 {
+		t.Fatalf("no restart while host work runs: %v %d", err, reboots())
+	}
+	run.respond["systemctl is-active krynodes-host.service"] = "inactive\n"
+	if err := executor.Execute(context.Background()); err != nil || reboots() != 1 {
+		t.Fatalf("restart once host work is done: %v %d", err, reboots())
+	}
+}
+
 func TestInstallDockerGoesToTheHostUnitSigned(t *testing.T) {
 	executor, _ := securityExecutor(t)
 	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "docker", "install", nil))

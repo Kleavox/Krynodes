@@ -102,12 +102,19 @@ export const firewallName = (report: SecurityReport) =>
 
 export function protectionDetail(id: string, report: SecurityReport): string {
   const rhel = report.platform?.family === "rhel";
+  const keyed = report.findings
+    .find((finding) => finding.id === "ssh-keys")
+    ?.detail.replace(/^SSH keys for /u, "")
+    .split(", ");
   const details: Record<string, string> = {
     "security-updates": `Installs security updates every day with ${rhel ? "dnf" : "unattended-upgrades"}.`,
     "reboot-window":
       "When an update needs a restart, the server restarts at the hour you choose, at most once a day.",
-    "ssh-keys-only":
-      "SSH stops accepting passwords; keys keep working. If you get locked out, Krynodes can turn passwords back on.",
+    "ssh-keys-only": `${
+      keyed
+        ? `SSH stops accepting passwords. ${new Intl.ListFormat("en").format(keyed)} keep logging in with their keys; an account without a key loses SSH.`
+        : "SSH stops accepting passwords; keys keep working."
+    } If you get locked out, Krynodes can turn passwords back on.`,
     fail2ban: rhel
       ? "Blocks addresses that keep failing to log in over SSH. Installs fail2ban from EPEL where the system needs it."
       : "Blocks addresses that keep failing to log in over SSH.",

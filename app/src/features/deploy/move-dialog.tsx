@@ -1,3 +1,4 @@
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { Fingerprint } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -206,8 +207,8 @@ function MoveForm({
         <Reading server={source.nodeName} failure={failure} retry={retry} />
       ) : servers.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No other server runs agent 0.5.0 with Docker and a free name{" "}
-          {source.project}.
+          No other server runs agent {MIN_AGENT_VERSION} with Docker and a free
+          name {source.project}.
         </p>
       ) : (
         <div className="space-y-4">

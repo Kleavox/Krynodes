@@ -49,7 +49,7 @@ function setup() {
     seedNode(sqlite, { id, owner });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.5.0', last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.6.0', last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(id);
   }

@@ -1,4 +1,10 @@
-import type { ActionVerb, NodeRecord, ServicesResponse } from "../types";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
+import type {
+  ActionRecord,
+  ActionVerb,
+  NodeRecord,
+  ServicesResponse,
+} from "../types";
 
 import { nodeState } from "./format";
 
@@ -30,6 +36,7 @@ export async function splitSteps(
   token: string,
   holders: Holder[],
   set: string,
+  source: string | null,
 ): Promise<OperationTarget[]> {
   const pieces = split(encoder.encode(token.trim()), holders.length);
   return Promise.all(
@@ -37,7 +44,11 @@ export async function splitSteps(
       ...vault(holder.nodeId),
       action: "store" as const,
       piece: await seal(holder.sealKey, pieceJson(set, pieces[index]!)),
-      args: { set, holders: String(holders.length) },
+      args: {
+        set,
+        holders: String(holders.length),
+        ...(source ? { source } : {}),
+      },
     })),
   );
 }
@@ -46,10 +57,11 @@ const release = (
   releaser: string,
   to: string,
   key: string,
+  set: string,
 ): OperationTarget => ({
   ...vault(releaser),
   action: "release",
-  args: { to, key },
+  args: { to, key, set },
 });
 
 export function reshareSteps(input: {
@@ -58,6 +70,7 @@ export function reshareSteps(input: {
   holders: Holder[];
   keyOf: Record<string, string>;
   set: string;
+  source: string;
   cleanup?: string;
   zone: string;
   forgets: string[];
@@ -68,6 +81,7 @@ export function reshareSteps(input: {
           input.releaser,
           input.assembler,
           input.keyOf[input.assembler] ?? "",
+          input.source,
         ),
       ]
     : [];
@@ -80,6 +94,7 @@ export function reshareSteps(input: {
         .map((holder) => `${holder.nodeId}:${holder.sealKey}`)
         .join(","),
       set: input.set,
+      source: input.source,
       ...(input.cleanup ? { cleanup: input.cleanup } : {}),
       zone: input.zone,
     },
@@ -89,7 +104,11 @@ export function reshareSteps(input: {
     steps.push({
       ...vault(holder.nodeId),
       action: "store",
-      args: { set: input.set, holders: String(input.holders.length) },
+      args: {
+        set: input.set,
+        holders: String(input.holders.length),
+        source: input.source,
+      },
       attachFrom: index,
       attachKey: holder.nodeId,
     });
@@ -132,10 +151,11 @@ export function exposeSteps(input: {
   zone: string;
   aud: string;
   releaser: string | null;
+  source: string;
 }): OperationTarget[] {
   return [
     ...(input.releaser
-      ? [release(input.releaser, input.target, input.targetKey)]
+      ? [release(input.releaser, input.target, input.targetKey, input.source)]
       : []),
     {
       nodeId: input.target,
@@ -150,6 +170,7 @@ export function exposeSteps(input: {
         ...(input.mode === "path" ? { path: input.path ?? "/" } : {}),
         zone: input.zone,
         aud: input.aud,
+        source: input.source,
       },
       ...(input.releaser ? { attachFrom: 0 } : {}),
     },
@@ -164,17 +185,22 @@ export function unexposeSteps(input: {
   zone: string;
   releaser: string | null;
   disposal?: "remove" | "purge";
+  source: string;
 }): OperationTarget[] {
   return [
     ...(input.releaser
-      ? [release(input.releaser, input.target, input.targetKey)]
+      ? [release(input.releaser, input.target, input.targetKey, input.source)]
       : []),
     {
       nodeId: input.target,
       kind: "compose",
       name: input.project,
       action: "unexpose",
-      args: { hostname: input.hostname, zone: input.zone },
+      args: {
+        hostname: input.hostname,
+        zone: input.zone,
+        source: input.source,
+      },
       ...(input.releaser ? { attachFrom: 0 } : {}),
     },
     ...(input.disposal
@@ -238,12 +264,30 @@ export interface VaultNode {
   id: string;
   name: string;
   sealKey: string | null;
-  vault: { set: string; holders: number } | null;
+  vault: {
+    set: string;
+    holders: number;
+    previous?: { set: string; holders: number };
+  } | null;
   reachable: boolean;
   online: boolean;
 }
 
 type Plan<T> = ({ ok: true } & T) | { ok: false; reason: string };
+
+export function pieceOf(
+  node: VaultNode | undefined,
+  setId: string | null,
+): { set: string; holders: number } | null {
+  if (!node?.vault || setId === null) return null;
+  if (node.vault.set === setId) return node.vault;
+  return node.vault.previous?.set === setId ? node.vault.previous : null;
+}
+
+export const splitHolders = (nodes: VaultNode[]): Holder[] =>
+  nodes
+    .filter((node) => node.reachable && node.online && node.sealKey)
+    .map((node) => ({ nodeId: node.id, sealKey: node.sealKey! }));
 
 export function planSpread(
   nodes: VaultNode[],
@@ -254,12 +298,8 @@ export function planSpread(
   holders: Holder[];
   forgets: string[];
 }> {
-  const holders = nodes
-    .filter((node) => node.reachable && node.sealKey)
-    .map((node) => ({ nodeId: node.id, sealKey: node.sealKey! }));
-  const current = nodes.filter(
-    (node) => setId !== null && node.vault?.set === setId,
-  );
+  const holders = splitHolders(nodes);
+  const current = nodes.filter((node) => pieceOf(node, setId) !== null);
   if (current.length === 0) {
     return {
       ok: false,
@@ -269,11 +309,12 @@ export function planSpread(
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: "This device reaches no server with agent 0.5.0.",
+      reason: `This device reaches no online server with agent ${MIN_AGENT_VERSION}.`,
     };
   }
   const usable = current.filter((node) => node.reachable && node.online);
-  const whole = current.length === 1 && current[0]!.vault!.holders === 1;
+  const whole =
+    current.length === 1 && pieceOf(current[0], setId)!.holders === 1;
   if (whole ? usable.length < 1 : usable.length < 2) {
     return {
       ok: false,
@@ -310,7 +351,7 @@ export function planRemoval(
     }
 > {
   const gone = nodes.find((node) => node.id === removed);
-  if (!gone || setId === null || (gone.vault?.set !== setId && !addresses)) {
+  if (!gone || setId === null || (!pieceOf(gone, setId) && !addresses)) {
     return { ok: true, needed: false };
   }
   const plan = planSpread(
@@ -322,8 +363,7 @@ export function planRemoval(
   if (holders.length === 0) {
     return {
       ok: false,
-      reason:
-        "No other server with agent 0.5.0 that this device reaches can take the token.",
+      reason: `No other server with agent ${MIN_AGENT_VERSION} that this device reaches can take the token.`,
     };
   }
   return {
@@ -343,17 +383,18 @@ export function planAddress(
   setId: string | null,
 ): Plan<{ releaser: string | null }> {
   const node = nodes.find((item) => item.id === target);
-  if (!node?.vault || node.vault.set !== setId) {
+  const piece = pieceOf(node, setId);
+  if (!piece) {
     return {
       ok: false,
       reason: `${node?.name ?? "This server"} holds no piece of the Cloudflare token. Spread it again under Settings, Cloudflare.`,
     };
   }
-  if (node.vault.holders === 1) return { ok: true, releaser: null };
+  if (piece.holders === 1) return { ok: true, releaser: null };
   const other = nodes.find(
     (item) =>
       item.id !== target &&
-      item.vault?.set === setId &&
+      pieceOf(item, setId) !== null &&
       item.reachable &&
       item.online,
   );
@@ -390,3 +431,15 @@ export function vaultNodes(
     ];
   });
 }
+
+const TOKEN_STEPS = ["store", "reshare", "forget"];
+
+export const pendingTokenSteps = (
+  actions: Pick<ActionRecord, "kind" | "action" | "status">[],
+) =>
+  actions.filter(
+    (action) =>
+      action.kind === "vault" &&
+      TOKEN_STEPS.includes(action.action) &&
+      (action.status === "queued" || action.status === "sent"),
+  ).length;

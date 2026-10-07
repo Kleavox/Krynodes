@@ -147,7 +147,8 @@ function OpenForm({
           : null;
 
   const submit = () => {
-    if (!plan?.ok || !settings) return;
+    if (!plan?.ok || !settings?.setId) return;
+    const source = settings.setId;
     operate.mutate(
       {
         kind: "expose",
@@ -165,6 +166,7 @@ function OpenForm({
             zone,
             aud: settings.aud ?? "",
             releaser: plan.releaser,
+            source,
           }),
       },
       {
@@ -362,7 +364,8 @@ function CloseForm({
       : null;
 
   const close = async () => {
-    if (!plan?.ok || !settings) return;
+    if (!plan?.ok || !settings?.setId) return;
+    const source = settings.setId;
     const chosen = disposal
       ? addresses.map((address) => address.hostname)
       : [hostname];
@@ -379,6 +382,7 @@ function CloseForm({
               hostname: name,
               zone: settings.zone,
               releaser: plan.releaser,
+              source,
               ...(disposal && index === chosen.length - 1 ? { disposal } : {}),
             }),
         });

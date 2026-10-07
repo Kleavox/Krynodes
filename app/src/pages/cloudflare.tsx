@@ -1,3 +1,4 @@
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -10,8 +11,11 @@ import { useSignedOperation } from "@/features/deploy/use-signed-action";
 import { useCloudflare, useOverview, useServices } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import {
+  pendingTokenSteps,
+  pieceOf,
   planSpread,
   reshareSteps,
+  splitHolders,
   splitSteps,
   vaultNodes,
   type VaultNode,
@@ -29,9 +33,7 @@ function Holders({
   nodes: VaultNode[];
   setId: string | null;
 }) {
-  const holding = nodes.filter(
-    (node) => setId !== null && node.vault?.set === setId,
-  );
+  const holding = nodes.filter((node) => pieceOf(node, setId) !== null);
   const missing = nodes.filter(
     (node) => node.sealKey && !holding.includes(node),
   );
@@ -57,7 +59,7 @@ function Holders({
       ))}
       {holding.length === 0 && missing.length === 0 && (
         <li className="px-3 py-2.5 text-muted-foreground">
-          No server runs agent 0.5.0 yet.
+          No server runs agent {MIN_AGENT_VERSION} yet.
         </li>
       )}
     </ul>
@@ -82,9 +84,9 @@ export function CloudflarePage() {
     chosenZone && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/u.test(chosenZone)
       ? "Enter the domain only, such as kleavox.xyz."
       : null;
-  const holding = nodes.filter(
-    (node) => setId !== null && node.vault?.set === setId,
-  );
+  const holding = nodes.filter((node) => pieceOf(node, setId) !== null);
+  const busy = pendingTokenSteps(services.data?.actions ?? []);
+  const spreadPlan = setId ? planSpread(nodes, setId) : null;
   const stale =
     setId !== null &&
     nodes.some((node) => node.sealKey && node.vault?.set !== setId);
@@ -100,13 +102,13 @@ export function CloudflarePage() {
         zone: chosenZone,
         reach: [],
         build: (fingerprint) => {
-          const holders = nodesFor(fingerprint)
-            .filter((node) => node.reachable && node.sealKey)
-            .map((node) => ({ nodeId: node.id, sealKey: node.sealKey! }));
+          const holders = splitHolders(nodesFor(fingerprint));
           if (holders.length === 0) {
-            throw new Error("This device reaches no server with agent 0.5.0.");
+            throw new Error(
+              `This device reaches no online server with agent ${MIN_AGENT_VERSION}.`,
+            );
           }
-          return splitSteps(token, holders, crypto.randomUUID());
+          return splitSteps(token, holders, crypto.randomUUID(), setId);
         },
       },
       {
@@ -127,7 +129,9 @@ export function CloudflarePage() {
         build: (fingerprint) => {
           const all = nodesFor(fingerprint);
           const plan = planSpread(all, setId);
-          if (!plan.ok) throw new Error(plan.reason);
+          if (!plan.ok || !setId) {
+            throw new Error(plan.ok ? "Paste the token again." : plan.reason);
+          }
           return reshareSteps({
             releaser: plan.releaser,
             assembler: plan.assembler,
@@ -136,6 +140,7 @@ export function CloudflarePage() {
               all.map((node) => [node.id, node.sealKey ?? ""]),
             ),
             set: crypto.randomUUID(),
+            source: setId,
             zone: chosenZone,
             forgets: plan.forgets,
           });
@@ -178,15 +183,27 @@ export function CloudflarePage() {
               })}
             </p>
           )}
-          {stale && holding.length > 0 && (
-            <Button
-              variant="outline"
-              disabled={operate.isPending}
-              onClick={spread}
-            >
-              Spread again
-            </Button>
-          )}
+          {busy > 0 ? (
+            <p role="status" className="text-sm text-warning">
+              The token is being changed: {busy}{" "}
+              {busy === 1 ? "step is" : "steps are"} left. The pieces in use
+              stay until the new ones are stored.
+            </p>
+          ) : stale && setId && holding.length > 0 ? (
+            spreadPlan?.ok ? (
+              <Button
+                variant="outline"
+                disabled={operate.isPending}
+                onClick={spread}
+              >
+                Spread again
+              </Button>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {spreadPlan?.reason} Paste the token again below to start fresh.
+              </p>
+            )
+          ) : null}
         </section>
 
         <section aria-labelledby="paste" className="space-y-3">

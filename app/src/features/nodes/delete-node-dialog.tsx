@@ -93,7 +93,7 @@ export function DeleteNodeDialog({
           const all = nodesFor(fingerprint);
           const chosen = planRemoval(all, node.id, setId, addresses);
           if (!chosen.ok) throw new Error(chosen.reason);
-          if (!chosen.needed) throw new Error("Nothing to spread.");
+          if (!chosen.needed || !setId) throw new Error("Nothing to spread.");
           return reshareSteps({
             releaser: chosen.releaser,
             assembler: chosen.assembler,
@@ -102,6 +102,7 @@ export function DeleteNodeDialog({
               all.map((item) => [item.id, item.sealKey ?? ""]),
             ),
             set: crypto.randomUUID(),
+            source: setId,
             cleanup: node.id,
             zone,
             forgets: chosen.forgets,

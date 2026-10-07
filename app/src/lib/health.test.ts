@@ -17,7 +17,7 @@ function node(extra: Partial<NodeRecord> = {}): NodeRecord {
     hostname: "web-01",
     architecture: "amd64",
     operating_system: "linux",
-    agent_version: "0.5.0",
+    agent_version: "0.6.0",
     last_seen_at: seen(10),
     enrolled_at: seen(86_400),
     disabled_at: null,

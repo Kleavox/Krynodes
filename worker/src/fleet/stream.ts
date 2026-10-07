@@ -43,6 +43,7 @@ export interface StreamState {
   window: Accumulator | null;
   wroteNode: boolean;
   away?: boolean;
+  left?: boolean;
 }
 
 export interface Flush {

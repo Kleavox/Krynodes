@@ -253,6 +253,7 @@ export interface WebAddress {
 interface VaultReport {
   set: string;
   holders: number;
+  previous?: { set: string; holders: number };
 }
 
 export interface CloudflareSettings {

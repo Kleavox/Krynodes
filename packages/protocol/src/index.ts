@@ -12,7 +12,13 @@ export {
   type TrustKeyRecord,
 } from "./change";
 export { summarizeChange, type ChangeSummary } from "./summary";
-export { agentSupported, compareVersions, MIN_AGENT_VERSION } from "./versions";
+export {
+  agentSupported,
+  agentUpdatable,
+  compareVersions,
+  MIN_AGENT_VERSION,
+  UPDATABLE_FROM,
+} from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
 
 export const agentHostSchema = z.object({
@@ -273,11 +279,13 @@ export const securityReportSchema = z.strictObject({
     .optional(),
 });
 
-export const vaultReportSchema = z
-  .strictObject({
-    set: z.string().uuid(),
-    holders: z.number().int().min(1).max(100),
-  })
+const vaultPieceSchema = z.strictObject({
+  set: z.string().uuid(),
+  holders: z.number().int().min(1).max(100),
+});
+
+export const vaultReportSchema = vaultPieceSchema
+  .extend({ previous: vaultPieceSchema.optional() })
   .nullable();
 
 const fingerprints = z.array(z.string().regex(/^[0-9a-f]{16}$/u)).max(20);

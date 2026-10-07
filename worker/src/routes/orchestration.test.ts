@@ -65,7 +65,7 @@ function routes() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.5.0', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.6.0', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(keyOf(id), JSON.stringify({ set: SET, holders: 3 }), id);
   }
@@ -225,7 +225,7 @@ describe("operations in steps", () => {
     expect((await t.operate("move", [unsigned, created!])).status).toBe(400);
   });
 
-  it("needs agent 0.5.0 on every server in the operation", async () => {
+  it("needs agent 0.6.0 on every server in the operation", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -326,6 +326,49 @@ describe("operations in steps", () => {
     expect(await code(response)).toBe("NO_PIECE");
   });
 
+  it("releases a piece the server keeps from the split still in use", async () => {
+    const t = routes();
+    t.sqlite.prepare("UPDATE nodes SET vault = ? WHERE id = ?").run(
+      JSON.stringify({
+        set: NEXT,
+        holders: 2,
+        previous: { set: SET, holders: 3 },
+      }),
+      B,
+    );
+    const release = (set: string) =>
+      t.operate("expose", [
+        step({
+          nodeId: B,
+          kind: "vault",
+          name: "cloudflare",
+          action: "release",
+          args: { to: A, key: keyOf(A), set },
+        }),
+        step({
+          nodeId: A,
+          kind: "compose",
+          name: "listmonk",
+          action: "expose",
+          args: {
+            service: "app",
+            port: "9000",
+            hostname: "listmonk-a.kleavox.xyz",
+            mode: "allow",
+            zone: "kleavox.xyz",
+            aud: "aud-1",
+            source: set,
+          },
+          attachFrom: 0,
+        }),
+      ]);
+    expect((await release(SET)).status).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    expect(
+      await code(await release("0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a99")),
+    ).toBe("NO_PIECE");
+  });
+
   it("splits the token across servers at once and remembers the zone", async () => {
     const t = routes();
     const stores = [A, B, C].map((nodeId) =>
@@ -344,7 +387,49 @@ describe("operations in steps", () => {
     ).toBe(true);
     expect(
       t.sqlite.prepare("SELECT zone, set_id FROM cloudflare").get(),
-    ).toEqual({ zone: "kleavox.xyz", set_id: NEXT });
+    ).toEqual({ zone: "kleavox.xyz", set_id: null });
+  });
+
+  it("allows one token change at a time", async () => {
+    const t = routes();
+    const split = (set: string) =>
+      [A, B].map((nodeId) =>
+        step({
+          nodeId,
+          kind: "vault",
+          name: "cloudflare",
+          action: "store",
+          args: { set, holders: "2" },
+        }),
+      );
+    expect(
+      (await t.operate("split", split(NEXT), { zone: "kleavox.xyz" })).status,
+    ).toBe(201);
+    const second = await t.operate("split", split(SET), {
+      zone: "kleavox.xyz",
+    });
+    expect(second.status).toBe(409);
+    expect(await code(second)).toBe("TOKEN_BUSY");
+    const open = await t.operate("expose", [
+      step({
+        nodeId: A,
+        kind: "compose",
+        name: "listmonk",
+        action: "expose",
+        args: {
+          service: "app",
+          port: "9000",
+          hostname: "listmonk-a.kleavox.xyz",
+          mode: "everyone",
+          zone: "kleavox.xyz",
+        },
+      }),
+    ]);
+    expect(await code(open)).toBe("TOKEN_BUSY");
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    expect(
+      (await t.operate("split", split(SET), { zone: "kleavox.xyz" })).status,
+    ).toBe(201);
   });
 
   it("re-splits and hands every remaining server its own new piece", async () => {
@@ -432,7 +517,7 @@ describe("operations in steps", () => {
   });
 });
 
-describe("single steps of agent 0.5.0", () => {
+describe("single steps of agent 0.6.0", () => {
   const single = (
     t: ReturnType<typeof routes>,
     target: Step,
@@ -617,7 +702,7 @@ describe("single steps of agent 0.5.0", () => {
     ).toBe(201);
   });
 
-  it("needs agent 0.5.0 for a stack with an access level or secrets", async () => {
+  it("needs agent 0.6.0 for a stack with an access level or secrets", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -644,11 +729,16 @@ describe("single steps of agent 0.5.0", () => {
 
 async function hub() {
   const { db, sqlite } = createTestDb();
+  sqlite
+    .prepare(
+      "INSERT INTO cloudflare (owner_user_id, zone, set_id, updated_at) VALUES ('standalone', 'kleavox.xyz', ?, datetime('now'))",
+    )
+    .run(SET);
   for (const id of [A, B, C]) {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.5.0', docker = 'ready', seal_key = ? WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.6.0', docker = 'ready', seal_key = ? WHERE id = ?",
       )
       .run(keyOf(id), id);
   }
@@ -679,7 +769,7 @@ async function hub() {
           hostname: "web-01",
           operatingSystem: "Debian 12.10",
           architecture: "amd64",
-          agentVersion: "0.5.0",
+          agentVersion: "0.6.0",
           metrics: {
             cpuPercent: 1,
             memoryUsedBytes: 1,
@@ -756,6 +846,64 @@ describe("steps that feed the next", () => {
         .prepare("SELECT output FROM actions WHERE id = ?")
         .get(exportId!),
     ).toEqual({ output: null });
+    await t.finish(B, createId!, "created");
+    expect(
+      t.sqlite
+        .prepare("SELECT attachment FROM actions WHERE id = ?")
+        .get(createId!),
+    ).toEqual({ attachment: null });
+  });
+
+  it("keeps the old split until the new one can rebuild the token", async () => {
+    const t = await hub();
+    const current = () =>
+      (
+        t.sqlite.prepare("SELECT set_id FROM cloudflare").get() as {
+          set_id: string;
+        }
+      ).set_id;
+    const ids = await t.operate(
+      "split",
+      [A, B, C].map((nodeId) =>
+        step({
+          nodeId,
+          kind: "vault",
+          name: "cloudflare",
+          action: "store",
+          args: { set: NEXT, holders: "3" },
+        }),
+      ),
+      { zone: "kleavox.xyz" },
+    );
+    expect(current()).toBe(SET);
+    await t.beat(A);
+    await t.finish(A, ids[0]!, "stored");
+    expect(current()).toBe(SET);
+    await t.beat(B);
+    await t.finish(B, ids[1]!, "stored");
+    expect(current()).toBe(NEXT);
+  });
+
+  it("switches at once when one server keeps the whole token", async () => {
+    const t = await hub();
+    const [id] = await t.operate(
+      "split",
+      [
+        step({
+          nodeId: A,
+          kind: "vault",
+          name: "cloudflare",
+          action: "store",
+          args: { set: NEXT, holders: "1" },
+        }),
+      ],
+      { zone: "kleavox.xyz" },
+    );
+    await t.beat(A);
+    await t.finish(A, id!, "stored");
+    expect(t.sqlite.prepare("SELECT set_id FROM cloudflare").get()).toEqual({
+      set_id: NEXT,
+    });
   });
 
   it("gives each server its own new piece after a re-split", async () => {
@@ -817,11 +965,28 @@ describe("steps that feed the next", () => {
       id: ids[2],
       attachment: "Zm9yQQ",
     });
+    expect(t.sqlite.prepare("SELECT set_id FROM cloudflare").get()).toEqual({
+      set_id: SET,
+    });
     await t.finish(A, ids[2]!, "stored");
+    expect(t.sqlite.prepare("SELECT set_id FROM cloudflare").get()).toEqual({
+      set_id: SET,
+    });
     expect((await t.beat(C)).actions?.[0]).toMatchObject({
       id: ids[3],
       attachment: "Zm9yQw",
     });
+    await t.finish(C, ids[3]!, "stored");
+    expect(t.sqlite.prepare("SELECT set_id FROM cloudflare").get()).toEqual({
+      set_id: NEXT,
+    });
+    expect(
+      t.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM actions WHERE attachment IS NOT NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
   });
 
   it("records a web address when it opens and forgets it when it closes", async () => {
@@ -900,7 +1065,7 @@ describe("steps that feed the next", () => {
   });
 });
 
-describe("the inventory of agent 0.5.0", () => {
+describe("the inventory of agent 0.6.0", () => {
   it("keeps the seal key, the security report, the vault and stack access", async () => {
     const t = await hub();
     const security = {

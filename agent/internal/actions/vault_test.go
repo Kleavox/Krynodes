@@ -299,3 +299,85 @@ func TestTheAgentReadsAPieceWrittenByTheBrowser(t *testing.T) {
 		t.Fatalf("piece %#v", piece)
 	}
 }
+
+const nextSet = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a21"
+
+func storeInto(t *testing.T, executor Executor, id, set, source string, piece []byte, holders string) {
+	t.Helper()
+	request := vaultRequest(t, id, "store", func(c *Command) {
+		c.Piece = sealedPiece(t, executor, set, piece)
+		c.Args = map[string]string{"set": set, "holders": holders}
+		if source != "" {
+			c.Args["source"] = source
+		}
+	})
+	if result := runRequest(t, executor, request); !result.OK {
+		t.Fatalf("store %#v", result)
+	}
+}
+
+func releaseFrom(t *testing.T, executor Executor, id, set string) (vaultPiece, bool) {
+	t.Helper()
+	target, _ := ecdh.P256().GenerateKey(rand.Reader)
+	request := vaultRequest(t, id, "release", func(c *Command) {
+		c.Args = map[string]string{"key": seal.Public(target), "set": set}
+	})
+	result := runRequest(t, executor, request)
+	if !result.OK {
+		return vaultPiece{}, false
+	}
+	opened, err := seal.Open(target, result.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var piece vaultPiece
+	json.Unmarshal(opened, &piece)
+	return piece, true
+}
+
+func TestAStoreKeepsThePieceOfTheSplitInUseUntilTheNextOne(t *testing.T) {
+	executor, _ := newTrustedExecutor(t)
+	old := pieces(t, "cf-token", 2)
+	fresh := pieces(t, "cf-token", 2)
+	storeInto(t, executor, idA, splitSet, "", old[0], "2")
+	storeInto(t, executor, idB, nextSet, splitSet, fresh[0], "2")
+	if piece, ok := releaseFrom(t, executor, idC, splitSet); !ok || piece.Set != splitSet || string(piece.Piece) != string(old[0]) {
+		t.Fatalf("the old piece is still there: %#v %v", piece, ok)
+	}
+	if piece, ok := releaseFrom(t, executor, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a04", nextSet); !ok || string(piece.Piece) != string(fresh[0]) {
+		t.Fatalf("the new piece: %#v %v", piece, ok)
+	}
+	var inventory Inventory
+	readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory)
+	if inventory.Vault == nil || inventory.Vault.Set != nextSet || inventory.Vault.Previous == nil || inventory.Vault.Previous.Set != splitSet || inventory.Vault.Previous.Holders != 2 {
+		t.Fatalf("vault %#v", inventory.Vault)
+	}
+	third := "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a22"
+	storeInto(t, executor, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a05", third, nextSet, pieces(t, "cf-token", 2)[0], "2")
+	if _, ok := releaseFrom(t, executor, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a06", splitSet); ok {
+		t.Fatal("only the source split survives a store")
+	}
+	if _, ok := releaseFrom(t, executor, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a07", nextSet); !ok {
+		t.Fatal("the source split survives")
+	}
+}
+
+func TestTheTokenIsRebuiltFromTheSplitInUse(t *testing.T) {
+	executor, run, fake := cloudflareExecutor(t, listmonkStack())
+	run.respond = map[string]string{
+		"docker ps --filter label=com.docker.compose.project=listmonk --filter label=com.docker.compose.service=app --format {{.Names}}": "listmonk-app-1\n",
+		"docker inspect --format {{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}} listmonk-app-1":                       "listmonk_default \n",
+	}
+	run.failing = map[string]string{"docker inspect --format {{.State.Running}} " + TunnelContainer: "No such object"}
+	old := pieces(t, "cf-token", 2)
+	storeInto(t, executor, idA, splitSet, "", old[0], "2")
+	storeInto(t, executor, idB, nextSet, splitSet, pieces(t, "other", 2)[0], "2")
+	request := composeRequest(t, idC, "listmonk", "expose", func(c *Command) {
+		c.Args = map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-node.kleavox.xyz", "mode": "everyone", "zone": "kleavox.xyz", "source": splitSet}
+	})
+	request.Attachment = sealedPiece(t, executor, splitSet, old[1])
+	result := runRequest(t, executor, request)
+	if !result.OK || fake.Token != "cf-token" {
+		t.Fatalf("result %#v token %q", result, fake.Token)
+	}
+}

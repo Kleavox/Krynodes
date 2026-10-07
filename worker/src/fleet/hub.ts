@@ -3,10 +3,12 @@ import {
   healStatements,
   heartbeatActions,
   inMaintenance,
+  REBOOT_MS,
 } from "../actions/store";
 import {
   acceptResults,
   commit,
+  forcedUpdate,
   heartbeatResponse,
   heartbeatStatements,
   insertWindow,
@@ -26,7 +28,8 @@ import {
 } from "../incident/notify";
 import { sendSecurityEmail, sendServerEmail } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
-import { agentConfigResponseSchema } from "@krynodes/protocol";
+import { agentConfigResponseSchema, agentSupported } from "@krynodes/protocol";
+import { readAgentRelease } from "../agent/releases";
 import {
   drain,
   fold,
@@ -60,6 +63,18 @@ interface RosterEntry {
 type Roster = Record<string, RosterEntry>;
 
 const offlineAfterMs = (interval: number) => Math.max(90, 3 * interval) * 1000;
+
+function restarting(security: string | null, seen: number, now: number) {
+  const report = JSON.parse(security ?? "null") as {
+    rebootHour?: number | null;
+    findings?: { id: string }[];
+  } | null;
+  return (
+    now - seen < REBOOT_MS &&
+    report?.rebootHour === new Date(seen).getUTCHours() &&
+    (report.findings ?? []).some((finding) => finding.id === "reboot-pending")
+  );
+}
 
 const watching = (ws: WebSocket) =>
   (ws.deserializeAttachment() as { watch?: boolean } | null)?.watch === true;
@@ -124,8 +139,12 @@ export class FleetHub {
       let poked = 0;
       for (const nodeId of nodeIds) {
         for (const ws of this.ctx.getWebSockets(nodeId)) {
-          ws.send(JSON.stringify({ type: "poke" }));
-          poked += 1;
+          try {
+            ws.send(JSON.stringify({ type: "poke" }));
+            poked += 1;
+          } catch {
+            continue;
+          }
         }
       }
       return Response.json({ poked });
@@ -270,15 +289,26 @@ export class FleetHub {
     return (await this.ctx.storage.get<Roster>(ROSTER)) ?? {};
   }
 
+  private heard(ws: WebSocket, state: StreamState) {
+    return Math.max(
+      state.lastSeen ?? state.connectedAt,
+      this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0,
+    );
+  }
+
   private pulse(nodeId: string, entry: RosterEntry) {
-    const socket = this.ctx.getWebSockets(nodeId)[0];
-    const state = socket?.deserializeAttachment() as StreamState | undefined;
-    return state
-      ? {
-          seen: state.lastSeen ?? state.connectedAt,
-          limit: offlineAfterMs(state.interval),
-        }
-      : { seen: entry.lastSeen, limit: offlineAfterMs(entry.interval) };
+    let pulse: { seen?: number; limit: number } = {
+      seen: entry.lastSeen,
+      limit: offlineAfterMs(entry.interval),
+    };
+    for (const socket of this.ctx.getWebSockets(nodeId)) {
+      const state = socket.deserializeAttachment() as StreamState;
+      const seen = this.heard(socket, state);
+      if (seen > (pulse.seen ?? 0)) {
+        pulse = { seen, limit: offlineAfterMs(state.interval) };
+      }
+    }
+    return pulse;
   }
 
   private async schedule(now: number) {
@@ -322,13 +352,16 @@ export class FleetHub {
       changed = true;
       const known = await db
         .prepare(
-          "SELECT id FROM nodes WHERE id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL",
+          "SELECT security FROM nodes WHERE id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL",
         )
         .bind(nodeId)
-        .first();
+        .first<{ security: string | null }>();
       if (!known) {
         delete roster[nodeId];
-      } else if (await inMaintenance(db, nodeId, now, now)) {
+      } else if (
+        restarting(known.security, seen, now) ||
+        (await inMaintenance(db, nodeId, now, now))
+      ) {
         entry.checkedAt = now;
       } else {
         entry.offline = true;
@@ -408,7 +441,17 @@ export class FleetHub {
     const known = await this.node(ws, current);
     if (!known) return;
     const retried = updateRetry(db, known, beat, now);
-    const node = retried.node;
+    const forced =
+      agentSupported(beat.agentVersion) || retried.node.update_requested_version
+        ? { node: retried.node, statements: [] }
+        : forcedUpdate(
+            db,
+            retried.node,
+            beat.agentVersion,
+            (await readAgentRelease(db)).version,
+            now,
+          );
+    const node = forced.node;
     let state: StreamState = { ...current, interval: node.interval_seconds };
     if (state.lastSeen === null) {
       const row = await db
@@ -441,7 +484,7 @@ export class FleetHub {
     if (folded.writeNode) {
       leading.push(...heartbeatStatements(db, node, beat, now));
     }
-    leading.push(...retried.statements);
+    leading.push(...retried.statements, ...forced.statements);
     if (current.lastSeen === null || current.away) {
       await this.returned(node.id);
     }
@@ -515,9 +558,9 @@ export class FleetHub {
 
   private async leave(ws: WebSocket) {
     const state = ws.deserializeAttachment() as StreamState | null;
-    if (!state) return;
+    if (!state || state.left) return;
     const drained = drain(state);
-    ws.serializeAttachment(drained.state);
+    ws.serializeAttachment({ ...drained.state, left: true });
     const statements: D1PreparedStatement[] = [];
     if (drained.flushed) {
       statements.push(this.flushStatement(state.nodeId, drained.flushed));
@@ -526,7 +569,7 @@ export class FleetHub {
     roster[state.nodeId] = {
       ...roster[state.nodeId],
       interval: state.interval,
-      lastSeen: state.lastSeen ?? state.connectedAt,
+      lastSeen: this.heard(ws, state),
     };
     await this.ctx.storage.put(ROSTER, roster);
     if (state.beat && state.lastSeen !== null) {

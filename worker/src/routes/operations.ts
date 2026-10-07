@@ -62,6 +62,8 @@ const commandSchema = z.object({
 
 type Step = z.infer<typeof stepSchema> & { args: Record<string, string> };
 
+const TOKEN_CHANGES = ["store", "reshare", "forget"];
+
 interface NodeRow {
   id: string;
   name: string;
@@ -185,16 +187,23 @@ function shaped(kind: string, steps: Step[]): boolean {
   return false;
 }
 
-function vaultOf(node: NodeRow): { set: string; holders: number } | null {
+interface HeldPiece {
+  set: string;
+  holders: number;
+}
+
+function vaultOf(node: NodeRow): (HeldPiece & { previous?: HeldPiece }) | null {
   try {
-    return JSON.parse(node.vault ?? "null") as {
-      set: string;
-      holders: number;
-    } | null;
+    return JSON.parse(node.vault ?? "null") as
+      (HeldPiece & { previous?: HeldPiece }) | null;
   } catch {
     return null;
   }
 }
+
+const holdsSet = (vault: ReturnType<typeof vaultOf>, set?: string) =>
+  vault !== null &&
+  (set === undefined || vault.set === set || vault.previous?.set === set);
 
 export function registerOperationRoutes(
   app: KrynodesApp,
@@ -289,12 +298,9 @@ export function registerOperationRoutes(
       }
       if (step.action === "release" || step.action === "reshare") {
         const vault = vaultOf(byId.get(step.nodeId)!);
-        if (
-          !vault ||
-          (step.action === "release" &&
-            step.args.set !== undefined &&
-            step.args.set !== vault.set)
-        ) {
+        const wanted =
+          step.action === "release" ? step.args.set : step.args.source;
+        if (!holdsSet(vault, wanted)) {
           return context.json(
             {
               code: "NO_PIECE",
@@ -318,6 +324,31 @@ export function registerOperationRoutes(
           {
             code: "KEY_CHANGED",
             message: "A server's key changed. Refresh and try again.",
+          },
+          409,
+        );
+      }
+    }
+    if (kind !== "move") {
+      const pending = await db
+        .prepare(
+          `SELECT action FROM actions
+           WHERE status IN ('queued', 'sent') AND kind = 'vault'
+             AND node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)`,
+        )
+        .bind(identity.id)
+        .all<{ action: string }>();
+      const changing = kind === "split" || kind === "reshare";
+      if (
+        pending.results.some(
+          (row) => changing || TOKEN_CHANGES.includes(row.action),
+        )
+      ) {
+        return context.json(
+          {
+            code: "TOKEN_BUSY",
+            message:
+              "The Cloudflare token is being changed. Try again when that finishes.",
           },
           409,
         );
@@ -402,16 +433,11 @@ export function registerOperationRoutes(
             db
               .prepare(
                 `INSERT INTO cloudflare (owner_user_id, zone, set_id, updated_at)
-                 VALUES (?1, ?2, ?3, ?4)
+                 VALUES (?1, ?2, NULL, ?3)
                  ON CONFLICT (owner_user_id) DO UPDATE SET
-                   zone = excluded.zone, set_id = excluded.set_id, updated_at = excluded.updated_at`,
+                   zone = excluded.zone, updated_at = excluded.updated_at`,
               )
-              .bind(
-                identity.id,
-                zone,
-                steps[0]!.args.set,
-                new Date(now).toISOString(),
-              ),
+              .bind(identity.id, zone, new Date(now).toISOString()),
           ]
         : [];
     try {

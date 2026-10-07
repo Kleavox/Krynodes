@@ -47,7 +47,7 @@ function fleet(extra: Partial<Env> = {}) {
         hostname,
         operatingSystem: "linux",
         architecture: "amd64",
-        agentVersion: "0.5.0",
+        agentVersion: "0.6.0",
       },
       token,
     );
