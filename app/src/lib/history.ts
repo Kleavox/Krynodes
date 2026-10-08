@@ -35,6 +35,7 @@ export function byDay(
 
 export function historyText(action: ActionRecord): string {
   const name = displayName(action.kind, action.name);
+  if (action.action === "uninstall") return "Remove Krynodes from the server";
   return action.action === "logs"
     ? `Read logs of ${name}`
     : `${verb(action.action)} ${objectOf(action)}`;

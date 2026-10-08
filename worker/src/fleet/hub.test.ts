@@ -67,6 +67,7 @@ function setup() {
     storage: new FakeStorage(),
   };
   const mail: { subject: string; text: string }[] = [];
+  let mailFails = false;
   const hub = new FleetHub(
     ctx as unknown as DurableObjectState,
     {
@@ -76,6 +77,7 @@ function setup() {
       PUBLIC_ORIGIN: "https://kry.example.test",
       EMAIL: {
         send: async (message: { subject: string; text: string }) => {
+          if (mailFails) throw new Error("destination address not verified");
           mail.push(message);
         },
       },
@@ -116,6 +118,7 @@ function setup() {
   const changes = () =>
     (sqlite.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
   return {
+    db,
     sqlite,
     hub,
     accepted,
@@ -125,6 +128,9 @@ function setup() {
     windows,
     changes,
     mail,
+    failMail: (on: boolean) => {
+      mailFails = on;
+    },
     storage: ctx.storage,
   };
 }
@@ -344,6 +350,82 @@ describe("FleetHub", () => {
     expect(t.mail).toHaveLength(2);
   });
 
+  it("mails a full disk once the database takes the report again", async () => {
+    const t = setup();
+    const disk = (used: number): AgentHeartbeat => ({
+      ...heartbeat(10),
+      metrics: {
+        ...heartbeat(10).metrics,
+        diskUsedBytes: used,
+        diskTotalBytes: 100,
+      },
+    });
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, disk(80));
+    const prepare = t.db.prepare.bind(t.db);
+    let broken = true;
+    t.db.prepare = ((sql: string) => {
+      if (
+        broken &&
+        sql.includes("FROM checks WHERE node_id = ? AND enabled = 1")
+      ) {
+        broken = false;
+        throw new Error("D1 is unavailable");
+      }
+      return prepare(sql);
+    }) as typeof t.db.prepare;
+    await t.send(ws, BASE + 65_000, disk(97));
+    expect(broken).toBe(false);
+    expect(t.mail).toEqual([]);
+    await t.send(ws, BASE + 125_000, disk(97));
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: disk 97% full`,
+    ]);
+  });
+
+  it("mails once when the disk reaches 95%, and again only after it went below 90%", async () => {
+    const t = setup();
+    const disk = (used: number): AgentHeartbeat => ({
+      ...heartbeat(10),
+      metrics: {
+        ...heartbeat(10).metrics,
+        diskUsedBytes: used,
+        diskTotalBytes: 100,
+      },
+    });
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, disk(80));
+    await t.send(ws, BASE + 65_000, disk(96));
+    await t.send(ws, BASE + 125_000, disk(97));
+    const again = await t.connect();
+    await t.send(again, BASE + 185_000, disk(97));
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: disk 96% full`,
+    ]);
+    expect(t.mail[0]!.text).toContain("almost full");
+
+    const third = await t.connect();
+    await t.send(third, BASE + 245_000, disk(85));
+    await t.send(third, BASE + 4_000_000, disk(95));
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: disk 96% full`,
+      `[Krynodes] ${NODE}: disk 95% full`,
+    ]);
+  });
+
+  it("accepts a new connection even when closing a lingering one throws", async () => {
+    const t = setup();
+    const old = await t.connect();
+    old.lingers = true;
+    old.close(1006, "gone");
+    old.close = () => {
+      throw new TypeError("Can't call WebSocket close() after close().");
+    };
+    const fresh = await t.connect();
+    await t.send(fresh, BASE + 5_000, heartbeat(10));
+    expect(fresh.replies().at(-1)).toMatchObject({ type: "heartbeat" });
+  });
+
   it("follows the newest connection when a replaced one lingers while closing", async () => {
     const t = setup();
     const old = await t.connect();
@@ -428,6 +510,122 @@ describe("FleetHub", () => {
     expect(t.mail).toEqual([]);
 
     vi.setSystemTime(BASE + 660_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
+  it("mails one list when more than five servers go offline at once", async () => {
+    const t = setup();
+    const ids = Array.from(
+      { length: 7 },
+      (_, index) => `00000000-0000-4000-8000-00000000000${index}`,
+    );
+    for (const id of ids) {
+      seedNode(t.sqlite, { id });
+      const ws = new FakeSocket();
+      await t.hub.accept(ws as unknown as WebSocket, id, "standalone", 60);
+      await t.send(ws, BASE + 5_000, { ...heartbeat(10), nodeId: id });
+      ws.close(1006, "gone");
+      await t.hub.webSocketClose(ws as unknown as WebSocket);
+    }
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      "[Krynodes] 7 servers offline",
+    ]);
+    for (const id of ids) expect(t.mail[0]!.text).toContain(id);
+  });
+
+  it("checks 40 silent servers with a few statements and calls them all offline", async () => {
+    const t = setup();
+    const ids = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    );
+    for (const id of ids) {
+      seedNode(t.sqlite, { id });
+      const ws = new FakeSocket();
+      await t.hub.accept(ws as unknown as WebSocket, id, "standalone", 60);
+      await t.send(ws, BASE + 5_000, { ...heartbeat(10), nodeId: id });
+      ws.close(1006, "gone");
+      await t.hub.webSocketClose(ws as unknown as WebSocket);
+    }
+    let statements = 0;
+    const prepare = t.db.prepare.bind(t.db);
+    t.db.prepare = ((sql: string) => {
+      statements += 1;
+      return prepare(sql);
+    }) as typeof t.db.prepare;
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(statements).toBeLessThanOrEqual(10);
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      "[Krynodes] 40 servers offline",
+    ]);
+  });
+
+  it("keeps watching when the database fails during a check, and mails once it is back", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    ws.close(1006, "gone");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+    const prepare = t.db.prepare.bind(t.db);
+    t.db.prepare = (() => {
+      throw new Error("D1 is unavailable");
+    }) as typeof t.db.prepare;
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.storage.alarm).toBe(BASE + 260_000);
+    t.db.prepare = prepare;
+    vi.setSystemTime(BASE + 260_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
+  it("mails a server it found offline even when the next alarm cannot be set", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    ws.close(1006, "gone");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+    const other = "00000000-0000-4000-8000-000000000099";
+    seedNode(t.sqlite, { id: other });
+    const live = new FakeSocket();
+    await t.hub.accept(live as unknown as WebSocket, other, "standalone", 60);
+    await t.send(live, BASE + 190_000, { ...heartbeat(10), nodeId: other });
+    const setAlarm = t.storage.setAlarm.bind(t.storage);
+    let failed = false;
+    t.storage.setAlarm = async (at: number) => {
+      if (!failed) {
+        failed = true;
+        throw new Error("storage is unavailable");
+      }
+      return setAlarm(at);
+    };
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+    expect(t.storage.alarm).toBe(BASE + 260_000);
+  });
+
+  it("still calls a silent server offline when its stored security report is unreadable", async () => {
+    const t = setup();
+    t.sqlite
+      .prepare("UPDATE nodes SET security = ? WHERE id = ?")
+      .run("{not json", NODE);
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    ws.close(1006, "gone");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+    vi.setSystemTime(BASE + 200_000);
     await t.hub.alarm();
     expect(t.mail.map((message) => message.subject)).toEqual([
       `[Krynodes] ${NODE}: offline`,
@@ -525,14 +723,58 @@ describe("FleetHub", () => {
     expect(incidents()).toBe(1);
   });
 
+  it("answers at most 60 messages a minute from one server and drops the rest", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    for (let index = 0; index < 62; index++) {
+      await t.send(ws, BASE + 5_000 + index * 100, heartbeat(10));
+    }
+    const answered = () =>
+      ws.replies().filter((reply) => reply.type === "heartbeat").length;
+    expect(answered()).toBe(60);
+    expect(
+      ws.replies().filter((reply) => reply.code === "TOO_MANY_MESSAGES"),
+    ).toHaveLength(1);
+    await t.send(ws, BASE + 66_000, heartbeat(10));
+    expect(answered()).toBe(61);
+  });
+
+  it("still mails a confirmed failure when the server's socket closed before the answer", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
+    ws.close(1006, "gone");
+    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: 1 check down — ${CHECK}`,
+    ]);
+  });
+
+  it("still mails a confirmed failure when handing out actions fails", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
+    const prepare = t.db.prepare.bind(t.db);
+    t.db.prepare = ((sql: string) => {
+      if (sql.includes("SET status = 'expired'")) {
+        throw new Error("D1 is unavailable");
+      }
+      return prepare(sql);
+    }) as typeof t.db.prepare;
+    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: 1 check down — ${CHECK}`,
+    ]);
+  });
+
   it("serves the live view and pokes connected servers", async () => {
     const t = setup();
     const ws = await t.connect();
     await t.send(ws, BASE + 5_000, heartbeat(10));
     const live = (await (
       await t.hub.fetch(new Request("https://fleet/live"))
-    ).json()) as Record<string, { lastSeen: number }>;
-    expect(live[NODE]?.lastSeen).toBe(BASE + 5_000);
+    ).json()) as { nodes: Record<string, { lastSeen: number }> };
+    expect(live.nodes[NODE]?.lastSeen).toBe(BASE + 5_000);
     const poke = await t.hub.fetch(
       new Request("https://fleet/poke", {
         method: "POST",
@@ -680,6 +922,101 @@ describe("FleetHub", () => {
     });
   });
 
+  it("remembers an alert mail that could not go out until one does", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    const mailState = async () =>
+      (
+        (await (
+          await t.hub.fetch(new Request("https://fleet/live"))
+        ).json()) as { mail: { failedAt: string; error: string } | null }
+      ).mail;
+    expect(await mailState()).toBeNull();
+    t.failMail(true);
+    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
+    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
+    expect(await mailState()).toEqual({
+      failedAt: new Date(BASE + 65_000).toISOString(),
+      error: "destination address not verified",
+    });
+    t.failMail(false);
+    const disk = {
+      ...heartbeat(10),
+      metrics: {
+        ...heartbeat(10).metrics,
+        diskUsedBytes: 96,
+        diskTotalBytes: 100,
+      },
+    };
+    await t.send(ws, BASE + 125_000, disk);
+    expect(t.mail.length).toBe(1);
+    expect(await mailState()).toBeNull();
+  });
+
+  it("keeps the results of a report whose inventory it cannot read", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    const action = "77777777-7777-4777-8777-777777777777";
+    t.sqlite
+      .prepare(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+           status, requested_by, requested_at, deliverable_at, sent_at)
+         VALUES (?, ?, 0, 'rolling', ?, 'docker', 'adguard', 'restart', 'sent', 'owner', ?, ?, ?)`,
+      )
+      .run(
+        action,
+        action,
+        NODE,
+        new Date(BASE).toISOString(),
+        new Date(BASE).toISOString(),
+        new Date(BASE).toISOString(),
+      );
+    vi.setSystemTime(BASE + 5_000);
+    await t.hub.webSocketMessage(
+      ws as unknown as WebSocket,
+      JSON.stringify({
+        id: 9,
+        type: "actions",
+        report: {
+          nodeId: NODE,
+          results: [
+            {
+              id: action,
+              ok: true,
+              exitCode: 0,
+              output: "restarted",
+              finishedAt: new Date(BASE + 4_000).toISOString(),
+            },
+          ],
+          inventory: {
+            hash: "b".repeat(64),
+            services: [
+              {
+                kind: "docker",
+                name: "bad name!",
+                state: "running",
+                since: null,
+                system: false,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(ws.replies().at(-1)).toMatchObject({
+      id: 9,
+      type: "actions",
+      response: { ok: true },
+    });
+    expect(
+      (ws.replies().at(-1) as { response: { inventoryHash: string | null } })
+        .response.inventoryHash,
+    ).not.toBe("b".repeat(64));
+    expect(
+      t.sqlite.prepare("SELECT status FROM actions WHERE id = ?").get(action),
+    ).toEqual({ status: "done" });
+  });
+
   it("tells the live view when each server connected", async () => {
     const t = setup();
     vi.setSystemTime(BASE + 1_000);
@@ -687,8 +1024,8 @@ describe("FleetHub", () => {
     await t.send(ws, BASE + 5_000, heartbeat(10));
     const live = (await (
       await t.hub.fetch(new Request("https://fleet/live"))
-    ).json()) as Record<string, { connectedAt: number }>;
-    expect(live[NODE]?.connectedAt).toBe(BASE + 1_000);
+    ).json()) as { nodes: Record<string, { connectedAt: number }> };
+    expect(live.nodes[NODE]?.connectedAt).toBe(BASE + 1_000);
   });
 
   describe("dashboards watching", () => {
@@ -743,7 +1080,7 @@ describe("FleetHub", () => {
       const live = await (
         await t.hub.fetch(new Request("https://fleet/live"))
       ).json();
-      expect(live).toEqual({});
+      expect(live).toEqual({ nodes: {}, mail: null });
       await t.hub.webSocketClose(viewer as unknown as WebSocket);
       expect(t.windows()).toEqual([]);
     });

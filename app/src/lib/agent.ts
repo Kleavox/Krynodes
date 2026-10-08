@@ -1,6 +1,8 @@
 import { agentUpdatable, compareVersions } from "@krynodes/protocol/versions";
 
-import type { NodeRecord } from "../types";
+import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
+import { signersFor } from "./devices";
+import { nodeState } from "./format";
 
 const ATTEMPT_MS = 15 * 60_000;
 const SILENT_MS = 20 * 60_000;
@@ -41,3 +43,23 @@ export function agentState(
   if (!latest || !version || !VERSION.test(version)) return "unknown";
   return compareVersions(version, latest) >= 0 ? "current" : "available";
 }
+
+const REMOVES_ITSELF = "0.6.2";
+
+export const removalReady = (
+  node: Pick<
+    NodeRecord,
+    | "agent_version"
+    | "disabled_at"
+    | "enrolled_at"
+    | "last_seen_at"
+    | "interval_seconds"
+  >,
+  trust: NodeTrust | null,
+  devices: DeviceRecord[],
+  now: number,
+) =>
+  nodeState(node, now) === "online" &&
+  VERSION.test(node.agent_version ?? "") &&
+  compareVersions(node.agent_version!, REMOVES_ITSELF) >= 0 &&
+  signersFor(devices, [trust]).length > 0;

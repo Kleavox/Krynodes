@@ -158,6 +158,50 @@ func TestContainedStacksCannotReachTheServerOrTheCloudMetadata(t *testing.T) {
 	}
 }
 
+func TestAnOlderContainedStackIsCheckedAgainBeforeItIsRecreated(t *testing.T) {
+	for _, verb := range []string{"deploy", "rollback"} {
+		executor, run := stackExecutor(t)
+		dir, stack := ownKuma(t, executor, "contained", kumaText)
+		withStacks(&executor, stack)
+		old := `{"name":"kuma","services":{"web":{"image":"louislam/uptime-kuma:1","logging":{"driver":"syslog","options":{"syslog-address":"tcp://127.0.0.1:6379"}}}}}`
+		if err := os.WriteFile(filepath.Join(dir, "compose.krynodes.json"), []byte(old), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		result := runRequest(t, executor, composeRequest(t, idA, "kuma", verb, nil))
+		if result.OK || !strings.Contains(result.Output, "syslog") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasSuffix(call, " up -d") || strings.HasSuffix(call, " pull") }) {
+			t.Fatalf("%s: %#v %q", verb, result, run.calls)
+		}
+	}
+}
+
+func TestTheContainmentIsInPlaceBeforeDockerStartsAtBoot(t *testing.T) {
+	executor, run := stackExecutor(t)
+	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	run.calls = nil
+	run.failing = map[string]string{
+		"iptables -C DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP": "",
+		"iptables -C INPUT -i krc+ -j DROP":                          "",
+		"ip6tables -C INPUT -i krc+ -j DROP":                         "",
+		"ip6tables -C DOCKER-USER -i krc+ -d fd00:ec2::254 -j DROP":  "",
+	}
+	executor.Contain(context.Background())
+	chain := slices.Index(run.calls, "iptables -N DOCKER-USER")
+	chain6 := slices.Index(run.calls, "ip6tables -N DOCKER-USER")
+	for _, call := range []string{"iptables -I DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP", "iptables -I INPUT -i krc+ -j DROP", "ip6tables -I INPUT -i krc+ -j DROP", "ip6tables -I DOCKER-USER -i krc+ -d fd00:ec2::254 -j DROP"} {
+		if index := slices.Index(run.calls, call); index < 0 || index < chain || chain < 0 || index < chain6 || chain6 < 0 {
+			t.Fatalf("missing %q after the chains in %q", call, run.calls)
+		}
+	}
+	quiet, run := stackExecutor(t, listmonk)
+	quiet.Contain(context.Background())
+	if len(run.calls) != 0 {
+		t.Fatalf("no rules without a Contained stack: %q", run.calls)
+	}
+}
+
 func TestNoGuardRulesWithoutAContainedStack(t *testing.T) {
 	executor, run := stackExecutor(t, listmonk)
 	if err := executor.Execute(context.Background()); err != nil {
@@ -462,6 +506,32 @@ func TestAdoptCopiesAStackIntoKrynodesAndKeepsTheOldFolder(t *testing.T) {
 	kept, _ := os.ReadFile(filepath.Join(old, "data", "orders.db"))
 	if string(copied) != "orders" || string(kept) != "orders" || accessOf(t, next) != "full" {
 		t.Fatalf("copied %q kept %q", copied, kept)
+	}
+}
+
+func TestAnAdoptThatCannotCopyInTimeBringsTheOldStackBack(t *testing.T) {
+	executor, run := stackExecutor(t)
+	old := filepath.Join(t.TempDir(), "shop")
+	if err := os.MkdirAll(old, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "compose.yaml"), []byte("services: {}\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	withStacks(&executor, Stack{Project: "shop", Directory: old, Files: []string{filepath.Join(old, "compose.yaml")}, Running: 1, Total: 1})
+	saved := copyTimeout
+	copyTimeout = 0
+	t.Cleanup(func() { copyTimeout = saved })
+	result := runRequest(t, executor, composeRequest(t, idA, "shop", "adopt", nil))
+	if result.OK || !strings.Contains(result.Output, "took longer than") {
+		t.Fatalf("result %#v", result)
+	}
+	if _, err := os.Lstat(filepath.Join(executor.StateDir, "compose", "shop")); err == nil {
+		t.Fatal("the half-made copy is removed")
+	}
+	back := "docker compose --project-name shop --project-directory " + old + " -f " + filepath.Join(old, "compose.yaml") + " up -d"
+	if run.calls[len(run.calls)-1] != back {
+		t.Fatalf("the old stack starts again: %q", run.calls)
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ const (
 	maxRequestBytes = 256 << 10
 	maxOutputBytes  = 2 << 10
 	commandTimeout  = 2 * time.Minute
+	runBudget       = 20 * time.Minute
 	expirySkew      = time.Minute
 	keepFor         = 24 * time.Hour
 )
@@ -56,6 +58,7 @@ type Executor struct {
 	HealthEvery   time.Duration
 	HealthSettle  time.Duration
 	Fetch         recipes.Fetcher
+	LookupIP      func(context.Context, string) ([]net.IP, error)
 }
 
 type pending struct {
@@ -83,12 +86,17 @@ func (e Executor) Execute(ctx context.Context) error {
 	reboot := false
 	scanned := false
 	processed := 0
+	started := e.Now()
+run:
 	for {
 		batch := e.unprocessed(ledger)
 		if len(batch) == 0 {
 			break
 		}
 		for _, item := range batch {
+			if e.Now().Sub(started) > runBudget {
+				break run
+			}
 			ledger[item.id] = e.Now()
 			if err := e.saveLedger(ledger); err != nil {
 				return err
@@ -107,7 +115,7 @@ func (e Executor) Execute(ctx context.Context) error {
 				case item.request.Kind == "vault":
 					result = e.vault(ctx, item.request)
 				case item.request.Kind == "host":
-					result, forwarded = e.host(item.request)
+					result, forwarded = e.host(ctx, item.request)
 					reboot = reboot || (result.OK && item.request.Action == "reboot")
 					scanned = scanned || (result.OK && item.request.Action == "scan")
 				case slices.Contains(autoVerbs, item.request.Action):
@@ -135,6 +143,7 @@ func (e Executor) Execute(ctx context.Context) error {
 	}
 	if snapshot.Docker == "ready" && e.hasContained() {
 		e.guard(ctx)
+		e.refreshTunnel(ctx)
 	}
 	trust, err := LoadTrust(e.StateDir)
 	if err != nil {
@@ -274,12 +283,8 @@ func check(request Request, now time.Time, services []Service) error {
 	if Protected(request.Kind, request.Name) {
 		return fmt.Errorf("%s is protected", request.Name)
 	}
-	expires, err := time.Parse(time.RFC3339Nano, request.ExpiresAt)
-	if err != nil {
-		return errors.New("invalid expiry")
-	}
-	if now.After(expires.Add(expirySkew)) {
-		return fmt.Errorf("the request expired at %s", request.ExpiresAt)
+	if err := expired(request, now); err != nil {
+		return err
 	}
 	for _, service := range services {
 		if service.Kind == request.Kind && service.Name == request.Name {
@@ -306,6 +311,9 @@ func (e Executor) execute(ctx context.Context, request Request, services []Servi
 	}
 	if _, err := e.authorize(request); err != nil {
 		return e.refuse(request.ID, err)
+	}
+	if request.Kind == "docker" && slices.Contains(startVerbs, request.Action) && e.lockedDown() {
+		return e.refuse(request.ID, errLockedDown)
 	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
@@ -355,7 +363,7 @@ func expired(request Request, now time.Time) error {
 		return errors.New("invalid expiry")
 	}
 	if now.After(expires.Add(expirySkew)) {
-		return fmt.Errorf("the request expired at %s", request.ExpiresAt)
+		return fmt.Errorf("the request expired at %s", clockSays(expires, now))
 	}
 	return nil
 }
@@ -493,6 +501,10 @@ func writeJSON(directory, name string, value any, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
+	return writeWhole(directory, name, encoded, mode)
+}
+
+func writeWhole(directory, name string, encoded []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return err
 	}

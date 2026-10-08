@@ -3,6 +3,8 @@ package actions
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -160,6 +162,19 @@ func TestDeletingARemovedStackRemovesItsVolumesAndOnlyItsOwnFolder(t *testing.T)
 	}
 }
 
+func TestAStackWithAWebAddressIsNotRemovedUntilTheAddressIsClosed(t *testing.T) {
+	for _, verb := range []string{"remove", "purge"} {
+		executor, run := stackExecutor(t, listmonk)
+		if err := writeJSON(executor.StateDir, "addresses.json", map[string]webAddress{"mail.kleavox.xyz": {Project: "listmonk", Service: "app", Network: "listmonk_default"}}, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		result := runRequest(t, executor, request(t, idA, "compose", "listmonk", verb, soon()))
+		if result.OK || !strings.Contains(result.Output, "mail.kleavox.xyz") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "docker compose") }) {
+			t.Fatalf("%s: %#v %q", verb, result, run.calls)
+		}
+	}
+}
+
 func TestRemovedStacksAreDeletedAfterSevenDays(t *testing.T) {
 	executor, run := stackExecutor(t)
 	old := filepath.Join(executor.StateDir, "compose", "old")
@@ -183,6 +198,25 @@ func TestRemovedStacksAreDeletedAfterSevenDays(t *testing.T) {
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatalf("its folder must go: %v", err)
+	}
+}
+
+func TestOldRemovedStacksWaitWhileTheClockIsNotSynchronized(t *testing.T) {
+	executor, run := stackExecutor(t)
+	old := filepath.Join(executor.StateDir, "compose", "old")
+	if err := os.MkdirAll(old, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	park(t, executor, map[string]removedStack{"old": {Directory: old, RemovedAt: executorNow.Add(-8 * 24 * time.Hour)}})
+	run.respond = map[string]string{"timedatectl show -p NTPSynchronized --value": "no\n"}
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := binOf(t, executor).Stacks["old"]; !ok {
+		t.Fatal("a clock that may be wrong deletes nothing")
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Fatalf("its folder stays: %v", err)
 	}
 }
 
@@ -338,6 +372,44 @@ func TestANewStackRunsItsResolvedFileWithPortsOnTheServerOnly(t *testing.T) {
 	}
 }
 
+func TestANewStackThatNeverStartedLeavesNoFolder(t *testing.T) {
+	executor, run := stackExecutor(t)
+	dir := kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	run.failing = map[string]string{composeCall(dir, "compose.krynodes.json", "pull"): "pull access denied"}
+	request := createRequest(t, idA, "kuma", kumaText)
+	if result := runRequest(t, executor, request); result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("a stack that never started leaves no folder or secrets behind")
+	}
+	executor, run = stackExecutor(t)
+	dir = kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	run.respond["docker ps -a --no-trunc --filter label=com.docker.compose.project=kuma --format {{.ID}}"] = "c0ffee\n"
+	run.failing = map[string]string{composeCall(dir, "compose.krynodes.json", "up -d"): "port is already allocated"}
+	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); err != nil {
+		t.Fatal("a stack with containers keeps its folder so it can be fixed or removed")
+	}
+	executor, run = stackExecutor(t)
+	dir = kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data", "kuma.db"), []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	run.failing = map[string]string{composeCall(dir, "compose.krynodes.json", "pull"): "pull access denied"}
+	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	if kept, _ := os.ReadFile(filepath.Join(dir, "data", "kuma.db")); string(kept) != "old" {
+		t.Fatal("a folder that was there before keeps its data")
+	}
+}
+
 func TestANewStackRefusesWhatCouldTakeOverTheServer(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -367,6 +439,17 @@ func TestANewStackRefusesWhatCouldTakeOverTheServer(t *testing.T) {
 			extra["secrets"] = map[string]any{"key": map[string]any{"file": "/root/.ssh/id_ed25519"}}
 		}, "id_ed25519"},
 		{"unconfined", func(_ string, s map[string]any, _ map[string]any) { s["security_opt"] = []any{"seccomp=unconfined"} }, "confinement"},
+		{"selinux super type", func(_ string, s map[string]any, _ map[string]any) { s["security_opt"] = []any{"label=type:spc_t"} }, "label=type:spc_t"},
+		{"own seccomp profile", func(_ string, s map[string]any, _ map[string]any) {
+			s["security_opt"] = []any{"seccomp=./allow-all.json"}
+		}, "seccomp=./allow-all.json"},
+		{"own apparmor profile", func(_ string, s map[string]any, _ map[string]any) { s["security_opt"] = []any{"apparmor=lenient"} }, "apparmor=lenient"},
+		{"gpus", func(_ string, s map[string]any, _ map[string]any) {
+			s["gpus"] = []any{map[string]any{"driver": "nvidia", "count": -1}}
+		}, "devices"},
+		{"reserved devices", func(_ string, s map[string]any, _ map[string]any) {
+			s["deploy"] = map[string]any{"resources": map[string]any{"reservations": map[string]any{"devices": []any{map[string]any{"capabilities": []any{"gpu"}}}}}}
+		}, "devices"},
 		{"build", func(_ string, s map[string]any, _ map[string]any) { s["build"] = map[string]any{"context": "."} }, "builds"},
 		{"external network", func(_ string, _ map[string]any, extra map[string]any) {
 			extra["networks"] = map[string]any{"lan": map[string]any{"name": "lan", "external": true}}
@@ -375,6 +458,66 @@ func TestANewStackRefusesWhatCouldTakeOverTheServer(t *testing.T) {
 			extra["networks"] = map[string]any{"lan": map[string]any{"driver": "macvlan"}}
 		}, "network lan"},
 		{"volumes from", func(_ string, s map[string]any, _ map[string]any) { s["volumes_from"] = []any{"container:adguard"} }, "another container"},
+		{"docker's own bridge", func(_ string, _ map[string]any, extra map[string]any) {
+			extra["networks"] = map[string]any{"default": map[string]any{"name": "bridge"}}
+		}, "network default"},
+		{"another stack's network", func(_ string, _ map[string]any, extra map[string]any) {
+			extra["networks"] = map[string]any{"default": map[string]any{"name": "kuma_default"}, "shop": map[string]any{"name": "kuma_x_default"}}
+		}, "network shop"},
+		{"other runtime", func(_ string, s map[string]any, _ map[string]any) { s["runtime"] = "nvidia" }, "runtime nvidia"},
+		{"log driver on the server's network", func(_ string, s map[string]any, _ map[string]any) {
+			s["logging"] = map[string]any{"driver": "syslog", "options": map[string]any{"syslog-address": "tcp://127.0.0.1:6379"}}
+		}, "logs"},
+		{"image from the server itself", func(_ string, s map[string]any, _ map[string]any) { s["image"] = "127.0.0.1:5000/app:1" }, "127.0.0.1"},
+		{"image from localhost", func(_ string, s map[string]any, _ map[string]any) { s["image"] = "localhost:5000/app" }, "localhost"},
+		{"image from the metadata address", func(_ string, s map[string]any, _ map[string]any) { s["image"] = "169.254.169.254/latest/app" }, "169.254.169.254"},
+		{"image from ipv6 loopback", func(_ string, s map[string]any, _ map[string]any) { s["image"] = "[::1]:5000/app" }, "::1"},
+		{"privileged hook", func(_ string, s map[string]any, _ map[string]any) {
+			s["post_start"] = []any{map[string]any{"command": []any{"insmod", "/x.ko"}, "privileged": true}}
+		}, "privileged"},
+		{"privileged stop hook", func(_ string, s map[string]any, _ map[string]any) {
+			s["pre_stop"] = []any{map[string]any{"command": []any{"sh"}, "privileged": true}}
+		}, "privileged"},
+		{"provider", func(_ string, s map[string]any, _ map[string]any) {
+			delete(s, "image")
+			s["provider"] = map[string]any{"type": "sh", "options": map[string]any{"c": "id"}}
+		}, "program on the server"},
+		{"label file", func(_ string, s map[string]any, _ map[string]any) { s["label_file"] = []any{"/etc/shadow"} }, "/etc/shadow"},
+		{"models", func(_ string, _ map[string]any, extra map[string]any) {
+			extra["models"] = map[string]any{"llm": map[string]any{"model": "ai/smollm2"}}
+		}, "models"},
+		{"another stack's volume", func(_ string, s map[string]any, extra map[string]any) {
+			s["volumes"] = []any{map[string]any{"type": "volume", "source": "data", "target": "/data"}}
+			extra["volumes"] = map[string]any{"data": map[string]any{"name": "shop_data"}}
+		}, "volume data"},
+		{"docker's default bridge", func(_ string, s map[string]any, _ map[string]any) { s["network_mode"] = "bridge" }, "network bridge"},
+		{"a network by mode", func(_ string, s map[string]any, _ map[string]any) { s["network_mode"] = "shop_default" }, "network shop_default"},
+		{"unlimited swap", func(_ string, s map[string]any, _ map[string]any) { s["memswap_limit"] = float64(-1) }, "swap"},
+		{"large swap", func(_ string, s map[string]any, _ map[string]any) { s["memswap_limit"] = "8g" }, "swap"},
+		{"many copies", func(_ string, s map[string]any, _ map[string]any) { s["scale"] = float64(50) }, "copies"},
+		{"many replicas", func(_ string, s map[string]any, _ map[string]any) {
+			s["deploy"] = map[string]any{"replicas": float64(50)}
+		}, "copies"},
+		{"docker api socket", func(_ string, s map[string]any, _ map[string]any) { s["use_api_socket"] = true }, "use_api_socket"},
+		{"a key compose added later", func(_ string, s map[string]any, _ map[string]any) { s["host_takeover"] = true }, "host_takeover"},
+		{"cgroup parent", func(_ string, s map[string]any, _ map[string]any) { s["cgroup_parent"] = "system.slice" }, "cgroup_parent"},
+		{"a top-level key compose added later", func(_ string, _ map[string]any, extra map[string]any) {
+			extra["plugins"] = map[string]any{"x": map[string]any{}}
+		}, "plugins"},
+		{"log option", func(_ string, s map[string]any, _ map[string]any) {
+			s["logging"] = map[string]any{"driver": "json-file", "options": map[string]any{"labels-regex": ".*", "path": "/etc/cron.d/x"}}
+		}, "logs"},
+		{"overlay volume", func(_ string, s map[string]any, extra map[string]any) {
+			s["volumes"] = []any{map[string]any{"type": "volume", "source": "etc", "target": "/etc2"}}
+			extra["volumes"] = map[string]any{"etc": map[string]any{"driver_opts": map[string]any{"type": "overlay", "o": "lowerdir=/etc,upperdir=/tmp/u,workdir=/tmp/w"}}}
+		}, "volume etc"},
+		{"volume plugin", func(_ string, s map[string]any, extra map[string]any) {
+			s["volumes"] = []any{map[string]any{"type": "volume", "source": "etc", "target": "/etc2"}}
+			extra["volumes"] = map[string]any{"etc": map[string]any{"driver": "local-persist", "driver_opts": map[string]any{"mountpoint": "/etc"}}}
+		}, "volume etc"},
+		{"ipv6", func(_ string, _ map[string]any, extra map[string]any) {
+			extra["networks"] = map[string]any{"default": map[string]any{"name": "kuma_default", "enable_ipv6": true}}
+		}, "IPv6"},
 	}
 	for _, item := range cases {
 		executor, run := stackExecutor(t)
@@ -392,11 +535,105 @@ func TestANewStackRefusesWhatCouldTakeOverTheServer(t *testing.T) {
 	}
 }
 
-func TestANewStackRefusesIncludesBeforeAskingCompose(t *testing.T) {
+func TestAResolvedFileWithoutAProjectNameStillRunsContained(t *testing.T) {
 	executor, run := stackExecutor(t)
-	result := runRequest(t, executor, createRequest(t, idA, "kuma", "include:\n  - /etc/compose.yml\n"+kumaText))
-	if result.OK || !strings.Contains(result.Output, "include") || len(run.calls) != 0 {
-		t.Fatalf("result %#v calls %q", result, run.calls)
+	dir := kumaDir(executor)
+	config := map[string]any{
+		"services": map[string]any{"web": kumaService(dir)},
+		"networks": map[string]any{"default": map[string]any{"name": "kuma_default"}},
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.respond = map[string]string{
+		composeCall(dir, "compose.yaml", "config --format json"):                                                            string(encoded),
+		composeCall(dir, "compose.krynodes.json", "ps --all --format {{.Service}}\t{{.State}}\t{{.Health}}\t{{.ExitCode}}"): "web\trunning\t\t0\n",
+	}
+	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+		t.Fatalf("the folder names the project when compose leaves it out: %#v", result)
+	}
+}
+
+func TestAContainedStackKeepsItsLogsSmallOnTheServer(t *testing.T) {
+	executor, run := stackExecutor(t)
+	dir := kumaDir(executor)
+	service := kumaService(dir)
+	service["logging"] = map[string]any{"driver": "json-file", "options": map[string]any{"max-size": "10m", "max-file": "3"}}
+	run.respond = map[string]string{
+		composeCall(dir, "compose.yaml", "config --format json"):                                                            resolved(t, dir, service, nil),
+		composeCall(dir, "compose.krynodes.json", "ps --all --format {{.Service}}\t{{.State}}\t{{.Health}}\t{{.ExitCode}}"): "web\trunning\t\t0\n",
+	}
+	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+		t.Fatalf("a size limit on its own logs is fine: %#v", result)
+	}
+}
+
+func TestAContainedStackRunsWithTheUsualComposeKeys(t *testing.T) {
+	executor, run := stackExecutor(t)
+	dir := kumaDir(executor)
+	service := kumaService(dir)
+	for key, value := range map[string]any{
+		"container_name": "kuma", "hostname": "kuma", "restart": "unless-stopped", "environment": map[string]any{"TZ": "UTC"},
+		"command": []any{"node", "server"}, "entrypoint": nil, "depends_on": map[string]any{}, "labels": map[string]any{"a": "b"},
+		"healthcheck": map[string]any{"test": []any{"CMD", "true"}}, "user": "1000", "working_dir": "/app", "read_only": true,
+		"cap_drop": []any{"ALL"}, "security_opt": []any{"no-new-privileges:true"}, "tmpfs": []any{"/tmp"}, "ulimits": map[string]any{},
+		"stop_grace_period": "10s", "x-note": "anything", "networks": map[string]any{"default": nil}, "pull_policy": "always",
+		"init": true, "extra_hosts": []any{}, "dns": []any{"1.1.1.1"}, "shm_size": "64m", "sysctls": map[string]any{}, "tty": false,
+	} {
+		service[key] = value
+	}
+	run.respond = map[string]string{
+		composeCall(dir, "compose.yaml", "config --format json"):                                                            resolved(t, dir, service, map[string]any{"x-shared": map[string]any{}}),
+		composeCall(dir, "compose.krynodes.json", "ps --all --format {{.Service}}\t{{.State}}\t{{.Health}}\t{{.ExitCode}}"): "web\trunning\t\t0\n",
+	}
+	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+		t.Fatalf("the usual keys run Contained: %#v", result)
+	}
+}
+
+func TestAContainedImageFromANameThatPointsAtTheServerIsRefused(t *testing.T) {
+	try := func(image string) Result {
+		t.Helper()
+		executor, run := stackExecutor(t)
+		executor.LookupIP = func(_ context.Context, host string) ([]net.IP, error) {
+			switch host {
+			case "127.0.0.1.nip.io":
+				return []net.IP{net.ParseIP("127.0.0.1")}, nil
+			case "registry.example.com":
+				return []net.IP{net.ParseIP("203.0.113.7")}, nil
+			}
+			return nil, errors.New("no such host")
+		}
+		dir := kumaDir(executor)
+		service := kumaService(dir)
+		service["image"] = image
+		run.respond = map[string]string{
+			composeCall(dir, "compose.yaml", "config --format json"):                                                            resolved(t, dir, service, nil),
+			composeCall(dir, "compose.krynodes.json", "ps --all --format {{.Service}}\t{{.State}}\t{{.Health}}\t{{.ExitCode}}"): "web\trunning\t\t0\n",
+		}
+		return runRequest(t, executor, createRequest(t, idA, "kuma", kumaText))
+	}
+	if result := try("127.0.0.1.nip.io:5000/app:1"); result.OK || !strings.Contains(result.Output, "127.0.0.1.nip.io") {
+		t.Fatalf("result %#v", result)
+	}
+	if result := try("registry.example.com/app:1"); !result.OK {
+		t.Fatalf("a registry elsewhere is fine: %#v", result)
+	}
+}
+
+func TestANewStackRefusesIncludesBeforeAskingCompose(t *testing.T) {
+	for _, text := range []string{
+		"include:\n  - /etc/compose.yml\n" + kumaText,
+		`{"include": ["/etc/shadow"], "services": {"web": {"image": "nginx"}}}`,
+		"{include: [/etc/shadow], services: {web: {image: nginx}}}",
+		"'include':\n  - /etc/compose.yml\n" + kumaText,
+	} {
+		executor, run := stackExecutor(t)
+		result := runRequest(t, executor, createRequest(t, idA, "kuma", text))
+		if result.OK || len(run.calls) != 0 {
+			t.Fatalf("%q: result %#v calls %q", text, result, run.calls)
+		}
 	}
 }
 

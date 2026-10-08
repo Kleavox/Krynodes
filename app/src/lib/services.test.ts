@@ -497,3 +497,41 @@ describe("words for host work", () => {
     expect(runningText(reboot, "pivox")).toBe("Restarting pivox");
   });
 });
+
+describe("words for removing Krynodes and moving a stack into it", () => {
+  const removal = (status: ActionRecord["status"]) =>
+    action({
+      kind: "host",
+      name: "server",
+      action: "uninstall",
+      status,
+      exitCode: null,
+    });
+  it("keeps the name Krynodes and says where", () => {
+    expect(actionText(removal("queued"), "pivox")).toBe(
+      "Waiting for pivox to remove Krynodes",
+    );
+    expect(runningText(removal("sent"), "pivox")).toBe(
+      "Removing Krynodes from pivox",
+    );
+    expect(outcomeText(removal("done"), "pivox")).toEqual({
+      ok: true,
+      text: "Krynodes removed from pivox",
+    });
+    expect(outcomeText(removal("failed"), "pivox")).toEqual({
+      ok: false,
+      text: "Could not remove Krynodes from pivox (failed)",
+    });
+    expect(
+      actionText(
+        action({
+          kind: "compose",
+          name: "kuma",
+          action: "adopt",
+          status: "queued",
+        }),
+        "pivox",
+      ),
+    ).toBe("Waiting for pivox to move into Krynodes");
+  });
+});

@@ -242,7 +242,7 @@ func TestAGrantFromTheFutureIsRefused(t *testing.T) {
 	c := newDeployCase(t, algES256)
 	c.grant["issuedAt"] = testNow.Add(5 * time.Minute).Format(time.RFC3339Nano)
 	c.grant["expiresAt"] = testNow.Add(10 * time.Minute).Format(time.RFC3339Nano)
-	refused(t, c.verify(t, testNow), "from the future")
+	refused(t, c.verify(t, testNow), "from the future: signed 29 Sep 10:05:00 UTC; this server's clock says 29 Sep 10:00:00 UTC")
 }
 
 func TestAGrantForAnotherRPIDIsRefused(t *testing.T) {
@@ -282,7 +282,7 @@ func TestACommandIssuedAfterTheSessionIsRefused(t *testing.T) {
 
 func TestAnExpiredCommandIsRefused(t *testing.T) {
 	c := newDeployCase(t, algES256)
-	refused(t, c.verify(t, testNow.Add(12*time.Minute)), "command expired")
+	refused(t, c.verify(t, testNow.Add(12*time.Minute)), "command expired at 29 Sep 10:10:00 UTC; this server's clock says 29 Sep 10:12:00 UTC")
 }
 
 func TestACommandLivingBeyondTheGraceIsRefused(t *testing.T) {

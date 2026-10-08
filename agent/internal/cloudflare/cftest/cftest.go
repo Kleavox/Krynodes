@@ -20,6 +20,7 @@ type API struct {
 	Policies map[string][]cloudflare.Policy
 	next     int
 	Calls    []string
+	Fail     map[string]bool
 }
 
 func New() *API {
@@ -48,6 +49,11 @@ func (f *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer "+f.Token {
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []any{map[string]any{"code": 10000, "message": "Authentication error"}}})
+		return
+	}
+	if f.Fail[r.Method+" "+strings.TrimPrefix(r.URL.Path, "/client/v4")] {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []any{map[string]any{"code": 10001, "message": "Internal error"}}})
 		return
 	}
 	var body map[string]any
@@ -121,6 +127,13 @@ func (f *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(app)
 	case len(parts) == 6 && parts[3] == "apps" && parts[5] == "policies":
 		reply(f.Policies[parts[4]])
+	case len(parts) == 5 && parts[3] == "apps" && r.Method == http.MethodPut:
+		raw, _ := json.Marshal(body)
+		var app cloudflare.App
+		json.Unmarshal(raw, &app)
+		app.ID = parts[4]
+		f.Apps[app.ID] = app
+		reply(app)
 	case len(parts) == 5 && parts[3] == "apps" && r.Method == http.MethodDelete:
 		delete(f.Apps, parts[4])
 		reply(map[string]any{"id": parts[4]})

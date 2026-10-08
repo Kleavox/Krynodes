@@ -21,6 +21,8 @@ const (
 	StateDir      = "/var/lib/kry-exec"
 	refreshMarker = "refresh"
 	maxReported   = 10
+	maxResultText = 65536
+	reportBudget  = 512 << 10
 )
 
 type Poster interface {
@@ -43,7 +45,7 @@ type Relay struct {
 }
 
 func backoff(failures int) time.Duration {
-	return min(time.Minute<<min(failures-1, 4), 10*time.Minute)
+	return min(5*time.Second<<min(failures-1, 7), 10*time.Minute)
 }
 
 func (r *Relay) note(err error) {
@@ -178,11 +180,17 @@ func (r *Relay) readResults() []Result {
 	}
 	slices.Sort(ids)
 	var results []Result
+	total := 0
 	for _, id := range ids {
 		var result Result
 		if err := readJSON(filepath.Join(r.StateDir, "results", id+".json"), &result); err != nil || result.ID != id {
 			r.note(err)
 			continue
+		}
+		result = fitted(result)
+		total += len(result.Output)
+		if len(results) > 0 && total > reportBudget {
+			break
 		}
 		results = append(results, result)
 		if len(results) == maxReported {
@@ -190,6 +198,20 @@ func (r *Relay) readResults() []Result {
 		}
 	}
 	return results
+}
+
+func fitted(result Result) Result {
+	units := 0
+	for _, char := range result.Output {
+		units++
+		if char > 0xffff {
+			units++
+		}
+	}
+	if units <= maxResultText {
+		return result
+	}
+	return Result{ID: result.ID, OK: false, Output: fmt.Sprintf("the result was %d KB, larger than the 64 KB a report can carry", len(result.Output)>>10), FinishedAt: result.FinishedAt}
 }
 
 func (r *Relay) Watch(ctx context.Context, every time.Duration) {

@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -168,6 +169,45 @@ func TestPollReportsResultsAndRemovesTheirRequests(t *testing.T) {
 	}
 }
 
+func TestAResultTooLargeForAReportIsReportedAsFailed(t *testing.T) {
+	relay, poster := newRelay(t)
+	if err := relay.Enqueue([]Request{{ID: idA, Kind: "compose", Name: "kuma", Action: "read", ExpiresAt: "2026-09-29T10:10:00.000Z"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(relay.StateDir, "results"), idA+".json", Result{ID: idA, OK: true, Output: strings.Repeat("😀", 40_000), FinishedAt: "t"}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := poster.reports[0].Results[0]
+	if got.ID != idA || got.OK || !strings.Contains(got.Output, "larger than the 64 KB") || got.FinishedAt != "t" {
+		t.Fatalf("result %#v", got)
+	}
+}
+
+func TestAReportCarriesAtMostHalfAMegabyteOfResults(t *testing.T) {
+	relay, poster := newRelay(t)
+	for index := range 10 {
+		id := fmt.Sprintf("0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a%02d", index)
+		if err := relay.Enqueue([]Request{{ID: id, Kind: "compose", Name: "kuma", Action: "read", ExpiresAt: "2026-09-29T10:10:00.000Z"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSON(filepath.Join(relay.StateDir, "results"), id+".json", Result{ID: id, OK: true, Output: strings.Repeat("a", 60_000), FinishedAt: "t"}, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.reports) != 2 || len(poster.reports[0].Results) != 8 || len(poster.reports[1].Results) != 2 {
+		t.Fatalf("reports of %d and %d", len(poster.reports[0].Results), len(poster.reports[len(poster.reports)-1].Results))
+	}
+}
+
 func TestAFailedReportWaitsLongerEachTimeBeforeTryingAgain(t *testing.T) {
 	relay, poster := newRelay(t)
 	now := executorNow
@@ -184,12 +224,11 @@ func TestAFailedReportWaitsLongerEachTimeBeforeTryingAgain(t *testing.T) {
 	}
 	poll(0, 1)
 	poll(2*time.Second, 1)
-	poll(57*time.Second, 1)
-	poll(2*time.Second, 2)
-	poll(61*time.Second, 2)
-	poll(60*time.Second, 3)
+	poll(4*time.Second, 2)
+	poll(9*time.Second, 2)
+	poll(2*time.Second, 3)
 	poster.err = nil
-	poll(4*time.Minute, 4)
+	poll(30*time.Second, 4)
 	writeInventory(t, relay, []Service{{Kind: "docker", Name: "adguard", State: "stopped"}}, now)
 	poll(2*time.Second, 5)
 }

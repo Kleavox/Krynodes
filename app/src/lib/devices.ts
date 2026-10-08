@@ -8,6 +8,7 @@ import {
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
 import { agentSupported, compareVersions } from "@krynodes/protocol/versions";
 import { b64url, fromB64url } from "./passkeys";
+import { serverNow } from "./http";
 
 const CHANGE_MS = 24 * 3_600_000;
 
@@ -134,7 +135,7 @@ export function buildChange(
   view: FleetView,
   plan: Plan & { now?: number; version?: number },
 ): string {
-  const now = plan.now ?? Date.now();
+  const now = plan.now ?? serverNow();
   const change: TrustChange = {
     v: 2,
     origin: view.origin,
@@ -232,7 +233,7 @@ export function firstTrusts(
   view: FleetView,
   nodeIds: string[],
   founder: string,
-  now = Date.now(),
+  now = serverNow(),
 ): string[] {
   const known = coreOf(view);
   const core =

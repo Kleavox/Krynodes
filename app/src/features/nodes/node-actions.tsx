@@ -184,7 +184,7 @@ export function NodeActions({
         description={
           dialog === "unlock"
             ? "The containers the lock down stopped start again, its web addresses come back, and SSH goes back to how it was."
-            : "Containers that publish ports to the internet stop and stay stopped after a restart, its web addresses go offline, and SSH stops accepting passwords when a key is set up. Unlock brings it all back."
+            : "Containers that publish ports to the internet stop and stay stopped after a restart, its web addresses go offline, and SSH stops accepting passwords when a key is set up. Until you unlock it, nothing starts there: deploys, starts, restarts and new stacks are refused. Unlock brings it all back."
         }
         confirmLabel={dialog === "unlock" ? "Unlock server" : "Lock down"}
         mutation={lock}

@@ -140,4 +140,26 @@ func TestUninstallSaysHowToRemoveTheDockerItInstalled(t *testing.T) {
 	if removal.Docker != "Docker stays for your apps. Krynodes installed it; remove it with: sudo dnf remove docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" {
 		t.Fatalf("removal %#v", removal)
 	}
+	rootFile(t, executor, "/etc/docker/daemon.json", "{\"log-driver\": \"local\"}\n")
+	if err := writeJSON(executor.StateDir, "docker.json", dockerState{InstalledAt: executorNow}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	removal = executor.Uninstall(context.Background(), false)
+	if !strings.HasSuffix(removal.Docker, " docker-compose-plugin && sudo rm /etc/docker/daemon.json") {
+		t.Fatalf("the log setting Krynodes wrote goes with Docker: %#v", removal)
+	}
+}
+
+func TestUninstallSaysWhenTheServerHeldAPieceOfTheToken(t *testing.T) {
+	executor, _ := securityExecutor(t)
+	if removal := executor.Uninstall(context.Background(), false); removal.Token != "" {
+		t.Fatalf("no word about a token it never held: %#v", removal)
+	}
+	executor, _ = securityExecutor(t)
+	if err := writeJSON(executor.StateDir, "vault.json", vaultFile{Set: "set-1", Holders: 3, Piece: []byte{1, 2}}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if removal := executor.Uninstall(context.Background(), false); !strings.Contains(removal.Token, "Cloudflare token") {
+		t.Fatalf("removal %#v", removal)
+	}
 }

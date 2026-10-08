@@ -128,7 +128,16 @@ export const KIND_VERBS = {
     "unexpose",
     "adopt",
   ],
-  host: ["reboot", "apply", "undo", "lockdown", "unlock", "scan", "install"],
+  host: [
+    "reboot",
+    "apply",
+    "undo",
+    "lockdown",
+    "unlock",
+    "scan",
+    "install",
+    "uninstall",
+  ],
   trust: ["trust"],
   vault: ["store", "release", "reshare", "forget"],
 } as const;
@@ -136,6 +145,7 @@ export const KIND_VERBS = {
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
 
 export function hostVerbFits(name: string, action: string): boolean {
+  if (action === "uninstall") return name === "server";
   if (name === "docker") return action === "install";
   const recipe = (RECIPES as readonly string[]).includes(name);
   return action !== "install" && RECIPE_VERBS.includes(action) === recipe;
@@ -187,6 +197,7 @@ export const agentActionSchema = z
       "reshare",
       "forget",
       "install",
+      "uninstall",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),

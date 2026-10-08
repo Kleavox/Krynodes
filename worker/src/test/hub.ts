@@ -36,6 +36,9 @@ export class FakeStorage {
   async put(key: string, value: unknown) {
     this.values.set(key, structuredClone(value));
   }
+  async delete(key: string) {
+    return this.values.delete(key);
+  }
   async setAlarm(at: number) {
     this.alarm = at;
   }

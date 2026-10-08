@@ -41,6 +41,33 @@ app.use("*", async (context, next) => {
   await next();
 });
 
+app.use("/api/*", async (context, next) => {
+  if (
+    (["POST", "PUT", "PATCH", "DELETE"].includes(context.req.method) ||
+      context.req.header("upgrade")?.toLowerCase() === "websocket") &&
+    !context.req.path.startsWith("/api/agent/")
+  ) {
+    const origin = context.req.header("origin");
+    const site = context.req.header("sec-fetch-site");
+    const own = context.env.PUBLIC_ORIGIN
+      ? new URL(context.env.PUBLIC_ORIGIN).origin
+      : null;
+    if (
+      (origin && own && origin !== own) ||
+      (site && site !== "same-origin" && site !== "none")
+    ) {
+      return context.json(
+        {
+          code: "CROSS_SITE",
+          message: "Changes are accepted only from the Krynodes dashboard.",
+        },
+        403,
+      );
+    }
+  }
+  await next();
+});
+
 app.get("/health", (context) => context.json({ service: "kry", status: "ok" }));
 
 app.get("/api/session", async (context) => {

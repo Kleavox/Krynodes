@@ -4,7 +4,8 @@ import { fromB64url } from "../lib/b64url";
 
 const ACTION_TTL_MS = 10 * 60_000;
 const ABANDON_MS = 15 * 60_000;
-const COMPOSE_ABANDON_MS = 30 * 60_000;
+const LONG_ABANDON_MS = 60 * 60_000;
+const PLANNED_MS = 30 * 60_000;
 
 export type ActionKind =
   "systemd" | "docker" | "compose" | "trust" | "host" | "vault";
@@ -39,7 +40,8 @@ export type ActionVerb =
   | "release"
   | "reshare"
   | "forget"
-  | "install";
+  | "install"
+  | "uninstall";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -83,9 +85,14 @@ export interface ActionRow {
 
 export const DELIVER_SQL = `UPDATE actions SET status = 'sent', sent_at = ?1
   WHERE id IN (
-    SELECT id FROM actions
-    WHERE status = 'queued' AND node_id = ?2 AND deliverable_at IS NOT NULL
-    ORDER BY rowid LIMIT 10)
+    SELECT id FROM (
+      SELECT id, ROW_NUMBER() OVER (ORDER BY rowid) AS place,
+        SUM(COALESCE(length(signed), 0) + COALESCE(length(attachment), 0))
+          OVER (ORDER BY rowid) AS bytes
+      FROM actions
+      WHERE status = 'queued' AND node_id = ?2 AND deliverable_at IS NOT NULL)
+    WHERE place = 1 OR bytes <= 524288
+    ORDER BY place LIMIT 10)
   RETURNING id, kind, name, action, deliverable_at, signed, attachment`;
 
 export const EXPIRE_SQL = `UPDATE actions SET status = 'expired', finished_at = ?1,
@@ -96,7 +103,7 @@ const ABANDON_SQL = `UPDATE actions
   SET status = 'failed', finished_at = ?1, output = 'No result from the server',
     attachment = NULL
   WHERE status = 'sent'
-    AND sent_at < CASE WHEN kind = 'compose' THEN ?3 ELSE ?2 END`;
+    AND sent_at < CASE WHEN kind IN ('compose', 'host') THEN ?3 ELSE ?2 END`;
 
 const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
     attachment = NULL
@@ -131,7 +138,7 @@ export function sweepStatements(
     db.prepare(EXPIRE_SQL).bind(at, cutoff),
     db
       .prepare(ABANDON_SQL)
-      .bind(at, iso(now - ABANDON_MS), iso(now - COMPOSE_ABANDON_MS)),
+      .bind(at, iso(now - ABANDON_MS), iso(now - LONG_ABANDON_MS)),
     db.prepare(SKIP_SQL).bind(at),
     db.prepare(PROMOTE_SQL).bind(at),
   ];
@@ -140,6 +147,33 @@ export function sweepStatements(
 const SETTLE_MS = 2 * 60_000;
 export const REBOOT_MS = 10 * 60_000;
 
+export async function plannedNodes(
+  db: D1Database,
+  nodeIds: string[],
+  now: number,
+  rebootSince = REBOOT_MS,
+): Promise<Set<string>> {
+  if (nodeIds.length === 0) return new Set();
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT node_id FROM actions
+       WHERE node_id IN (SELECT value FROM json_each(?1))
+         AND action NOT IN ('logs', 'autorestart', 'manual') AND (
+         (status = 'queued' AND deliverable_at IS NOT NULL)
+         OR (status = 'sent' AND sent_at >= ?4)
+         OR (status IN ('done', 'failed') AND finished_at >=
+           CASE WHEN action = 'reboot' THEN ?3 ELSE ?2 END))`,
+    )
+    .bind(
+      JSON.stringify(nodeIds),
+      iso(now - SETTLE_MS),
+      iso(now - rebootSince),
+      iso(now - PLANNED_MS),
+    )
+    .all<{ node_id: string }>();
+  return new Set(rows.results.map((row) => row.node_id));
+}
+
 export async function inMaintenance(
   db: D1Database,
   nodeId: string,
@@ -147,18 +181,7 @@ export async function inMaintenance(
   connectedAt: number,
 ): Promise<boolean> {
   const rebootSince = now - connectedAt < SETTLE_MS ? REBOOT_MS : SETTLE_MS;
-  const row = await db
-    .prepare(
-      `SELECT 1 AS planned FROM actions
-       WHERE node_id = ?1 AND action NOT IN ('logs', 'autorestart', 'manual') AND (
-         status IN ('queued', 'sent')
-         OR (status IN ('done', 'failed') AND finished_at >=
-           CASE WHEN action = 'reboot' THEN ?3 ELSE ?2 END))
-       LIMIT 1`,
-    )
-    .bind(nodeId, iso(now - SETTLE_MS), iso(now - rebootSince))
-    .first<{ planned: number }>();
-  return row !== null;
+  return (await plannedNodes(db, [nodeId], now, rebootSince)).has(nodeId);
 }
 
 export function createBatch(
@@ -170,6 +193,7 @@ export function createBatch(
     requestedBy: string;
     now: number;
     deviceId?: string;
+    whileOpen?: string;
   },
 ) {
   const batchId = crypto.randomUUID();
@@ -205,7 +229,9 @@ export function createBatch(
               CASE WHEN ?2 = 'parallel' OR key = 0 THEN ?5 END,
               json_extract(value, '$.signed'), ?7,
               json_extract(value, '$.attachFrom'), json_extract(value, '$.attachKey')
-       FROM json_each(?6)`,
+       FROM json_each(?6)
+       WHERE ?8 IS NULL
+         OR EXISTS (SELECT 1 FROM proposals WHERE id = ?8 AND status = 'open')`,
     )
     .bind(
       batchId,
@@ -215,6 +241,7 @@ export function createBatch(
       at,
       rows,
       input.deviceId ?? null,
+      input.whileOpen ?? null,
     );
   return { batchId, actions, statements: [statement] };
 }
@@ -319,6 +346,15 @@ function followUp(
                   WHERE batch_id = ?4 AND action = 'store' AND status = 'done') >= ?5`,
         )
         .bind(set, at, nodeId, action.batch_id, Number(holders) > 1 ? 2 : 1),
+    ];
+  }
+  if (action.action === "uninstall") {
+    return [
+      db
+        .prepare(
+          "UPDATE nodes SET disabled_at = ? WHERE id = ? AND disabled_at IS NULL",
+        )
+        .bind(at, nodeId),
     ];
   }
   if (action.action === "expose") {

@@ -57,7 +57,9 @@ export function ServicesPage() {
     );
   }
 
-  const nodes = overview.data.nodes.filter((node) => node.enrolled_at !== null);
+  const nodes = overview.data.nodes.filter(
+    (node) => node.enrolled_at !== null && node.disabled_at === null,
+  );
   const seen = overview.dataUpdatedAt;
   const groups = serverLists(services.data, nodes, {
     showSystem,

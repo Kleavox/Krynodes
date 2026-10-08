@@ -74,18 +74,18 @@ export async function requestAutoUpdates(
       compareVersions(node.agent_version!, version) < 0,
   );
   if (due.length === 0) return 0;
-  const requestedAt = new Date(now).toISOString();
-  await db.batch(
-    due.map((node) =>
-      db
-        .prepare(
-          `UPDATE nodes SET update_requested_version = ?, update_requested_at = ?,
-             update_attempts = 1, update_error = NULL
-           WHERE id = ?`,
-        )
-        .bind(version, requestedAt, node.id),
-    ),
-  );
+  await db
+    .prepare(
+      `UPDATE nodes SET update_requested_version = ?, update_requested_at = ?,
+         update_attempts = 1, update_error = NULL
+       WHERE id IN (SELECT value FROM json_each(?))`,
+    )
+    .bind(
+      version,
+      new Date(now).toISOString(),
+      JSON.stringify(due.map((node) => node.id)),
+    )
+    .run();
   return due.length;
 }
 

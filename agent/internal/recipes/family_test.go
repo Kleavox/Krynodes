@@ -55,6 +55,19 @@ func TestSecurityUpdatesOnRHELUseTheirOwnTimer(t *testing.T) {
 	}
 }
 
+func TestAFailedSecurityUpdatesTimerOnRHELLeavesNoUnits(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	run.failing["systemctl enable --now krynodes-security-updates.timer"] = true
+	if _, err := Apply(context.Background(), env, "security-updates", nil); err == nil {
+		t.Fatal("the failure is reported")
+	}
+	for _, gone := range []string{"/etc/systemd/system/krynodes-security-updates.service", "/etc/systemd/system/krynodes-security-updates.timer"} {
+		if exists(env, gone) {
+			t.Fatalf("%s stays", gone)
+		}
+	}
+}
+
 func TestSSHOnRHELReloadsSshd(t *testing.T) {
 	env, run := onRelease(t, "rocky")
 	usersWithKeys(t, env, true)
@@ -144,14 +157,20 @@ func TestFirewalldKeepsSSHAndTheChosenPortsOpen(t *testing.T) {
 	run.failing["firewall-cmd --state"] = true
 	run.failing["rpm -q firewalld"] = true
 	for _, port := range []string{"22/tcp", "443/tcp"} {
-		run.failing["firewall-cmd --permanent --query-port="+port] = true
+		run.failing["firewall-offline-cmd --query-port="+port] = true
 	}
 	saved, err := Apply(context.Background(), env, "firewall", map[string]string{"ports": "443/tcp,53/udp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustCall(t, run, "dnf install -y -q firewalld", "systemctl enable --now firewalld", "firewall-cmd --permanent --add-port=22/tcp", "firewall-cmd --permanent --add-port=443/tcp", "firewall-cmd --reload")
-	if slices.Contains(run.calls, "firewall-cmd --permanent --add-port=53/udp") {
+	mustCall(t, run, "dnf install -y -q firewalld", "firewall-offline-cmd --add-port=22/tcp", "firewall-offline-cmd --add-port=443/tcp", "systemctl enable --now firewalld")
+	start := slices.Index(run.calls, "systemctl enable --now firewalld")
+	for _, port := range []string{"22/tcp", "443/tcp"} {
+		if slices.Index(run.calls, "firewall-offline-cmd --add-port="+port) > start {
+			t.Fatalf("%s must be open before firewalld starts: %q", port, run.calls)
+		}
+	}
+	if slices.Contains(run.calls, "firewall-offline-cmd --add-port=53/udp") {
 		t.Fatal("a port that is already open is left alone")
 	}
 	if saved["ports"] != "22/tcp,443/tcp" || saved["wasRunning"] != "false" || saved["installed"] != "firewalld" {
@@ -159,6 +178,33 @@ func TestFirewalldKeepsSSHAndTheChosenPortsOpen(t *testing.T) {
 	}
 	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw") }) {
 		t.Fatalf("no ufw on RHEL: %q", run.calls)
+	}
+}
+
+func TestFirewalldNeverStartsWithoutSSH(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	run.failing["firewall-cmd --state"] = true
+	run.failing["firewall-offline-cmd --query-port=22/tcp"] = true
+	run.failing["firewall-offline-cmd --add-port=22/tcp"] = true
+	if _, err := Apply(context.Background(), env, "firewall", nil); err == nil {
+		t.Fatal("the failure is reported")
+	}
+	if slices.Contains(run.calls, "systemctl enable --now firewalld") {
+		t.Fatalf("firewalld must not start when SSH could not be let in: %q", run.calls)
+	}
+}
+
+func TestARunningFirewalldGetsThePortsLive(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	run.respond["firewall-cmd --state"] = "running\n"
+	run.failing["firewall-cmd --permanent --query-port=22/tcp"] = true
+	saved, err := Apply(context.Background(), env, "firewall", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCall(t, run, "firewall-cmd --permanent --add-port=22/tcp", "firewall-cmd --reload")
+	if slices.Contains(run.calls, "systemctl enable --now firewalld") || saved["wasRunning"] != "true" {
+		t.Fatalf("calls %q saved %v", run.calls, saved)
 	}
 }
 

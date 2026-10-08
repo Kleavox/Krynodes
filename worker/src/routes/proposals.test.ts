@@ -438,6 +438,92 @@ describe("proposals", () => {
     ]);
   });
 
+  it("sends nothing when the change is cancelled while its last approval arrives", async () => {
+    const t = setup();
+    const [laptop, phone, spare] = await fleet(5).then((keys) => [
+      keys[0],
+      keys[1],
+      keys[4],
+    ]);
+    for (const key of [laptop!, phone!, spare!]) await t.register(key);
+    await t.report(A, [laptop!, phone!, spare!], [laptop!]);
+    const text = t.change({
+      core: [laptop!, phone!],
+      access: { [A]: [laptop!] },
+    });
+    const opened = await reply(t.open(text, await t.approval(phone!, text)));
+    expect(opened).toMatchObject({ status: "open" });
+    const batch = t.db.batch.bind(t.db);
+    let cancelled = false;
+    t.db.batch = (async (statements: D1PreparedStatement[]) => {
+      if (!cancelled) {
+        cancelled = true;
+        t.sqlite
+          .prepare("UPDATE proposals SET status = 'cancelled' WHERE id = ?")
+          .run(String(opened.id));
+      }
+      return batch(statements);
+    }) as typeof t.db.batch;
+    const late = await t.call("POST", `/api/proposals/${opened.id}/approvals`, {
+      approval: await t.approval(laptop!, text),
+    });
+    expect(late.status).toBe(410);
+    expect(t.trustActions()).toHaveLength(0);
+    expect(
+      t.sqlite
+        .prepare("SELECT status FROM proposals WHERE id = ?")
+        .get(String(opened.id)),
+    ).toEqual({ status: "cancelled" });
+    expect(
+      t.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM devices WHERE removed_at IS NOT NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("keeps both approvals that arrive together", async () => {
+    const t = setup();
+    const [laptop, phone, spare] = await fleet(5).then((keys) => [
+      keys[0],
+      keys[1],
+      keys[4],
+    ]);
+    for (const key of [laptop!, phone!, spare!]) await t.register(key);
+    await t.report(A, [laptop!, phone!, spare!], [laptop!]);
+    const text = t.change({ access: { [A]: [laptop!, phone!] } });
+    const opened = await reply(t.open(text, await t.approval(spare!, text)));
+    expect(opened).toMatchObject({ status: "open" });
+    const prepare = t.db.prepare.bind(t.db);
+    let raced = false;
+    t.db.prepare = ((sql: string) => {
+      if (!raced && sql.startsWith("UPDATE proposals SET approvals")) {
+        raced = true;
+        const row = t.sqlite
+          .prepare("SELECT approvals FROM proposals WHERE id = ?")
+          .get(String(opened.id)) as { approvals: string };
+        const approvals = JSON.parse(row.approvals) as unknown[];
+        approvals.push({ credentialId: "someone-else" });
+        t.sqlite
+          .prepare("UPDATE proposals SET approvals = ? WHERE id = ?")
+          .run(JSON.stringify(approvals), String(opened.id));
+      }
+      return prepare(sql);
+    }) as typeof t.db.prepare;
+    const second = await t.call(
+      "POST",
+      `/api/proposals/${opened.id}/approvals`,
+      { approval: await t.approval(phone!, text) },
+    );
+    expect(raced).toBe(true);
+    expect(second.status).toBe(409);
+    const stored = t.sqlite
+      .prepare("SELECT approvals FROM proposals WHERE id = ?")
+      .get(String(opened.id)) as { approvals: string };
+    expect(JSON.parse(stored.approvals)).toHaveLength(2);
+  });
+
   it("refuses approvals from devices outside the core and forged ones", async () => {
     const t = setup();
     const [laptop, phone, tablet] = await fleet(3);

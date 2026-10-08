@@ -85,7 +85,9 @@ function CheckForm({
   const problem = checkTargetProblem(kind, target);
   const showProblem = touched && problem !== null;
   const choosesNode = Boolean(check) || !nodeId;
-  const enrolled = nodes.filter((entry) => entry.enrolled_at !== null);
+  const enrolled = nodes.filter(
+    (entry) => entry.enrolled_at !== null && entry.disabled_at === null,
+  );
   const fresh =
     check !== undefined &&
     (kind !== check.kind ||

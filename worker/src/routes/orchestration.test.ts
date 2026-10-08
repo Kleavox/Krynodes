@@ -432,6 +432,45 @@ describe("operations in steps", () => {
     ).toBe(201);
   });
 
+  it("lets an expired token step go before a new change, and says when the token is only in use", async () => {
+    const t = routes();
+    const split = () =>
+      [A, B].map((nodeId) =>
+        step({
+          nodeId,
+          kind: "vault",
+          name: "cloudflare",
+          action: "store",
+          args: { set: NEXT, holders: "2" },
+        }),
+      );
+    const pending = (action: string, minutesAgo: number) => {
+      const at = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+      t.sqlite
+        .prepare(
+          `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+             status, requested_by, requested_at, deliverable_at)
+           VALUES (?, ?, 0, 'rolling', ?, 'vault', 'cloudflare', ?, 'queued', 'owner@example.test', ?, ?)`,
+        )
+        .run(crypto.randomUUID(), crypto.randomUUID(), A, action, at, at);
+    };
+    pending("store", 11);
+    pending("release", 1);
+    const busy = await t.operate("split", split(), { zone: "kleavox.xyz" });
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toMatchObject({
+      code: "TOKEN_BUSY",
+      message:
+        "The Cloudflare token is in use for a web address. Try again when that finishes.",
+    });
+    t.sqlite
+      .prepare("UPDATE actions SET status = 'done' WHERE action = 'release'")
+      .run();
+    expect(
+      (await t.operate("split", split(), { zone: "kleavox.xyz" })).status,
+    ).toBe(201);
+  });
+
   it("re-splits and hands every remaining server its own new piece", async () => {
     const t = routes();
     const response = await t.operate("reshare", [
@@ -566,6 +605,21 @@ describe("single steps of agent 0.6.0", () => {
         `${name} ${action}`,
       ).toBe(400);
     }
+  });
+
+  it("removes Krynodes from a server only signed", async () => {
+    const t = routes();
+    const uninstall = {
+      nodeId: A,
+      kind: "host",
+      name: "server",
+      action: "uninstall",
+    } as const;
+    expect((await single(t, uninstall, false)).status).toBe(400);
+    expect((await single(t, uninstall)).status).toBe(201);
+    expect(
+      (await single(t, { ...uninstall, nodeId: B, name: "fail2ban" })).status,
+    ).toBe(400);
   });
 
   it("applies and undoes recipes, locks a server down and checks it unsigned", async () => {

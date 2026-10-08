@@ -788,6 +788,17 @@ describe("orchestration messages of agent 0.5.0", () => {
     }
   });
 
+  it("removes Krynodes only from a whole server", () => {
+    expect(parse({ kind: "host", name: "server", action: "uninstall" })).toBe(
+      true,
+    );
+    for (const name of ["docker", "fail2ban", "reboot-window"]) {
+      expect(parse({ kind: "host", name, action: "uninstall" }), name).toBe(
+        false,
+      );
+    }
+  });
+
   it("checks a server without a signature", () => {
     const { signed: _, ...unsigned } = base;
     expect(

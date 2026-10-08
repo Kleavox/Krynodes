@@ -28,6 +28,12 @@ const PROTECTED_UNITS = [
   /^serial-getty@.*\.service$/u,
   /^user@.*\.service$/u,
   /^snap\.docker\..+\.service$/u,
+  /^ufw\.service$/u,
+  /^firewalld\.service$/u,
+  /^nftables\.service$/u,
+  /^netfilter-persistent\.service$/u,
+  /^iptables\.service$/u,
+  /^ip6tables\.service$/u,
 ];
 
 export function isValidTarget(kind: string, name: string): boolean {

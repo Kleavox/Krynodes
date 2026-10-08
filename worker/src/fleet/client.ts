@@ -10,15 +10,26 @@ export function hubFor(env: Env, ownerId: string) {
   return namespace.get(namespace.idFromName(ownerId));
 }
 
+export interface MailState {
+  failedAt: string;
+  error: string;
+}
+
 export async function fleetLive(
   env: Env,
   ownerId: string,
-): Promise<Record<string, LiveNode> | null> {
-  if (!streamsOn(env)) return {};
+): Promise<{
+  nodes: Record<string, LiveNode>;
+  mail: MailState | null;
+} | null> {
+  if (!streamsOn(env)) return { nodes: {}, mail: null };
   try {
     const response = await hubFor(env, ownerId).fetch("https://fleet/live");
     if (!response.ok) throw new Error(`hub answered ${response.status}`);
-    return (await response.json()) as Record<string, LiveNode>;
+    return (await response.json()) as {
+      nodes: Record<string, LiveNode>;
+      mail: MailState | null;
+    };
   } catch (error) {
     console.error("[kry fleet]", error);
     return null;

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
@@ -154,7 +156,7 @@ func TestFullAccessStacksMayHoldDockerAndPublicPorts(t *testing.T) {
 }
 
 func checks(run *fakeRun) int {
-	return strings.Count(strings.Join(run.calls, "\n"), "sshd -T")
+	return strings.Count(strings.Join(run.calls, "\n"), listening)
 }
 
 func TestTheCheckRunsEverySixHoursOrWhenAsked(t *testing.T) {
@@ -359,6 +361,88 @@ func TestLockdownSurvivesARestartAndUnlockGivesThePoliciesBack(t *testing.T) {
 	}
 }
 
+func TestAFailedLockdownGivesEverythingBack(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	const policy = "docker inspect --format {{.HostConfig.RestartPolicy.Name}}:{{.HostConfig.RestartPolicy.MaximumRetryCount}} "
+	run.respond["docker ps --format {{.ID}}\t{{.Names}}\t{{.Ports}}"] = "w1\tweb-1\t0.0.0.0:80->80/tcp\nq1\tqueue-1\t0.0.0.0:5672->5672/tcp\n"
+	run.respond[policy+"w1"] = "always:0\n"
+	run.respond[policy+"q1"] = "unless-stopped:0\n"
+	run.failing["docker stop w1 q1"] = "Error response from daemon: cannot stop container: q1: permission denied\n"
+	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "server", "lockdown", nil))
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, executor, idA); result.OK || !strings.Contains(result.Output, "permission denied") {
+		t.Fatalf("result %#v", result)
+	}
+	stop := slices.Index(run.calls, "docker stop w1 q1")
+	for _, call := range []string{"docker update --restart always w1", "docker update --restart unless-stopped q1", "docker start w1 q1"} {
+		if index := slices.Index(run.calls, call); index < stop {
+			t.Fatalf("%q must follow the failed stop in %q", call, run.calls)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "lockdown.json")); !os.IsNotExist(err) {
+		t.Fatal("a failed lockdown leaves the server unlocked")
+	}
+}
+
+func TestALockdownThatCannotBeRecordedGivesEverythingBack(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	const policy = "docker inspect --format {{.HostConfig.RestartPolicy.Name}}:{{.HostConfig.RestartPolicy.MaximumRetryCount}} "
+	run.respond["docker ps --format {{.ID}}\t{{.Names}}\t{{.Ports}}"] = "w1\tweb-1\t0.0.0.0:80->80/tcp\n"
+	run.respond[policy+"w1"] = "always:0\n"
+	if err := os.MkdirAll(filepath.Join(executor.StateDir, ".lockdown.json.tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "server", "lockdown", nil))
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, executor, idA); result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	stop := slices.Index(run.calls, "docker stop w1")
+	for _, call := range []string{"docker update --restart always w1", "docker start w1"} {
+		if index := slices.Index(run.calls, call); stop < 0 || index < stop {
+			t.Fatalf("%q must follow the stop in %q", call, run.calls)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(executor.Root, "etc/ssh/sshd_config.d/10-krynodes.conf")); !os.IsNotExist(err) {
+		t.Fatal("SSH keys only from the failed lockdown is turned off again")
+	}
+}
+
+func TestAProtectionThatCannotBeRecordedIsTurnedOffAgain(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	if err := os.MkdirAll(filepath.Join(executor.StateDir, ".recipes.json.tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "ssh-keys-only", "apply", nil))
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, executor, idA); result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(executor.Root, "etc/ssh/sshd_config.d/10-krynodes.conf")); !os.IsNotExist(err) {
+		t.Fatal("an unrecorded protection could never be turned off")
+	}
+}
+
 func TestUnlockSkipsContainersThatAreGoneButNotOtherFailures(t *testing.T) {
 	executor, run := securityExecutor(t)
 	unlock := func(id string) reporter.ActionResult {
@@ -386,6 +470,36 @@ func TestUnlockSkipsContainersThatAreGoneButNotOtherFailures(t *testing.T) {
 	run.failing["docker start w1 q1"] = "Error response from daemon: cannot start: permission denied\n"
 	if result := unlock(idB); result.OK {
 		t.Fatalf("other failures still count: %#v", result)
+	}
+}
+
+func TestALockedDownServerStartsNothingUntilItIsUnlocked(t *testing.T) {
+	lock := func(executor Executor) {
+		if err := writeJSON(executor.StateDir, "lockdown.json", lockdownState{Containers: []string{}, At: executorNow}, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refused := func(name string, result Result, run *fakeRun) {
+		t.Helper()
+		if result.OK || !strings.Contains(result.Output, "locked down") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "docker") }) {
+			t.Fatalf("%s: %#v %q", name, result, run.calls)
+		}
+	}
+	for _, verb := range []string{"deploy", "rollback", "start", "restart", "edit", "adopt", "expose"} {
+		executor, run := stackExecutor(t, listmonk)
+		lock(executor)
+		refused(verb, runRequest(t, executor, request(t, idA, "compose", "listmonk", verb, soon())), run)
+	}
+	executor, run := stackExecutor(t)
+	lock(executor)
+	refused("create", runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)), run)
+	executor, run = stackExecutor(t)
+	lock(executor)
+	refused("docker start", runRequest(t, executor, request(t, idA, "docker", "adguard", "start", soon())), run)
+	executor, _ = stackExecutor(t, listmonk)
+	lock(executor)
+	if result := runRequest(t, executor, request(t, idA, "compose", "listmonk", "stop", soon())); !result.OK {
+		t.Fatalf("stopping stays allowed: %#v", result)
 	}
 }
 
@@ -544,6 +658,35 @@ func TestRebootWindowUsesTheFamilyCheck(t *testing.T) {
 	run.respond["dnf needs-restarting -r"] = "Reboot is required to fully utilize these updates.\n"
 	if err := executor.Execute(context.Background()); err != nil || reboots() != 1 {
 		t.Fatalf("restart when dnf asks: %v %d", err, reboots())
+	}
+}
+
+func TestAnUnsyncedClockIsNoted(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := findingsOf(t, executor)["clock-unsynced"]; found {
+		t.Fatal("no finding when timedatectl says nothing")
+	}
+	executor, run = securityExecutor(t)
+	healthyServer(t, executor, run)
+	run.respond["timedatectl show -p NTPSynchronized --value"] = "no\n"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if found := findingsOf(t, executor)["clock-unsynced"]; found.Severity != "warning" || found.Detail != "The clock is not synchronized with a time server; signed actions can be refused" {
+		t.Fatalf("finding %#v", found)
+	}
+}
+
+func TestAPlatformNameFitsTheReport(t *testing.T) {
+	for _, long := range []string{strings.Repeat("Ü", 200), strings.Repeat("🐧", 100)} {
+		report := platformReport(recipes.Platform{Name: long})
+		if len(report.Name) > 120 || len(report.Name) < 116 || !utf8.ValidString(report.Name) || !strings.HasPrefix(long, report.Name) {
+			t.Fatalf("name of %d bytes", len(report.Name))
+		}
 	}
 }
 

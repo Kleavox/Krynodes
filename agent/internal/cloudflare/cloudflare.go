@@ -260,9 +260,6 @@ func (c *Client) apps(ctx context.Context, account string) ([]App, error) {
 }
 
 func (c *Client) Guard(ctx context.Context, account, domain, aud string) error {
-	if err := c.Unguard(ctx, account, domain); err != nil {
-		return err
-	}
 	apps, err := c.apps(ctx, account)
 	if err != nil {
 		return err
@@ -286,7 +283,25 @@ func (c *Client) Guard(ctx context.Context, account, domain, aud string) error {
 	if len(policies) == 0 {
 		return fmt.Errorf("the dashboard's Access application has no policy to reuse")
 	}
-	return c.do(ctx, http.MethodPost, "/accounts/"+account+"/access/apps", nil, App{Name: Mark + " " + domain, Domain: domain, Type: "self_hosted", SessionDuration: "24h", Policies: policies}, nil)
+	app := App{Name: Mark + " " + domain, Domain: domain, Type: "self_hosted", SessionDuration: "24h", Policies: policies}
+	var existing []App
+	for _, found := range apps {
+		if found.Name == app.Name {
+			existing = append(existing, found)
+		}
+	}
+	if len(existing) == 0 {
+		return c.do(ctx, http.MethodPost, "/accounts/"+account+"/access/apps", nil, app, nil)
+	}
+	if err := c.do(ctx, http.MethodPut, "/accounts/"+account+"/access/apps/"+existing[0].ID, nil, app, nil); err != nil {
+		return err
+	}
+	for _, extra := range existing[1:] {
+		if err := c.do(ctx, http.MethodDelete, "/accounts/"+account+"/access/apps/"+extra.ID, nil, nil, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Client) Unguard(ctx context.Context, account, domain string) error {
@@ -328,6 +343,15 @@ func (c *Client) Clean(ctx context.Context, account, zone, tunnelName string) er
 				return err
 			}
 			hosts = append(hosts, record.Name)
+		}
+	}
+	rules, err := c.ingress(ctx, account, tunnel)
+	if err != nil {
+		return err
+	}
+	for _, rule := range rules {
+		if rule.Hostname != "" && !slices.Contains(hosts, rule.Hostname) {
+			hosts = append(hosts, rule.Hostname)
 		}
 	}
 	apps, err := c.apps(ctx, account)

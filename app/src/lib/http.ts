@@ -38,6 +38,10 @@ async function readApiResponse<T = unknown>(response: Response): Promise<T> {
 
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
+let offset = 0;
+
+export const serverNow = (local = Date.now()) => local + offset;
+
 export async function apiFetch<T = unknown>(
   path: string,
   init: RequestInit = {},
@@ -52,6 +56,8 @@ export async function apiFetch<T = unknown>(
       ...init.headers,
     },
   });
+  const date = Date.parse(response.headers.get("date") ?? "");
+  if (!Number.isNaN(date)) offset = date - Date.now();
   return readApiResponse<T>(response);
 }
 

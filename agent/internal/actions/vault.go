@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -276,17 +277,6 @@ func (e Executor) expose(ctx context.Context, request Request, command Command, 
 		return e.failed(request, err, "")
 	}
 	addresses := e.addresses()
-	if previous, ok := addresses[hostname]; ok && previous.Domain != "" {
-		if err := cf.Unguard(ctx, zone.AccountID, previous.Domain); err != nil {
-			return e.failed(request, err, "")
-		}
-	}
-	if err := cf.Route(ctx, zone.AccountID, tunnel, hostname, fmt.Sprintf("http://%s:%d", container, port)); err != nil {
-		return e.failed(request, err, "")
-	}
-	if err := cf.Point(ctx, zone.ID, hostname, tunnel); err != nil {
-		return e.refuse(request.ID, err)
-	}
 	domain := ""
 	switch mode {
 	case "allow":
@@ -296,6 +286,17 @@ func (e Executor) expose(ctx context.Context, request Request, command Command, 
 	}
 	if domain != "" {
 		if err := cf.Guard(ctx, zone.AccountID, domain, args["aud"]); err != nil {
+			return e.failed(request, err, "")
+		}
+	}
+	if err := cf.Route(ctx, zone.AccountID, tunnel, hostname, fmt.Sprintf("http://%s:%d", container, port)); err != nil {
+		return e.failed(request, err, "")
+	}
+	if err := cf.Point(ctx, zone.ID, hostname, tunnel); err != nil {
+		return e.refuse(request.ID, err)
+	}
+	if previous, ok := addresses[hostname]; ok && previous.Domain != "" && previous.Domain != domain {
+		if err := cf.Unguard(ctx, zone.AccountID, previous.Domain); err != nil {
 			return e.failed(request, err, "")
 		}
 	}
@@ -326,15 +327,37 @@ func mapValues(addresses map[string]webAddress) []webAddress {
 	return values
 }
 
+func (e Executor) refreshTunnel(ctx context.Context) {
+	if e.lockedDown() || !slices.ContainsFunc(mapValues(e.addresses()), func(address webAddress) bool {
+		return e.accessOf(filepath.Join(e.StateDir, "compose", address.Project)) == "contained"
+	}) {
+		return
+	}
+	raw, err := os.ReadFile(filepath.Join(e.StateDir, "tunnel.env"))
+	token, found := strings.CutPrefix(strings.TrimSpace(string(raw)), "TUNNEL_TOKEN=")
+	if err != nil || !found || token == "" {
+		return
+	}
+	state, err := e.docker(ctx, collectTimeout, "inspect", "inspect", "--format", `{{.State.Running}} {{join .Args " "}}`, TunnelContainer)
+	running, args, _ := strings.Cut(strings.TrimSpace(string(state)), " ")
+	if err != nil || running != "true" || strings.Contains(args, "--metrics 127.0.0.1:20241") {
+		return
+	}
+	if err := e.ensureTunnel(ctx, token); err != nil {
+		log.Printf("restart the tunnel: %v", err)
+	}
+}
+
 func (e Executor) ensureTunnel(ctx context.Context, token string) error {
 	path := filepath.Join(e.StateDir, "tunnel.env")
 	wanted := "TUNNEL_TOKEN=" + token + "\n"
 	current, _ := os.ReadFile(path)
-	state, err := e.docker(ctx, collectTimeout, "inspect", "inspect", "--format", "{{.State.Running}}", TunnelContainer)
-	if err == nil && string(current) == wanted && strings.TrimSpace(string(state)) != "false" {
+	state, err := e.docker(ctx, collectTimeout, "inspect", "inspect", "--format", `{{.State.Running}} {{join .Args " "}}`, TunnelContainer)
+	running, args, _ := strings.Cut(strings.TrimSpace(string(state)), " ")
+	if err == nil && string(current) == wanted && running != "false" && strings.Contains(args, "--metrics 127.0.0.1:20241") {
 		return nil
 	}
-	if err := os.WriteFile(path, []byte(wanted), 0o600); err != nil {
+	if err := writeWhole(e.StateDir, "tunnel.env", []byte(wanted), 0o600); err != nil {
 		return err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
@@ -343,7 +366,7 @@ func (e Executor) ensureTunnel(ctx context.Context, token string) error {
 	if err == nil {
 		e.docker(ctx, collectTimeout, "remove", "rm", "-f", TunnelContainer)
 	}
-	if _, err := e.docker(ctx, pullTimeout, "run", "run", "-d", "--name", TunnelContainer, "--restart", "unless-stopped", "--env-file", path, cloudflaredImage, "tunnel", "--no-autoupdate", "run"); err != nil {
+	if _, err := e.docker(ctx, pullTimeout, "run", "run", "-d", "--name", TunnelContainer, "--restart", "unless-stopped", "--env-file", path, cloudflaredImage, "tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:20241", "run"); err != nil {
 		return err
 	}
 	for _, address := range e.addresses() {

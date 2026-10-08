@@ -13,6 +13,7 @@ import {
   nameFor,
   thisBrowser,
 } from "./passkeys";
+import { apiFetch } from "./http";
 
 const T = Date.parse("2026-09-29T10:00:00.000Z");
 const MINUTE = 60_000;
@@ -81,6 +82,53 @@ describe("passkeys", () => {
       signature: "BAU",
     });
     expect(session.expiresAt).toBe(T + 5 * MINUTE);
+  });
+
+  it("stamps the grant and its commands with Krynodes' clock, not the device's", async () => {
+    authenticator();
+    vi.useFakeTimers({ now: T, toFake: ["Date"] });
+    const answer = (at: number) =>
+      vi.stubGlobal(
+        "fetch",
+        async () =>
+          new Response("{}", {
+            headers: {
+              "content-type": "application/json",
+              date: new Date(at).toUTCString(),
+            },
+          }),
+      );
+    try {
+      answer(T + 2 * MINUTE);
+      await apiFetch("/api/services");
+      const session = await createSession(["ZGV2aWNl"], "kry.example.test", T);
+      expect(decode(session.grant.grant)).toMatchObject({
+        issuedAt: new Date(T + 2 * MINUTE).toISOString(),
+        expiresAt: new Date(T + 7 * MINUTE).toISOString(),
+      });
+      expect(session.expiresAt).toBe(T + 5 * MINUTE);
+      answer(T + 3 * MINUTE);
+      await apiFetch("/api/services");
+      const command = actionCommand(
+        {
+          id: "c",
+          nodeId: "n",
+          kind: "compose",
+          name: "kuma",
+          action: "deploy",
+        },
+        session,
+        T + MINUTE,
+      );
+      expect(command).toMatchObject({
+        issuedAt: new Date(T + 3 * MINUTE).toISOString(),
+        expiresAt: new Date(T + 67 * MINUTE).toISOString(),
+      });
+    } finally {
+      answer(T);
+      await apiFetch("/api/services");
+      vi.useRealTimers();
+    }
   });
 
   it("signs a command the session key verifies (P1363)", async () => {

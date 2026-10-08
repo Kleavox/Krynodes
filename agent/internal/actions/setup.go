@@ -68,8 +68,8 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 				mark("–", step.title, " already on")
 				continue
 			}
-			if step.id == "ssh-keys-only" && len(recipes.KeyedUsers(env)) == 0 {
-				mark("–", step.title, " skipped: add an SSH key for root or a sudo user first")
+			if step.id == "ssh-keys-only" && len(recipes.SSHLogins(ctx, env)) == 0 {
+				mark("–", step.title, " skipped: first let root or a sudo user log in over SSH with a key")
 				continue
 			}
 			saved, err := recipes.Apply(ctx, env, step.id, args)

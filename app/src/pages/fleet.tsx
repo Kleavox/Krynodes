@@ -206,7 +206,7 @@ export function FleetPage() {
     );
   }
 
-  const { nodes, checks, incidents, agentRelease } = overview.data;
+  const { nodes, checks, incidents, agentRelease, mail } = overview.data;
   const seen = overview.dataUpdatedAt;
   const checksFor = (id: string) =>
     checks.filter((check) => check.node_id === id);
@@ -268,6 +268,14 @@ export function FleetPage() {
           )
         }
       />
+
+      {mail && (
+        <p role="alert" className="mb-3 text-sm text-destructive">
+          Alert mail could not be sent {timeAgo(mail.failedAt)}:{" "}
+          {mail.error.replace(/\.?$/u, ".")} Failures and offline servers are
+          not mailed until this works again.
+        </p>
+      )}
 
       {recent.isError && !recent.data && nodes.length > 0 && (
         <p role="status" className="mb-3 text-sm text-destructive">

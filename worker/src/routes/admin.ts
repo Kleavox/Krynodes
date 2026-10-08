@@ -63,9 +63,13 @@ export function registerAdminRoutes(
     ]);
 
     const rows = nodes.results as { id: string; interval_seconds: number }[];
-    const live = rows.length > 0 ? await fleetLive(context.env, ownerId) : {};
+    const live =
+      rows.length > 0
+        ? await fleetLive(context.env, ownerId)
+        : { nodes: {}, mail: null };
     return context.json({
-      nodes: mergeLive(rows, live),
+      nodes: mergeLive(rows, live === null ? null : live.nodes),
+      mail: live?.mail ?? null,
       checks: checks.results,
       incidents: incidents.results,
       agentRelease: {

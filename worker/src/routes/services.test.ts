@@ -146,6 +146,15 @@ describe("GET /api/services", () => {
     ]);
   });
 
+  it("leaves out a server Krynodes was removed from", async () => {
+    const { call, sqlite } = setup();
+    sqlite
+      .prepare("UPDATE nodes SET disabled_at = datetime('now') WHERE id = ?")
+      .run(B);
+    const body = await reply(call("GET", "/api/services"));
+    expect(body.nodes!.map((node) => node.id).sort()).toEqual([A, C].sort());
+  });
+
   it("reads the day's actions through the node index", () => {
     const { sqlite } = setup();
     const plan = sqlite

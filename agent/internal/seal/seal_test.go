@@ -121,3 +121,21 @@ func TestTheAgentOpensWhatABrowserSealed(t *testing.T) {
 		t.Fatalf("opened %q: %v", opened, err)
 	}
 }
+
+func TestADamagedServerKeyIsSetAsideAndMadeAgain(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "seal.key"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := Load(dir)
+	if err != nil || key == nil {
+		t.Fatalf("key %v err %v", key, err)
+	}
+	again, err := Load(dir)
+	if err != nil || Public(again) != Public(key) {
+		t.Fatalf("the new key is kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "seal.key.damaged")); err != nil {
+		t.Fatalf("the damaged key is set aside: %v", err)
+	}
+}

@@ -266,9 +266,11 @@ function NewStackForm({
                 Ready images only; a file that builds from source is refused.
               </li>
               <li>
-                Refused too: privileged mode, the server&rsquo;s network or
-                processes, devices, extra capabilities, and mounts outside the
-                stack&rsquo;s own folder.
+                Refused too: privileged mode, its own confinement settings, the
+                server&rsquo;s network or processes, devices and GPUs, extra
+                capabilities, mounts outside the stack&rsquo;s own folder, other
+                stacks&rsquo; networks and volumes, logs sent off the server,
+                and Compose settings Krynodes does not know.
               </li>
               <li>
                 Ports open on the server itself (127.0.0.1). Open one to your

@@ -3,6 +3,9 @@ package main
 import (
 	"crypto/tls"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -81,6 +84,54 @@ func TestUpdaterUnitsRunSelfUpdateWhenAskedTo(t *testing.T) {
 	}
 }
 
+func TestAnEnrolledServerIsNotEnrolledAgain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	before := []byte(`{"endpoint":"https://kry.example","node_id":"node-old","token":"tok","interval_seconds":60}`)
+	if err := os.WriteFile(path, before, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"enroll", "--endpoint", "https://127.0.0.1:1", "--token", "fresh", "--config", path})
+	if err == nil || !strings.Contains(err.Error(), "already enrolled as node-old") || !strings.Contains(err.Error(), "kry uninstall-service") {
+		t.Fatalf("err %v", err)
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Fatalf("the config must stay: %s", after)
+	}
+}
+
+func TestAUnitIsWrittenWholeAndOnlyWhenItChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "krynodes.service")
+	if err := writeUnit(path, "first\n"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := before.ModTime().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeUnit(path, "first\n"); err != nil {
+		t.Fatal(err)
+	}
+	if same, _ := os.Stat(path); !same.ModTime().Equal(old) {
+		t.Fatal("an unchanged unit is left as it is")
+	}
+	if err := writeUnit(path, "second\n"); err != nil {
+		t.Fatal(err)
+	}
+	if body, _ := os.ReadFile(path); string(body) != "second\n" {
+		t.Fatalf("unit %q", body)
+	}
+	if leftovers, _ := filepath.Glob(path + "*.tmp"); len(leftovers) != 0 {
+		t.Fatalf("left %v", leftovers)
+	}
+	if info, _ := os.Stat(path); info.Mode().Perm() != 0o644 && runtime.GOOS != "windows" {
+		t.Fatalf("mode %v", info.Mode())
+	}
+}
+
 func TestTheExecutorUnitRunsAsRootInASandbox(t *testing.T) {
 	unit := execUnit("/usr/local/bin/kry")
 	for _, want := range []string{
@@ -92,7 +143,7 @@ func TestTheExecutorUnitRunsAsRootInASandbox(t *testing.T) {
 		"ProtectSystem=strict\n",
 		"ReadWritePaths=/var/lib/kry-exec\n",
 		"Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n",
-		"TimeoutStartSec=30min\n",
+		"TimeoutStartSec=60min\n",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("executor unit is missing %q", want)
@@ -147,8 +198,76 @@ func TestTheExecutorIsStartedByRequestsAndATimer(t *testing.T) {
 
 func TestUninstallStopsTheExecutorBeforeRemovingItsState(t *testing.T) {
 	commands := uninstallCommands()
-	if len(commands) < 2 || strings.Join(commands[1], " ") != "systemctl stop krynodes-exec.service krynodes-host.service" {
+	if len(commands) != 3 || strings.Join(commands[1], " ") != "systemctl stop krynodes-exec.service krynodes-host.service" {
 		t.Fatalf("unexpected commands %#v", commands)
+	}
+	if slices.Contains(commands[0], "krynodes.service") || strings.Join(commands[2], " ") != "systemctl disable --now krynodes.service" {
+		t.Fatalf("the agent itself stops last, after it reported: %#v", commands)
+	}
+	all := strings.Join(append(append(slices.Clone(commands[0]), commands[1]...), commands[2]...), " ")
+	for _, unit := range enabledUnits() {
+		if !strings.Contains(all, unit) {
+			t.Fatalf("%s stays enabled: %#v", unit, commands)
+		}
+	}
+}
+
+func TestTheContainmentUnitRunsBeforeDocker(t *testing.T) {
+	unit := guardUnit("/usr/local/bin/kry")
+	for _, want := range []string{"Before=docker.service\n", "Type=oneshot\n", "ExecStart=/usr/local/bin/kry guard\n", "WantedBy=multi-user.target\n"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("guard unit is missing %q", want)
+		}
+	}
+	if !slices.Contains(enabledUnits(), "krynodes-guard.service") || !slices.Contains(leftovers("/usr/local/bin/kry"), guardPath) {
+		t.Fatalf("enabled %v leftovers %v", enabledUnits(), leftovers("/usr/local/bin/kry"))
+	}
+}
+
+func TestUninstallWaitsForEveryResultToBeReported(t *testing.T) {
+	requests, state := t.TempDir(), t.TempDir()
+	const id = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01"
+	if unreported(requests, state) {
+		t.Fatal("nothing waits")
+	}
+	if err := os.WriteFile(filepath.Join(requests, id+".json"), []byte("{}"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if unreported(requests, state) {
+		t.Fatal("a request without a result never gets one once the executor stopped")
+	}
+	if err := os.MkdirAll(filepath.Join(state, "results"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "results", id+".json"), []byte("{}"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if !unreported(requests, state) {
+		t.Fatal("a result the dashboard has not heard of waits")
+	}
+}
+
+func TestUninstallWaitsForHostWorkBeforeStoppingIt(t *testing.T) {
+	answers := []string{"inactive\nactivating\n", "active\ninactive\n", "inactive\ninactive\n"}
+	waited := time.Duration(0)
+	sleep := func(d time.Duration) { waited += d }
+	next := func() string {
+		answer := answers[0]
+		answers = answers[1:]
+		return answer
+	}
+	if !waitFor(func() bool { return unitsBusy(next()) }, sleep, time.Minute, "waiting") || waited != 4*time.Second || len(answers) != 0 {
+		t.Fatalf("waited %s, answers left %q", waited, answers)
+	}
+	waited = 0
+	if waitFor(func() bool { return unitsBusy("activating\n") }, sleep, 10*time.Second, "waiting") || waited != 10*time.Second {
+		t.Fatalf("gives up after the limit: waited %s", waited)
+	}
+	if !strings.Contains(strings.Join(uninstallCommands()[0], " "), "krynodes-host.path") {
+		t.Fatal("new host work is stopped before the wait")
+	}
+	if !slices.Equal(busyUnits, []string{"krynodes-exec.service", "krynodes-host.service", "krynodes-update.service"}) {
+		t.Fatalf("waits for %v", busyUnits)
 	}
 }
 
@@ -197,7 +316,7 @@ func TestUpdatesNeedTLS13(t *testing.T) {
 
 func TestTheHostUnitRunsOnlyTheFixedRecipesWhenAsked(t *testing.T) {
 	unit := hostUnit("/usr/local/bin/kry")
-	for _, want := range []string{"Type=oneshot\n", "ExecStart=/usr/local/bin/kry host-apply\n", "TimeoutStartSec=30min\n", "Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n", "PrivateTmp=true\n"} {
+	for _, want := range []string{"Type=oneshot\n", "ExecStart=/usr/local/bin/kry host-apply\n", "TimeoutStartSec=120min\n", "Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n", "PrivateTmp=true\n"} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("host unit is missing %q", want)
 		}

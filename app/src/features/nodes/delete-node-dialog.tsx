@@ -13,16 +13,21 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { useSignedOperation } from "@/features/deploy/use-signed-action";
+import {
+  useSignedAction,
+  useSignedOperation,
+} from "@/features/deploy/use-signed-action";
+import { removalReady } from "@/lib/agent";
 import {
   useAction,
   useCloudflare,
   useDeleteNode,
+  useDevices,
   useOverview,
   useServices,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
-import { planRemoval, reshareSteps, vaultNodes } from "@/lib/vault";
+import { pieceOf, planRemoval, reshareSteps, vaultNodes } from "@/lib/vault";
 import type { NodeRecord } from "@/types";
 
 const ENDED = ["failed", "expired", "cancelled", "skipped"];
@@ -40,10 +45,14 @@ export function DeleteNodeDialog({
 }) {
   const remove = useDeleteNode();
   const operate = useSignedOperation(false);
+  const run = useSignedAction(false);
+  const devices = useDevices();
   const services = useServices();
   const overview = useOverview();
   const settings = useCloudflare();
   const [last, setLast] = useState<string | null>(null);
+  const [stage, setStage] = useState<"spread" | "remove" | null>(null);
+  const [keepAgent, setKeepAgent] = useState(false);
   const tracked = useAction(last);
   const seen = overview.dataUpdatedAt;
   const setId = settings.data?.setId ?? null;
@@ -56,17 +65,33 @@ export function DeleteNodeDialog({
     (services.data?.nodes.find((entry) => entry.id === node.id)?.webAddresses
       ?.length ?? 0) > 0;
   const piece =
-    setId !== null &&
-    nodesFor(null).find((item) => item.id === node.id)?.vault?.set === setId;
+    pieceOf(
+      nodesFor(null).find((item) => item.id === node.id),
+      setId,
+    ) !== null;
   const plan = planRemoval(nodesFor(null), node.id, setId, addresses);
-  const status = tracked.data?.action.status;
-  const spreadFailed = status !== undefined && ENDED.includes(status);
+  const action = tracked.data?.action.id === last ? tracked.data?.action : null;
+  const status = action?.status;
+  const ended = status !== undefined && ENDED.includes(status);
+  const spreadFailed = ended && stage === "spread";
+  const removalFailed = ended && stage === "remove";
+  const holds = !plan.ok || plan.needed;
+  const trust =
+    services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
+  const offer =
+    plan.ok &&
+    removalReady(node, trust, devices.data?.devices ?? [], Date.now());
+  const leaving = offer && !keepAgent;
+  const spreadDone = stage === "spread" && status === "done";
 
   const close = (next: boolean) => {
     if (!next) {
       remove.reset();
       operate.reset();
+      run.reset();
       setLast(null);
+      setStage(null);
+      setKeepAgent(false);
     }
     onOpenChange(next);
   };
@@ -78,10 +103,27 @@ export function DeleteNodeDialog({
       },
     });
 
+  const removeAgent = () =>
+    run.mutate(
+      {
+        action: "uninstall",
+        targets: [{ nodeId: node.id, kind: "host", name: "server" }],
+      },
+      {
+        onSuccess: (batch) => {
+          setStage("remove");
+          setLast(batch.actions[0]?.id ?? null);
+        },
+      },
+    );
+
   useEffect(() => {
-    if (remove.isIdle && status === "done") {
-      deleteNow();
+    if (!remove.isIdle || status !== "done") return;
+    if (stage === "spread" && leaving) {
+      if (run.isIdle) removeAgent();
+      return;
     }
+    deleteNow();
   });
 
   const spread = () =>
@@ -109,12 +151,18 @@ export function DeleteNodeDialog({
           });
         },
       },
-      { onSuccess: (batch) => setLast(batch.actions.at(-1)?.id ?? null) },
+      {
+        onSuccess: (batch) => {
+          setStage("spread");
+          setLast(batch.actions.at(-1)?.id ?? null);
+        },
+      },
     );
 
-  const spreading = last !== null && !spreadFailed;
-  const holds = !plan.ok || plan.needed;
-  const error = remove.error ?? operate.error;
+  const spreading = stage === "spread" && !ended && !spreadDone;
+  const removing = run.isPending || (stage === "remove" && !ended);
+  const busy = operate.isPending || spreading || removing || remove.isPending;
+  const error = remove.error ?? operate.error ?? run.error;
 
   return (
     <AlertDialog open={open} onOpenChange={close}>
@@ -125,14 +173,20 @@ export function DeleteNodeDialog({
             <div className="space-y-2">
               <p>
                 Its metrics, checks, check results and incidents are deleted
-                with it, and the agent on the server stops being accepted. Then
-                run{" "}
-                <code className="font-mono text-xs">
-                  sudo kry uninstall-service
-                </code>{" "}
-                on the server to take Krynodes off it.
+                with it, and the agent on the server stops being accepted.{" "}
+                {leaving ? (
+                  "Krynodes also leaves the server: its protections are turned off and its apps keep running."
+                ) : (
+                  <>
+                    Then run{" "}
+                    <code className="font-mono text-xs">
+                      sudo kry uninstall-service
+                    </code>{" "}
+                    on the server to take Krynodes off it.
+                  </>
+                )}
               </p>
-              {holds && plan.ok && (
+              {holds && plan.ok && stage !== "remove" && (
                 <p>
                   {piece
                     ? `${node.name} holds a piece of the Cloudflare token. Krynodes first spreads the token across the other servers and removes the tunnel of ${node.name} from Cloudflare, then deletes it.`
@@ -171,9 +225,37 @@ export function DeleteNodeDialog({
                   here.
                 </p>
               )}
+              {stage === "remove" && !ended && (
+                <p className="text-warning">
+                  Removing Krynodes from {node.name}. It is deleted once that
+                  finishes; keep this open.
+                </p>
+              )}
+              {removalFailed && (
+                <p className="text-destructive">
+                  Krynodes could not be removed from {node.name}
+                  {action?.output ? `: ${action.output}` : "."} Delete anyway
+                  leaves it there; run{" "}
+                  <code className="font-mono text-xs">
+                    sudo kry uninstall-service
+                  </code>{" "}
+                  on the server to take it off.
+                </p>
+              )}
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {offer && !removalFailed && (
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={!keepAgent}
+              disabled={busy}
+              onChange={() => setKeepAgent(!keepAgent)}
+            />
+            Remove Krynodes from the server
+          </label>
+        )}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(error)}
@@ -181,12 +263,12 @@ export function DeleteNodeDialog({
         )}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          {holds && plan.ok && !spreadFailed ? (
-            <Button
-              variant="destructive"
-              disabled={operate.isPending || spreading || remove.isPending}
-              onClick={spread}
-            >
+          {holds &&
+          plan.ok &&
+          stage !== "remove" &&
+          !spreadFailed &&
+          !spreadDone ? (
+            <Button variant="destructive" disabled={busy} onClick={spread}>
               {!operate.isPending && !spreading && (
                 <Fingerprint aria-hidden="true" />
               )}
@@ -198,6 +280,17 @@ export function DeleteNodeDialog({
                     ? "Spread and delete"
                     : "Clean up and delete"}
             </Button>
+          ) : leaving && !removalFailed && !spreadFailed ? (
+            <Button variant="destructive" disabled={busy} onClick={removeAgent}>
+              {!busy && <Fingerprint aria-hidden="true" />}
+              {run.isPending
+                ? "Waiting for the fingerprint…"
+                : removing
+                  ? "Removing Krynodes…"
+                  : remove.isPending
+                    ? "Working…"
+                    : "Remove and delete"}
+            </Button>
           ) : (
             <Button
               variant="destructive"
@@ -207,7 +300,7 @@ export function DeleteNodeDialog({
               {!remove.isPending && <GuardIcon />}
               {remove.isPending
                 ? "Working…"
-                : holds
+                : holds || removalFailed
                   ? "Delete anyway"
                   : "Delete node"}
             </Button>

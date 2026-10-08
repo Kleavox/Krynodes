@@ -89,6 +89,7 @@ describe("GET /api/overview contract", () => {
       "agentRelease",
       "checks",
       "incidents",
+      "mail",
       "nodes",
     ]);
     expect(Object.keys(body.nodes![0]!).sort()).toEqual([...NODE_KEYS].sort());

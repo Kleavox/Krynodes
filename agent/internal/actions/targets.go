@@ -23,6 +23,8 @@ var protectedUnits = compile(
 	`^cloudflared\.service$`, `^cloudflared-.+\.service$`,
 	`^getty@.*\.service$`, `^serial-getty@.*\.service$`, `^user@.*\.service$`,
 	`^snap\.docker\..+\.service$`,
+	`^ufw\.service$`, `^firewalld\.service$`, `^nftables\.service$`,
+	`^netfilter-persistent\.service$`, `^iptables\.service$`, `^ip6tables\.service$`,
 )
 
 var systemUnits = compile(

@@ -23,6 +23,11 @@ var fakeTools = map[string]string{
 
 func runInstaller(t *testing.T, failSetup bool, args ...string) (string, string, error) {
 	t.Helper()
+	return runScript(t, "../../../app/public/install.sh", failSetup, args...)
+}
+
+func runScript(t *testing.T, script string, failSetup bool, args ...string) (string, string, error) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the installer runs on Linux")
 	}
@@ -41,7 +46,7 @@ func runInstaller(t *testing.T, failSetup bool, args ...string) (string, string,
 		}
 	}
 	log := filepath.Join(dir, "log")
-	command := exec.Command(shell, append([]string{"../../../app/public/install.sh"}, args...)...)
+	command := exec.Command(shell, append([]string{script}, args...)...)
 	command.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "KRY_BIN="+filepath.Join(bin, "kry"))
 	if failSetup {
 		command.Env = append(command.Env, "FAIL_SETUP=1")
@@ -91,5 +96,35 @@ func TestTheInstallerRefusesBadSetupFlags(t *testing.T) {
 		if err == nil || strings.Contains(log, "kry enroll") {
 			t.Fatalf("%q must stop before enrolling:\n%s\n%s", args, log, output)
 		}
+	}
+}
+
+func TestADownloadCutShortRunsNothing(t *testing.T) {
+	script, err := os.ReadFile("../../../app/public/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.SplitAfter(strings.TrimSuffix(string(script), "\n"), "\n")
+	dir := t.TempDir()
+	for cut := 1; cut < len(lines); cut++ {
+		path := filepath.Join(dir, "install.sh")
+		if err := os.WriteFile(path, []byte(strings.Join(lines[:cut], "")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if log, _, _ := runScript(t, path, false, "https://kry.example", "token-1"); log != "" {
+			t.Fatalf("a download cut after line %d ran:\n%s", cut, log)
+		}
+	}
+}
+
+func TestTheInstallerLeavesAnEnrolledServerAlone(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(config, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KRY_CONFIG", config)
+	log, output, err := runInstaller(t, false, "https://kry.example", "token-1")
+	if err == nil || log != "" || !strings.Contains(output, "already enrolled") || strings.Contains(output, "Downloading") {
+		t.Fatalf("err %v log %q output %q", err, log, output)
 	}
 }

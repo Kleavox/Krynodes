@@ -21,15 +21,23 @@ func rhelUpdates(ctx context.Context, env Env) (map[string]string, error) {
 		{updatesService, "[Unit]\nDescription=Krynodes security updates\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/dnf -y upgrade --security\n"},
 		{updatesTimer, "[Unit]\nDescription=Krynodes security updates\n\n[Timer]\nOnCalendar=daily\nRandomizedDelaySec=1h\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"},
 	}
+	back := func(err error) (map[string]string, error) {
+		env.remove(updatesTimer)
+		env.remove(updatesService)
+		return nil, err
+	}
 	for _, file := range files {
 		if err := env.write(file.path, file.body, 0o644); err != nil {
-			return nil, err
+			return back(err)
 		}
 	}
 	if err := env.run(ctx, "systemctl", "daemon-reload"); err != nil {
-		return nil, err
+		return back(err)
 	}
-	return nil, env.run(ctx, "systemctl", "enable", "--now", updatesUnit)
+	if err := env.run(ctx, "systemctl", "enable", "--now", updatesUnit); err != nil {
+		return back(err)
+	}
+	return nil, nil
 }
 
 func undoRHELUpdates(ctx context.Context, env Env) error {
@@ -101,28 +109,34 @@ func firewalld(ctx context.Context, env Env, extra []string) (map[string]string,
 	}
 	state, _ := env.output(ctx, "firewall-cmd", "--state")
 	running := strings.TrimSpace(state) == "running"
-	if !running {
-		if err := env.run(ctx, "systemctl", "enable", "--now", "firewalld"); err != nil {
-			return nil, err
-		}
-	}
 	ports := sshPorts(ctx, env)
 	for _, port := range extra {
 		if !slices.Contains(ports, port) {
 			ports = append(ports, port)
 		}
 	}
+	port := func(verb, port string) (string, []string) {
+		if running {
+			return "firewall-cmd", []string{"--permanent", "--" + verb + "-port=" + port}
+		}
+		return "firewall-offline-cmd", []string{"--" + verb + "-port=" + port}
+	}
 	var added []string
-	for _, port := range ports {
-		if _, err := env.output(ctx, "firewall-cmd", "--permanent", "--query-port="+port); err == nil {
+	for _, wanted := range ports {
+		if tool, args := port("query", wanted); env.run(ctx, tool, args...) == nil {
 			continue
 		}
-		if err := env.run(ctx, "firewall-cmd", "--permanent", "--add-port="+port); err != nil {
+		tool, args := port("add", wanted)
+		if err := env.run(ctx, tool, args...); err != nil {
+			return nil, fmt.Errorf("%s could not open %s: %w", tool, wanted, err)
+		}
+		added = append(added, wanted)
+	}
+	if running {
+		if err := env.run(ctx, "firewall-cmd", "--reload"); err != nil {
 			return nil, err
 		}
-		added = append(added, port)
-	}
-	if err := env.run(ctx, "firewall-cmd", "--reload"); err != nil {
+	} else if err := env.run(ctx, "systemctl", "enable", "--now", "firewalld"); err != nil {
 		return nil, err
 	}
 	saved["ports"] = strings.Join(added, ",")

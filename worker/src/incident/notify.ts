@@ -6,6 +6,7 @@ export interface IncidentNotice {
   summary: string;
   occurredAt: string;
   healing?: boolean;
+  disk?: boolean;
 }
 
 export interface ServerChanges {
@@ -27,7 +28,9 @@ export const loadBox = (stored: Partial<MailBox> | undefined): MailBox =>
     : emptyBox();
 
 const keyOf = (notice: IncidentNotice) =>
-  notice.checkId ?? `server:${notice.nodeId}`;
+  notice.disk
+    ? `disk:${notice.nodeId}`
+    : (notice.checkId ?? `server:${notice.nodeId}`);
 
 export function receive(
   stored: MailBox,

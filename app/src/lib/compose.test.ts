@@ -39,8 +39,24 @@ describe("reading a compose file", () => {
       devices: ["dhcp"],
       privileged: ["dhcp"],
       builds: ["app"],
+      docker: [],
       error: null,
     });
+  });
+
+  it("names a service that controls Docker, which is root on the server", () => {
+    const text = `services:
+  agent:
+    image: portainer/agent
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+  helper:
+    image: docker/helper
+    use_api_socket: true
+  web:
+    image: nginx
+`;
+    expect(summarize(text).docker).toEqual(["agent", "helper"]);
   });
 
   it("says when the text is not a compose file", () => {

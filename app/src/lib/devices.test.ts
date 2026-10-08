@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import { apiFetch } from "./http";
 
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
 import {
@@ -179,6 +181,37 @@ describe("changes", () => {
       { node: node(N3), trust: null },
     ],
   );
+
+  it("dates a change by Krynodes' clock when the device's clock is off", async () => {
+    vi.useFakeTimers({ now: T, toFake: ["Date"] });
+    const answer = (at: number) =>
+      vi.stubGlobal(
+        "fetch",
+        async () =>
+          new Response("{}", {
+            headers: {
+              "content-type": "application/json",
+              date: new Date(at).toUTCString(),
+            },
+          }),
+      );
+    try {
+      answer(T - 3 * 60_000);
+      await apiFetch("/api/devices");
+      const text = buildChange(two, {
+        core: null,
+        access: { [N1]: ["laptop"] },
+      });
+      expect(bytes(text)).toMatchObject({
+        issuedAt: new Date(T - 3 * 60_000).toISOString(),
+      });
+    } finally {
+      answer(T);
+      await apiFetch("/api/devices");
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
 
   it("encodes a change as the exact bytes the servers read", () => {
     const text = buildChange(two, {

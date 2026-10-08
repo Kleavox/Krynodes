@@ -21,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -33,7 +34,7 @@ import { useOverview, useServices } from "@/lib/api";
 import { moveCompose, servicesOf } from "@/lib/compose";
 import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
-import { moveBlocker } from "@/lib/stacks";
+import { moveBlocker, moveConfirmed } from "@/lib/stacks";
 import { moveSteps } from "@/lib/vault";
 import type { WebAddress } from "@/types";
 
@@ -141,6 +142,7 @@ function MoveForm({
   const text = edited ?? moved?.text ?? "";
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
   const [original, setOriginal] = useState<Original>("later");
+  const [typed, setTyped] = useState("");
   const [sealing, setSealing] = useState(false);
   const problem = secretsProblem(secrets);
   const blocked = moveBlocker(addresses, original);
@@ -302,6 +304,19 @@ function MoveForm({
                 </span>
               </label>
             ))}
+            {original === "now" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="move-confirm">
+                  Type {source.project} to delete the original for good
+                </Label>
+                <Input
+                  id="move-confirm"
+                  value={typed}
+                  autoComplete="off"
+                  onChange={(event) => setTyped(event.target.value)}
+                />
+              </div>
+            )}
             {blocked && <p className="text-sm text-destructive">{blocked}</p>}
           </div>
         </div>
@@ -322,6 +337,7 @@ function MoveForm({
             kept.length === 0 ||
             problem !== null ||
             blocked !== null ||
+            !moveConfirmed(original, typed, source.project) ||
             sealing ||
             operate.isPending
           }

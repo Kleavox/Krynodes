@@ -80,7 +80,8 @@ SHA-256 and its signature against the release key written into the script
 (`openssl`, 1.1.1 or newer), installs `/usr/local/bin/kry`, enrolls the node, and starts the
 `krynodes` systemd service (config in `/etc/kry/config.json`). The node takes
 the server's hostname as its name (**Rename node** changes it) and reports every
-minute. The script is
+minute. A server that is already enrolled is left alone; to enroll it again,
+run `sudo kry uninstall-service` first. The script is
 `app/public/install.sh`, served as a static asset. Afterwards:
 
 ```sh
@@ -97,7 +98,7 @@ enrolling, the script runs `kry setup`, which prints what it found and did:
 Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
 ✓ Automatic security updates
 ✓ Restart when needed · 20:00 UTC
-– SSH keys only skipped: add an SSH key for root or a sudo user first
+– SSH keys only skipped: first let root or a sudo user log in over SSH with a key
 ✓ Block repeated login failures
 ✓ Docker 28.4.0 with Compose
 ```
@@ -169,15 +170,22 @@ for that report ("pivox: 2 checks down — Health, API"). A server that stops
 reporting mails at once too ("pivox: offline"), at the moment the dashboard
 turns it Offline: nothing heard for three intervals, at least 90 seconds. The
 agent's keepalive ping counts, so a report Krynodes fails to store does not
-make a live server offline. Each
+make a live server offline. A disk that reaches 95% mails once ("pivox: disk
+96% full"), and again only after it went below 90%; the disk is the fullest of
+`/` and Docker's data folder (`/var/lib/docker`, or its `data-root`), so
+Docker on its own volume counts. Each
 check and each server mails its first failure in an hour; later failures in
-that hour, recoveries and "back online" never mail. While an action runs on a
+that hour, recoveries and "back online" never mail. When more than five
+servers need a mail at the same moment (a provider or network outage), one
+mail lists them all ("7 servers offline"). While an action runs on a
 server and for 2 minutes after it (10 minutes after a restart, until the agent
 is back), failing checks there open no incident, a silent server is not called
 offline, and the bars read "maintenance"; anything still down afterwards mails
 then. A restart by **Restart when needed** gets the same 10 minutes when the
 server's last check said a restart was waiting. Actions and deploys never mail. Mail shows times in UTC; the dashboard
-and the status page use the browser's time zone.
+and the status page use the browser's time zone. When an alert mail cannot be
+sent (or mail is not set up), the Fleet page says so and why until one goes
+out again.
 
 ### Live connection
 
@@ -263,6 +271,8 @@ page and Ctrl K offer the same actions, and a SERVICE check's menu has
 The node page's **Actions** menu (and Ctrl K) also has
 **Restart server**: after a confirmation and the same fingerprint, `kry exec`
 reports "restarting the server" and then runs `systemctl reboot --no-block`.
+It refuses while a protection or a Docker install is still running there, since
+a restart in the middle of a package install leaves the package manager broken.
 Each server on the Services page carries the same menu.
 
 Everything in flight is visible to everyone: the server reads
@@ -283,24 +293,36 @@ The agent never runs anything itself:
 - It drops each request in `/var/lib/kry/actions`.
 - The root oneshot `kry exec` does the work. The units `krynodes-exec.path` and
   `krynodes-exec.timer` start it, the timer every 5 minutes to refresh the list of
-  services.
+  services. A run starts no new request after 20 minutes and leaves the rest
+  to the next run, so nothing it started is cut off by the unit's one-hour
+  limit; Move into Krynodes gives up copying the old folder after 15 minutes
+  and starts the stack from it again.
 - `kry exec` refuses anything that is not signed by a trusted device and
   aimed at something present on the server. The only unsigned requests it
   takes are turning auto-restart off, restarting a listed unit that is down
   and running the Security check.
-- It never starts, stops or restarts ssh, the network, Docker itself, systemd
-  internals, cloudflared or Krynodes; it only reads their logs.
+- It never starts, stops or restarts ssh, the network, the firewall (ufw,
+  firewalld, nftables, iptables), Docker itself, systemd internals, cloudflared
+  or Krynodes; it only reads their logs. The firewall is turned on and off as
+  a protection on the Security panel.
 - It keeps its state in `/var/lib/kry-exec`.
 
-To take Krynodes off a server, first delete the node in the dashboard while
-the server is online (that spreads the Cloudflare token without it and removes
-its tunnel, DNS records and login), then run:
+To take Krynodes off a server, delete the node in the dashboard while the
+server is online: with **Remove Krynodes from the server** ticked (servers on
+agent 0.6.2 or newer that this device can sign for) the dashboard spreads the
+token, asks the server to remove Krynodes, and deletes the node once the server
+confirms; the removal runs 30 seconds later, after the answer reached
+Krynodes. If the dashboard closes in between, the server stays listed as
+**removed** (never mailed as offline) until you delete it. Without it, or for
+a server that is offline, run:
 
 ```sh
 sudo kry uninstall-service
 ```
 
-It leaves nothing of Krynodes behind: its units, `/usr/local/bin/kry`,
+It first stops new work and waits (up to an hour) for a stack change, a
+protection, a Docker install or an agent update that is still running, so
+nothing is cut half way. It leaves nothing of Krynodes behind: its units, `/usr/local/bin/kry`,
 `/etc/kry`, `/var/lib/kry`, `/var/lib/kry-exec` (seal key and token piece
 included), the `kry` user, the tunnel container and its image, and the
 containment rules of Contained stacks. Every protection it turned on is turned
@@ -310,6 +332,8 @@ accepts passwords again". Stacks Krynodes runs keep running: each folder moves
 to `/var/lib/krynodes-stacks/<name>`, with its secrets, and it prints the
 `docker compose` command to manage it. With `--delete-apps` they are deleted
 instead, with their volumes. Stacks you started yourself are never touched.
+When the server held a piece of the Cloudflare token it says so: spread the
+token again on the Cloudflare page unless Delete node already did.
 
 ### Deploy
 
@@ -330,7 +354,8 @@ container leaves the list as soon as its server confirms.
 **Removed**, under the server lists. It waits there for 7 days with its volumes
 and compose files: **Restore** starts it again (with a fingerprint), and
 **Delete permanently** deletes it at once. After 7 days the server deletes it
-by itself. **Delete permanently**, on a running or a removed stack, deletes its
+by itself, but not while its clock is not synchronized with a time server.
+**Delete permanently**, on a running or a removed stack, deletes its
 containers, networks and volumes, and the folder Krynodes made for it; a folder
 elsewhere (a stack you started yourself) stays. Type the name to confirm.
 Images stay. A stack started again outside Krynodes leaves Removed with nothing
@@ -340,9 +365,9 @@ deleted, and New stack refuses a name that waits there.
 project that is not yours. The text is signed into the command. The server
 writes it to `/var/lib/kry-exec/compose/<name>`, resolves it with
 `docker compose config` and refuses, naming the service and the reason, a file
-that builds from source, asks for privileged mode, extra capabilities or
-devices, shares the server's network, processes or namespaces, turns off
-confinement, mounts anything outside its own folder (also through a symlink),
+that builds from source, asks for privileged mode, extra capabilities,
+devices or GPUs, shares the server's network, processes or namespaces, sets
+its own confinement (any `security_opt` but `no-new-privileges`), mounts anything outside its own folder (also through a symlink),
 uses an external or host network or volume, or includes other files. Published
 ports are bound to `127.0.0.1`; reach them through a Cloudflare Tunnel. Then
 it pulls, starts and health-checks the stack like a deploy. Do not paste
@@ -357,6 +382,13 @@ once when the page is hidden (another tab or app in front, the screen locked, a
 phone screen off) and is checked against the clock before every signature, so
 a laptop that slept needs a new fingerprint. Nothing on screen shows whether a
 session is open. Agents and the Worker accept sessions of at most 15 minutes.
+Signatures carry Krynodes' time (from its responses), so a device whose clock
+is off still signs; a server whose clock is off refuses with both times in the
+message.
+
+The Worker takes changes (and the live feed) only from its own page: a
+request whose `Origin` is another site, or that the browser marks as
+cross-site, is refused, so another tab cannot act with your Access login.
 
 One admin login can be shared safely by several people, and the rules are
 these:
@@ -417,8 +449,19 @@ stored data, not a live takeover.
 
 - **Contained** (default): the vetting above, plus at most 1 CPU, 1 GB memory
   and 512 processes per service (set when absent; more is refused), and no way
-  to reach `169.254.169.254` or the server's own addresses. Published ports
-  are bound to `127.0.0.1`.
+  to reach `169.254.169.254`, `fd00:ec2::254` or the server's own addresses,
+  from boot on (`krynodes-guard.service` sets the rules before Docker starts).
+  Its networks are its own (no `name:` of another network, no IPv6), its
+  volumes plain local ones (no driver options or plugins), and it runs on
+  `runc`. Its logs stay on the server (`local` or `json-file`, size options
+  only), and its images come from a registry that is not the server itself
+  (Docker pulls and ships logs from the server's own network). Privileged
+  hooks, provider services and models are refused. Only the usual Compose
+  keys are taken (a key it does not know, such as `use_api_socket`, needs
+  Full access), and Deploy, Rollback and Restore check an older Contained
+  stack against these rules again. Each service runs one copy and joins only
+  the stack's own networks.
+  Published ports are bound to `127.0.0.1`.
 - **Full access**: public ports, host network, server folders, builds and
   devices. Before the fingerprint the dialog lists what the stack opens. It
   is root-equivalent; use it for stacks you trust like the server itself.
@@ -438,8 +481,11 @@ Cloudflare Access login as this dashboard), **Login only for a path** (such as
 `/admin`), or **Everyone**. Krynodes makes one tunnel per server
 (`krynodes-<server id>`), runs `cloudflared` as a digest-pinned container on
 the stacks' own networks only, and touches only the DNS records, Access apps
-and tunnels it made. A hostname that already exists is refused. **Close web
-address…**, Remove and Delete permanently remove what it made.
+and tunnels it made. A hostname that already exists is refused. The login
+comes first: the Access app is made (or updated in place) before the route and
+the DNS record, and an older login is removed last, so a protected address is
+never open, not even when a step fails. **Close web address…**, Remove and
+Delete permanently remove what it made, the login last.
 
 **Cloudflare token** (account menu → Cloudflare). Create one token with
 Account · Cloudflare Tunnel · Edit, Account · Access: Apps and Policies · Edit
@@ -472,9 +518,10 @@ they move.
 move (unticked ones leave `depends_on`, and values that still name them are
 flagged, like a test mailpit), review the compose file, and choose the access
 level there. Images are pinned to the digests that ran, secrets are sealed
-again to the target, and small files beside the compose file (up to 1 MB) come
-along; app data does not. Once the copy runs healthy the original is deleted
-now, moved to Removed, or kept, as you chose; if the copy fails the original
+again to the target, and small files beside the compose file (up to 32 KB
+together) come along; app data does not. Once the copy runs healthy the
+original is deleted now (type the stack's name first, since its volumes go
+too), moved to Removed, or kept, as you chose; if the copy fails the original
 is untouched.
 
 **Move into Krynodes** copies a stack started elsewhere into
@@ -485,34 +532,46 @@ it was. A stack that mounts server folders moves as Full access.
 **Security check.** Every 6 hours, and after every change below, each server
 checks SSH password and root login, SSH keys, ports open to the internet
 (also ones Krynodes did not open), automatic updates, pending updates and
-restarts, privileged containers and `docker.sock` mounts, and OS end of life.
+restarts, privileged containers and `docker.sock` mounts, OS end of life, and
+a clock that is not synchronized (signed actions depend on it).
 Fleet shows a shield (green, amber, red); the server page lists the findings
 with **Check now**. A new serious finding is mailed under the quiet rules.
 
 **Protections** on the server page, each with Turn off (Undo):
 
-| Protection                    | What it does                                                                                                                                       |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Automatic security updates    | `unattended-upgrades` (Debian, Ubuntu); a daily Krynodes timer running `dnf -y upgrade --security` (RHEL family)                                   |
-| Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action, a protection or a Docker install |
-| SSH keys only                 | no password login over SSH; offered only when root or a sudo user has a key                                                                        |
-| Block repeated login failures | fail2ban for SSH (from EPEL on RHEL, Rocky, AlmaLinux, Oracle Linux and CentOS Stream)                                                             |
-| Firewall                      | ufw or firewalld: SSH and the ports you tick stay open; ports published by Docker are not affected                                                 |
-| Free port 53                  | stops systemd-resolved holding port 53, for a DNS server such as AdGuard; offered only when port 53 is held by it                                  |
+| Protection                    | What it does                                                                                                                                               |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automatic security updates    | `unattended-upgrades` (Debian, Ubuntu); a daily Krynodes timer running `dnf -y upgrade --security` (RHEL family)                                           |
+| Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action, a protection or a Docker install         |
+| SSH keys only                 | no password login over SSH; offered only when root or a sudo user can log in with a key                                                                    |
+| Block repeated login failures | fail2ban for SSH (from EPEL on RHEL, Rocky, AlmaLinux, Oracle Linux and CentOS Stream)                                                                     |
+| Firewall                      | ufw or firewalld: every port SSH listens on (its config, `ssh.socket`, its open sockets) and the ports you tick stay open; Docker's ports are not affected |
+| Free port 53                  | stops systemd-resolved holding port 53, for a DNS server such as AdGuard; refused when systemd-resolved knows no upstream DNS server                       |
 
 Each one writes its own drop-in file and never edits yours; Turn off removes
-it, and the packages Krynodes installed for it. **Apply
+it, and the packages Krynodes installed for it. A protection that fails half
+way, or whose record cannot be saved, is taken back (SSH keys only drops its
+file when SSH cannot reload, Free port 53 puts DNS back). SSH keys only counts
+only accounts SSH really lets in with a key (`PermitRootLogin`, `AllowUsers`,
+`DenyUsers`, `AllowGroups`, `DenyGroups`, `PubkeyAuthentication`,
+`AuthenticationMethods`, keys in the files `AuthorizedKeysFile` names) and
+leaves root's login rule alone. **Apply
 recommended** turns on the first four with one fingerprint. The agent connects
 outward, so none of them can cut Krynodes off.
 
 **Lock down server** (server menu) stops containers that publish ports to the
 internet and the tunnel, and turns on SSH keys only when a key is set up.
-**Unlock server** brings back exactly what it changed.
+**Unlock server** brings back exactly what it changed. A lock down that fails
+half way gives everything back at once. While a server is locked down nothing
+starts there: new stacks, Deploy, Rollback, Start, Restart, Edit compose, Move
+into Krynodes, restoring a removed stack and Web address are refused until it
+is unlocked; Stop, Remove, logs and reading files still work.
 
 **Install Docker** (server menu, for a server without Docker or Compose) adds
 Docker's own repository and installs Docker with Compose, or only the Compose
 plugin when Docker is there. It refuses next to Podman. A repository the owner
-added already is used as it is.
+added already is used as it is. A Docker it installs keeps container logs small
+(Docker's `local` log driver, unless `/etc/docker/daemon.json` already exists).
 
 ## Data retention
 

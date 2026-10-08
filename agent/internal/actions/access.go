@@ -17,6 +17,7 @@ import (
 const (
 	guardBridges    = "krc+"
 	metadataAddress = "169.254.169.254"
+	metadataIPv6    = "fd00:ec2::254"
 	diskReserve     = 1_000_000_000
 )
 
@@ -66,9 +67,22 @@ var guardRules = [][]string{
 	{"iptables", "DOCKER-USER", "-i", guardBridges, "-d", metadataAddress, "-j", "DROP"},
 	{"iptables", "INPUT", "-i", guardBridges, "-j", "DROP"},
 	{"ip6tables", "INPUT", "-i", guardBridges, "-j", "DROP"},
+	{"ip6tables", "DOCKER-USER", "-i", guardBridges, "-d", metadataIPv6, "-j", "DROP"},
+}
+
+func (e Executor) Contain(ctx context.Context) {
+	if !e.hasContained() {
+		return
+	}
+	e.guard(ctx)
 }
 
 func (e Executor) guard(ctx context.Context) {
+	for _, tool := range []string{"iptables", "ip6tables"} {
+		chainCtx, cancel := context.WithTimeout(ctx, collectTimeout)
+		e.Run(chainCtx, tool, "-N", "DOCKER-USER")
+		cancel()
+	}
 	for _, rule := range guardRules {
 		ctx, cancel := context.WithTimeout(ctx, collectTimeout)
 		if _, _, err := e.Run(ctx, rule[0], append([]string{"-C"}, rule[1:]...)...); err != nil {

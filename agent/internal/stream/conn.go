@@ -43,6 +43,8 @@ type conn struct {
 	closeOnce sync.Once
 }
 
+var errUnknownServer = errors.New("Krynodes refused this server's token (HTTP 401)")
+
 var dialer = &http.Client{
 	Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
@@ -78,6 +80,10 @@ func dial(ctx context.Context, endpoint, token, version string) (*conn, error) {
 	response, err := dialer.Do(request)
 	if err != nil {
 		return nil, err
+	}
+	if response.StatusCode == http.StatusUnauthorized {
+		response.Body.Close()
+		return nil, errUnknownServer
 	}
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		response.Body.Close()

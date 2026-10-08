@@ -15,7 +15,21 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 )
 
-const hostUnit = "krynodes-host.service"
+const (
+	hostUnit      = "krynodes-host.service"
+	staleHostWork = 40 * time.Minute
+)
+
+var errHostBusy = errors.New("Krynodes is still changing this server; try again when that finishes")
+
+var errLockedDown = errors.New("the server is locked down; unlock it first")
+
+var startVerbs = []string{"create", "restore", "deploy", "rollback", "start", "restart", "edit", "adopt", "expose"}
+
+func (e Executor) lockedDown() bool {
+	_, err := os.Stat(filepath.Join(e.StateDir, "lockdown.json"))
+	return err == nil
+}
 
 type rebootWindow struct {
 	Hour *int   `json:"hour"`
@@ -62,7 +76,7 @@ func (e Executor) appliedRecipes() []string {
 	return names
 }
 
-func (e Executor) host(request Request) (Result, bool) {
+func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err), false
 	}
@@ -70,11 +84,24 @@ func (e Executor) host(request Request) (Result, bool) {
 	switch {
 	case server && request.Action == "scan":
 		return Result{ID: request.ID, OK: true, Output: "checked", FinishedAt: e.stamp()}, false
-	case server && request.Action == "reboot":
+	case server && (request.Action == "reboot" || request.Action == "uninstall"):
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
 		}
-		return Result{ID: request.ID, OK: true, Output: "restarting the server", FinishedAt: e.stamp()}, false
+		if e.hostBusy(ctx) {
+			return e.refuse(request.ID, errHostBusy), false
+		}
+		if request.Action == "reboot" {
+			return Result{ID: request.ID, OK: true, Output: "restarting the server", FinishedAt: e.stamp()}, false
+		}
+		binary, err := os.Executable()
+		if err != nil {
+			return e.failed(request, err, ""), false
+		}
+		if output, _, err := e.Run(ctx, "systemd-run", "--unit", "krynodes-uninstall-"+request.ID[:8], "--on-active=30", "--collect", "--", binary, "uninstall-service"); err != nil {
+			return e.failed(request, fmt.Errorf("remove Krynodes: %w", err), string(output)), false
+		}
+		return Result{ID: request.ID, OK: true, Output: "Krynodes leaves this server in 30 seconds; its apps keep running", FinishedAt: e.stamp()}, false
 	case request.Name == "reboot-window" && (request.Action == "apply" || request.Action == "undo"):
 		return e.rebootSetting(request), false
 	case (server && (request.Action == "lockdown" || request.Action == "unlock")) ||
@@ -125,14 +152,23 @@ func (e Executor) rebootDue(ctx context.Context) bool {
 	if needed, _ := recipes.RebootNeeded(ctx, e.recipeEnv()); !needed {
 		return false
 	}
-	if queued, _ := os.ReadDir(filepath.Join(e.StateDir, "host")); len(queued) > 0 {
-		return false
-	}
-	if state, _ := e.output(ctx, "systemctl", "is-active", hostUnit); slices.Contains([]string{"active", "activating", "reloading"}, strings.TrimSpace(state)) {
+	if e.hostBusy(ctx) {
 		return false
 	}
 	window.Last = today
 	return writeJSON(e.StateDir, "reboot.json", window, 0o640) == nil
+}
+
+func (e Executor) hostBusy(ctx context.Context) bool {
+	queued, _ := os.ReadDir(filepath.Join(e.StateDir, "host"))
+	if slices.ContainsFunc(queued, func(entry os.DirEntry) bool {
+		info, err := entry.Info()
+		return err == nil && e.Now().Sub(info.ModTime()) < staleHostWork
+	}) {
+		return true
+	}
+	state, _ := e.output(ctx, "systemctl", "is-active", hostUnit)
+	return slices.Contains([]string{"active", "activating", "reloading"}, strings.TrimSpace(state))
 }
 
 func (e Executor) HostApply(ctx context.Context) error {
@@ -202,7 +238,13 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 			return e.refuse(request.ID, err)
 		}
 		state.Applied[request.Name] = appliedRecipe{At: e.Now(), Saved: saved}
-		return save("applied")
+		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
+			if back := recipes.Undo(ctx, env, request.Name, saved); back != nil {
+				err = fmt.Errorf("%w; turning it off again also failed: %v", err, back)
+			}
+			return e.failed(request, err, "")
+		}
+		return Result{ID: request.ID, OK: true, Output: "applied", FinishedAt: e.stamp()}
 	case "undo":
 		if err := recipes.Undo(ctx, env, request.Name, state.Applied[request.Name].Saved); err != nil {
 			return e.refuse(request.ID, err)
@@ -263,17 +305,23 @@ func (e Executor) lockdown(ctx context.Context, request Request, env recipes.Env
 		}
 		held = append(held, id)
 	}
+	giveBack := func(err error) Result {
+		if undo := e.reopen(ctx, state); undo != nil {
+			err = fmt.Errorf("%w; putting the containers back also failed: %v", err, undo)
+		}
+		return e.failed(request, err, "")
+	}
 	if len(held) > 0 {
 		if _, err := e.docker(ctx, collectTimeout, "hold", append([]string{"update", "--restart", "no"}, held...)...); err != nil {
-			return e.failed(request, err, "")
+			return giveBack(err)
 		}
 	}
 	if len(state.Containers) > 0 {
 		if _, err := e.docker(ctx, upTimeout, "stop", append([]string{"stop"}, state.Containers...)...); err != nil {
-			return e.failed(request, err, "")
+			return giveBack(err)
 		}
 	}
-	if _, applied := e.readRecipes().Applied["ssh-keys-only"]; !applied && len(recipes.KeyedUsers(env)) > 0 {
+	if _, applied := e.readRecipes().Applied["ssh-keys-only"]; !applied && len(recipes.SSHLogins(ctx, env)) > 0 {
 		if _, err := recipes.Apply(ctx, env, "ssh-keys-only", nil); err != nil {
 			log.Printf("lockdown ssh: %v", err)
 		} else {
@@ -281,7 +329,12 @@ func (e Executor) lockdown(ctx context.Context, request Request, env recipes.Env
 		}
 	}
 	if err := writeJSON(e.StateDir, "lockdown.json", state, 0o640); err != nil {
-		return e.failed(request, err, "")
+		if state.SSH {
+			if undo := recipes.Undo(ctx, env, "ssh-keys-only", nil); undo != nil {
+				err = fmt.Errorf("%w; turning SSH keys only off again also failed: %v", err, undo)
+			}
+		}
+		return giveBack(err)
 	}
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("locked down: %d containers stopped", len(state.Containers)), FinishedAt: e.stamp()}
 }

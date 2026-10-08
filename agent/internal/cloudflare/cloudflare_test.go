@@ -3,6 +3,7 @@ package cloudflare_test
 import (
 	"context"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,6 +75,43 @@ func TestAWebAddressGetsATunnelRouteDNSAndLogin(t *testing.T) {
 	}
 }
 
+func TestGuardingAgainNeverLeavesTheAddressOpen(t *testing.T) {
+	cf, fake := client(t)
+	ctx := context.Background()
+	const domain = "listmonk-pivox.kleavox.xyz"
+	if err := cf.Guard(ctx, "acc-1", domain, "aud-1"); err != nil {
+		t.Fatal(err)
+	}
+	fake.Calls = nil
+	if err := cf.Guard(ctx, "acc-1", domain, "aud-1"); err != nil {
+		t.Fatal(err)
+	}
+	guarded := 0
+	for _, app := range fake.Apps {
+		if app.Domain == domain {
+			guarded++
+		}
+	}
+	if guarded != 1 || slices.ContainsFunc(fake.Calls, func(call string) bool { return strings.HasPrefix(call, "DELETE ") }) {
+		t.Fatalf("apps %v calls %q", fake.Apps, fake.Calls)
+	}
+	fake.Fail = map[string]bool{"GET /accounts/acc-1/access/apps/dash/policies": true}
+	if err := cf.Guard(ctx, "acc-1", domain, "aud-1"); err == nil {
+		t.Fatal("the failure is reported")
+	}
+	if !slices.ContainsFunc(mapApps(fake.Apps), func(app cloudflare.App) bool { return app.Domain == domain }) {
+		t.Fatal("a failed guard must keep the login that was there")
+	}
+}
+
+func mapApps(apps map[string]cloudflare.App) []cloudflare.App {
+	found := []cloudflare.App{}
+	for _, app := range apps {
+		found = append(found, app)
+	}
+	return found
+}
+
 func TestKrynodesNeverTakesAnotherRecordOrApp(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
@@ -125,6 +163,29 @@ func TestCleaningUpARemovedServer(t *testing.T) {
 	}
 	if len(fake.Tunnels) != 1 || len(fake.Records) != 1 || len(fake.Apps) != 1 {
 		t.Fatalf("tunnels %v records %v apps %v", fake.Tunnels, fake.Records, fake.Apps)
+	}
+}
+
+func TestACleanUpThatStoppedHalfWayFindsTheLoginsOnTheNextTry(t *testing.T) {
+	cf, fake := client(t)
+	ctx := context.Background()
+	tunnel, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-b")
+	cf.Route(ctx, "acc-1", tunnel, "kuma-b.kleavox.xyz", "http://kuma:3001")
+	cf.Point(ctx, "zone-1", "kuma-b.kleavox.xyz", tunnel)
+	cf.Guard(ctx, "acc-1", "kuma-b.kleavox.xyz/admin", "aud-1")
+	fake.Fail = map[string]bool{"GET /accounts/acc-1/access/apps": true}
+	if err := cf.Clean(ctx, "acc-1", "zone-1", "krynodes-node-b"); err == nil {
+		t.Fatal("the first try stops")
+	}
+	if len(fake.Records) != 0 {
+		t.Fatalf("the DNS record went first: %v", fake.Records)
+	}
+	fake.Fail = nil
+	if err := cf.Clean(ctx, "acc-1", "zone-1", "krynodes-node-b"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Apps) != 1 || len(fake.Tunnels) != 0 {
+		t.Fatalf("apps %v tunnels %v", fake.Apps, fake.Tunnels)
 	}
 }
 

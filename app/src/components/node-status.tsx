@@ -60,7 +60,7 @@ export function NodeStatus({
   return (
     <StatusChip
       tone={nodeTone(state)}
-      label={state}
+      label={state === "disabled" ? "removed" : state}
       detail={state === "offline" ? offlineDetail : undefined}
     />
   );

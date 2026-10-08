@@ -239,6 +239,7 @@ async function apply(
 ) {
   const db = env.DB;
   const at = new Date(input.now).toISOString();
+  const guard = input.isNew ? null : input.id;
   const batch = createBatch(db, {
     action: "trust",
     mode: "parallel",
@@ -250,6 +251,7 @@ async function apply(
     })),
     requestedBy: input.email,
     now: input.now,
+    whileOpen: guard ?? undefined,
   });
   const record = input.isNew
     ? db
@@ -271,21 +273,25 @@ async function apply(
         )
     : db
         .prepare(
-          "UPDATE proposals SET status = 'applied', approvals = ?, closed_at = ? WHERE id = ?",
+          `UPDATE proposals SET status = 'applied', approvals = ?, closed_at = ?
+           WHERE id = ? AND status = 'open'`,
         )
         .bind(JSON.stringify(input.approvals), at, input.id);
+  const open = (slot: number) =>
+    `(?${slot} IS NULL OR EXISTS (SELECT 1 FROM proposals WHERE id = ?${slot} AND status = 'open'))`;
   const statements = [
     ...batch.statements,
-    record,
     db
       .prepare(
-        `UPDATE proposals SET status = 'superseded', closed_at = ?
-         WHERE owner_user_id = ? AND status = 'open' AND id <> ? AND version <= ?`,
+        `UPDATE proposals SET status = 'superseded', closed_at = ?1
+         WHERE owner_user_id = ?2 AND status = 'open' AND id <> ?3 AND version <= ?4
+           AND ${open(5)}`,
       )
-      .bind(at, input.ownerId, input.id, input.change.version),
+      .bind(at, input.ownerId, input.id, input.change.version, guard),
     db
       .prepare(
-        "UPDATE devices SET last_used_at = ? WHERE owner_user_id = ? AND id IN (SELECT value FROM json_each(?))",
+        `UPDATE devices SET last_used_at = ?1
+         WHERE owner_user_id = ?2 AND id IN (SELECT value FROM json_each(?3)) AND ${open(4)}`,
       )
       .bind(
         at,
@@ -293,29 +299,41 @@ async function apply(
         JSON.stringify(
           input.approvals.map((approval) => approval.credentialId),
         ),
+        guard,
       ),
   ];
   if (input.change.core) {
     statements.push(
       db
         .prepare(
-          `UPDATE devices SET removed_at = ?
-           WHERE owner_user_id = ? AND removed_at IS NULL
-             AND id IN (SELECT value FROM json_each(?))
-             AND id NOT IN (SELECT value FROM json_each(?))`,
+          `UPDATE devices SET removed_at = ?1
+           WHERE owner_user_id = ?2 AND removed_at IS NULL
+             AND id IN (SELECT value FROM json_each(?3))
+             AND id NOT IN (SELECT value FROM json_each(?4))
+             AND ${open(5)}`,
         )
         .bind(
           at,
           input.ownerId,
           JSON.stringify(input.fleet.core),
           JSON.stringify(input.change.core.map((key) => key.id)),
+          guard,
         ),
     );
   }
+  statements.push(record);
   await db.batch(sweepStatements(db, input.now));
   try {
-    await db.batch(statements);
+    const results = await db.batch(statements);
+    if (!results.at(-1)?.meta.changes) {
+      throw new Refusal(
+        410,
+        "CLOSED",
+        "The change was cancelled or closed while it was approved.",
+      );
+    }
   } catch (error) {
+    if (error instanceof Refusal) throw error;
     if (!String(error).includes("UNIQUE")) throw error;
     throw new Refusal(
       409,
@@ -561,11 +579,18 @@ export function registerProposalRoutes(
         });
         return context.json({ id: row.id, status: "applied" });
       }
-      await context.env.DB.prepare(
-        "UPDATE proposals SET approvals = ? WHERE id = ?",
+      const stored = await context.env.DB.prepare(
+        "UPDATE proposals SET approvals = ? WHERE id = ? AND status = 'open' AND approvals = ?",
       )
-        .bind(JSON.stringify(approvals), row.id)
+        .bind(JSON.stringify(approvals), row.id, row.approvals)
         .run();
+      if (!stored.meta.changes) {
+        throw new Refusal(
+          409,
+          "APPROVED_TOGETHER",
+          "Another approval arrived at the same moment. Approve again.",
+        );
+      }
       return context.json({ id: row.id, status: "open", missing: waiting });
     } catch (error) {
       return refused(context, error);

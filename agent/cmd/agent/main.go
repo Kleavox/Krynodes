@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,6 +45,7 @@ const (
 	execTimerPath     = "/etc/systemd/system/krynodes-exec.timer"
 	hostPath          = "/etc/systemd/system/krynodes-host.service"
 	hostWatcherPath   = "/etc/systemd/system/krynodes-host.path"
+	guardPath         = "/etc/systemd/system/krynodes-guard.service"
 	stateDirectory    = "/var/lib/kry"
 )
 
@@ -81,6 +83,8 @@ func run(args []string) error {
 		return execActions()
 	case "host-apply":
 		return hostApply()
+	case "guard":
+		return guardCommand()
 	case "setup":
 		return setupCommand(args)
 	case "trust":
@@ -181,6 +185,13 @@ func enroll(args []string) error {
 	}
 	if strings.TrimSpace(*token) == "" {
 		return fmt.Errorf("--token is required")
+	}
+	if _, err := os.Stat(*configPath); err == nil {
+		enrolled := "another node"
+		if cfg, err := config.Load(*configPath); err == nil {
+			enrolled = cfg.NodeID
+		}
+		return fmt.Errorf("this server is already enrolled as %s; to enroll it again, remove Krynodes first with: sudo kry uninstall-service", enrolled)
 	}
 
 	host, err := currentHost()
@@ -349,9 +360,10 @@ func installService(args []string) error {
 		execTimerPath:   execTimerUnit(),
 		hostPath:        hostUnit(executable),
 		hostWatcherPath: hostPathUnit(),
+		guardPath:       guardUnit(executable),
 	}
 	for path, unit := range units {
-		if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
+		if err := writeUnit(path, unit); err != nil {
 			return err
 		}
 	}
@@ -367,8 +379,54 @@ func installService(args []string) error {
 	return nil
 }
 
+func writeUnit(path, unit string) error {
+	if current, err := os.ReadFile(path); err == nil && string(current) == unit {
+		return nil
+	}
+	temporary := path + ".tmp"
+	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(unit); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		os.Remove(temporary)
+		return err
+	}
+	if directory, err := os.Open(filepath.Dir(path)); err == nil {
+		directory.Sync()
+		directory.Close()
+	}
+	return nil
+}
+
 func enabledUnits() []string {
-	return []string{unitName + ".service", unitName + "-update.path", unitName + "-exec.path", unitName + "-exec.timer", unitName + "-host.path"}
+	return []string{unitName + ".service", unitName + "-update.path", unitName + "-exec.path", unitName + "-exec.timer", unitName + "-host.path", unitName + "-guard.service"}
+}
+
+func guardUnit(executable string) string {
+	return fmt.Sprintf(`[Unit]
+Description=Krynodes containment for Contained stacks
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%s guard
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+`, executable)
 }
 
 func hostUnit(executable string) string {
@@ -379,7 +437,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=oneshot
 ExecStart=%s host-apply
-TimeoutStartSec=30min
+TimeoutStartSec=120min
 PrivateTmp=true
 Environment=DOCKER_CONFIG=%s/docker
 `, executable, actions.StateDir)
@@ -465,7 +523,7 @@ StartLimitIntervalSec=0
 Type=oneshot
 Group=%s
 ExecStart=%s exec
-TimeoutStartSec=30min
+TimeoutStartSec=60min
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
@@ -517,6 +575,15 @@ func execActions() error {
 		Audit: true,
 	}
 	return executor.Execute(context.Background())
+}
+
+func guardCommand() error {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return fmt.Errorf("guard must run as root on Linux")
+	}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	executor.Contain(context.Background())
+	return nil
 }
 
 func hostApply() error {
@@ -646,11 +713,21 @@ func uninstallService(args []string) error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("uninstall-service must run as root on Linux")
 	}
-	for _, command := range uninstallCommands() {
-		_ = exec.Command(command[0], command[1:]...).Run()
+	commands := uninstallCommands()
+	_ = exec.Command(commands[0][0], commands[0][1:]...).Run()
+	working := func() bool {
+		output, _ := exec.Command("systemctl", append([]string{"is-active"}, busyUnits...)...).Output()
+		return unitsBusy(string(output))
 	}
+	idle := waitFor(working, time.Sleep, time.Hour, "Waiting for Krynodes to finish changing this server…")
+	_ = exec.Command(commands[1][0], commands[1][1:]...).Run()
+	waitFor(func() bool { return unreported(actions.RequestDir, actions.StateDir) }, time.Sleep, 2*time.Minute, "Waiting for the dashboard to hear the last results…")
+	_ = exec.Command(commands[2][0], commands[2][1:]...).Run()
 	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
 	removal := executor.Uninstall(context.Background(), deleteApps)
+	if !idle {
+		removal.Problems = append(removal.Problems, "Krynodes was still working on this server after an hour and was stopped; check the package manager with: sudo dpkg --configure -a (Debian, Ubuntu) or sudo dnf check (RHEL family), and the stacks with docker compose ps")
+	}
 	binary, _ := os.Executable()
 	for _, path := range leftovers(binary) {
 		if err := os.RemoveAll(path); err != nil {
@@ -669,6 +746,9 @@ func uninstallService(args []string) error {
 	if removal.Docker != "" {
 		fmt.Println("  " + removal.Docker)
 	}
+	if removal.Token != "" {
+		fmt.Println("  " + removal.Token)
+	}
 	fmt.Println("If this server is still in the dashboard, delete it there too; that also removes its Cloudflare tunnel, DNS records and login.")
 	if len(removal.Problems) > 0 {
 		return fmt.Errorf("some parts need a look:\n  %s", strings.Join(removal.Problems, "\n  "))
@@ -676,8 +756,45 @@ func uninstallService(args []string) error {
 	return nil
 }
 
+var busyUnits = []string{unitName + "-exec.service", unitName + "-host.service", unitName + "-update.service"}
+
+func unitsBusy(states string) bool {
+	return slices.ContainsFunc(strings.Fields(states), func(state string) bool {
+		return state == "active" || state == "activating" || state == "reloading"
+	})
+}
+
+func unreported(requestDir, stateDir string) bool {
+	entries, _ := os.ReadDir(requestDir)
+	return slices.ContainsFunc(entries, func(entry os.DirEntry) bool {
+		id, ok := strings.CutSuffix(entry.Name(), ".json")
+		if !ok {
+			return false
+		}
+		_, err := os.Stat(filepath.Join(stateDir, "results", id+".json"))
+		return err == nil
+	})
+}
+
+func waitFor(busy func() bool, sleep func(time.Duration), limit time.Duration, message string) bool {
+	told := false
+	for waited := time.Duration(0); ; waited += 2 * time.Second {
+		if !busy() {
+			return true
+		}
+		if waited >= limit {
+			return false
+		}
+		if !told {
+			fmt.Println(message)
+			told = true
+		}
+		sleep(2 * time.Second)
+	}
+}
+
 func leftovers(binary string) []string {
-	paths := []string{hostWatcherPath, hostPath, execTimerPath, execWatcherPath, execPath, watcherPath, updaterPath, unitPath, stateDirectory, path.Dir(defaultConfigPath)}
+	paths := []string{guardPath, hostWatcherPath, hostPath, execTimerPath, execWatcherPath, execPath, watcherPath, updaterPath, unitPath, stateDirectory, path.Dir(defaultConfigPath)}
 	if binary != "" {
 		paths = append(paths, binary)
 	}
@@ -686,8 +803,9 @@ func leftovers(binary string) []string {
 
 func uninstallCommands() [][]string {
 	return [][]string{
-		{"systemctl", "disable", "--now", unitName + "-host.path", unitName + "-exec.timer", unitName + "-exec.path", unitName + "-update.path", unitName + ".service"},
+		{"systemctl", "disable", "--now", unitName + "-host.path", unitName + "-exec.timer", unitName + "-exec.path", unitName + "-update.path", unitName + "-guard.service"},
 		{"systemctl", "stop", unitName + "-exec.service", unitName + "-host.service"},
+		{"systemctl", "disable", "--now", unitName + ".service"},
 	}
 }
 

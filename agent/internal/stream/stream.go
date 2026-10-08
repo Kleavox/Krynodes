@@ -42,6 +42,7 @@ type Client struct {
 	stable        time.Duration
 	replacedDelay time.Duration
 	refusedDelay  time.Duration
+	goneDelay     time.Duration
 
 	mu      sync.Mutex
 	conn    *conn
@@ -65,6 +66,7 @@ func New(endpoint, token, version string) *Client {
 		stable:        time.Minute,
 		replacedDelay: 30 * time.Second,
 		refusedDelay:  time.Minute,
+		goneDelay:     15 * time.Minute,
 		waiting:       map[uint64]chan envelope{},
 		up:            make(chan struct{}),
 		ready:         make(chan struct{}, 1),
@@ -122,6 +124,10 @@ func (c *Client) Run(ctx context.Context) {
 		if err != nil {
 			wait := c.delay(attempt)
 			attempt++
+			if errors.Is(err, errUnknownServer) {
+				wait = c.goneDelay
+				log.Printf("Krynodes does not know this server any more (it was deleted or its token replaced); remove the agent with: sudo kry uninstall-service")
+			}
 			log.Printf("live connection to Krynodes failed: %v; retrying in %s", err, wait.Round(time.Second))
 			if !pause(ctx, wait) {
 				return

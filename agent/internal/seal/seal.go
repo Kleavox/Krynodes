@@ -33,9 +33,14 @@ func Load(dir string) (*ecdh.PrivateKey, error) {
 	path := filepath.Join(dir, "seal.key")
 	raw, err := os.ReadFile(path)
 	if err == nil {
-		return ecdh.P256().NewPrivateKey(raw)
-	}
-	if !errors.Is(err, os.ErrNotExist) {
+		key, parseErr := ecdh.P256().NewPrivateKey(raw)
+		if parseErr == nil {
+			return key, nil
+		}
+		if err := os.Rename(path, path+".damaged"); err != nil {
+			return nil, parseErr
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	key, err := ecdh.P256().GenerateKey(rand.Reader)
@@ -55,6 +60,10 @@ func Load(dir string) (*ecdh.PrivateKey, error) {
 		return nil, err
 	}
 	if _, err := temporary.Write(key.Bytes()); err != nil {
+		temporary.Close()
+		return nil, err
+	}
+	if err := temporary.Sync(); err != nil {
 		temporary.Close()
 		return nil, err
 	}

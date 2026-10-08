@@ -78,7 +78,7 @@ func TestSetupSkipsWhatIsOnAndGoesOnAfterAFailure(t *testing.T) {
 	for _, line := range []string{
 		"✗ Automatic security updates: ",
 		"– Restart when needed skipped: no restart hour was given\n",
-		"– SSH keys only skipped: add an SSH key for root or a sudo user first\n",
+		"– SSH keys only skipped: first let root or a sudo user log in over SSH with a key\n",
 		"– Block repeated login failures already on\n",
 	} {
 		if !strings.Contains(got, line) {

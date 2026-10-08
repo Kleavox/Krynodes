@@ -329,6 +329,7 @@ export function registerOperationRoutes(
         );
       }
     }
+    await db.batch(sweepStatements(db, now));
     if (kind !== "move") {
       const pending = await db
         .prepare(
@@ -339,16 +340,16 @@ export function registerOperationRoutes(
         .bind(identity.id)
         .all<{ action: string }>();
       const changing = kind === "split" || kind === "reshare";
-      if (
-        pending.results.some(
-          (row) => changing || TOKEN_CHANGES.includes(row.action),
-        )
-      ) {
+      const changed = pending.results.some((row) =>
+        TOKEN_CHANGES.includes(row.action),
+      );
+      if (changed || (changing && pending.results.length > 0)) {
         return context.json(
           {
             code: "TOKEN_BUSY",
-            message:
-              "The Cloudflare token is being changed. Try again when that finishes.",
+            message: changed
+              ? "The Cloudflare token is being changed. Try again when that finishes."
+              : "The Cloudflare token is in use for a web address. Try again when that finishes.",
           },
           409,
         );
@@ -407,7 +408,6 @@ export function registerOperationRoutes(
       }
     }
 
-    await db.batch(sweepStatements(db, now));
     const batch = createBatch(db, {
       action: steps[0]!.action,
       mode: kind === "split" ? "parallel" : "rolling",

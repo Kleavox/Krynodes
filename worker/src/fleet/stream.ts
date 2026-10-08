@@ -44,6 +44,7 @@ export interface StreamState {
   wroteNode: boolean;
   away?: boolean;
   left?: boolean;
+  diskFull?: boolean;
 }
 
 export interface Flush {

@@ -8,6 +8,19 @@ export interface StatsEnv {
 
 const MAX_AGE = 600;
 const FRESH_MS = 300_000;
+const VERSION_MS = 30_000;
+
+const versions = new WeakMap<D1Database, { at: number; value: string }>();
+
+async function currentVersion(db: D1Database, now: number): Promise<string> {
+  const known = versions.get(db);
+  if (known && now - known.at >= 0 && now - known.at < VERSION_MS) {
+    return known.value;
+  }
+  const value = await statusVersion(db);
+  versions.set(db, { at: now, value });
+  return value;
+}
 
 const CSP =
   "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
@@ -75,7 +88,7 @@ export async function serveStats(
   const now = options.now ?? Date.now();
   const key = new Request(`${url.origin}/`);
   const round = refreshRound(url);
-  const version = await statusVersion(env.DB);
+  const version = await currentVersion(env.DB, now);
   let response = await options.cache?.match(key);
   if (
     !response ||

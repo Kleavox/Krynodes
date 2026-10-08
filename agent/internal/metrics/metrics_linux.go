@@ -4,6 +4,8 @@ package metrics
 
 import (
 	"bufio"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -23,7 +25,8 @@ func collectPlatform() (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	diskUsed, diskTotal, err := readDisk("/")
+	daemon, _ := os.ReadFile("/etc/docker/daemon.json")
+	diskUsed, diskTotal, err := fullest(diskPaths(daemon), readDisk)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -114,6 +117,36 @@ func readMemory() (used int64, total int64, err error) {
 func diskUsage(blocks, free uint64, blockSize int64) (used int64, total int64) {
 	total = int64(blocks) * blockSize
 	return total - int64(free)*blockSize, total
+}
+
+var errNoDisk = errors.New("no disk could be read")
+
+func diskPaths(daemon []byte) []string {
+	paths := []string{"/", "/var/lib/docker"}
+	var config struct {
+		DataRoot string `json:"data-root"`
+	}
+	if json.Unmarshal(daemon, &config) == nil && strings.HasPrefix(config.DataRoot, "/") {
+		paths = append(paths, config.DataRoot)
+	}
+	return paths
+}
+
+func fullest(paths []string, read func(string) (int64, int64, error)) (int64, int64, error) {
+	var used, total int64
+	for _, path := range paths {
+		u, t, err := read(path)
+		if err != nil || t <= 0 {
+			continue
+		}
+		if total == 0 || float64(u)/float64(t) > float64(used)/float64(total) {
+			used, total = u, t
+		}
+	}
+	if total == 0 {
+		return 0, 0, errNoDisk
+	}
+	return used, total, nil
 }
 
 func readDisk(path string) (used int64, total int64, err error) {

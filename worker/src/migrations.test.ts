@@ -348,3 +348,30 @@ describe("migration 0022", () => {
     ).toEqual([]);
   });
 });
+
+describe("migration 0026", () => {
+  it("keeps every action and accepts removing Krynodes from a server", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0026");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "docker", "install", "done", "{}"));
+    expect(() =>
+      sqlite.exec(action("a2", "host", "server", "uninstall", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0026"));
+    sqlite.exec(action("a2", "host", "server", "uninstall", "queued", "{}"));
+    const rows = sqlite
+      .prepare("SELECT id, action FROM actions ORDER BY id")
+      .all();
+    expect(rows).toEqual([
+      { id: "a1", action: "install" },
+      { id: "a2", action: "uninstall" },
+    ]);
+    expect(() =>
+      sqlite.exec(action("a3", "host", "server", "explode", "queued", "{}")),
+    ).toThrow();
+  });
+});

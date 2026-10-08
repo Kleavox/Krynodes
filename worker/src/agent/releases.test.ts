@@ -80,6 +80,36 @@ describe("checkAgentRelease", () => {
 });
 
 describe("requestAutoUpdates", () => {
+  it("asks a fleet of 60 servers to update in one statement", async () => {
+    const { db, sqlite } = createTestDb();
+    for (let index = 0; index < 60; index++) {
+      const id = `fleet-${index}`;
+      seedNode(sqlite, { id });
+      sqlite
+        .prepare(
+          "UPDATE nodes SET agent_version = '0.1.0', auto_update = 1 WHERE id = ?",
+        )
+        .run(id);
+    }
+    let statements = 0;
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      statements += 1;
+      return prepare(sql);
+    }) as typeof db.prepare;
+    expect(
+      await requestAutoUpdates(db, "0.2.0", Date.parse("2026-09-28T08:00:00Z")),
+    ).toBe(60);
+    expect(statements).toBeLessThanOrEqual(2);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM nodes WHERE update_requested_version = '0.2.0'",
+        )
+        .get(),
+    ).toEqual({ n: 60 });
+  });
+
   it("asks only opted-in, capable, outdated and idle nodes to update", async () => {
     const { db, sqlite } = createTestDb();
     const set = sqlite.prepare(

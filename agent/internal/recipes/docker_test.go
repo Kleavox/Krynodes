@@ -59,6 +59,26 @@ func TestDockerOnDebianUsesDockersRepository(t *testing.T) {
 	}
 }
 
+func TestAFreshDockerKeepsItsLogsSmall(t *testing.T) {
+	for _, owned := range []string{"", "{\"data-root\": \"/srv/docker\"}\n"} {
+		env, run := onRelease(t, "debian 13")
+		env, _ = withFetch(env)
+		freshServer(run)
+		run.respond["dpkg --print-architecture"] = "amd64\n"
+		want := "{\"log-driver\": \"local\"}\n"
+		if owned != "" {
+			write(t, env, "/etc/docker/daemon.json", owned)
+			want = owned
+		}
+		if _, err := InstallDocker(context.Background(), env, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(env, "/etc/docker/daemon.json"); got != want {
+			t.Fatalf("daemon.json %q, want %q", got, want)
+		}
+	}
+}
+
 func TestDockerLeavesARepositoryTheOwnerAddedAlone(t *testing.T) {
 	env, run := onRelease(t, "debian 13")
 	env, fetched := withFetch(env)
@@ -114,7 +134,7 @@ func TestDockerWithoutComposeGetsOnlyThePlugin(t *testing.T) {
 		t.Fatalf("result %+v err %v", result, err)
 	}
 	mustCall(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q docker-compose-plugin")
-	if slices.Contains(run.calls, "systemctl enable --now docker") {
+	if slices.Contains(run.calls, "systemctl enable --now docker") || exists(env, "/etc/docker/daemon.json") {
 		t.Fatalf("the running Docker is left as it is: %q", run.calls)
 	}
 }

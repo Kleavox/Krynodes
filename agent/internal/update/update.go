@@ -387,7 +387,7 @@ func (o Options) install(target string, binary []byte) error {
 	current := o.BinaryPath
 	staged := current + ".new"
 	previous := current + ".previous"
-	if err := os.WriteFile(staged, binary, 0o755); err != nil {
+	if err := writeSynced(staged, binary); err != nil {
 		return fmt.Errorf("stage new binary: %w", err)
 	}
 	reported, err := o.Output(staged, "version")
@@ -405,6 +405,7 @@ func (o Options) install(target string, binary []byte) error {
 		_ = os.Rename(previous, current)
 		return fmt.Errorf("install new binary: %w", err)
 	}
+	syncDirectory(filepath.Dir(current))
 	failure := ""
 	if err := o.Run(current, "install-service"); err != nil {
 		failure = fmt.Sprintf("refresh service units: %v", err)
@@ -481,4 +482,27 @@ func isNewer(target, current string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func writeSynced(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func syncDirectory(path string) {
+	if directory, err := os.Open(path); err == nil {
+		_ = directory.Sync()
+		directory.Close()
+	}
 }

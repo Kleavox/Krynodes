@@ -65,5 +65,10 @@ describe("history", () => {
         action({ kind: "systemd", name: "nginx.service", action: "heal" }),
       ),
     ).toBe("Auto-restart nginx");
+    expect(
+      historyText(
+        action({ kind: "host", name: "server", action: "uninstall" }),
+      ),
+    ).toBe("Remove Krynodes from the server");
   });
 });

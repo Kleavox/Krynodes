@@ -55,7 +55,7 @@ export function recipeChoices(report: SecurityReport): RecipeChoice[] {
       applied,
       blocked:
         id === "ssh-keys-only" && !applied && has(report, "ssh-no-keys")
-          ? "Add an SSH key for root or a sudo user first."
+          ? "First let root or a sudo user log in over SSH with a key."
           : null,
     };
   });

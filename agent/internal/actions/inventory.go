@@ -27,6 +27,8 @@ const (
 
 var collectTimeout = 30 * time.Second
 
+var copyTimeout = 15 * time.Minute
+
 const createdLayout = "2006-01-02 15:04:05 -0700"
 
 const containerFormat = "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}\t{{.CreatedAt}}\t{{.Ports}}"
@@ -231,8 +233,15 @@ func parseContainers(output string) ([]Service, []Stack) {
 
 func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 	services, stacks, trust, docker, removed := parts.Services, parts.Stacks, parts.Trust, parts.Docker, parts.Removed
+	removed = slices.Clone(removed)
 	if removed == nil {
 		removed = []reporter.RemovedStack{}
+	}
+	slices.SortFunc(removed, func(a, b reporter.RemovedStack) int {
+		return cmp.Or(cmp.Compare(b.RemovedAt, a.RemovedAt), cmp.Compare(a.Project, b.Project))
+	})
+	if len(removed) > maxStacks {
+		removed = removed[:maxStacks]
 	}
 	sorted := slices.Clone(services)
 	if sorted == nil {

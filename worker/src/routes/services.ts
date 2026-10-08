@@ -59,6 +59,7 @@ const actionRequestSchema = z.object({
     "unlock",
     "scan",
     "install",
+    "uninstall",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -141,7 +142,7 @@ export function registerServiceRoutes(
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
                   seal_key, security, vault
-           FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL`,
+           FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
         .all<{

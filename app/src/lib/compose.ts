@@ -15,6 +15,7 @@ export interface ComposeSummary {
   devices: string[];
   privileged: string[];
   builds: string[];
+  docker: string[];
   error: string | null;
 }
 
@@ -65,6 +66,7 @@ export function summarize(text: string): ComposeSummary {
     devices: [],
     privileged: [],
     builds: [],
+    docker: [],
     error: loaded.error,
   };
   if (!loaded.services) return summary;
@@ -106,7 +108,9 @@ export function summarize(text: string): ComposeSummary {
       if (source && (source.startsWith("/") || source.startsWith("~"))) {
         add(summary.folders, source);
       }
+      if (source?.endsWith("docker.sock")) add(summary.docker, name);
     }
+    if (service.use_api_socket === true) add(summary.docker, name);
     if (service.network_mode === "host") summary.hostNetwork.push(name);
     if (list(service.devices).length > 0 || service.gpus)
       summary.devices.push(name);

@@ -264,13 +264,12 @@ export async function requestRefresh(
       (!nodeIds || nodeIds.includes(row.id)),
   );
   if (wanted.length === 0) return [];
-  const at = new Date(now).toISOString();
-  await db.batch(
-    wanted.map((row) =>
-      db
-        .prepare("UPDATE nodes SET refresh_requested_at = ? WHERE id = ?")
-        .bind(at, row.id),
-    ),
-  );
-  return wanted.map((row) => row.id);
+  const ids = wanted.map((row) => row.id);
+  await db
+    .prepare(
+      "UPDATE nodes SET refresh_requested_at = ? WHERE id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(new Date(now).toISOString(), JSON.stringify(ids))
+    .run();
+  return ids;
 }

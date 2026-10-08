@@ -15,6 +15,7 @@ import { nodeState } from "./format";
 import {
   displayName,
   groupByServer,
+  isRead,
   type ServerGroup,
   type ServiceMember,
 } from "./services";
@@ -48,7 +49,7 @@ const healthy = (group: StackGroup) =>
 function latestCompose(data: ServicesResponse) {
   const latest = new Map<string, ActionRecord>();
   for (const action of data.actions) {
-    if (action.kind === "compose" && action.action !== "logs") {
+    if (action.kind === "compose" && !isRead(action)) {
       latest.set(`${action.nodeId}|${action.name}`, action);
     }
   }
@@ -333,3 +334,9 @@ export function serverLists(
       a.node.name.localeCompare(b.node.name),
   );
 }
+
+export const moveConfirmed = (
+  original: "now" | "later" | "keep",
+  typed: string,
+  project: string,
+) => original !== "now" || typed === project;

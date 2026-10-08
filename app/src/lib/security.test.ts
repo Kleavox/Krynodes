@@ -66,7 +66,11 @@ describe("the security check on screen", () => {
     ).toEqual([
       ["security-updates", false, null],
       ["reboot-window", false, null],
-      ["ssh-keys-only", false, "Add an SSH key for root or a sudo user first."],
+      [
+        "ssh-keys-only",
+        false,
+        "First let root or a sudo user log in over SSH with a key.",
+      ],
       ["fail2ban", true, null],
       ["firewall", false, null],
     ]);

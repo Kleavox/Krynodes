@@ -17,6 +17,7 @@ type Removal struct {
 	Apps      []string
 	Problems  []string
 	Docker    string
+	Token     string
 }
 
 var turnedOff = map[string]string{
@@ -63,6 +64,12 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 			remove = "sudo dnf remove "
 		}
 		removal.Docker = "Docker stays for your apps. Krynodes installed it; remove it with: " + remove + "docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
+		if written, _ := os.ReadFile(filepath.Join(e.Root, recipes.DockerDaemon)); string(written) == recipes.DockerLogs {
+			removal.Docker += " && sudo rm " + recipes.DockerDaemon
+		}
+	}
+	if _, err := os.Stat(filepath.Join(e.StateDir, "vault.json")); err == nil {
+		removal.Token = "This server held a piece of the Cloudflare token. Unless the dashboard spread the token before this, spread it again on its Cloudflare page so enough servers keep a piece."
 	}
 	composeDir := filepath.Join(e.StateDir, "compose")
 	keepDir := filepath.Join(filepath.Dir(e.StateDir), "krynodes-stacks")

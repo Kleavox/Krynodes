@@ -162,6 +162,9 @@ func TestRefusalsRunNothingAndSayWhy(t *testing.T) {
 			if len(run.calls) != 0 || result.OK || result.ExitCode != nil || !strings.HasPrefix(result.Output, "refused: ") {
 				t.Fatalf("calls %#v result %#v", run.calls, result)
 			}
+			if label == "expired" && !strings.Contains(result.Output, "; this server's clock says ") {
+				t.Fatalf("the refusal names no clock: %s", result.Output)
+			}
 		})
 	}
 }
@@ -215,6 +218,35 @@ func TestARequestWrittenDuringARunIsNotLeftForTheTimer(t *testing.T) {
 	}
 	if !slices.Equal(run.calls, []string{"docker restart -- adguard", "systemctl stop -- nginx.service"}) {
 		t.Fatalf("unexpected calls %#v", run.calls)
+	}
+}
+
+func TestALongRunLeavesNewRequestsForTheNextRun(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	now := executorNow
+	executor.Now = func() time.Time { return now }
+	writeRequest(t, executor.RequestDir, idA+".json", request(t, idA, "docker", "adguard", "restart", executorNow.Add(time.Minute)))
+	c := *testSigner(t)
+	c.command.ID, c.command.Kind, c.command.Name, c.command.Action = idB, "systemd", "nginx.service", "stop"
+	c.command.ExpiresAt = executorNow.Add(time.Hour).Format(time.RFC3339Nano)
+	later := c.request(t)
+	later.ID, later.Kind, later.Name, later.Action, later.ExpiresAt = idB, "systemd", "nginx.service", "stop", executorNow.Add(time.Hour).Format(time.RFC3339Nano)
+	writeRequest(t, executor.RequestDir, idB+".json", later)
+	run.during = func() { now = now.Add(21 * time.Minute) }
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(run.calls, []string{"docker restart -- adguard"}) {
+		t.Fatalf("a run past its budget must not start more: %q", run.calls)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "results", idB+".json")); err == nil {
+		t.Fatal("the request left for the next run has no result yet")
+	}
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, executor, idB); !result.OK || run.calls[len(run.calls)-1] != "systemctl stop -- nginx.service" {
+		t.Fatalf("the next run takes it: %#v %q", result, run.calls)
 	}
 }
 
@@ -504,6 +536,7 @@ func TestASignatureForAnotherActionIsRefused(t *testing.T) {
 func TestARestartOfTheServerIsReportedBeforeItReboots(t *testing.T) {
 	executor, run := newTrustedExecutor(t)
 	writeRequest(t, executor.RequestDir, idA+".json", request(t, idA, "host", "server", "reboot", executorNow.Add(time.Minute)))
+	run.respond = map[string]string{"systemctl is-active krynodes-host.service": "inactive\n"}
 	resultWritten := false
 	run.during = func() {
 		_, err := os.Stat(filepath.Join(executor.StateDir, "results", idA+".json"))
@@ -516,9 +549,86 @@ func TestARestartOfTheServerIsReportedBeforeItReboots(t *testing.T) {
 	if !result.OK || result.Output != "restarting the server" {
 		t.Fatalf("result %+v", result)
 	}
-	if !slices.Equal(run.calls, []string{"systemctl reboot --no-block"}) || !resultWritten {
+	if !slices.Equal(run.calls, []string{"systemctl is-active krynodes-host.service", "systemctl reboot --no-block"}) || !resultWritten {
 		t.Fatalf("calls %q, result written first: %v", run.calls, resultWritten)
 	}
+}
+
+func TestRemovingKrynodesIsScheduledBeforeItIsReported(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	result := runRequest(t, executor, request(t, idA, "host", "server", "uninstall", executorNow.Add(time.Minute)))
+	if !result.OK || result.Output != "Krynodes leaves this server in 30 seconds; its apps keep running" {
+		t.Fatalf("result %+v", result)
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"systemctl is-active krynodes-host.service", "systemd-run --unit krynodes-uninstall-" + idA[:8] + " --on-active=30 --collect -- " + binary + " uninstall-service"}
+	if !slices.Equal(run.calls, want) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestAFailedSchedulingIsReportedAndNothingLeaves(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	run.failing = map[string]string{}
+	binary, _ := os.Executable()
+	run.failing["systemd-run --unit krynodes-uninstall-"+idA[:8]+" --on-active=30 --collect -- "+binary+" uninstall-service"] = "Failed to connect to bus"
+	result := runRequest(t, executor, request(t, idA, "host", "server", "uninstall", executorNow.Add(time.Minute)))
+	if result.OK || !strings.Contains(result.Output, "Failed to connect to bus") {
+		t.Fatalf("result %+v", result)
+	}
+}
+
+func TestRestartAndRemovalWaitForHostWork(t *testing.T) {
+	for _, verb := range []string{"reboot", "uninstall"} {
+		for _, busy := range []string{"queued", "running"} {
+			executor, run := newTrustedExecutor(t)
+			run.respond = map[string]string{}
+			if busy == "queued" {
+				if err := writeJSON(filepath.Join(executor.StateDir, "host"), idB+".json", map[string]string{"id": idB}, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				run.respond["systemctl is-active krynodes-host.service"] = "activating\n"
+			}
+			result := runRequest(t, executor, request(t, idA, "host", "server", verb, executorNow.Add(time.Minute)))
+			if result.OK || result.Output != "refused: Krynodes is still changing this server; try again when that finishes" {
+				t.Fatalf("%s while %s: %+v", verb, busy, result)
+			}
+			for _, call := range run.calls {
+				if strings.HasPrefix(call, "systemd-run") || strings.HasPrefix(call, "systemctl reboot") {
+					t.Fatalf("%s while %s ran %q", verb, busy, call)
+				}
+			}
+		}
+	}
+}
+
+func TestAHostRequestLeftBehindLongAgoBlocksNothing(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	run.respond = map[string]string{"systemctl is-active krynodes-host.service": "inactive\n"}
+	queued := filepath.Join(executor.StateDir, "host", idB+".json")
+	if err := writeJSON(filepath.Dir(queued), idB+".json", map[string]string{"id": idB}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := executorNow.Add(-2 * time.Hour)
+	if err := os.Chtimes(queued, old, old); err != nil {
+		t.Fatal(err)
+	}
+	result := runRequest(t, executor, request(t, idA, "host", "server", "reboot", executorNow.Add(time.Minute)))
+	if !result.OK || !slices.Contains(run.calls, "systemctl reboot --no-block") {
+		t.Fatalf("a request left behind two hours ago is not work in progress: %+v %q", result, run.calls)
+	}
+}
+
+func TestAnUnsignedRemovalOfKrynodesIsRefused(t *testing.T) {
+	executor, run := newTrustedExecutor(t)
+	unsigned := request(t, idA, "host", "server", "uninstall", executorNow.Add(time.Minute))
+	unsigned.Signed = nil
+	writeRequest(t, executor.RequestDir, idA+".json", unsigned)
+	refusedWithoutRunning(t, executor, run, "refused: the request is not signed")
 }
 
 func TestAnUnsignedServerRestartIsRefused(t *testing.T) {

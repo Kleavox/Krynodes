@@ -232,6 +232,36 @@ describe("refresh and eligibility", () => {
     ]);
   });
 
+  it("asks a fleet of 60 servers in one statement", async () => {
+    const { db, sqlite } = setup();
+    for (let index = 0; index < 60; index++) {
+      const id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+      seedNode(sqlite, { id });
+      sqlite
+        .prepare(
+          "UPDATE nodes SET agent_version = '0.6.0', last_seen_at = ? WHERE id = ?",
+        )
+        .run(SEEN, id);
+    }
+    let statements = 0;
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      statements += 1;
+      return prepare(sql);
+    }) as typeof db.prepare;
+    expect(await requestRefresh(db, "standalone", undefined, NOW)).toHaveLength(
+      61,
+    );
+    expect(statements).toBeLessThanOrEqual(2);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM nodes WHERE refresh_requested_at IS NULL",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+
   it("still asks a server whose row is a few minutes old", async () => {
     const { db, sqlite } = setup();
     sqlite

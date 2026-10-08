@@ -5,6 +5,7 @@ interface CheckChange {
   summary: string;
   occurredAt: string;
   healing?: boolean;
+  disk?: boolean;
 }
 
 const COLOR = {
@@ -137,35 +138,88 @@ const names = (changes: CheckChange[]) =>
 const plural = (count: number, word: string) =>
   `${count} ${word}${count === 1 ? "" : "s"}`;
 
+function serverParts(changes: CheckChange[]) {
+  const full = changes.find((change) => change.disk);
+  const offline = changes.find(
+    (change) => change.checkName === null && !change.disk,
+  );
+  const down = changes.filter((change) => change.checkName !== null);
+  const parts = [
+    ...(offline ? ["offline"] : []),
+    ...(full ? [`disk ${full.summary}`] : []),
+    ...(down.length > 0
+      ? [`${plural(down.length, "check")} down — ${names(down)}`]
+      : []),
+  ];
+  return { full, offline, down, parts };
+}
+
+export async function sendFleetEmail(
+  env: Env,
+  servers: { nodeName: string; down: CheckChange[] }[],
+): Promise<void> {
+  const listed = servers.map((server) => ({
+    name: server.nodeName,
+    ...serverParts(server.down),
+  }));
+  const allOffline = listed.every(
+    (server) => server.offline && server.parts.length === 1,
+  );
+  const heading = `${plural(listed.length, "server")} ${allOffline ? "offline" : "need a look"}`;
+  const intro = allOffline
+    ? "These servers stopped reporting at the same time. When many go at once, the cause is often their network or provider."
+    : "These servers went offline, filled their disk or have checks that kept failing.";
+  await deliver(env, {
+    title: `[Krynodes] ${heading}`,
+    preheader: intro,
+    badge: { label: allOffline ? "Offline" : "Down", color: COLOR.destructive },
+    heading,
+    intro,
+    rows: listed.map((server): [string, string] => [
+      server.name,
+      server.parts.join(" · "),
+    ]),
+    action: {
+      label: "Open the fleet",
+      href: new URL("/", env.PUBLIC_ORIGIN).toString(),
+    },
+  });
+}
+
 export async function sendServerEmail(
   env: Env,
   message: { nodeId: string; nodeName: string; down: CheckChange[] },
 ): Promise<void> {
   const { nodeId, nodeName } = message;
-  const offline = message.down.find((change) => change.checkName === null);
-  const down = message.down.filter((change) => change.checkName !== null);
-  const parts = [
-    ...(offline ? ["offline"] : []),
-    ...(down.length > 0
-      ? [`${plural(down.length, "check")} down — ${names(down)}`]
-      : []),
-  ];
+  const { full, offline, down, parts } = serverParts(message.down);
   const heading = `${nodeName}: ${parts.join(" · ")}`;
   const intro = offline
     ? `${nodeName} stopped reporting. Its checks cannot run until it is back.`
-    : `Checks on ${nodeName} kept failing and opened incidents.`;
+    : down.length > 0
+      ? `Checks on ${nodeName} kept failing and opened incidents.`
+      : `The disk on ${nodeName} is almost full. Services start failing when it runs out.`;
   await deliver(env, {
     title: `[Krynodes] ${heading}`,
     preheader: intro,
     badge: offline
       ? { label: "Offline", color: COLOR.destructive }
-      : { label: "Down", color: COLOR.destructive },
+      : down.length > 0
+        ? { label: "Down", color: COLOR.destructive }
+        : { label: "Disk", color: COLOR.destructive },
     heading,
     intro,
     rows: [
       ["Server", nodeName],
       ...(offline
         ? [["Last report", utcTime(offline.occurredAt)] as [string, string]]
+        : []),
+      ...(full
+        ? [
+            ["Disk", `${full.summary} · since ${utcTime(full.occurredAt)}`] as [
+              string,
+              string,
+            ],
+          ]
         : []),
       ...down.map((change): [string, string] => [
         change.checkName ?? nodeName,

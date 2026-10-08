@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -66,10 +68,38 @@ func (e Env) write(name, body string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(full, []byte(body), mode); err != nil {
+	temporary := full + ".krynodes.save"
+	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
 		return err
 	}
-	return os.Chmod(full, mode)
+	if _, err := file.WriteString(body); err != nil {
+		file.Close()
+		os.Remove(temporary)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		os.Remove(temporary)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(temporary)
+		return err
+	}
+	if err := os.Chmod(temporary, mode); err != nil {
+		os.Remove(temporary)
+		return err
+	}
+	if err := os.Rename(temporary, full); err != nil {
+		os.Remove(temporary)
+		return err
+	}
+	if directory, err := os.Open(filepath.Dir(full)); err == nil {
+		directory.Sync()
+		directory.Close()
+	}
+	return nil
 }
 
 func (e Env) remove(name string) error {
@@ -77,6 +107,16 @@ func (e Env) remove(name string) error {
 		return err
 	}
 	return nil
+}
+
+func (e Env) takeBack(ctx context.Context, err error, fresh, file string) error {
+	e.remove(file)
+	if packages := strings.Fields(fresh); len(packages) > 0 {
+		if back := e.purge(ctx, packages...); back != nil {
+			return fmt.Errorf("%w; removing %s again also failed: %v", err, fresh, back)
+		}
+	}
+	return err
 }
 
 func installed(fresh string) map[string]string {
@@ -94,42 +134,162 @@ func lines(path string) []string {
 	return strings.Split(string(body), "\n")
 }
 
-func KeyedUsers(env Env) []string {
-	admins := map[string]bool{}
+type account struct{ name, uid, home string }
+
+func admins(env Env) []account {
+	sudoers := map[string]bool{}
 	for _, line := range lines(env.path("/etc/group")) {
 		fields := strings.Split(line, ":")
 		if len(fields) == 4 && (fields[0] == "sudo" || fields[0] == "wheel") {
 			for member := range strings.SplitSeq(fields[3], ",") {
-				admins[strings.TrimSpace(member)] = true
+				sudoers[strings.TrimSpace(member)] = true
 			}
 		}
 	}
-	var users []string
+	var found []account
 	for _, line := range lines(env.path("/etc/passwd")) {
 		fields := strings.Split(line, ":")
 		if len(fields) != 7 || strings.HasSuffix(fields[6], "nologin") || strings.HasSuffix(fields[6], "false") {
 			continue
 		}
-		if fields[2] != "0" && !admins[fields[0]] {
-			continue
-		}
-		if slices.ContainsFunc(lines(env.path(filepath.ToSlash(filepath.Join(fields[5], ".ssh", "authorized_keys")))), func(key string) bool {
-			return keyLine.MatchString(strings.TrimSpace(key))
-		}) {
-			users = append(users, fields[0])
+		if fields[2] == "0" || sudoers[fields[0]] {
+			found = append(found, account{fields[0], fields[2], fields[5]})
 		}
 	}
-	slices.Sort(users)
-	return users
+	slices.SortFunc(found, func(a, b account) int { return strings.Compare(a.name, b.name) })
+	return found
+}
+
+func (e Env) hasKey(files []string) bool {
+	return slices.ContainsFunc(files, func(file string) bool {
+		return slices.ContainsFunc(lines(e.path(file)), func(key string) bool {
+			return keyLine.MatchString(strings.TrimSpace(key))
+		})
+	})
+}
+
+func keyFiles(patterns []string, user, uid, home string) []string {
+	if len(patterns) == 0 {
+		patterns = []string{".ssh/authorized_keys", ".ssh/authorized_keys2"}
+	}
+	tokens := strings.NewReplacer("%%", "%", "%h", home, "%u", user, "%U", uid)
+	var files []string
+	for _, pattern := range patterns {
+		if pattern == "none" {
+			continue
+		}
+		file := tokens.Replace(pattern)
+		if !strings.HasPrefix(file, "/") {
+			file = strings.TrimSuffix(home, "/") + "/" + file
+		}
+		files = append(files, file)
+	}
+	return files
+}
+
+func sshSettings(ctx context.Context, env Env, connection ...string) map[string][]string {
+	settings := map[string][]string{}
+	if output, err := env.output(ctx, "sshd", append([]string{"-T"}, connection...)...); err == nil {
+		for line := range strings.SplitSeq(output, "\n") {
+			if fields := strings.Fields(line); len(fields) > 1 {
+				settings[fields[0]] = append(settings[fields[0]], fields[1:]...)
+			}
+		}
+	}
+	return settings
+}
+
+func keyLogin(settings map[string][]string) bool {
+	if values := settings["pubkeyauthentication"]; len(values) > 0 && values[0] == "no" {
+		return false
+	}
+	methods := settings["authenticationmethods"]
+	return len(methods) == 0 || methods[0] == "any" || slices.ContainsFunc(methods, func(list string) bool {
+		return !slices.ContainsFunc(strings.Split(list, ","), func(method string) bool { return method != "publickey" })
+	})
+}
+
+func SSHLogins(ctx context.Context, env Env) []string {
+	global := sshSettings(ctx, env)
+	names := map[string]string{}
+	members := map[string][]string{}
+	for _, line := range lines(env.path("/etc/group")) {
+		if fields := strings.Split(line, ":"); len(fields) == 4 {
+			names[fields[2]] = fields[0]
+			for member := range strings.SplitSeq(fields[3], ",") {
+				members[strings.TrimSpace(member)] = append(members[strings.TrimSpace(member)], fields[0])
+			}
+		}
+	}
+	for _, line := range lines(env.path("/etc/passwd")) {
+		if fields := strings.Split(line, ":"); len(fields) == 7 && names[fields[3]] != "" {
+			members[fields[0]] = append(members[fields[0]], names[fields[3]])
+		}
+	}
+	matches := func(patterns []string, value string) bool {
+		return slices.ContainsFunc(patterns, func(pattern string) bool {
+			user, _, _ := strings.Cut(pattern, "@")
+			found, _ := path.Match(user, value)
+			return found
+		})
+	}
+	inGroup := func(patterns []string, user string) bool {
+		return slices.ContainsFunc(members[user], func(group string) bool { return matches(patterns, group) })
+	}
+	logins := []string{}
+	for _, account := range admins(env) {
+		user := account.name
+		settings := global
+		if !strings.ContainsAny(user, ",= ") {
+			if own := sshSettings(ctx, env, "-C", "user="+user+",host=krynodes.invalid,addr=192.0.2.1"); len(own) > 0 {
+				settings = own
+			}
+		}
+		if !keyLogin(settings) || !env.hasKey(keyFiles(settings["authorizedkeysfile"], user, account.uid, account.home)) {
+			continue
+		}
+		root := "prohibit-password"
+		if values := settings["permitrootlogin"]; len(values) > 0 {
+			root = values[0]
+		}
+		switch {
+		case user == "root" && root != "yes" && root != "prohibit-password" && root != "without-password":
+		case matches(settings["denyusers"], user):
+		case len(settings["allowusers"]) > 0 && !matches(settings["allowusers"], user):
+		case inGroup(settings["denygroups"], user):
+		case len(settings["allowgroups"]) > 0 && !inGroup(settings["allowgroups"], user):
+		default:
+			logins = append(logins, user)
+		}
+	}
+	return logins
 }
 
 func sshPorts(ctx context.Context, env Env) []string {
-	output, err := env.output(ctx, "sshd", "-T")
 	ports := []string{}
-	if err == nil {
+	add := func(address string) {
+		port := address[strings.LastIndex(address, ":")+1:]
+		if number, err := strconv.Atoi(port); err == nil && number > 0 && number < 65536 && !slices.Contains(ports, port+"/tcp") {
+			ports = append(ports, port+"/tcp")
+		}
+	}
+	if output, err := env.output(ctx, "sshd", "-T"); err == nil {
 		for line := range strings.SplitSeq(output, "\n") {
-			if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "port" && !slices.Contains(ports, fields[1]+"/tcp") {
-				ports = append(ports, fields[1]+"/tcp")
+			if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "port" {
+				add(fields[1])
+			}
+		}
+	}
+	for _, unit := range []string{"ssh.socket", "sshd.socket"} {
+		output, _ := env.output(ctx, "systemctl", "show", unit, "-p", "Listen", "--value")
+		for _, field := range strings.Fields(output) {
+			add(field)
+		}
+	}
+	if output, err := env.output(ctx, "ss", "-H", "-tulnp"); err == nil {
+		for line := range strings.SplitSeq(output, "\n") {
+			if fields := strings.Fields(line); len(fields) > 6 && fields[0] == "tcp" && strings.Contains(fields[6], `(("sshd"`) {
+				add(fields[4])
 			}
 		}
 	}
@@ -173,23 +333,30 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		if err != nil {
 			return nil, err
 		}
-		return installed(fresh), env.write(autoUpgrades, "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n", 0o644)
+		if err := env.write(autoUpgrades, "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n", 0o644); err != nil {
+			return nil, env.takeBack(ctx, err, fresh, autoUpgrades)
+		}
+		return installed(fresh), nil
 	case "ssh-keys-only":
-		if len(KeyedUsers(env)) == 0 {
-			return nil, errors.New("no SSH key is set up for root or a sudo user; add one before turning passwords off")
+		if len(SSHLogins(ctx, env)) == 0 {
+			return nil, errors.New("no SSH key lets root or a sudo user log in; add one before turning passwords off")
 		}
 		config, _ := os.ReadFile(env.path("/etc/ssh/sshd_config"))
 		if !includeConf.Match(config) {
 			return nil, errors.New("this server's SSH does not read /etc/ssh/sshd_config.d; change it by hand")
 		}
-		if err := env.write(sshDropIn, "PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n", 0o644); err != nil {
+		if err := env.write(sshDropIn, "PasswordAuthentication no\nKbdInteractiveAuthentication no\n", 0o644); err != nil {
 			return nil, err
 		}
 		if err := env.run(ctx, "sshd", "-t"); err != nil {
 			env.remove(sshDropIn)
 			return nil, err
 		}
-		return nil, reloadSSH(ctx, env)
+		if err := reloadSSH(ctx, env); err != nil {
+			env.remove(sshDropIn)
+			return nil, err
+		}
+		return nil, nil
 	case "fail2ban":
 		var fresh string
 		var err error
@@ -202,12 +369,15 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 			return nil, err
 		}
 		if err := env.write(jail, "[sshd]\nenabled = true\nbackend = systemd\n", 0o644); err != nil {
-			return nil, err
+			return nil, env.takeBack(ctx, err, fresh, jail)
 		}
 		if err := env.run(ctx, "systemctl", "enable", "--now", "fail2ban"); err != nil {
-			return nil, err
+			return nil, env.takeBack(ctx, err, fresh, jail)
 		}
-		return installed(fresh), env.run(ctx, "systemctl", "restart", "fail2ban")
+		if err := env.run(ctx, "systemctl", "restart", "fail2ban"); err != nil {
+			return nil, env.takeBack(ctx, err, fresh, jail)
+		}
+		return installed(fresh), nil
 	case "firewall":
 		return firewall(ctx, env, args["ports"])
 	case "free-port-53":
@@ -269,22 +439,40 @@ func freePort53(ctx context.Context, env Env) (map[string]string, error) {
 	if err := env.run(ctx, "systemctl", "is-active", "--quiet", "systemd-resolved"); err != nil {
 		return nil, errors.New("port 53 is not held by systemd-resolved on this server")
 	}
+	upstream, _ := os.ReadFile(env.path(fullResolver))
+	if !slices.ContainsFunc(strings.Split(string(upstream), "\n"), func(line string) bool {
+		fields := strings.Fields(line)
+		return len(fields) > 1 && fields[0] == "nameserver" && !strings.HasPrefix(fields[1], "127.")
+	}) {
+		return nil, errors.New("systemd-resolved knows no DNS server to ask; freeing port 53 would leave this server without DNS")
+	}
 	saved := map[string]string{}
 	if link, err := os.Readlink(env.path(resolvConf)); err == nil {
 		saved["link"] = link
 	} else if body, err := os.ReadFile(env.path(resolvConf)); err == nil {
 		saved["file"] = string(body)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("%s cannot be read, so it could not be put back: %w", resolvConf, err)
+	}
+	fail := func(err error) (map[string]string, error) {
+		if back := undo(ctx, env, "free-port-53", saved); back != nil {
+			err = fmt.Errorf("%w; putting DNS back also failed: %v", err, back)
+		}
+		return nil, err
 	}
 	if err := env.write(stubDropIn, "[Resolve]\nDNSStubListener=no\n", 0o644); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	if err := env.remove(resolvConf); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	if err := os.Symlink(fullResolver, env.path(resolvConf)); err != nil {
-		return nil, err
+		return fail(err)
 	}
-	return saved, env.run(ctx, "systemctl", "restart", "systemd-resolved")
+	if err := env.run(ctx, "systemctl", "restart", "systemd-resolved"); err != nil {
+		return fail(err)
+	}
+	return saved, nil
 }
 
 func Undo(ctx context.Context, env Env, id string, saved map[string]string) error {
@@ -339,13 +527,12 @@ func undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 		if err := env.remove(resolvConf); err != nil {
 			return err
 		}
-		switch {
-		case saved["link"] != "":
-			if err := os.Symlink(saved["link"], env.path(resolvConf)); err != nil {
+		if body, ok := saved["file"]; ok {
+			if err := env.write(resolvConf, body, 0o644); err != nil {
 				return err
 			}
-		case saved["file"] != "":
-			if err := env.write(resolvConf, saved["file"], 0o644); err != nil {
+		} else if saved["link"] != "" {
+			if err := os.Symlink(saved["link"], env.path(resolvConf)); err != nil {
 				return err
 			}
 		}

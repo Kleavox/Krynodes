@@ -251,7 +251,7 @@ func TestAnExpiredChangeIsRefused(t *testing.T) {
 	c.body["expiresAt"] = testNow.Add(-2 * time.Minute).Format(time.RFC3339Nano)
 	c.body["issuedAt"] = testNow.Add(-time.Hour).Format(time.RFC3339Nano)
 	_, err := apply(t, storeOf(found, []string{"a"}, []string{"a"}), c)
-	refused(t, err, "expired")
+	refused(t, err, "the change expired at 29 Sep 09:58:00 UTC; this server's clock says 29 Sep 10:00:00 UTC")
 }
 
 func TestAChangeLongerThanADayIsRefused(t *testing.T) {

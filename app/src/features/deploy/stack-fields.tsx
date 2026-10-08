@@ -170,6 +170,8 @@ export function FullAccessSummary({ text }: { text: string }) {
       `Runs privileged: ${summary.privileged.join(", ")}`,
     summary.builds.length > 0 &&
       `Builds on the server: ${summary.builds.join(", ")}`,
+    summary.docker.length > 0 &&
+      `Controls Docker, which is root on the server: ${summary.docker.join(", ")}`,
   ].filter(Boolean) as string[];
   const dns = summary.internet.some((port) => port.startsWith("53/"));
   return (

@@ -19,6 +19,12 @@
     ["systemd", "serial-getty@ttyS0.service"],
     ["systemd", "user@1000.service"],
     ["systemd", "snap.docker.dockerd.service"],
+    ["systemd", "ufw.service"],
+    ["systemd", "firewalld.service"],
+    ["systemd", "nftables.service"],
+    ["systemd", "netfilter-persistent.service"],
+    ["systemd", "iptables.service"],
+    ["systemd", "ip6tables.service"],
     ["docker", "krynodes-tunnel"]
   ],
   "allowed": [

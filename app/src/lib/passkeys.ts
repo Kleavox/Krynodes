@@ -1,4 +1,5 @@
 import type { ActionKind } from "../types";
+import { serverNow } from "./http";
 
 export const SESSION_MS = 5 * 60_000;
 const COMMAND_GRACE_MS = 60 * 60_000;
@@ -26,6 +27,7 @@ export interface Session {
   grant: SignedGrant;
   issuedAt: number;
   expiresAt: number;
+  offset: number;
 }
 
 export interface DeviceInput {
@@ -229,13 +231,14 @@ export async function createSession(
   );
   const spki = await crypto.subtle.exportKey("spki", pair.publicKey);
   const expiresAt = now + SESSION_MS;
+  const offset = serverNow(now) - now;
   const grantBytes = encoder.encode(
     JSON.stringify({
       v: 1,
       rpId,
       sessionKey: b64url(spki),
-      issuedAt: iso(now),
-      expiresAt: iso(expiresAt),
+      issuedAt: iso(now + offset),
+      expiresAt: iso(expiresAt + offset),
       nonce: b64url(random(16)),
     }),
   );
@@ -245,6 +248,7 @@ export async function createSession(
     grant: { grant: b64url(grantBytes), ...approval },
     issuedAt: now,
     expiresAt,
+    offset,
   };
 }
 
@@ -271,8 +275,8 @@ export function actionCommand(
     kind: target.kind,
     name: target.name,
     action: target.action,
-    issuedAt: iso(now),
-    expiresAt: iso(session.expiresAt + COMMAND_GRACE_MS),
+    issuedAt: iso(now + session.offset),
+    expiresAt: iso(session.expiresAt + session.offset + COMMAND_GRACE_MS),
     ...(target.compose ? { compose: target.compose } : {}),
     ...(target.access ? { access: target.access } : {}),
     ...(target.secrets ? { secrets: target.secrets } : {}),
@@ -309,7 +313,7 @@ export async function signIntent(
     v: 1,
     op,
     target,
-    at: iso(now),
+    at: iso(now + session.offset),
     origin,
   });
   return b64url(encoder.encode(JSON.stringify(signed)));

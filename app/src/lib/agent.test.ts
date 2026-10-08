@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { agentState } from "./agent";
+import type { DeviceRecord } from "../types";
+import { agentState, removalReady } from "./agent";
 
 const NOW = Date.parse("2026-09-28T12:00:00Z");
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -59,5 +60,32 @@ describe("agentState", () => {
     expect(agentState(node("0.5.2", "0.5.2", ago(60)), "0.5.3", NOW)).toBe(
       "available",
     );
+  });
+});
+
+describe("removing Krynodes from a server with Delete node", () => {
+  const laptop = {
+    id: "laptop",
+    fingerprint: "aaaaaaaaaaaaaaaa",
+  } as DeviceRecord;
+  const server = (version: string | null, minutesAgo = 0) => ({
+    agent_version: version,
+    disabled_at: null,
+    enrolled_at: ago(600),
+    last_seen_at: ago(minutesAgo),
+    interval_seconds: 60,
+  });
+  const trust = { version: 1, core: [], access: [laptop.fingerprint] };
+
+  it("needs an online server on agent 0.6.2 or newer that a device can sign for", () => {
+    expect(removalReady(server("0.6.2"), trust, [laptop], NOW)).toBe(true);
+    expect(removalReady(server("0.7.0"), trust, [laptop], NOW)).toBe(true);
+    expect(removalReady(server("0.6.1"), trust, [laptop], NOW)).toBe(false);
+    expect(removalReady(server("dev"), trust, [laptop], NOW)).toBe(false);
+    expect(removalReady(server("0.6.2", 10), trust, [laptop], NOW)).toBe(false);
+    expect(removalReady(server("0.6.2"), null, [laptop], NOW)).toBe(false);
+    expect(
+      removalReady(server("0.6.2"), { ...trust, access: [] }, [laptop], NOW),
+    ).toBe(false);
   });
 });

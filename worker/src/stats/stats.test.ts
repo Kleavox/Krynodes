@@ -801,6 +801,30 @@ describe("serveStats", () => {
     expect(await head.text()).toBe("");
   });
 
+  it("asks the database at most twice a minute while the page is busy", async () => {
+    const { db, sqlite } = fleet();
+    publish(sqlite, "a", { name: "Website" });
+    const cache = memoryCache();
+    const env = { DB: db, STATS_RATE_LIMIT: ALLOW };
+    await serveStats(new Request("https://stats.test/"), env, {
+      now: NOW,
+      cache,
+    });
+    const statements = recordStatements(sqlite);
+    for (let index = 1; index <= 20; index++) {
+      await serveStats(new Request("https://stats.test/"), env, {
+        now: NOW + index * 1_000,
+        cache,
+      });
+    }
+    expect(statements).toHaveLength(0);
+    await serveStats(new Request("https://stats.test/"), env, {
+      now: NOW + 31_000,
+      cache,
+    });
+    expect(statements).toHaveLength(1);
+  });
+
   it("re-renders at once when a public check changes or a new one is published", async () => {
     const { db, sqlite } = fleet();
     publish(sqlite, "a", { name: "Website" });

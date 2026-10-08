@@ -21,9 +21,11 @@ type DockerResult struct {
 }
 
 const (
-	dockerKey  = "/etc/apt/keyrings/docker.asc"
-	dockerList = "/etc/apt/sources.list.d/docker.list"
-	dockerRepo = "/etc/yum.repos.d/docker-ce.repo"
+	dockerKey    = "/etc/apt/keyrings/docker.asc"
+	dockerList   = "/etc/apt/sources.list.d/docker.list"
+	dockerRepo   = "/etc/yum.repos.d/docker-ce.repo"
+	DockerDaemon = "/etc/docker/daemon.json"
+	DockerLogs   = "{\"log-driver\": \"local\"}\n"
 )
 
 var dockerPackages = []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"}
@@ -82,6 +84,10 @@ func InstallDocker(ctx context.Context, env Env, args map[string]string) (Docker
 	packages := dockerPackages
 	if missing == nil {
 		packages = []string{"docker-compose-plugin"}
+	} else if _, err := os.Stat(env.path(DockerDaemon)); errors.Is(err, os.ErrNotExist) {
+		if err := env.write(DockerDaemon, DockerLogs, 0o644); err != nil {
+			return DockerResult{}, err
+		}
 	}
 	if _, err := env.install(ctx, packages...); err != nil {
 		return DockerResult{}, err

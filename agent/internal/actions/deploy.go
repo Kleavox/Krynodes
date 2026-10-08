@@ -91,6 +91,9 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
+	if slices.Contains(startVerbs, request.Action) && e.lockedDown() {
+		return e.refuse(request.ID, errLockedDown)
+	}
 	if request.Action == "create" {
 		return e.create(ctx, request, command, snapshot)
 	}
@@ -113,6 +116,11 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 		return e.refuse(request.ID, err)
 	}
 	stack.Files = files
+	if request.Action == "deploy" || request.Action == "rollback" {
+		if err := e.stillContained(ctx, stack.Directory); err != nil {
+			return e.refuse(request.ID, err)
+		}
+	}
 	switch request.Action {
 	case "deploy":
 		return e.deploy(ctx, request, stack)

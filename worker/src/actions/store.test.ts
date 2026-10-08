@@ -10,6 +10,7 @@ import {
   DELIVER_SQL,
   deliverActions,
   EXPIRE_SQL,
+  inMaintenance,
   sweepStatements,
   type BatchMode,
 } from "./store";
@@ -95,6 +96,82 @@ describe("action batches", () => {
     expect(status(first!.id)).toBe("sent");
     expect(await deliverActions(db, A, NOW)).toEqual([]);
     expect(status(second!.id)).toBe("queued");
+  });
+
+  it("hands a server at most half a megabyte of actions at once, and a larger one alone", async () => {
+    const { db, sqlite } = setup();
+    const batch = createBatch(db, {
+      action: "restart",
+      mode: "parallel",
+      targets: ["one", "two", "three", "four"].map((name) => ({
+        nodeId: A,
+        kind: "docker" as const,
+        name,
+      })),
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    const sizes = [200_000, 200_000, 200_000, 600_000];
+    batch.actions.forEach((action, index) =>
+      sqlite
+        .prepare("UPDATE actions SET attachment = ? WHERE id = ?")
+        .run("x".repeat(sizes[index]!), action.id),
+    );
+    const names = async () =>
+      (await deliverActions(db, A, NOW)).map((action) => action.name);
+    expect(await names()).toEqual(["one", "two"]);
+    expect(await names()).toEqual(["three"]);
+    expect(await names()).toEqual(["four"]);
+  });
+
+  it("marks a server Krynodes left as disabled, so it is never mailed as offline", async () => {
+    const { db, sqlite } = setup();
+    const removal = (nodeId: string, id: string) =>
+      createBatch(db, {
+        action: "uninstall",
+        mode: "parallel",
+        targets: [
+          {
+            id,
+            nodeId,
+            kind: "host",
+            name: "server",
+            signed: { grant: { grant: "Zw" }, command: "Yw", signature: "cw" },
+          },
+        ],
+        requestedBy: "owner@example.test",
+        now: NOW,
+      });
+    const left = "88888888-8888-4888-8888-888888888888";
+    const stayed = "99999999-9999-4999-8999-999999999999";
+    await db.batch([
+      ...removal(A, left).statements,
+      ...removal(B, stayed).statements,
+    ]);
+    await deliverActions(db, A, NOW);
+    await deliverActions(db, B, NOW);
+    const report = (nodeId: string, id: string, ok: boolean) =>
+      actionResultStatements(
+        db,
+        nodeId,
+        [{ id, ok, exitCode: null, output: "x", finishedAt: iso(NOW) }],
+        NOW + MINUTE,
+      );
+    await db.batch([
+      ...(await report(A, left, true)),
+      ...(await report(B, stayed, false)),
+    ]);
+    const disabled = (id: string) =>
+      (
+        sqlite
+          .prepare("SELECT disabled_at FROM nodes WHERE id = ?")
+          .get(id) as {
+          disabled_at: string | null;
+        }
+      ).disabled_at;
+    expect(disabled(A)).not.toBeNull();
+    expect(disabled(B)).toBeNull();
   });
 
   it("gives the next server its turn once the previous one is done", async () => {
@@ -344,7 +421,7 @@ describe("action batches", () => {
     expect(delivered).not.toHaveProperty("signed");
   });
 
-  it("abandons a compose action after 30 minutes and a restart after 15", async () => {
+  it("abandons a compose or server action after an hour and a restart after 15", async () => {
     const { db, sqlite, queue, sweep, status } = setup();
     const { actions } = await queue("parallel", [A]);
     const deploy = createBatch(db, {
@@ -363,15 +440,66 @@ describe("action batches", () => {
       now: NOW,
     });
     await db.batch(deploy.statements);
+    const install = createBatch(db, {
+      action: "install",
+      mode: "parallel",
+      targets: [
+        {
+          id: "77777777-7777-4777-8777-777777777777",
+          nodeId: C,
+          kind: "host",
+          name: "docker",
+          signed: { grant: { grant: "Zw" }, command: "Yw", signature: "cw" },
+        },
+      ],
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(install.statements);
     await deliverActions(db, A, NOW);
     await deliverActions(db, B, NOW);
+    await deliverActions(db, C, NOW);
     await sweep(NOW + 16 * MINUTE);
     expect(status(actions[0]!.id)).toBe("failed");
     expect(status("66666666-6666-4666-8666-666666666666")).toBe("sent");
-    await sweep(NOW + 31 * MINUTE);
+    await sweep(NOW + 50 * MINUTE);
+    expect(status("66666666-6666-4666-8666-666666666666")).toBe("sent");
+    expect(status("77777777-7777-4777-8777-777777777777")).toBe("sent");
+    await sweep(NOW + 61 * MINUTE);
     expect(status("66666666-6666-4666-8666-666666666666")).toBe("failed");
+    expect(status("77777777-7777-4777-8777-777777777777")).toBe("failed");
     expect(
       sqlite.prepare("SELECT output FROM actions WHERE kind = 'compose'").get(),
     ).toEqual({ output: "No result from the server" });
+  });
+
+  it("does not count a server still waiting its turn in a rolling batch as planned work", async () => {
+    const { db, queue } = setup();
+    await queue("rolling", [A, B]);
+    expect(await inMaintenance(db, A, NOW + MINUTE, NOW)).toBe(true);
+    expect(await inMaintenance(db, B, NOW + MINUTE, NOW)).toBe(false);
+  });
+
+  it("counts work sent to a server as planned for its first 30 minutes only", async () => {
+    const { db } = setup();
+    const deploy = createBatch(db, {
+      action: "deploy",
+      mode: "parallel",
+      targets: [
+        {
+          id: "66666666-6666-4666-8666-666666666666",
+          nodeId: B,
+          kind: "compose",
+          name: "listmonk",
+          signed: { grant: { grant: "Zw" }, command: "Yw", signature: "cw" },
+        },
+      ],
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(deploy.statements);
+    await deliverActions(db, B, NOW);
+    expect(await inMaintenance(db, B, NOW + 29 * MINUTE, NOW)).toBe(true);
+    expect(await inMaintenance(db, B, NOW + 31 * MINUTE, NOW)).toBe(false);
   });
 });

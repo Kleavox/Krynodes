@@ -359,6 +359,42 @@ func TestAReplacedConnectionWaitsBeforeComingBack(t *testing.T) {
 	}
 }
 
+func TestADeletedServerAsksAgainOnlyRarely(t *testing.T) {
+	for status, slow := range map[int]bool{http.StatusUnauthorized: true, http.StatusBadGateway: false} {
+		var times []time.Time
+		var mu sync.Mutex
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			mu.Lock()
+			times = append(times, time.Now())
+			mu.Unlock()
+			w.WriteHeader(status)
+		}))
+		c := New(srv.URL, "token", "0.6.2")
+		c.minDelay = 10 * time.Millisecond
+		c.maxDelay = 40 * time.Millisecond
+		c.goneDelay = 400 * time.Millisecond
+		ctx, cancel := context.WithCancel(context.Background())
+		go c.Run(ctx)
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			mu.Lock()
+			count := len(times)
+			mu.Unlock()
+			if count >= 2 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		cancel()
+		srv.Close()
+		mu.Lock()
+		if len(times) < 2 || (times[1].Sub(times[0]) >= 350*time.Millisecond) != slow {
+			t.Fatalf("HTTP %d: dials %v", status, times)
+		}
+		mu.Unlock()
+	}
+}
+
 func TestCallsFailFastWithoutAConnection(t *testing.T) {
 	c := New("http://127.0.0.1:1", "token", "0.3.1")
 	if _, err := c.SendHeartbeat(context.Background(), beat()); !errors.Is(err, ErrNotConnected) {

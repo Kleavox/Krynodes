@@ -85,6 +85,11 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
     reshare: { verb: "Spread", doing: "Spreading…", done: "Spread" },
     forget: { verb: "Forget", doing: "Forgetting…", done: "Forgot" },
     install: { verb: "Install", doing: "Installing…", done: "Installed" },
+    uninstall: {
+      verb: "Remove Krynodes",
+      doing: "Removing Krynodes…",
+      done: "Krynodes removed",
+    },
   };
 
 export const RECIPE_TITLES: Record<string, string> = {
@@ -135,6 +140,9 @@ export function verb(action: ActionVerb): string {
   return WORDS[action].verb;
 }
 
+export const isRead = (action: Pick<ActionRecord, "action">) =>
+  action.action === "logs" || action.action === "read";
+
 export function isPending(action: ActionRecord | null | undefined): boolean {
   return action?.status === "queued" || action?.status === "sent";
 }
@@ -162,7 +170,7 @@ export function groupByServer(
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const latest = new Map<string, ActionRecord>();
   for (const action of data.actions) {
-    if (action.action === "logs") continue;
+    if (isRead(action)) continue;
     latest.set(`${action.nodeId}|${action.kind}:${action.name}`, action);
   }
   const query = options.query.trim().toLowerCase();
@@ -206,11 +214,13 @@ export function groupByServer(
   );
 }
 
+const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+
 export function actionText(action: ActionRecord, nodeName: string): string {
   const words = WORDS[action.action];
   switch (action.status) {
     case "queued":
-      return `Waiting for ${action.deliverableAt ? nodeName : "its turn"} to ${words.verb.toLowerCase().replace(/ for$/u, "")}`;
+      return `Waiting for ${action.deliverableAt ? nodeName : "its turn"} to ${lower(words.verb).replace(/ for$/u, "")}`;
     case "sent":
       return words.doing;
     case "done":
@@ -241,9 +251,7 @@ export function pollServices(
 ): number {
   const busy =
     data !== undefined &&
-    (data.actions.some(
-      (action) => action.action !== "logs" && isPending(action),
-    ) ||
+    (data.actions.some((action) => !isRead(action) && isPending(action)) ||
       data.nodes.some((node) => refreshPending(node, now)));
   return busy ? PENDING_POLL_MS : untilWindowSettles(now);
 }
@@ -277,7 +285,9 @@ export function serviceForCheck(
 export function runningText(action: ActionRecord, nodeName?: string): string {
   const doing = WORDS[action.action].doing.replace(/…$/u, "");
   if (action.kind === "host" && action.name === "server") {
-    return `${doing} ${nodeName ?? "server"}`;
+    return action.action === "uninstall"
+      ? `${doing} from ${nodeName ?? "the server"}`
+      : `${doing} ${nodeName ?? "server"}`;
   }
   const target = `${doing} ${displayName(action.kind, action.name)}`;
   return nodeName ? `${target} on ${nodeName}` : target;
@@ -293,9 +303,11 @@ export function outcomeText(
     return {
       ok: true,
       text:
-        action.kind === "host" && action.name === "server"
-          ? `${nodeName} ${words.done.toLowerCase()}`
-          : `${name} ${words.done.toLowerCase()} on ${nodeName}`,
+        action.action === "uninstall"
+          ? `${words.done} from ${nodeName}`
+          : action.kind === "host" && action.name === "server"
+            ? `${nodeName} ${lower(words.done)}`
+            : `${name} ${lower(words.done)} on ${nodeName}`,
     };
   }
   if (action.status === "failed" || action.status === "expired") {
@@ -307,7 +319,7 @@ export function outcomeText(
           : `exit ${action.exitCode}`;
     return {
       ok: false,
-      text: `Could not ${words.verb.toLowerCase()} ${objectOf(action)} on ${nodeName} (${why})`,
+      text: `Could not ${lower(words.verb)} ${action.action === "uninstall" ? "from" : `${objectOf(action)} on`} ${nodeName} (${why})`,
     };
   }
   return null;

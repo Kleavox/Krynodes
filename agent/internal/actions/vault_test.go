@@ -139,7 +139,7 @@ func TestAServiceGetsAWebAddressWithTheDashboardLogin(t *testing.T) {
 		"docker ps --filter label=com.docker.compose.project=listmonk --filter label=com.docker.compose.service=app --format {{.Names}}": "listmonk-app-1\n",
 		"docker inspect --format {{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}} listmonk-app-1":                       "listmonk_default \n",
 	}
-	run.failing = map[string]string{"docker inspect --format {{.State.Running}} " + TunnelContainer: "No such object"}
+	run.failing = map[string]string{"docker inspect --format {{.State.Running}} {{join .Args \" \"}} " + TunnelContainer: "No such object"}
 	args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-pivox.kleavox.xyz", "mode": "path", "path": "/admin", "zone": "kleavox.xyz", "aud": "aud-1"}
 	result := runRequest(t, executor, exposeRequest(t, executor, split[1], "expose", args))
 	if !result.OK {
@@ -157,7 +157,7 @@ func TestAServiceGetsAWebAddressWithTheDashboardLogin(t *testing.T) {
 		t.Fatalf("records %v apps %v", fake.Records, fake.Apps)
 	}
 	if !slices.ContainsFunc(run.calls, func(call string) bool {
-		return strings.HasPrefix(call, "docker run -d --name krynodes-tunnel --restart unless-stopped --env-file ") && strings.HasSuffix(call, cloudflaredImage+" tunnel --no-autoupdate run")
+		return strings.HasPrefix(call, "docker run -d --name krynodes-tunnel --restart unless-stopped --env-file ") && strings.HasSuffix(call, cloudflaredImage+" tunnel --no-autoupdate --metrics 127.0.0.1:20241 run")
 	}) || !slices.Contains(run.calls, "docker network connect listmonk_default krynodes-tunnel") {
 		t.Fatalf("calls %q", run.calls)
 	}
@@ -173,6 +173,38 @@ func TestAServiceGetsAWebAddressWithTheDashboardLogin(t *testing.T) {
 	}
 	if json.Unmarshal([]byte(result.Output), &output) != nil || output.Expires != "2027-10-05T00:00:00Z" {
 		t.Fatalf("output %q", result.Output)
+	}
+}
+
+func TestAProtectedAddressIsNeverOpenEvenForAMoment(t *testing.T) {
+	for _, failing := range []bool{false, true} {
+		executor, run, fake := cloudflareExecutor(t, listmonkStack())
+		split := pieces(t, "cf-token", 2)
+		storePiece(t, executor, split[0], "2")
+		run.respond = map[string]string{
+			"docker ps --filter label=com.docker.compose.project=listmonk --filter label=com.docker.compose.service=app --format {{.Names}}": "listmonk-app-1\n",
+			"docker inspect --format {{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}} listmonk-app-1":                       "listmonk_default \n",
+		}
+		run.failing = map[string]string{"docker inspect --format {{.State.Running}} {{join .Args \" \"}} " + TunnelContainer: "No such object"}
+		if failing {
+			fake.Fail = map[string]bool{"POST /accounts/acc-1/access/apps": true}
+		}
+		args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-pivox.kleavox.xyz", "mode": "allow", "zone": "kleavox.xyz", "aud": "aud-1"}
+		result := runRequest(t, executor, exposeRequest(t, executor, split[1], "expose", args))
+		guard := slices.Index(fake.Calls, "POST /client/v4/accounts/acc-1/access/apps")
+		route := slices.IndexFunc(fake.Calls, func(call string) bool {
+			return strings.HasSuffix(call, "/configurations") && strings.HasPrefix(call, "PUT ")
+		})
+		point := slices.Index(fake.Calls, "POST /client/v4/zones/zone-1/dns_records")
+		if failing {
+			if result.OK || route >= 0 || point >= 0 {
+				t.Fatalf("a failed login must leave the address unrouted: %#v calls %q", result, fake.Calls)
+			}
+			continue
+		}
+		if !result.OK || guard < 0 || guard > route || guard > point {
+			t.Fatalf("the login comes first: %#v calls %q", result, fake.Calls)
+		}
 	}
 }
 
@@ -368,7 +400,7 @@ func TestTheTokenIsRebuiltFromTheSplitInUse(t *testing.T) {
 		"docker ps --filter label=com.docker.compose.project=listmonk --filter label=com.docker.compose.service=app --format {{.Names}}": "listmonk-app-1\n",
 		"docker inspect --format {{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}} listmonk-app-1":                       "listmonk_default \n",
 	}
-	run.failing = map[string]string{"docker inspect --format {{.State.Running}} " + TunnelContainer: "No such object"}
+	run.failing = map[string]string{"docker inspect --format {{.State.Running}} {{join .Args \" \"}} " + TunnelContainer: "No such object"}
 	old := pieces(t, "cf-token", 2)
 	storeInto(t, executor, idA, splitSet, "", old[0], "2")
 	storeInto(t, executor, idB, nextSet, splitSet, pieces(t, "other", 2)[0], "2")
@@ -379,5 +411,70 @@ func TestTheTokenIsRebuiltFromTheSplitInUse(t *testing.T) {
 	result := runRequest(t, executor, request)
 	if !result.OK || fake.Token != "cf-token" {
 		t.Fatalf("result %#v token %q", result, fake.Token)
+	}
+}
+
+func TestATunnelStartedByAnOlderAgentIsStartedAgainWithItsMetricsKeptInside(t *testing.T) {
+	inspect := "docker inspect --format {{.State.Running}} {{join .Args \" \"}} " + TunnelContainer
+	for args, again := range map[string]bool{
+		"true tunnel --no-autoupdate run":                           true,
+		"true tunnel --no-autoupdate --metrics 127.0.0.1:20241 run": false,
+	} {
+		executor, run := newTrustedExecutor(t)
+		if err := os.MkdirAll(executor.StateDir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(executor.StateDir, "tunnel.env"), []byte("TUNNEL_TOKEN=same\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		run.respond = map[string]string{inspect: args + "\n"}
+		if err := executor.ensureTunnel(context.Background(), "same"); err != nil {
+			t.Fatal(err)
+		}
+		started := slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "docker run -d --name krynodes-tunnel") })
+		if started != again {
+			t.Fatalf("%q: started %v calls %q", args, started, run.calls)
+		}
+	}
+}
+
+func TestAnOlderTunnelOnAContainedStackIsStartedAgainOnce(t *testing.T) {
+	inspect := "docker inspect --format {{.State.Running}} {{join .Args \" \"}} " + TunnelContainer
+	run := func(state string, access string, locked bool) bool {
+		t.Helper()
+		executor, fake := stackExecutor(t)
+		_, stack := ownKuma(t, executor, access, kumaText)
+		withStacks(&executor, stack)
+		if err := os.WriteFile(filepath.Join(executor.StateDir, "tunnel.env"), []byte("TUNNEL_TOKEN=same\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSON(executor.StateDir, "addresses.json", map[string]webAddress{"kuma.kleavox.xyz": {Project: "kuma", Network: "kuma_default"}}, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if locked {
+			if err := writeJSON(executor.StateDir, "lockdown.json", lockdownState{Containers: []string{}, At: executorNow}, 0o640); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fake.respond = map[string]string{inspect: state + "\n"}
+		if err := executor.Execute(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return slices.ContainsFunc(fake.calls, func(call string) bool { return strings.HasPrefix(call, "docker run -d --name krynodes-tunnel") })
+	}
+	if !run("true tunnel --no-autoupdate run", "contained", false) {
+		t.Fatal("a running older tunnel next to a Contained stack starts again")
+	}
+	if run("true tunnel --no-autoupdate --metrics 127.0.0.1:20241 run", "contained", false) {
+		t.Fatal("a current tunnel is left alone")
+	}
+	if run("false tunnel --no-autoupdate run", "contained", false) {
+		t.Fatal("a tunnel someone stopped stays stopped")
+	}
+	if run("true tunnel --no-autoupdate run", "full", false) {
+		t.Fatal("only a Contained neighbour needs it")
+	}
+	if run("true tunnel --no-autoupdate run", "contained", true) {
+		t.Fatal("a locked-down server starts nothing")
 	}
 }

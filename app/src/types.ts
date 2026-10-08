@@ -90,6 +90,7 @@ export interface Overview {
   checks: CheckRecord[];
   incidents: Incident[];
   agentRelease: AgentRelease;
+  mail?: { failedAt: string; error: string } | null;
 }
 
 export interface Enrollment {
@@ -194,7 +195,8 @@ export type ActionVerb =
   | "release"
   | "reshare"
   | "forget"
-  | "install";
+  | "install"
+  | "uninstall";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =

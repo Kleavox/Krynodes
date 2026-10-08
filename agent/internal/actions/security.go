@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
@@ -72,15 +73,16 @@ func (e Executor) findings(ctx context.Context) []reporter.Finding {
 	}
 	settings, sshd := e.sshSettings(ctx)
 	if sshd {
-		if settings["passwordauthentication"] == "yes" || settings["kbdinteractiveauthentication"] == "yes" {
+		passwords := settings["passwordauthentication"] == "yes" || settings["kbdinteractiveauthentication"] == "yes"
+		if passwords {
 			add("ssh-password", "serious", "SSH accepts passwords")
 		}
-		if settings["permitrootlogin"] == "yes" {
+		if passwords && settings["permitrootlogin"] == "yes" {
 			add("ssh-root", "serious", "Root can log in over SSH with a password")
 		}
 	}
-	if users := recipes.KeyedUsers(recipes.Env{Root: e.Root}); len(users) == 0 {
-		add("ssh-no-keys", "warning", "No SSH key is set up for root or a sudo user")
+	if users := recipes.SSHLogins(ctx, e.recipeEnv()); len(users) == 0 {
+		add("ssh-no-keys", "warning", "No SSH key lets root or a sudo user log in")
 	} else {
 		add("ssh-keys", "note", "SSH keys for "+strings.Join(users, ", "))
 	}
@@ -138,6 +140,9 @@ func (e Executor) findings(ctx context.Context) []reporter.Finding {
 	}
 	if stub {
 		add("dns-stub", "note", "systemd-resolved holds port 53 on this server")
+	}
+	if synced, _ := e.output(ctx, "timedatectl", "show", "-p", "NTPSynchronized", "--value"); strings.TrimSpace(synced) == "no" {
+		add("clock-unsynced", "warning", "The clock is not synchronized with a time server; signed actions can be refused")
 	}
 	return found
 }
@@ -225,7 +230,12 @@ func (e Executor) securityUpdates(ctx context.Context, family recipes.Family) in
 }
 
 func platformReport(platform recipes.Platform) *reporter.Platform {
-	report := &reporter.Platform{Name: platform.Name, Verified: platform.Verified, Checked: platform.Checked}
+	name := platform.Name
+	for len(name) > 120 {
+		_, size := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-size]
+	}
+	report := &reporter.Platform{Name: name, Verified: platform.Verified, Checked: platform.Checked}
 	if platform.Family != "" {
 		family := string(platform.Family)
 		report.Family = &family

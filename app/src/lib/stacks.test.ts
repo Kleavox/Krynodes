@@ -13,6 +13,7 @@ import {
   deployBlocker,
   groupStacks,
   moveBlocker,
+  moveConfirmed,
   newStackBlocker,
   ownFolder,
   removedStacks,
@@ -113,8 +114,12 @@ describe("stacks", () => {
     ).toEqual(["listmonk"]);
   });
 
-  it("keeps reading logs out of a stack's last action", () => {
-    const entry = (id: string, action: "deploy" | "logs") => ({
+  it("keeps reading logs or the compose file out of a stack's last action", () => {
+    const entry = (
+      id: string,
+      action: "deploy" | "logs" | "read",
+      status: "done" | "queued" = "done",
+    ) => ({
       id,
       batchId: id,
       position: 0,
@@ -123,7 +128,7 @@ describe("stacks", () => {
       kind: "compose" as const,
       name: "listmonk",
       action,
-      status: "done" as const,
+      status,
       requestedBy: "owner@example.test",
       requestedAt: "2026-09-29T09:00:00.000Z",
       deliverableAt: "2026-09-29T09:00:00.000Z",
@@ -134,7 +139,14 @@ describe("stacks", () => {
       output: null,
     });
     const groups = groupStacks(
-      { ...data, actions: [entry("a1", "deploy"), entry("a2", "logs")] },
+      {
+        ...data,
+        actions: [
+          entry("a1", "deploy"),
+          entry("a2", "logs"),
+          entry("a3", "read", "queued"),
+        ],
+      },
       nodes,
       "",
     );
@@ -446,5 +458,15 @@ describe("moving a stack with web addresses", () => {
     expect(moveBlocker([address], "later")).toMatch(/Close web address/u);
     expect(moveBlocker([address], "keep")).toBeNull();
     expect(moveBlocker([], "now")).toBeNull();
+  });
+});
+
+describe("deleting the original of a move at once", () => {
+  it("needs the stack's name typed, like Delete permanently", () => {
+    expect(moveConfirmed("later", "", "listmonk")).toBe(true);
+    expect(moveConfirmed("keep", "", "listmonk")).toBe(true);
+    expect(moveConfirmed("now", "", "listmonk")).toBe(false);
+    expect(moveConfirmed("now", "listmon", "listmonk")).toBe(false);
+    expect(moveConfirmed("now", "listmonk", "listmonk")).toBe(true);
   });
 });

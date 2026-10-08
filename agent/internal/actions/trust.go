@@ -163,7 +163,7 @@ func ApplyTrustChange(current Trust, request Request, now time.Time) (Trust, err
 		return Trust{}, errors.New("the change lasts longer than 24 hours")
 	}
 	if now.After(expires.Add(clockSkew)) {
-		return Trust{}, errors.New("the change expired")
+		return Trust{}, fmt.Errorf("the change expired at %s", clockSays(expires, now))
 	}
 	host, err := originHost(change.Origin)
 	if err != nil {

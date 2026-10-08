@@ -260,16 +260,18 @@ export function SecurityPanel({
       className="rounded-lg border bg-card p-4"
     >
       <div className="mb-3 flex items-center gap-2">
-        <h2 id="node-security" className={sectionTitle + " mb-0"}>
-          Security
-        </h2>
-        <span className="ml-auto font-mono text-xs text-muted-foreground">
-          Checked {timeAgo(report.checkedAt, seen)}
-        </span>
+        <div className="min-w-0">
+          <h2 id="node-security" className={sectionTitle + " mb-0"}>
+            Security
+          </h2>
+          <p className="font-mono text-xs text-muted-foreground">
+            Checked {timeAgo(report.checkedAt, seen)}
+          </p>
+        </div>
         <Button
           variant="ghost"
           size="sm"
-          className="h-8"
+          className="ml-auto h-8"
           disabled={scan.isPending}
           onClick={() => scan.mutate(node.id)}
         >
@@ -297,7 +299,7 @@ export function SecurityPanel({
         {choices.map((choice) => (
           <li key={choice.id} className="flex items-center gap-2 px-3 py-2">
             <span className="min-w-0 flex-1">
-              <span className="block truncate">{choice.title}</span>
+              <span className="block">{choice.title}</span>
               {choice.blocked && (
                 <span className="block text-xs text-muted-foreground">
                   {choice.blocked}

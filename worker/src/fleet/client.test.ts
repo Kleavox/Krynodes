@@ -10,6 +10,8 @@ const NODE = "11111111-1111-4111-8111-111111111111";
 const OTHER = "33333333-3333-4333-8333-333333333333";
 const TOKEN = "agent-token";
 
+const live = (nodes: object) => JSON.stringify({ nodes, mail: null });
+
 function fleet(handler: (request: Request) => Response | Promise<Response>) {
   const calls: { name: string; request: Request }[] = [];
   return {
@@ -104,7 +106,7 @@ describe("overview with live connections", () => {
     const hub = fleet(
       () =>
         new Response(
-          JSON.stringify({
+          live({
             [NODE]: {
               lastSeen: LAST_SEEN,
               connectedAt: LAST_SEEN - 600_000,
@@ -149,7 +151,7 @@ describe("overview with live connections", () => {
     const hub = fleet(
       () =>
         new Response(
-          JSON.stringify({
+          live({
             [NODE]: {
               lastSeen: LAST_SEEN,
               agentVersion: "0.3.0",

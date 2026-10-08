@@ -81,11 +81,10 @@ func writeEnv(directory string, values map[string]string) error {
 	for _, name := range sortedKeys(anyMap(values)) {
 		fmt.Fprintf(&text, "%s='%s'\n", name, values[name])
 	}
-	path := filepath.Join(directory, ".env")
-	if err := os.WriteFile(path, []byte(text.String()), 0o600); err != nil {
+	if err := writeWhole(directory, ".env", []byte(text.String()), 0o600); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600)
+	return os.Chmod(filepath.Join(directory, ".env"), 0o600)
 }
 
 func readEnv(path string) (map[string]string, error) {
@@ -244,7 +243,7 @@ func (e Executor) prepare(request Request, command Command, directory string) er
 			if name == "" || filepath.Base(name) != name || strings.HasPrefix(name, ".") || slices.Contains(keptNames, name) {
 				return fmt.Errorf("a moved file may not be named %q", name)
 			}
-			if err := os.WriteFile(filepath.Join(directory, name), body, 0o640); err != nil {
+			if err := writeWhole(directory, name, body, 0o640); err != nil {
 				return err
 			}
 		}
@@ -283,6 +282,9 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory, 
 	}
 	if access == "contained" {
 		if err := vet(config, directory); err != nil {
+			return e.refuse(request.ID, err)
+		}
+		if err := e.checkRegistries(ctx, config); err != nil {
 			return e.refuse(request.ID, err)
 		}
 		if err := contain(config, name); err != nil {
@@ -345,7 +347,7 @@ func backup(directory string, names map[string]string) (func(), error) {
 		}
 	}
 	for from, to := range names {
-		if err := copyFile(filepath.Join(directory, from), filepath.Join(directory, to)); errors.Is(err, os.ErrNotExist) {
+		if err := copyFile(context.Background(), filepath.Join(directory, from), filepath.Join(directory, to)); errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
 			return nil, err
@@ -357,7 +359,7 @@ func backup(directory string, names map[string]string) (func(), error) {
 	}, nil
 }
 
-func copyFile(from, to string) error {
+func copyFile(ctx context.Context, from, to string) error {
 	source, err := os.Open(from)
 	if err != nil {
 		return err
@@ -371,7 +373,7 @@ func copyFile(from, to string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(target, source); err != nil {
+	if _, err := io.Copy(target, contextReader{ctx, source}); err != nil {
 		target.Close()
 		return err
 	}
@@ -408,7 +410,7 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 		e.docker(ctx, upTimeout, "up", composeArgs(old, "up", "-d")...)
 		return result
 	}
-	if err := os.WriteFile(filepath.Join(directory, "compose.yaml"), []byte(command.Compose), 0o640); err != nil {
+	if err := writeWhole(directory, "compose.yaml", []byte(command.Compose), 0o640); err != nil {
 		return revert(e.failed(request, err, ""))
 	}
 	if command.Secrets != "" {
@@ -423,9 +425,24 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 	return result
 }
 
-func copyTree(from, to string) error {
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (c contextReader) Read(buffer []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.reader.Read(buffer)
+}
+
+func copyTree(ctx context.Context, from, to string) error {
 	return filepath.WalkDir(from, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		relative, err := filepath.Rel(from, path)
@@ -451,7 +468,7 @@ func copyTree(from, to string) error {
 				return err
 			}
 		case info.Mode().IsRegular():
-			if err := copyFile(path, target); err != nil {
+			if err := copyFile(ctx, path, target); err != nil {
 				return err
 			}
 		default:
@@ -508,7 +525,13 @@ func (e Executor) adopt(ctx context.Context, request Request, stack Stack) Resul
 		e.docker(ctx, upTimeout, "up", composeArgs(stack, "up", "-d")...)
 		return result
 	}
-	if err := copyTree(stack.Directory, target); err != nil {
+	copying, cancel := context.WithTimeout(ctx, copyTimeout)
+	err := copyTree(copying, stack.Directory, target)
+	cancel()
+	if errors.Is(err, context.DeadlineExceeded) {
+		err = fmt.Errorf("copying %s took longer than %d minutes; it runs from its old folder again, move its data by hand", stack.Directory, int(copyTimeout.Minutes()))
+	}
+	if err != nil {
 		return back(e.failed(request, err, ""))
 	}
 	if _, err := e.docker(ctx, upTimeout, "up", composeArgs(moved, "up", "-d")...); err != nil {
