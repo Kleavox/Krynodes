@@ -1,4 +1,4 @@
-import type { SecurityReport } from "../types";
+import type { Finding, SecurityReport } from "../types";
 
 import { RECIPE_TITLES } from "./services";
 
@@ -6,8 +6,24 @@ export interface RecipeChoice {
   id: string;
   title: string;
   applied: boolean;
+  outside: boolean;
   blocked: string | null;
 }
+
+const OFF_FINDING: Record<string, string> = {
+  "security-updates": "updates-off",
+  fail2ban: "fail2ban-off",
+  firewall: "firewall-off",
+};
+
+export const findingTone = (finding: Finding) =>
+  finding.id === "ssh-keys"
+    ? "ok"
+    : finding.severity === "serious"
+      ? "bad"
+      : finding.severity === "warning"
+        ? "warn"
+        : "idle";
 
 const ORDER = [
   "security-updates",
@@ -49,10 +65,12 @@ export function recipeChoices(report: SecurityReport): RecipeChoice[] {
       report.recipes.includes(id),
   ).map((id) => {
     const applied = report.recipes.includes(id);
+    const off = OFF_FINDING[id];
     return {
       id,
       title: RECIPE_TITLES[id] ?? id,
       applied,
+      outside: !applied && off !== undefined && !has(report, off),
       blocked:
         id === "ssh-keys-only" && !applied && has(report, "ssh-no-keys")
           ? "First let root or a sudo user log in over SSH with a key."
@@ -65,7 +83,10 @@ export function recommended(report: SecurityReport): string[] {
   return recipeChoices(report)
     .filter(
       (choice) =>
-        RECOMMENDED.includes(choice.id) && !choice.applied && !choice.blocked,
+        RECOMMENDED.includes(choice.id) &&
+        !choice.applied &&
+        !choice.outside &&
+        !choice.blocked,
     )
     .map((choice) => choice.id);
 }
