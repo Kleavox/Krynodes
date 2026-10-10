@@ -359,7 +359,7 @@ export const agentActionsResponseSchema = z.object({
 export const agentCheckSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
-  kind: z.enum(["HTTP", "TCP", "SERVICE"]),
+  kind: z.enum(["HTTP", "TCP", "SERVICE", "CONTAINER"]),
   target: z.string().min(1),
   timeoutSeconds: z.number().int().positive(),
 });

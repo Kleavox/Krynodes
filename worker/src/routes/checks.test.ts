@@ -280,3 +280,66 @@ describe("auto-restart follows its check", () => {
     expect(t.manual()).toEqual([]);
   });
 });
+
+describe("container checks", () => {
+  function containers(version: string | null) {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: NODE });
+    sqlite
+      .prepare("UPDATE nodes SET agent_version = ? WHERE id = ?")
+      .run(version, NODE);
+    seedCheck(sqlite, { id: CHECK, nodeId: NODE });
+    const env = { DB: db } as unknown as Env;
+    const send = (method: string, path: string, body: unknown) =>
+      app.request(
+        `https://kry.example.test${path}`,
+        {
+          method,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        env,
+      );
+    return { send, sqlite };
+  }
+  const create = {
+    nodeId: NODE,
+    name: "AdGuard",
+    kind: "CONTAINER",
+    target: "adguard-adguard-1",
+  };
+
+  it("creates one on agent 0.6.3 or newer", async () => {
+    const { send, sqlite } = containers("0.6.3");
+    expect((await send("POST", "/api/checks", create)).status).toBe(201);
+    expect(
+      sqlite
+        .prepare("SELECT kind, target FROM checks WHERE name = 'AdGuard'")
+        .get(),
+    ).toEqual({ kind: "CONTAINER", target: "adguard-adguard-1" });
+  });
+
+  it.each(["0.6.2", null])("refuses agent %s", async (version) => {
+    const { send } = containers(version);
+    const response = await send("POST", "/api/checks", create);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: "AGENT_TOO_OLD",
+      message: "This server needs agent 0.6.3 or newer for container checks.",
+    });
+    const changed = await send("PATCH", `/api/checks/${CHECK}`, {
+      kind: "CONTAINER",
+      target: "web",
+    });
+    expect(changed.status).toBe(409);
+  });
+
+  it("refuses a name Docker would not give a container", async () => {
+    const { send } = containers("0.6.3");
+    for (const target of ["-web", "web/1", "web 1", "x".repeat(129)]) {
+      expect(
+        (await send("POST", "/api/checks", { ...create, target })).status,
+      ).toBe(400);
+    }
+  });
+});

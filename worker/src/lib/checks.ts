@@ -1,4 +1,8 @@
-export type CheckKind = "HTTP" | "TCP" | "SERVICE";
+export const CHECK_KINDS = ["HTTP", "TCP", "SERVICE", "CONTAINER"] as const;
+
+export type CheckKind = (typeof CHECK_KINDS)[number];
+
+export const CONTAINER_AGENT = "0.6.3";
 
 export function validateCheckTarget(
   kind: CheckKind,
@@ -21,6 +25,10 @@ export function validateCheckTarget(
     if (!match) return null;
     const port = Number(match[2]);
     return port >= 1 && port <= 65_535 ? value.toLowerCase() : null;
+  }
+
+  if (kind === "CONTAINER") {
+    return /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u.test(value) ? value : null;
   }
 
   return /^[a-zA-Z0-9@_.:-]{1,128}$/u.test(value) ? value : null;

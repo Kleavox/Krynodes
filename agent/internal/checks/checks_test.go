@@ -9,9 +9,54 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/Kleavox/krynodes/agent/internal/containers"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
+
+func TestContainerChecksReadTheWatcherStateOnce(t *testing.T) {
+	reads := 0
+	previous := containerState
+	containerState = func() (containers.State, error) {
+		reads++
+		return containers.State{At: time.Now(), Docker: true, Containers: []containers.Container{
+			{Name: "adguard-adguard-1", State: "running"},
+			{Name: "db", State: "running", Health: "unhealthy"},
+			{Name: "old", State: "exited"},
+		}}, nil
+	}
+	defer func() { containerState = previous }()
+	results := runOnce(context.Background(), []reporter.Check{
+		{ID: "a", Kind: "CONTAINER", Target: "adguard-adguard-1"},
+		{ID: "b", Kind: "CONTAINER", Target: "db"},
+		{ID: "c", Kind: "CONTAINER", Target: "old"},
+		{ID: "d", Kind: "CONTAINER", Target: "missing"},
+	})
+	if reads != 1 {
+		t.Fatalf("read the state %d times", reads)
+	}
+	want := []string{"UP", "DOWN unhealthy", "DOWN exited", "DOWN Container not found"}
+	for index, result := range results {
+		got := result.Status
+		if result.Message != nil {
+			got += " " + *result.Message
+		}
+		if got != want[index] {
+			t.Errorf("%s: got %q want %q", result.CheckID, got, want[index])
+		}
+	}
+}
+
+func TestAContainerCheckOnItsOwnIsDownWithoutTheWatcher(t *testing.T) {
+	previous := containerState
+	containerState = func() (containers.State, error) { return containers.State{}, os.ErrNotExist }
+	defer func() { containerState = previous }()
+	result := Run(context.Background(), reporter.Check{ID: "a", Kind: "CONTAINER", Target: "web"})
+	if result.Status != "DOWN" || *result.Message != "Container status is not available yet" {
+		t.Fatalf("result %#v", result)
+	}
+}
 
 func TestMain(m *testing.M) {
 	recheckDelay = 0

@@ -46,6 +46,7 @@ const (
 	hostPath          = "/etc/systemd/system/krynodes-host.service"
 	hostWatcherPath   = "/etc/systemd/system/krynodes-host.path"
 	guardPath         = "/etc/systemd/system/krynodes-guard.service"
+	containersPath    = "/etc/systemd/system/krynodes-containers.service"
 	stateDirectory    = "/var/lib/kry"
 )
 
@@ -85,6 +86,8 @@ func run(args []string) error {
 		return hostApply()
 	case "guard":
 		return guardCommand()
+	case "watch-containers":
+		return watchContainers()
 	case "setup":
 		return setupCommand(args)
 	case "trust":
@@ -361,6 +364,7 @@ func installService(args []string) error {
 		hostPath:        hostUnit(executable),
 		hostWatcherPath: hostPathUnit(),
 		guardPath:       guardUnit(executable),
+		containersPath:  containersUnit(executable),
 	}
 	for path, unit := range units {
 		if err := writeUnit(path, unit); err != nil {
@@ -373,6 +377,11 @@ func installService(args []string) error {
 	for _, name := range enabledUnits() {
 		if err := exec.Command("systemctl", "enable", "--now", name).Run(); err != nil {
 			return fmt.Errorf("enable %s: %w", name, err)
+		}
+	}
+	for _, name := range restartedUnits() {
+		if err := exec.Command("systemctl", "restart", name).Run(); err != nil {
+			return fmt.Errorf("restart %s: %w", name, err)
 		}
 	}
 	fmt.Printf("Installed and started %s.service\n", unitName)
@@ -411,7 +420,11 @@ func writeUnit(path, unit string) error {
 }
 
 func enabledUnits() []string {
-	return []string{unitName + ".service", unitName + "-update.path", unitName + "-exec.path", unitName + "-exec.timer", unitName + "-host.path", unitName + "-guard.service"}
+	return []string{unitName + ".service", unitName + "-update.path", unitName + "-exec.path", unitName + "-exec.timer", unitName + "-host.path", unitName + "-guard.service", unitName + "-containers.service"}
+}
+
+func restartedUnits() []string {
+	return []string{unitName + "-containers.service"}
 }
 
 func guardUnit(executable string) string {
@@ -531,6 +544,39 @@ ProtectSystem=strict
 ReadWritePaths=%s
 Environment=DOCKER_CONFIG=%s/docker
 `, accountName, executable, actions.StateDir, actions.StateDir)
+}
+
+func containersUnit(executable string) string {
+	return fmt.Sprintf(`[Unit]
+Description=Krynodes container states
+After=docker.service
+
+[Service]
+Type=simple
+Group=%s
+ExecStart=%s watch-containers
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=%s
+Environment=DOCKER_CONFIG=%s/docker
+
+[Install]
+WantedBy=multi-user.target
+`, accountName, executable, actions.StateDir, actions.StateDir)
+}
+
+func watchContainers() error {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return fmt.Errorf("watch-containers must run as root on Linux")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	actions.NewWatcher().Watch(ctx)
+	return nil
 }
 
 func execPathUnit() string {
@@ -794,7 +840,7 @@ func waitFor(busy func() bool, sleep func(time.Duration), limit time.Duration, m
 }
 
 func leftovers(binary string) []string {
-	paths := []string{guardPath, hostWatcherPath, hostPath, execTimerPath, execWatcherPath, execPath, watcherPath, updaterPath, unitPath, stateDirectory, path.Dir(defaultConfigPath)}
+	paths := []string{containersPath, guardPath, hostWatcherPath, hostPath, execTimerPath, execWatcherPath, execPath, watcherPath, updaterPath, unitPath, stateDirectory, path.Dir(defaultConfigPath)}
 	if binary != "" {
 		paths = append(paths, binary)
 	}
@@ -803,7 +849,7 @@ func leftovers(binary string) []string {
 
 func uninstallCommands() [][]string {
 	return [][]string{
-		{"systemctl", "disable", "--now", unitName + "-host.path", unitName + "-exec.timer", unitName + "-exec.path", unitName + "-update.path", unitName + "-guard.service"},
+		{"systemctl", "disable", "--now", unitName + "-host.path", unitName + "-exec.timer", unitName + "-exec.path", unitName + "-update.path", unitName + "-guard.service", unitName + "-containers.service"},
 		{"systemctl", "stop", unitName + "-exec.service", unitName + "-host.service"},
 		{"systemctl", "disable", "--now", unitName + ".service"},
 	}

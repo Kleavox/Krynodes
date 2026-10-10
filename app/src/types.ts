@@ -40,7 +40,7 @@ export interface NodeRecord {
   grace_seconds?: number;
 }
 
-export type CheckKind = "HTTP" | "TCP" | "SERVICE";
+export type CheckKind = "HTTP" | "TCP" | "SERVICE" | "CONTAINER";
 export type CheckStatus = "UNKNOWN" | "UP" | "DOWN";
 
 export interface CheckRecord {

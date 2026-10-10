@@ -349,6 +349,62 @@ describe("migration 0022", () => {
   });
 });
 
+describe("migration 0027", () => {
+  it("accepts container checks and keeps every check, incident and index", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0027");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'io', 'h1')",
+    );
+    sqlite.exec(
+      "INSERT INTO checks (id, node_id, name, kind, target, status, timeout_seconds, latency_ms, last_checked_at, consecutive_failures, last_message, public, public_note, auto_restart) VALUES ('c1', 'n1', 'Web', 'HTTP', 'https://example.com/', 'DOWN', 15, 120, '2026-10-10T01:00:00.000Z', 3, 'timeout', 1, 'Main site', 0), ('c2', 'n1', 'Nginx', 'SERVICE', 'nginx.service', 'UP', 10, 5, NULL, 0, NULL, 0, NULL, 1)",
+    );
+    sqlite.exec(
+      "INSERT INTO incidents (id, check_id, status, started_at, summary) VALUES ('i1', 'c1', 'OPEN', '2026-10-10T00:55:00.000Z', 'timeout'), ('i2', 'c2', 'RESOLVED', '2026-10-09T00:00:00.000Z', 'failed')",
+    );
+    expect(() =>
+      sqlite.exec(
+        "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('c3', 'n1', 'AdGuard', 'CONTAINER', 'adguard-adguard-1')",
+      ),
+    ).toThrow(/CHECK/u);
+    const before = sqlite.prepare("SELECT * FROM checks ORDER BY id").all();
+    apply(sqlite, (name) => name.startsWith("0027"));
+    expect(sqlite.prepare("SELECT * FROM checks ORDER BY id").all()).toEqual(
+      before,
+    );
+    expect(
+      sqlite
+        .prepare("SELECT id, check_id, status FROM incidents ORDER BY id")
+        .all(),
+    ).toEqual([
+      { id: "i1", check_id: "c1", status: "OPEN" },
+      { id: "i2", check_id: "c2", status: "RESOLVED" },
+    ]);
+    sqlite.exec(
+      "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('c3', 'n1', 'AdGuard', 'CONTAINER', 'adguard-adguard-1')",
+    );
+    expect(() =>
+      sqlite.exec(
+        "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('c4', 'n1', 'Shell', 'SHELL', 'ls')",
+      ),
+    ).toThrow(/CHECK/u);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type IN ('index', 'table') AND (tbl_name = 'checks' OR name LIKE '%keep%' OR name LIKE 'checks_%') AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all()
+        .map((row) => (row as { name: string }).name),
+    ).toEqual(["checks", "idx_checks_node_id", "idx_checks_public_updated"]);
+    sqlite.exec("DELETE FROM checks WHERE id = 'c1'");
+    expect(
+      sqlite.prepare("SELECT id FROM incidents ORDER BY id").all(),
+    ).toEqual([{ id: "i2" }]);
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
+});
+
 describe("migration 0026", () => {
   it("keeps every action and accepts removing Krynodes from a server", () => {
     const sqlite = new DatabaseSync(":memory:");

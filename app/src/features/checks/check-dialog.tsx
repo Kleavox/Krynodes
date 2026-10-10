@@ -18,21 +18,42 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCreateCheck, useUpdateCheck } from "@/lib/api";
+import {
+  useCreateCheck,
+  useOverview,
+  useServices,
+  useUpdateCheck,
+} from "@/lib/api";
 import {
   checkTargetProblem,
+  containerChecksReady,
+  pickedKind,
   TARGET_HINT,
   TARGET_PLACEHOLDER,
+  targetOptions,
 } from "@/lib/checks";
 import { errorMessage } from "@/lib/http";
 import { cn } from "@/lib/utils";
 import type { CheckKind, CheckRecord, NodeRecord } from "@/types";
 
+import { TargetPicker } from "./target-picker";
+
 const KINDS: { value: CheckKind; label: string }[] = [
   { value: "HTTP", label: "HTTP" },
   { value: "TCP", label: "TCP" },
   { value: "SERVICE", label: "Systemd" },
+  { value: "CONTAINER", label: "Docker" },
 ];
+
+const EMPTY: Partial<Record<CheckKind, string>> = {
+  SERVICE: "No systemd services on this server.",
+  CONTAINER: "No Docker containers on this server.",
+};
+
+const SEARCH: Partial<Record<CheckKind, string>> = {
+  SERVICE: "Search services",
+  CONTAINER: "Search containers",
+};
 const TIMEOUTS = [5, 10, 15, 20, 30];
 
 export function CheckDialog({
@@ -82,12 +103,37 @@ function CheckForm({
   const [target, setTarget] = useState(check?.target ?? "");
   const [seconds, setSeconds] = useState(check?.timeout_seconds ?? 10);
   const [touched, setTouched] = useState(false);
+  const overview = useOverview();
+  const services = useServices();
   const problem = checkTargetProblem(kind, target);
   const showProblem = touched && problem !== null;
   const choosesNode = Boolean(check) || !nodeId;
   const enrolled = nodes.filter(
     (entry) => entry.enrolled_at !== null && entry.disabled_at === null,
   );
+  const known = nodes.length > 0 ? nodes : (overview.data?.nodes ?? []);
+  const dockerReady =
+    check?.kind === "CONTAINER" ||
+    containerChecksReady(
+      known.find((entry) => entry.id === node)?.agent_version ?? null,
+    );
+  const listed = (nextNode: string) =>
+    services.data?.nodes.find((entry) => entry.id === nextNode)?.services;
+  const options = targetOptions(listed(node), kind, target);
+  const fits = (nextKind: CheckKind, nextNode: string) =>
+    pickedKind(nextKind)
+      ? targetOptions(listed(nextNode), nextKind, "").some(
+          (option) => option.name === target,
+        )
+      : !pickedKind(kind);
+  const chooseKind = (value: CheckKind) => {
+    if (!fits(value, node)) setTarget("");
+    setKind(value);
+  };
+  const chooseNode = (value: string) => {
+    if (!fits(kind, value)) setTarget("");
+    setNode(value);
+  };
   const fresh =
     check !== undefined &&
     (kind !== check.kind ||
@@ -134,7 +180,7 @@ function CheckForm({
         </DialogHeader>
         {choosesNode && (
           <Field id="check-node" label="Runs on">
-            <Select value={node} onValueChange={setNode}>
+            <Select value={node} onValueChange={chooseNode}>
               <SelectTrigger id="check-node" className="w-full">
                 <SelectValue placeholder="Choose a node" />
               </SelectTrigger>
@@ -163,17 +209,23 @@ function CheckForm({
           <Field id="check-kind" label="Kind">
             <Select
               value={kind}
-              onValueChange={(value) => setKind(value as CheckKind)}
+              onValueChange={(value) => chooseKind(value as CheckKind)}
             >
               <SelectTrigger id="check-kind" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {KINDS.map((entry) => (
-                  <SelectItem key={entry.value} value={entry.value}>
-                    {entry.label}
-                  </SelectItem>
-                ))}
+                {KINDS.map((entry) =>
+                  entry.value === "CONTAINER" && !dockerReady ? (
+                    <SelectItem key={entry.value} value={entry.value} disabled>
+                      {entry.label} · Needs agent 0.6.3 or newer
+                    </SelectItem>
+                  ) : (
+                    <SelectItem key={entry.value} value={entry.value}>
+                      {entry.label}
+                    </SelectItem>
+                  ),
+                )}
               </SelectContent>
             </Select>
           </Field>
@@ -199,20 +251,34 @@ function CheckForm({
         </div>
         <div className="space-y-2">
           <Field id="check-target" label="Target">
-            <Input
-              id="check-target"
-              className="font-mono"
-              value={target}
-              onChange={(event) => setTarget(event.target.value)}
-              onBlur={() => setTouched(true)}
-              placeholder={TARGET_PLACEHOLDER[kind]}
-              maxLength={2048}
-              required
-              aria-invalid={showProblem}
-              aria-describedby="check-target-hint"
-              spellCheck={false}
-              autoCapitalize="off"
-            />
+            {pickedKind(kind) ? (
+              <TargetPicker
+                id="check-target"
+                options={node ? options : []}
+                value={target}
+                onChange={setTarget}
+                placeholder={TARGET_PLACEHOLDER[kind]}
+                empty={node ? EMPTY[kind]! : "Choose a node first."}
+                search={SEARCH[kind]!}
+                invalid={showProblem}
+                describedBy="check-target-hint"
+              />
+            ) : (
+              <Input
+                id="check-target"
+                className="font-mono"
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+                onBlur={() => setTouched(true)}
+                placeholder={TARGET_PLACEHOLDER[kind]}
+                maxLength={2048}
+                required
+                aria-invalid={showProblem}
+                aria-describedby="check-target-hint"
+                spellCheck={false}
+                autoCapitalize="off"
+              />
+            )}
           </Field>
           <p
             id="check-target-hint"
