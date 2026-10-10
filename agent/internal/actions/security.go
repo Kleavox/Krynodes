@@ -15,7 +15,10 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
-var applyUpdates = regexp.MustCompile(`(?m)^\s*apply_updates\s*=\s*(yes|true|1)\s*$`)
+var (
+	applyUpdates = regexp.MustCompile(`(?m)^\s*apply_updates\s*=\s*(yes|true|1)\s*$`)
+	ufwEnabled   = regexp.MustCompile(`(?m)^\s*ENABLED\s*=\s*"?yes"?\s*$`)
+)
 
 const (
 	checkEvery  = 6 * time.Hour
@@ -124,8 +127,8 @@ func (e Executor) findings(ctx context.Context) []reporter.Finding {
 	if len(public) > 0 {
 		add("public-ports", "warning", "Listening on public addresses outside Krynodes: "+strings.Join(public, ", "))
 	}
-	ufw, _ := e.output(ctx, "ufw", "status")
-	firewall := strings.Contains(ufw, "Status: active")
+	ufw, _ := os.ReadFile(e.path("/etc/ufw/ufw.conf"))
+	firewall := ufwEnabled.Match(ufw)
 	tool := "ufw"
 	if platform.Family == recipes.RHEL {
 		state, _ := e.output(ctx, "firewall-cmd", "--state")

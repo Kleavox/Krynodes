@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SecurityReport } from "../types";
 import {
   firewallName,
+  findingTone,
   firewallPorts,
   fromUtcHour,
   protectionDetail,
@@ -83,12 +84,66 @@ describe("the security check on screen", () => {
     ).toBe(true);
   });
 
+  it("shows a protection set up by hand as on, without offering to change it", () => {
+    const choices = recipeChoices(
+      report({
+        recipes: ["security-updates"],
+        findings: [
+          { id: "ssh-password", severity: "serious", detail: "x" },
+          { id: "dns-stub", severity: "note", detail: "x" },
+        ],
+      }),
+    );
+    expect(
+      choices.map((choice) => [choice.id, choice.applied, choice.outside]),
+    ).toEqual([
+      ["security-updates", true, false],
+      ["reboot-window", false, false],
+      ["ssh-keys-only", false, false],
+      ["fail2ban", false, true],
+      ["firewall", false, true],
+      ["free-port-53", false, false],
+    ]);
+    expect(
+      recommended(
+        report({
+          findings: [{ id: "ssh-password", severity: "serious", detail: "x" }],
+        }),
+      ),
+    ).toEqual(["reboot-window", "ssh-keys-only"]);
+  });
+
+  it("does not take a missing SSH finding as SSH set up by hand", () => {
+    expect(
+      recipeChoices(report()).find((choice) => choice.id === "ssh-keys-only")
+        ?.outside,
+    ).toBe(false);
+  });
+
+  it("marks SSH keys as good news, not as a note", () => {
+    expect(findingTone({ id: "ssh-keys", severity: "note", detail: "x" })).toBe(
+      "ok",
+    );
+    expect(findingTone({ id: "dns-stub", severity: "note", detail: "x" })).toBe(
+      "idle",
+    );
+    expect(
+      findingTone({ id: "public-ports", severity: "warning", detail: "x" }),
+    ).toBe("warn");
+    expect(
+      findingTone({ id: "ssh-password", severity: "serious", detail: "x" }),
+    ).toBe("bad");
+  });
+
   it("recommends the four safest recipes that are still off and can run", () => {
     expect(
       recommended(
         report({
           recipes: ["fail2ban"],
-          findings: [{ id: "ssh-no-keys", severity: "warning", detail: "x" }],
+          findings: [
+            { id: "ssh-no-keys", severity: "warning", detail: "x" },
+            { id: "updates-off", severity: "warning", detail: "x" },
+          ],
         }),
       ),
     ).toEqual(["security-updates", "reboot-window"]);

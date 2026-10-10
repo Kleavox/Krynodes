@@ -119,7 +119,29 @@ func healthyServer(t *testing.T, executor Executor, run *fakeRun) {
 	run.respond["sshd -T"] = "passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin without-password\nport 22\n"
 	run.respond["dpkg-query -W -f ${Status} unattended-upgrades"] = "install ok installed"
 	run.respond[listening] = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n"
+	rootFile(t, executor, "/etc/ufw/ufw.conf", "# comment\nENABLED=yes\nLOGLEVEL=low\n")
+}
+
+func TestUfwIsReadFromItsConfigBecauseTheSandboxCannotTakeItsLock(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	run.failing["ufw status"] = "OSError: [Errno 30] Read-only file system: '/run/ufw.lock'"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, off := findingsOf(t, executor)["firewall-off"]; off {
+		t.Fatal("ufw is enabled in /etc/ufw/ufw.conf")
+	}
+	executor, run = securityExecutor(t)
+	healthyServer(t, executor, run)
 	run.respond["ufw status"] = "Status: active\n"
+	rootFile(t, executor, "/etc/ufw/ufw.conf", "ENABLED=no\n")
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if found := findingsOf(t, executor); found["firewall-off"].Detail != "No firewall is active (ufw)" {
+		t.Fatalf("findings %#v", found)
+	}
 }
 
 func TestAHealthyServerHasOnlyNotes(t *testing.T) {

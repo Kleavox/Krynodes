@@ -28,6 +28,7 @@ import { agentCurrent } from "@/lib/devices";
 import { timeAgo } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
 import {
+  findingTone,
   firewallPorts,
   protectionDetail,
   protectionsNotice,
@@ -38,17 +39,10 @@ import {
   type RecipeChoice,
 } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { Finding, NodeRecord } from "@/types";
+import type { NodeRecord } from "@/types";
 
 const sectionTitle =
   "mb-3 text-[11px] tracking-wider text-muted-foreground uppercase";
-
-const tone = (finding: Finding) =>
-  finding.severity === "serious"
-    ? "bad"
-    : finding.severity === "warning"
-      ? "warn"
-      : "idle";
 
 const offset = () => new Date().getTimezoneOffset();
 
@@ -281,7 +275,7 @@ export function SecurityPanel({
       <ul className="space-y-1.5 text-sm">
         {findings.map((finding) => (
           <li key={finding.id} className="flex gap-2">
-            <StatusDot tone={tone(finding)} />
+            <StatusDot tone={findingTone(finding)} />
             <span className="min-w-0">{finding.detail}</span>
           </li>
         ))}
@@ -311,9 +305,11 @@ export function SecurityPanel({
                 ? choice.id === "reboot-window" && report.rebootHour !== null
                   ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
                   : "On"
-                : "Off"}
+                : choice.outside
+                  ? "On · set up outside Krynodes"
+                  : "Off"}
             </span>
-            {choice.blocked ? (
+            {choice.blocked || choice.outside ? (
               <span className="size-9 md:size-8" />
             ) : (
               <RowMenu
