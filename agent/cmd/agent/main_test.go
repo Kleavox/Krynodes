@@ -224,6 +224,35 @@ func TestTheContainmentUnitRunsBeforeDocker(t *testing.T) {
 	}
 }
 
+func TestTheContainerWatcherRunsAsRootInTheExecutorSandbox(t *testing.T) {
+	unit := containersUnit("/usr/local/bin/kry")
+	for _, want := range []string{
+		"Type=simple\n",
+		"Group=kry\n",
+		"ExecStart=/usr/local/bin/kry watch-containers\n",
+		"Restart=always\n",
+		"NoNewPrivileges=true\n",
+		"ProtectHome=read-only\n",
+		"ProtectSystem=strict\n",
+		"ReadWritePaths=/var/lib/kry-exec\n",
+		"Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n",
+		"WantedBy=multi-user.target\n",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("watcher unit is missing %q", want)
+		}
+	}
+	if strings.Contains(unit, "User=") {
+		t.Error("the watcher needs Docker, so it runs as root")
+	}
+	if !slices.Contains(enabledUnits(), "krynodes-containers.service") || !slices.Contains(leftovers("/usr/local/bin/kry"), containersPath) {
+		t.Fatalf("enabled %v leftovers %v", enabledUnits(), leftovers("/usr/local/bin/kry"))
+	}
+	if !slices.Contains(restartedUnits(), "krynodes-containers.service") {
+		t.Fatal("an update must restart the watcher onto the new binary")
+	}
+}
+
 func TestUninstallWaitsForEveryResultToBeReported(t *testing.T) {
 	requests, state := t.TempDir(), t.TempDir()
 	const id = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01"

@@ -4,7 +4,13 @@ import { z } from "zod";
 import { CHECK_LIMIT } from "../agent/ingest";
 import { readAgentRelease } from "../agent/releases";
 import { fleetLive, mergeLive, pokeSoon } from "../fleet/client";
-import { validateCheckTarget } from "../lib/checks";
+import { compareVersions } from "@krynodes/protocol";
+
+import {
+  CHECK_KINDS,
+  CONTAINER_AGENT,
+  validateCheckTarget,
+} from "../lib/checks";
 import { confirmed } from "../trust/intent";
 import { manualStatement, unitOf } from "../actions/store";
 import {
@@ -124,7 +130,7 @@ export function registerAdminRoutes(
       .object({
         nodeId: z.string().uuid(),
         name: z.string().trim().min(1).max(100),
-        kind: z.enum(["HTTP", "TCP", "SERVICE"]),
+        kind: z.enum(CHECK_KINDS),
         target: z.string().trim().min(1).max(2048),
         timeoutSeconds: z.number().int().min(1).max(30).default(10),
       })
@@ -160,6 +166,10 @@ export function registerAdminRoutes(
         400,
       );
     }
+    if (body.data.kind === "CONTAINER") {
+      const old = await agentTooOld(context, body.data.nodeId);
+      if (old) return old;
+    }
 
     const id = crypto.randomUUID();
     await context.env.DB.prepare(
@@ -188,7 +198,7 @@ export function registerAdminRoutes(
         enabled: z.boolean().optional(),
         name: z.string().trim().min(1).max(100).optional(),
         nodeId: z.string().uuid().optional(),
-        kind: z.enum(["HTTP", "TCP", "SERVICE"]).optional(),
+        kind: z.enum(CHECK_KINDS).optional(),
         target: z.string().trim().min(1).max(2048).optional(),
         timeoutSeconds: z.number().int().min(1).max(30).optional(),
         public: z.boolean().optional(),
@@ -231,6 +241,13 @@ export function registerAdminRoutes(
           400,
         );
       }
+    }
+    if (
+      kind === "CONTAINER" &&
+      (check.kind !== "CONTAINER" || nodeId !== check.node_id)
+    ) {
+      const old = await agentTooOld(context, nodeId);
+      if (old) return old;
     }
     const pausing = change.enabled === false && check.enabled === 1;
     const fresh =
@@ -332,6 +349,27 @@ export function registerAdminRoutes(
     }
     return context.body(null, 204);
   });
+}
+
+async function agentTooOld(context: KrynodesContext, nodeId: string) {
+  const row = await context.env.DB.prepare(
+    "SELECT agent_version FROM nodes WHERE id = ?",
+  )
+    .bind(nodeId)
+    .first<{ agent_version: string | null }>();
+  if (
+    row?.agent_version &&
+    compareVersions(row.agent_version, CONTAINER_AGENT) >= 0
+  ) {
+    return null;
+  }
+  return context.json(
+    {
+      code: "AGENT_TOO_OLD",
+      message: `This server needs agent ${CONTAINER_AGENT} or newer for container checks.`,
+    },
+    409,
+  );
 }
 
 async function ownedNode(context: KrynodesContext) {

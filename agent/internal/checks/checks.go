@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Kleavox/krynodes/agent/internal/containers"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
@@ -25,6 +26,14 @@ var serviceStates = func(ctx context.Context, units []string) (string, error) {
 		return string(output), nil
 	}
 	return "", err
+}
+
+var containerState = func() (containers.State, error) {
+	return containers.Read("/var/lib/kry-exec/" + containers.File)
+}
+
+func containerResult(check reporter.Check, state containers.State, err error) reporter.CheckResult {
+	return result(check, time.Now(), containers.Verdict(state, err, check.Target, time.Now()))
 }
 
 var (
@@ -68,10 +77,20 @@ func runOnce(ctx context.Context, definitions []reporter.Check) []reporter.Check
 	semaphore := make(chan struct{}, 4)
 	var wait sync.WaitGroup
 	var services []int
+	var state *containers.State
+	var stateErr error
 
 	for index, definition := range definitions {
 		if definition.Kind == "SERVICE" && validUnit(definition.Target) {
 			services = append(services, index)
+			continue
+		}
+		if definition.Kind == "CONTAINER" {
+			if state == nil {
+				read, err := containerState()
+				state, stateErr = &read, err
+			}
+			results[index] = containerResult(definition, *state, stateErr)
 			continue
 		}
 		wait.Add(1)
@@ -137,6 +156,9 @@ func Run(ctx context.Context, check reporter.Check) reporter.CheckResult {
 		err = runTCP(checkCtx, check.Target)
 	case "SERVICE":
 		err = runService(checkCtx, check.Target)
+	case "CONTAINER":
+		state, readErr := containerState()
+		return containerResult(check, state, readErr)
 	default:
 		err = fmt.Errorf("unsupported check kind")
 	}

@@ -1,7 +1,7 @@
 # Krynodes
 
 Krynodes is a small, self-hosted monitoring console on Cloudflare Workers. A Go
-agent on each server reports metrics and runs HTTP, TCP and systemd checks; the
+agent on each server reports metrics and runs HTTP, TCP, systemd and Docker checks; the
 Worker stores history in D1, opens and resolves incidents, and mails the
 operator. The dashboard sits behind Cloudflare Zero Trust; one login can be
 shared by a small team, and every open tab sees what the others do as it
@@ -141,8 +141,14 @@ downloads a release, and so does the install script (`curl --proto =https
 ### Checks
 
 Checks run on the agent of the server they belong to: HTTP (down on errors,
-timeouts and 5xx answers), TCP (down when the connection fails) and systemd
-(up while the unit is active). A failing check is tried twice
+timeouts and 5xx answers), TCP (down when the connection fails), systemd
+(up while the unit is active) and Docker (up while the container runs and is
+not unhealthy; agent 0.6.4 or newer). A systemd or Docker target is picked
+from a searchable list of what the server reports on the Services page, never
+typed, so protected units such as ssh or docker itself are not offered. A
+Docker check reads the state `krynodes-containers.service` keeps (below), so a
+container that stops shows within one check cycle; if that state is more than
+3 minutes old the check is down with "Container status is stale". A failing check is tried twice
 more, 5 seconds apart, before the agent reports it down, and an incident opens
 only at the second such report in a row. A check's menu on the Checks page or the node
 page has **Edit** (name, server, kind, target, timeout), **Pause** / **Resume**,
@@ -297,6 +303,12 @@ The agent never runs anything itself:
   to the next run, so nothing it started is cut off by the unit's one-hour
   limit; Move into Krynodes gives up copying the old folder after 15 minutes
   and starts the stack from it again.
+- `krynodes-containers.service` runs `kry watch-containers` as root in the
+  same sandbox as `kry exec`. It follows `docker events`, writes the
+  containers' states to `/var/lib/kry-exec/containers.json` after each
+  start, stop, restart or health change, refreshes the file's time every
+  minute and reconnects when Docker restarts. It only reads Docker; the
+  agent itself still has no Docker access.
 - `kry exec` refuses anything that is not signed by a trusted device and
   aimed at something present on the server. The only unsigned requests it
   takes are turning auto-restart off, restarting a listed unit that is down
