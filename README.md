@@ -549,6 +549,13 @@ a clock that is not synchronized (signed actions depend on it).
 Fleet shows a shield (green, amber, red); the server page lists the findings
 with **Check now**. A new serious finding is mailed under the quiet rules.
 
+**Addresses that are not public.** The Security panel's ⋯ menu keeps one list
+of address ranges (IPv4 or IPv6, at most 32) for every server, empty until you
+fill it. Listeners bound to an address inside a range, such as a VPN's, are
+left out of the public-ports finding. The agent (0.6.6 or newer) reports each
+listener's address; the Worker applies the list when it shows the report, so
+a change shows at once, without a new check.
+
 **Protections** on the server page, each with Turn off (Undo):
 
 | Protection                    | What it does                                                                                                                                               |

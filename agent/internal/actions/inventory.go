@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,6 +148,16 @@ func fieldAt(fields []string, index int) string {
 
 func publicPorts(text string) []string {
 	var ports []string
+	for _, bound := range publicBindings(text) {
+		if port := strconv.Itoa(bound.Port) + "/" + bound.Protocol; !slices.Contains(ports, port) {
+			ports = append(ports, port)
+		}
+	}
+	return ports
+}
+
+func publicBindings(text string) []reporter.Listener {
+	var bindings []reporter.Listener
 	for item := range strings.SplitSeq(text, ",") {
 		host, inside, found := strings.Cut(strings.TrimSpace(item), "->")
 		if !found {
@@ -162,11 +173,13 @@ func publicPorts(text string) []string {
 			continue
 		}
 		first, _, _ := strings.Cut(host[colon+1:], "-")
-		if port := first + "/" + protocol; !slices.Contains(ports, port) {
-			ports = append(ports, port)
+		port, err := strconv.Atoi(first)
+		if err != nil {
+			continue
 		}
+		bindings = append(bindings, reporter.Listener{Address: address, Port: port, Protocol: protocol})
 	}
-	return ports
+	return bindings
 }
 
 func parseContainers(output string) ([]Service, []Stack) {

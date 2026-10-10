@@ -41,6 +41,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { NodeRecord } from "@/types";
 
+import { PrivateRangesDialog } from "./private-ranges-dialog";
+
 const sectionTitle =
   "mb-3 text-[11px] tracking-wider text-muted-foreground uppercase";
 
@@ -234,6 +236,7 @@ export function SecurityPanel({
   const services = useServices();
   const scan = useScan();
   const [pending, setPending] = useState<Pending | null>(null);
+  const [ranges, setRanges] = useState(false);
   const entry = services.data?.nodes.find((item) => item.id === node.id);
   const report = entry?.security;
   if (!agentCurrent(node) || !report) return null;
@@ -271,7 +274,17 @@ export function SecurityPanel({
         >
           Check now
         </Button>
+        <RowMenu
+          label="Security settings"
+          items={[
+            {
+              label: "Addresses that are not public…",
+              onSelect: () => setRanges(true),
+            },
+          ]}
+        />
       </div>
+      <PrivateRangesDialog open={ranges} onOpenChange={setRanges} />
       <ul className="space-y-1.5 text-sm">
         {findings.map((finding) => (
           <li key={finding.id} className="flex gap-2">

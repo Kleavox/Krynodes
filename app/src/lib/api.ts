@@ -154,6 +154,25 @@ export function useEnrollmentStatus(id: string | undefined) {
   });
 }
 
+export function usePrivateRanges(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.privateRanges,
+    queryFn: () =>
+      apiFetch<{ ranges: string[] }>("/api/settings/private-ranges"),
+    enabled,
+  });
+}
+
+export const useSavePrivateRanges = () =>
+  useApiMutation(
+    (ranges: string[]) =>
+      apiFetch<{ ranges: string[] }>(
+        "/api/settings/private-ranges",
+        send("PUT", { ranges }),
+      ),
+    [queryKeys.privateRanges, queryKeys.services],
+  );
+
 export const useUpdateNode = () =>
   useApiMutation(
     ({ id, ...change }: { id: string; name?: string; autoUpdate?: boolean }) =>

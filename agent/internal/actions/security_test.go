@@ -177,6 +177,37 @@ func TestFullAccessStacksMayHoldDockerAndPublicPorts(t *testing.T) {
 	}
 }
 
+func TestThePublicListenersAreReportedWithTheirAddresses(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	run.respond[listening] = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n" +
+		"tcp LISTEN 0 4096 100.79.66.29:57969 0.0.0.0:* users:((\"tailscaled\",pid=2,fd=3))\n" +
+		"udp UNCONN 0 0 0.0.0.0:41641 0.0.0.0:* users:((\"tailscaled\",pid=2,fd=5))\n" +
+		"tcp LISTEN 0 4096 [fd7a:115c:a1e0::1]:63014 [::]:* users:((\"tailscaled\",pid=2,fd=4))\n" +
+		"tcp LISTEN 0 4096 127.0.0.1:3000 0.0.0.0:* users:((\"local\",pid=3,fd=3))\n"
+	run.respond["docker ps --format "+portsFormat] = "web-1\t192.168.1.5:8080->80/tcp, [::]:8080->80/tcp\tshop\n"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var inventory Inventory
+	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	want := []reporter.Listener{
+		{Address: "100.79.66.29", Port: 57969, Protocol: "tcp", Process: "tailscaled"},
+		{Address: "0.0.0.0", Port: 41641, Protocol: "udp", Process: "tailscaled"},
+		{Address: "fd7a:115c:a1e0::1", Port: 63014, Protocol: "tcp", Process: "tailscaled"},
+		{Address: "192.168.1.5", Port: 8080, Protocol: "tcp", Process: "web-1"},
+		{Address: "::", Port: 8080, Protocol: "tcp", Process: "web-1"},
+	}
+	if !slices.Equal(inventory.Security.Listeners, want) {
+		t.Fatalf("listeners %#v", inventory.Security.Listeners)
+	}
+	if detail := findingsOf(t, executor)["public-ports"].Detail; detail != "Listening on public addresses outside Krynodes: 57969/tcp (tailscaled), 41641/udp (tailscaled), 63014/tcp (tailscaled), 8080/tcp (web-1)" {
+		t.Fatalf("detail %q", detail)
+	}
+}
+
 func checks(run *fakeRun) int {
 	return strings.Count(strings.Join(run.calls, "\n"), listening)
 }

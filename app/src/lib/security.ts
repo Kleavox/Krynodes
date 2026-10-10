@@ -100,6 +100,12 @@ export function firewallPorts(report: SecurityReport): string[] {
   );
 }
 
+export const rangeLines = (text: string) =>
+  text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
 export const toUtcHour = (hour: number, offsetMinutes: number) =>
   ((((hour * 60 + offsetMinutes) / 60) % 24) + 24) % 24;
 

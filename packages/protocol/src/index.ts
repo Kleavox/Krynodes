@@ -288,6 +288,17 @@ export const securityReportSchema = z.strictObject({
       checked: z.string().max(40),
     })
     .optional(),
+  listeners: z
+    .array(
+      z.strictObject({
+        address: z.string().max(64),
+        port: z.number().int().min(0).max(65_535),
+        protocol: z.enum(["tcp", "udp"]),
+        process: z.string().max(64),
+      }),
+    )
+    .max(100)
+    .optional(),
 });
 
 const vaultPieceSchema = z.strictObject({

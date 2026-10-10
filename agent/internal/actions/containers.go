@@ -13,7 +13,7 @@ import (
 var containerEvents = []string{"create", "start", "restart", "die", "stop", "kill", "pause", "unpause", "destroy", "rename", "health_status"}
 
 type Watcher struct {
-	Dir    string
+	Save   func(containers.State) error
 	Now    func() time.Time
 	Run    Runner
 	Follow func(ctx context.Context) (io.ReadCloser, error)
@@ -24,7 +24,7 @@ type Watcher struct {
 
 func NewWatcher() Watcher {
 	return Watcher{
-		Dir:    StateDir,
+		Save:   stateWriter(StateDir),
 		Now:    time.Now,
 		Run:    RunCommand,
 		Follow: followEvents,
@@ -141,5 +141,11 @@ func (w Watcher) snapshot(ctx context.Context) ([]containers.Container, bool) {
 }
 
 func (w Watcher) write(state containers.State) {
-	_ = writeJSON(w.Dir, containers.File, state, 0o640)
+	_ = w.Save(state)
+}
+
+func stateWriter(dir string) func(containers.State) error {
+	return func(state containers.State) error {
+		return writeJSON(dir, containers.File, state, 0o640)
+	}
 }

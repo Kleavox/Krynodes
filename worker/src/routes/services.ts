@@ -24,6 +24,8 @@ import {
   type ActionRow,
 } from "../actions/store";
 import { decodeJson } from "../lib/b64url";
+import { filterListeners, type Finding, type Listener } from "../lib/ranges";
+import { readPrivateRanges } from "./settings";
 import { readReport } from "../trust/fleet";
 import {
   invalidRequest,
@@ -116,6 +118,16 @@ function toActionRecord(row: ActionRow) {
   };
 }
 
+function securityReport(text: string | null, ranges: string[]): unknown {
+  const report = parsed(text) as {
+    findings?: unknown;
+    listeners?: Listener[];
+  } | null;
+  return report && Array.isArray(report.findings)
+    ? filterListeners(report as { findings: Finding[] }, ranges)
+    : report;
+}
+
 function parsed(text: string | null): unknown {
   if (text === null) return null;
   try {
@@ -137,6 +149,7 @@ export function registerServiceRoutes(
     const owner = context.get("identity").id;
     const now = Date.now();
     await db.batch(sweepStatements(db, now));
+    const ranges = await readPrivateRanges(db);
     const [nodes, services, actions] = await Promise.all([
       db
         .prepare(
@@ -237,7 +250,7 @@ export function registerServiceRoutes(
         trust: readReport(node.trust_report),
         docker: node.docker,
         sealKey: node.seal_key,
-        security: parsed(node.security),
+        security: securityReport(node.security, ranges),
         vault: parsed(node.vault),
         webAddresses: addresses.results
           .filter((address) => address.node_id === node.id)

@@ -16,6 +16,7 @@ type watchFake struct {
 	mu      sync.Mutex
 	listing []string
 	calls   int
+	saved   []containers.State
 	streams chan *io.PipeWriter
 	waits   chan time.Duration
 	docker  bool
@@ -25,9 +26,8 @@ func newWatchFake(listing ...string) *watchFake {
 	return &watchFake{listing: listing, streams: make(chan *io.PipeWriter, 4), waits: make(chan time.Duration, 4), docker: true}
 }
 
-func (f *watchFake) watcher(t *testing.T, dir string) Watcher {
+func (f *watchFake) watcher(t *testing.T) Watcher {
 	return Watcher{
-		Dir: dir,
 		Now: func() time.Time { return time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC) },
 		Run: func(_ context.Context, name string, args ...string) ([]byte, int, error) {
 			if name != "docker" || strings.Join(args, " ") != "ps -a --format "+containers.Format {
@@ -50,48 +50,57 @@ func (f *watchFake) watcher(t *testing.T, dir string) Watcher {
 			<-ctx.Done()
 			return false
 		},
+		Save: func(state containers.State) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.saved = append(f.saved, state)
+			return nil
+		},
 		Beat: time.Hour,
 	}
 }
 
-func waitForState(t *testing.T, path string, check func(containers.State) bool) containers.State {
+func (f *watchFake) waitFor(t *testing.T, check func(containers.State) bool) containers.State {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if state, err := containers.Read(path); err == nil && check(state) {
-			return state
+	for {
+		f.mu.Lock()
+		var last containers.State
+		found := len(f.saved) > 0
+		if found {
+			last = f.saved[len(f.saved)-1]
 		}
-		time.Sleep(10 * time.Millisecond)
+		f.mu.Unlock()
+		if found && check(last) {
+			return last
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("last saved state %#v", last)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	state, err := containers.Read(path)
-	t.Fatalf("state %#v err %v", state, err)
-	return state
 }
 
 func TestTheWatcherWritesASnapshotAndRefreshesOnEachEvent(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, containers.File)
 	fake := newWatchFake("web\trunning\tUp 1 second\n", "web\texited\tExited (1) now\n", "web\trunning\tUp now\nnew\trunning\tUp now\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go fake.watcher(t, dir).Watch(ctx)
+	go fake.watcher(t).Watch(ctx)
 	stream := <-fake.streams
-	waitForState(t, path, func(state containers.State) bool {
+	fake.waitFor(t, func(state containers.State) bool {
 		return state.Docker && len(state.Containers) == 1 && state.Containers[0].State == "running"
 	})
 	io.WriteString(stream, `{"status":"die","id":"a"}`+"\n")
-	waitForState(t, path, func(state containers.State) bool {
+	fake.waitFor(t, func(state containers.State) bool {
 		return len(state.Containers) == 1 && state.Containers[0].State == "exited"
 	})
 	io.WriteString(stream, `{"status":"start","id":"a"}`+"\n"+`{"status":"start","id":"b"}`+"\n")
-	waitForState(t, path, func(state containers.State) bool { return len(state.Containers) == 2 })
+	fake.waitFor(t, func(state containers.State) bool { return len(state.Containers) == 2 })
 }
 
 func TestTheWatcherSnapshotsAgainWhenDockerRestarts(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, containers.File)
 	fake := newWatchFake("web\trunning\tUp\n", "web\trunning\tUp\nback\trunning\tUp\n")
-	watcher := fake.watcher(t, dir)
+	watcher := fake.watcher(t)
 	waited := make(chan time.Duration, 4)
 	watcher.Wait = func(ctx context.Context, wait time.Duration) bool {
 		waited <- wait
@@ -105,30 +114,27 @@ func TestTheWatcherSnapshotsAgainWhenDockerRestarts(t *testing.T) {
 		t.Fatalf("waited %v before reconnecting", wait)
 	}
 	<-fake.streams
-	waitForState(t, path, func(state containers.State) bool { return len(state.Containers) == 2 })
+	fake.waitFor(t, func(state containers.State) bool { return len(state.Containers) == 2 })
 }
 
 func TestTheWatcherSaysWhenDockerIsMissing(t *testing.T) {
-	dir := t.TempDir()
 	fake := newWatchFake("")
 	fake.docker = false
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go fake.watcher(t, dir).Watch(ctx)
+	go fake.watcher(t).Watch(ctx)
 	if wait := <-fake.waits; wait != time.Minute {
 		t.Fatalf("waited %v; the state must stay fresher than the 3 minutes a check accepts", wait)
 	}
-	state := waitForState(t, filepath.Join(dir, containers.File), func(state containers.State) bool { return !state.At.IsZero() })
+	state := fake.waitFor(t, func(state containers.State) bool { return !state.At.IsZero() })
 	if state.Docker || len(state.Containers) != 0 {
 		t.Fatalf("state %#v", state)
 	}
 }
 
 func TestTheWatcherHeartbeatKeepsTheLastContainers(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, containers.File)
 	fake := newWatchFake("web\trunning\tUp\n")
-	watcher := fake.watcher(t, dir)
+	watcher := fake.watcher(t)
 	watcher.Beat = 20 * time.Millisecond
 	tick := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 	var mu sync.Mutex
@@ -142,8 +148,8 @@ func TestTheWatcherHeartbeatKeepsTheLastContainers(t *testing.T) {
 	defer cancel()
 	go watcher.Watch(ctx)
 	<-fake.streams
-	first := waitForState(t, path, func(state containers.State) bool { return len(state.Containers) == 1 })
-	later := waitForState(t, path, func(state containers.State) bool { return state.At.After(first.At) })
+	first := fake.waitFor(t, func(state containers.State) bool { return len(state.Containers) == 1 })
+	later := fake.waitFor(t, func(state containers.State) bool { return state.At.After(first.At) })
 	if len(later.Containers) != 1 || later.Containers[0].Name != "web" {
 		t.Fatalf("heartbeat lost the containers: %#v", later)
 	}
@@ -151,5 +157,18 @@ func TestTheWatcherHeartbeatKeepsTheLastContainers(t *testing.T) {
 	defer fake.mu.Unlock()
 	if fake.calls != 1 {
 		t.Fatalf("a heartbeat must not run Docker, ran %d times", fake.calls)
+	}
+}
+
+func TestTheWatcherStateIsWrittenForTheCheckToRead(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	want := containers.State{At: at, Docker: true, Containers: []containers.Container{{Name: "web", State: "running", Health: "healthy"}}}
+	if err := stateWriter(dir)(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := containers.Read(filepath.Join(dir, containers.File))
+	if err != nil || !got.At.Equal(at) || !got.Docker || len(got.Containers) != 1 || got.Containers[0] != want.Containers[0] {
+		t.Fatalf("got %#v err %v", got, err)
 	}
 }

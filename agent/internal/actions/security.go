@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -27,9 +28,12 @@ const (
 )
 
 type securityState struct {
-	CheckedAt time.Time          `json:"checkedAt"`
-	Findings  []reporter.Finding `json:"findings"`
+	CheckedAt time.Time           `json:"checkedAt"`
+	Findings  []reporter.Finding  `json:"findings"`
+	Listeners []reporter.Listener `json:"listeners,omitempty"`
 }
+
+const maxListeners = 100
 
 func (e Executor) path(name string) string {
 	return filepath.Join(e.Root, filepath.FromSlash(name))
@@ -45,7 +49,8 @@ func (e Executor) output(ctx context.Context, name string, args ...string) (stri
 func (e Executor) security(ctx context.Context, force bool) *reporter.SecurityReport {
 	state, _ := readState[securityState](e.StateDir, "security.json")
 	if force || state.CheckedAt.IsZero() || e.Now().Sub(state.CheckedAt) >= checkEvery {
-		state = securityState{CheckedAt: e.Now(), Findings: e.findings(ctx)}
+		found, listeners := e.findings(ctx)
+		state = securityState{CheckedAt: e.Now(), Findings: found, Listeners: listeners}
 		if err := writeJSON(e.StateDir, "security.json", state, 0o640); err != nil {
 			return nil
 		}
@@ -63,10 +68,11 @@ func (e Executor) security(ctx context.Context, force bool) *reporter.SecurityRe
 		report.RebootHour = window.Hour
 	}
 	report.Findings = findings
+	report.Listeners = state.Listeners
 	return report
 }
 
-func (e Executor) findings(ctx context.Context) []reporter.Finding {
+func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.Listener) {
 	found := []reporter.Finding{}
 	add := func(id, severity, detail string) {
 		if len(detail) > 300 {
@@ -122,10 +128,13 @@ func (e Executor) findings(ctx context.Context) []reporter.Finding {
 	if risky := e.riskyContainers(ctx); len(risky) > 0 {
 		add("risky-container", "serious", "Containers with full control of the server: "+strings.Join(risky, ", "))
 	}
-	public, stub := e.publicListeners(ctx, settings)
-	public = append(public, e.publicContainers(ctx)...)
-	if len(public) > 0 {
+	listeners, stub := e.publicListeners(ctx, settings)
+	listeners = append(listeners, e.publicContainers(ctx)...)
+	if public := listenerEntries(listeners); len(public) > 0 {
 		add("public-ports", "warning", "Listening on public addresses outside Krynodes: "+strings.Join(public, ", "))
+	}
+	if len(listeners) > maxListeners {
+		listeners = listeners[:maxListeners]
 	}
 	ufw, _ := os.ReadFile(e.path("/etc/ufw/ufw.conf"))
 	firewall := ufwEnabled.Match(ufw)
@@ -147,7 +156,7 @@ func (e Executor) findings(ctx context.Context) []reporter.Finding {
 	if synced, _ := e.output(ctx, "timedatectl", "show", "-p", "NTPSynchronized", "--value"); strings.TrimSpace(synced) == "no" {
 		add("clock-unsynced", "warning", "The clock is not synchronized with a time server; signed actions can be refused")
 	}
-	return found
+	return found, listeners
 }
 
 func (e Executor) sshSettings(ctx context.Context) (map[string]string, bool) {
@@ -273,7 +282,28 @@ func (e Executor) riskyContainers(ctx context.Context) []string {
 	return risky
 }
 
-func (e Executor) publicListeners(ctx context.Context, settings map[string]string) ([]string, bool) {
+func listenerEntries(listeners []reporter.Listener) []string {
+	var entries []string
+	for _, listener := range listeners {
+		entry := strconv.Itoa(listener.Port) + "/" + listener.Protocol
+		if listener.Process != "" {
+			entry += " (" + listener.Process + ")"
+		}
+		if !slices.Contains(entries, entry) {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func addListener(listeners []reporter.Listener, listener reporter.Listener) []reporter.Listener {
+	if slices.Contains(listeners, listener) {
+		return listeners
+	}
+	return append(listeners, listener)
+}
+
+func (e Executor) publicListeners(ctx context.Context, settings map[string]string) ([]reporter.Listener, bool) {
 	output, ok := e.output(ctx, "ss", "-H", "-tulnp")
 	if !ok {
 		return nil, false
@@ -282,7 +312,7 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 	if settings["ports"] == "" {
 		ssh = []string{"22"}
 	}
-	var public []string
+	var public []reporter.Listener
 	stub := false
 	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Fields(line)
@@ -310,30 +340,29 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 		if strings.HasPrefix(host, "127.") || host == "::1" || process == "docker-proxy" || (fields[0] == "tcp" && slices.Contains(ssh, port)) {
 			continue
 		}
-		entry := port + "/" + fields[0]
-		if process != "" {
-			entry += " (" + process + ")"
+		number, err := strconv.Atoi(port)
+		if err != nil || (fields[0] != "tcp" && fields[0] != "udp") {
+			continue
 		}
-		if !slices.Contains(public, entry) {
-			public = append(public, entry)
-		}
+		public = addListener(public, reporter.Listener{Address: host, Port: number, Protocol: fields[0], Process: process})
 	}
 	return public, stub
 }
 
-func (e Executor) publicContainers(ctx context.Context) []string {
+func (e Executor) publicContainers(ctx context.Context) []reporter.Listener {
 	output, ok := e.output(ctx, "docker", "ps", "--format", "{{.Names}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}")
 	if !ok {
 		return nil
 	}
-	var public []string
+	var public []reporter.Listener
 	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
 		if len(fields) < 3 || fields[0] == TunnelContainer || e.fullAccess(fields[2]) {
 			continue
 		}
-		for _, port := range publicPorts(fields[1]) {
-			public = append(public, port+" ("+fields[0]+")")
+		for _, bound := range publicBindings(fields[1]) {
+			bound.Process = fields[0]
+			public = addListener(public, bound)
 		}
 	}
 	return public

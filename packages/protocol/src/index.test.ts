@@ -900,6 +900,30 @@ describe("orchestration messages of agent 0.5.0", () => {
         security: { ...security, platform: { ...platform, family: "arch" } },
       }),
     ).toBe(false);
+    const listener = {
+      address: "100.79.66.29",
+      port: 57969,
+      protocol: "tcp",
+      process: "tailscaled",
+    };
+    expect(request({ security: { ...security, listeners: [listener] } })).toBe(
+      true,
+    );
+    for (const bad of [
+      { ...listener, port: 70000 },
+      { ...listener, protocol: "sctp" },
+      { ...listener, address: "x".repeat(65) },
+      { ...listener, extra: 1 },
+    ]) {
+      expect(request({ security: { ...security, listeners: [bad] } })).toBe(
+        false,
+      );
+    }
+    expect(
+      request({
+        security: { ...security, listeners: Array(101).fill(listener) },
+      }),
+    ).toBe(false);
     expect(request({ vault: null })).toBe(true);
     const previous = {
       set: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a20",

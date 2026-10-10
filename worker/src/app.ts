@@ -18,6 +18,7 @@ import { registerLiveRoutes } from "./routes/live";
 import { registerMetricRoutes } from "./routes/metrics";
 import { registerServiceRoutes } from "./routes/services";
 import { registerOperationRoutes } from "./routes/operations";
+import { registerSettingRoutes } from "./routes/settings";
 import { registerUsageRoutes } from "./usage/usage";
 import type { KrynodesEnv } from "./routes/shared";
 
@@ -114,6 +115,7 @@ registerOperationRoutes(app, requireOperator);
 registerDeviceRoutes(app, requireOperator);
 registerProposalRoutes(app, requireOperator);
 registerUsageRoutes(app, requireOperator);
+registerSettingRoutes(app, requireOperator);
 registerAgentRoutes(app);
 
 app.all("/api/*", (context) =>

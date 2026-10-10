@@ -8,6 +8,7 @@ import {
   fromUtcHour,
   protectionDetail,
   protectionsNotice,
+  rangeLines,
   recipeChoices,
   recommended,
   toUtcHour,
@@ -181,6 +182,15 @@ describe("the security check on screen", () => {
     expect(fromUtcHour(20, -420)).toBe(3);
     expect(toUtcHour(23, 60)).toBe(0);
     expect(fromUtcHour(0, 60)).toBe(23);
+  });
+});
+
+describe("addresses that are not public", () => {
+  it("takes one range per line and ignores blank lines", () => {
+    expect(
+      rangeLines(" 100.64.0.0/10 \r\n\n fd7a:115c:a1e0::/48\n   \n"),
+    ).toEqual(["100.64.0.0/10", "fd7a:115c:a1e0::/48"]);
+    expect(rangeLines("")).toEqual([]);
   });
 });
 

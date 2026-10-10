@@ -119,12 +119,20 @@ type Platform struct {
 }
 
 type SecurityReport struct {
-	CheckedAt  string    `json:"checkedAt"`
-	Findings   []Finding `json:"findings"`
-	Recipes    []string  `json:"recipes"`
-	Lockdown   bool      `json:"lockdown"`
-	RebootHour *int      `json:"rebootHour"`
-	Platform   *Platform `json:"platform,omitempty"`
+	CheckedAt  string     `json:"checkedAt"`
+	Findings   []Finding  `json:"findings"`
+	Recipes    []string   `json:"recipes"`
+	Lockdown   bool       `json:"lockdown"`
+	RebootHour *int       `json:"rebootHour"`
+	Platform   *Platform  `json:"platform,omitempty"`
+	Listeners  []Listener `json:"listeners,omitempty"`
+}
+
+type Listener struct {
+	Address  string `json:"address"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	Process  string `json:"process"`
 }
 
 type VaultReport struct {
