@@ -29,6 +29,17 @@ func TestClaimDirectoryReplacesASymlinkInsteadOfFollowingIt(t *testing.T) {
 	}
 }
 
+func TestClaimDirectoryKeepsSetgidSoNewFilesTakeItsGroup(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "results")
+	if err := claimDirectory(directory, os.Getuid(), os.Getgid(), 0o750|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(directory)
+	if err != nil || info.Mode()&os.ModeSetgid == 0 || info.Mode().Perm() != 0o750 {
+		t.Fatalf("mode %v err %v", info.Mode(), err)
+	}
+}
+
 func TestClaimFileRefusesASymlink(t *testing.T) {
 	base := t.TempDir()
 	secret := filepath.Join(base, "shadow")

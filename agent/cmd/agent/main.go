@@ -644,12 +644,20 @@ func prepareActionDirectories(uid, gid int) error {
 	if err := claimDirectory(actions.RequestDir, uid, gid, 0o750); err != nil {
 		return fmt.Errorf("prepare action request directory: %w", err)
 	}
+	modes := stateDirectoryModes()
 	for _, directory := range []string{actions.StateDir, filepath.Join(actions.StateDir, "results")} {
-		if err := claimDirectory(directory, 0, gid, 0o750); err != nil {
+		if err := claimDirectory(directory, 0, gid, modes[directory]); err != nil {
 			return fmt.Errorf("prepare %s: %w", directory, err)
 		}
 	}
 	return nil
+}
+
+func stateDirectoryModes() map[string]os.FileMode {
+	return map[string]os.FileMode{
+		actions.StateDir: 0o750,
+		filepath.Join(actions.StateDir, "results"): 0o750 | os.ModeSetgid,
+	}
 }
 
 type requestFile struct{}

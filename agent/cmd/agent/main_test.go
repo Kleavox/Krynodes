@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/actions"
 )
 
 func TestCyclesStartTwoSecondsAfterEachIntervalOnTheClock(t *testing.T) {
@@ -340,6 +342,17 @@ func TestUpdatesNeedTLS13(t *testing.T) {
 	transport := updateClient().Transport.(*http.Transport)
 	if transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
 		t.Fatal("release downloads must need TLS 1.3")
+	}
+}
+
+func TestResultsInheritTheAgentGroupWhoeverWritesThem(t *testing.T) {
+	modes := stateDirectoryModes()
+	results := modes[filepath.Join(actions.StateDir, "results")]
+	if results&os.ModeSetgid == 0 || results.Perm() != 0o750 {
+		t.Fatalf("results is %v; the root host unit writes there and the agent must read it", results)
+	}
+	if state := modes[actions.StateDir]; state&os.ModeSetgid != 0 || state.Perm() != 0o750 {
+		t.Fatalf("state directory is %v", state)
 	}
 }
 
