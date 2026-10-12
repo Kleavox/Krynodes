@@ -479,6 +479,8 @@ stored data, not a live takeover.
   lists the ports the stack may open on its server, such as `3000/tcp`, at
   most 16; the rule covers every network of that stack only, is signed with
   the compose file and goes when the list is emptied or the stack removed.
+  From agent 0.6.8 the rule is in place before the stack starts, so an app
+  that calls the server as it starts finds the port open.
   The rules live in the `KRY-CONTAINED` chain, which INPUT enters for the
   stacks' bridges.
 - **Full access**: public ports, host network, server folders, builds and

@@ -203,19 +203,37 @@ func (e Executor) reachRules() [][]string {
 		if readJSON(filepath.Join(directory, "compose.krynodes.json"), &config) != nil {
 			continue
 		}
-		networks := asMap(config["networks"])
-		for _, name := range sortedKeys(networks) {
-			bridge := asText(asMap(asMap(networks[name])["driver_opts"])["com.docker.network.bridge.name"])
-			if !strings.HasPrefix(bridge, "krc") {
-				continue
-			}
-			for _, port := range ports {
-				number, protocol, _ := strings.Cut(port, "/")
-				rules = append(rules, []string{"-i", bridge, "-p", protocol, "-m", protocol, "--dport", number, "-j", "ACCEPT"})
-			}
+		rules = append(rules, reachFor(config, ports)...)
+	}
+	return rules
+}
+
+func reachFor(config map[string]any, ports []string) [][]string {
+	var rules [][]string
+	networks := asMap(config["networks"])
+	for _, name := range sortedKeys(networks) {
+		bridge := asText(asMap(asMap(networks[name])["driver_opts"])["com.docker.network.bridge.name"])
+		if !strings.HasPrefix(bridge, "krc") {
+			continue
+		}
+		for _, port := range ports {
+			number, protocol, _ := strings.Cut(port, "/")
+			rules = append(rules, []string{"-i", bridge, "-p", protocol, "-m", protocol, "--dport", number, "-j", "ACCEPT"})
 		}
 	}
 	return rules
+}
+
+func (e Executor) openReach(ctx context.Context, config map[string]any, ports []string) {
+	if len(ports) == 0 {
+		return
+	}
+	e.guard(ctx)
+	for _, tool := range containTools {
+		for _, rule := range reachFor(config, ports) {
+			e.ensure(ctx, tool, []string{"-I", containChain, "1"}, containChain, rule)
+		}
+	}
 }
 
 var units = []struct {

@@ -296,6 +296,7 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory, 
 			return e.failed(request, err, "")
 		}
 		stack.Files = []string{filepath.Join(directory, "compose.krynodes.json")}
+		e.openReach(ctx, config, hostPorts)
 	} else if err := os.Remove(filepath.Join(directory, "compose.krynodes.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return e.failed(request, err, "")
 	}

@@ -118,6 +118,22 @@ func TestAContainedStackReachesTheServerOnlyOnTheChosenPorts(t *testing.T) {
 	}
 }
 
+func TestTheReachIsInPlaceBeforeTheStackStarts(t *testing.T) {
+	executor, run, result := reachingKuma(t, "3000/tcp")
+	if !result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	allow := slices.Index(run.calls, portRule("iptables", "-I KRY-CONTAINED 1", bridgeName("kuma", "default"), "tcp", "3000"))
+	enter := slices.Index(run.calls, "iptables -I INPUT 1 -i krc+ -j KRY-CONTAINED")
+	up := slices.Index(run.calls, composeCall(kumaDir(executor), "compose.krynodes.json", "up -d"))
+	if allow < 0 || up < 0 || allow > up {
+		t.Fatalf("an app that calls the server as it starts must find the port open: %q", run.calls)
+	}
+	if enter >= 0 && enter > up {
+		t.Fatalf("the chain is entered before the stack starts: %q", run.calls)
+	}
+}
+
 func TestOnlyRealPortsOfAContainedStackMayBeReached(t *testing.T) {
 	var many []string
 	for port := 1; port <= 17; port++ {
