@@ -54,9 +54,13 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	e.docker(ctx, upTimeout, "remove the tunnel", "rm", "-f", TunnelContainer)
 	e.docker(ctx, upTimeout, "remove the tunnel image", "image", "rm", cloudflaredImage)
 	for _, rule := range guardRules {
-		ruleCtx, cancel := context.WithTimeout(ctx, collectTimeout)
-		e.Run(ruleCtx, rule[0], append([]string{"-D"}, rule[1:]...)...)
-		cancel()
+		e.firewall(ctx, rule[0], append([]string{"-D"}, rule[1:]...)...)
+	}
+	for _, tool := range containTools {
+		e.firewall(ctx, tool, append([]string{"-D", "INPUT"}, jumpRule...)...)
+		e.firewall(ctx, tool, "-F", containChain)
+		e.firewall(ctx, tool, "-X", containChain)
+		e.firewall(ctx, tool, append([]string{"-D", "INPUT"}, oldDropRule...)...)
 	}
 	if _, err := os.Stat(filepath.Join(e.StateDir, "docker.json")); err == nil {
 		remove := "sudo apt-get purge "

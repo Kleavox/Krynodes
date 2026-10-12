@@ -8,7 +8,10 @@ import type {
   StackEntry,
   WebAddress,
 } from "../types";
-import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
+import {
+  compareVersions,
+  MIN_AGENT_VERSION,
+} from "@krynodes/protocol/versions";
 
 import { agentCurrent } from "./devices";
 import { nodeState } from "./format";
@@ -19,6 +22,43 @@ import {
   type ServerGroup,
   type ServiceMember,
 } from "./services";
+
+export const REACH_AGENT = "0.6.7";
+
+const MAX_HOST_PORTS = 16;
+
+export const reachReady = (node: Pick<NodeRecord, "agent_version">) =>
+  /^\d+\.\d+\.\d+$/u.test(node.agent_version ?? "") &&
+  compareVersions(node.agent_version!, REACH_AGENT) >= 0;
+
+export function parseHostPorts(text: string): {
+  ports: string[];
+  problem: string | null;
+} {
+  const ports: string[] = [];
+  for (const raw of text.split(",")) {
+    const entry = raw.trim();
+    if (entry === "") continue;
+    const match = /^(\d{1,5})\/(tcp|udp)$/u.exec(entry);
+    if (!match) {
+      return { ports: [], problem: `${entry} is not a port such as 3000/tcp.` };
+    }
+    const number = Number(match[1]);
+    if (number < 1 || number > 65_535) {
+      return {
+        ports: [],
+        problem: `${entry} is not a port between 1 and 65535.`,
+      };
+    }
+    if (!ports.includes(entry)) ports.push(entry);
+  }
+  return ports.length > MAX_HOST_PORTS
+    ? {
+        ports: [],
+        problem: `A stack may reach at most ${MAX_HOST_PORTS} ports on the server.`,
+      }
+    : { ports, problem: null };
+}
 
 export interface StackMember {
   node: NodeRecord;

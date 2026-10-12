@@ -24,12 +24,18 @@ import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import { toast } from "sonner";
 import { isPending } from "@/lib/services";
-import { newStackBlocker, stackNameProblem } from "@/lib/stacks";
+import {
+  newStackBlocker,
+  parseHostPorts,
+  reachReady,
+  stackNameProblem,
+} from "@/lib/stacks";
 import type { NodeRecord } from "@/types";
 
 import {
   AccessChoice,
   FullAccessSummary,
+  ReachField,
   SecretsEditor,
   sealSecrets,
   secretsProblem,
@@ -85,6 +91,7 @@ function NewStackForm({
   const [touched, setTouched] = useState(false);
   const [access, setAccess] = useState<Access>("contained");
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  const [reach, setReach] = useState("");
   const [sealing, setSealing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const action = useAction(actionId).data?.action;
@@ -92,6 +99,8 @@ function NewStackForm({
   const chosen = choices.find((choice) => choice.node.id === nodeId);
   const sealKey = entries.get(nodeId)?.sealKey ?? null;
   const modern = chosen !== undefined && agentCurrent(chosen.node);
+  const reaching = modern && access === "contained" && reachReady(chosen.node);
+  const hostPorts = parseHostPorts(reaching ? reach : "");
   const taken = (entries.get(nodeId)?.stacks ?? []).map(
     (stack) => stack.project,
   );
@@ -110,6 +119,7 @@ function NewStackForm({
     chosen.blocker === null &&
     nameProblem === null &&
     textProblem === null &&
+    hostPorts.problem === null &&
     (!modern || secretsProblem(secrets) === null);
 
   const create = async () => {
@@ -137,6 +147,9 @@ function NewStackForm({
             compose: text,
             ...(modern ? { access } : {}),
             ...(sealed ? { secrets: sealed } : {}),
+            ...(hostPorts.ports.length > 0
+              ? { args: { hostPorts: hostPorts.ports.join(",") } }
+              : {}),
           },
         ],
       },
@@ -293,6 +306,13 @@ function NewStackForm({
               <Label>Access</Label>
               <AccessChoice value={access} onChange={setAccess} />
             </div>
+            {reaching && (
+              <ReachField
+                value={reach}
+                onChange={setReach}
+                problem={hostPorts.problem}
+              />
+            )}
             <div className="space-y-1.5">
               <Label>Secrets</Label>
               <SecretsEditor rows={secrets} onChange={setSecrets} />

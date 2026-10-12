@@ -17,10 +17,46 @@ import {
   newStackBlocker,
   ownFolder,
   removedStacks,
+  parseHostPorts,
+  reachReady,
   serverLists,
   stackCommands,
   stackNameProblem,
 } from "./stacks";
+
+describe("ports a Contained stack may reach on its server", () => {
+  it("reads a list once each, in order", () => {
+    expect(parseHostPorts(" 3000/tcp, 53/udp,3000/tcp ")).toEqual({
+      ports: ["3000/tcp", "53/udp"],
+      problem: null,
+    });
+    expect(parseHostPorts("")).toEqual({ ports: [], problem: null });
+  });
+
+  it("names what it cannot take", () => {
+    expect(parseHostPorts("3000").problem).toBe(
+      "3000 is not a port such as 3000/tcp.",
+    );
+    expect(parseHostPorts("70000/tcp").problem).toBe(
+      "70000/tcp is not a port between 1 and 65535.",
+    );
+    expect(parseHostPorts("0/tcp").problem).toBe(
+      "0/tcp is not a port between 1 and 65535.",
+    );
+    expect(
+      parseHostPorts(
+        Array.from({ length: 17 }, (_, index) => `${index + 1}/tcp`).join(","),
+      ).problem,
+    ).toBe("A stack may reach at most 16 ports on the server.");
+  });
+
+  it("needs agent 0.6.7 or newer", () => {
+    expect(reachReady({ agent_version: "0.6.7" })).toBe(true);
+    expect(reachReady({ agent_version: "0.7.0" })).toBe(true);
+    expect(reachReady({ agent_version: "0.6.6" })).toBe(false);
+    expect(reachReady({ agent_version: null })).toBe(false);
+  });
+});
 
 const node = (id: string, name: string, agent = "0.6.0") =>
   ({

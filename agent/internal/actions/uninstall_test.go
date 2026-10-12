@@ -69,6 +69,13 @@ func TestUninstallTurnsProtectionsOffAndKeepsAppsRunning(t *testing.T) {
 		"docker rm -f krynodes-tunnel",
 		"docker image rm " + cloudflaredImage,
 		"iptables -D DOCKER-USER -i " + guardBridges + " -d " + metadataAddress + " -j DROP",
+		"iptables -D INPUT -i krc+ -j KRY-CONTAINED",
+		"iptables -F KRY-CONTAINED",
+		"iptables -X KRY-CONTAINED",
+		"iptables -D INPUT -i krc+ -j DROP",
+		"ip6tables -D INPUT -i krc+ -j KRY-CONTAINED",
+		"ip6tables -F KRY-CONTAINED",
+		"ip6tables -X KRY-CONTAINED",
 	} {
 		if !slices.Contains(run.calls, call) {
 			t.Fatalf("missing %q in %q", call, run.calls)

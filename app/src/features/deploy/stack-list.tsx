@@ -19,6 +19,7 @@ import { isPending } from "@/lib/services";
 import {
   deployBlocker,
   ownFolder,
+  reachReady,
   stackCommands,
   type ServerStack,
   type StackMember,
@@ -128,6 +129,7 @@ function StackControls({
     sealKey:
       services.data?.nodes.find((entry) => entry.id === member.node.id)
         ?.sealKey ?? null,
+    reach: reachReady(member.node),
   };
   const modern =
     agentCurrent(member.node) && member.trusted && member.stack.compose;

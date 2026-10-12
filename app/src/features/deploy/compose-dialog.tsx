@@ -14,10 +14,12 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/http";
+import { parseHostPorts } from "@/lib/stacks";
 
 import {
   AccessChoice,
   FullAccessSummary,
+  ReachField,
   SecretsEditor,
   sealSecrets,
   secretsProblem,
@@ -35,6 +37,7 @@ export interface StackTarget {
   nodeName: string;
   project: string;
   sealKey: string | null;
+  reach: boolean;
 }
 
 const AREA =
@@ -107,11 +110,16 @@ function ComposeForm({
   const [text, setText] = useState<string | null>(null);
   const [access, setAccess] = useState<Access | null>(null);
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  const [reach, setReach] = useState<string | null>(null);
   const [sealing, setSealing] = useState(false);
   const current = text ?? read?.compose ?? "";
   const chosen: Access =
     access ?? (read?.access === "full" ? "full" : "contained");
-  const problem = secretsProblem(secrets);
+  const reaching = target.reach && chosen === "contained";
+  const hostPorts = parseHostPorts(
+    reaching ? (reach ?? (read?.hostPorts ?? []).join(", ")) : "",
+  );
+  const problem = secretsProblem(secrets) ?? hostPorts.problem;
 
   const save = async () => {
     if (!read || problem) return;
@@ -138,6 +146,9 @@ function ComposeForm({
             compose: current,
             access: chosen,
             ...(sealed ? { secrets: sealed } : {}),
+            ...(reaching
+              ? { args: { hostPorts: hostPorts.ports.join(",") } }
+              : {}),
           },
         ],
       },
@@ -183,14 +194,23 @@ function ComposeForm({
                 <AccessChoice value={chosen} onChange={setAccess} />
               </div>
               {chosen === "full" && <FullAccessSummary text={current} />}
+              {reaching && (
+                <ReachField
+                  value={reach ?? (read.hostPorts ?? []).join(", ")}
+                  onChange={setReach}
+                  problem={hostPorts.problem}
+                />
+              )}
               <div className="space-y-1.5">
                 <Label>Secrets</Label>
                 <SecretsEditor rows={secrets} onChange={setSecrets} />
                 <p className="text-xs text-muted-foreground">
                   Leave this empty to keep the secrets the stack has now.
                 </p>
-                {problem && (
-                  <p className="text-xs text-destructive">{problem}</p>
+                {secretsProblem(secrets) && (
+                  <p className="text-xs text-destructive">
+                    {secretsProblem(secrets)}
+                  </p>
                 )}
               </div>
             </>

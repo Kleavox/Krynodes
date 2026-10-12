@@ -36,10 +36,11 @@ type moveBundle struct {
 }
 
 type composeRead struct {
-	Compose string            `json:"compose"`
-	Access  string            `json:"access"`
-	Files   []composeFile     `json:"files"`
-	Images  map[string]string `json:"images"`
+	Compose   string            `json:"compose"`
+	Access    string            `json:"access"`
+	HostPorts []string          `json:"hostPorts,omitempty"`
+	Files     []composeFile     `json:"files"`
+	Images    map[string]string `json:"images"`
 }
 
 func (e Executor) opened(sealed string, value any) error {
@@ -189,7 +190,7 @@ func (e Executor) read(ctx context.Context, request Request, stack Stack) Result
 	if err != nil {
 		return e.failed(request, err, "")
 	}
-	output, err := json.Marshal(composeRead{Compose: string(text), Access: e.accessOf(stack.Directory), Files: files, Images: e.pinned(ctx, stack)})
+	output, err := json.Marshal(composeRead{Compose: string(text), Access: e.accessOf(stack.Directory), HostPorts: e.hostPortsOf(stack.Directory), Files: files, Images: e.pinned(ctx, stack)})
 	if err != nil {
 		return e.failed(request, err, "")
 	}
@@ -269,7 +270,7 @@ func (e Executor) prepare(request Request, command Command, directory string) er
 	return writeEnv(directory, env)
 }
 
-func (e Executor) launch(ctx context.Context, request Request, name, directory, access, done string) Result {
+func (e Executor) launch(ctx context.Context, request Request, name, directory, access string, hostPorts []string, done string) Result {
 	stack := Stack{Project: name, Directory: directory, Files: []string{filepath.Join(directory, "compose.yaml")}}
 	output, err := e.docker(ctx, collectTimeout, "read", composeArgs(stack, "config", "--format", "json")...)
 	if err != nil {
@@ -310,7 +311,7 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory, 
 	if states, err := e.healthy(ctx, stack); err != nil {
 		return e.failed(request, err, states)
 	}
-	if err := writeJSON(directory, "krynodes.json", stackMeta{Access: access}, 0o640); err != nil {
+	if err := writeJSON(directory, "krynodes.json", stackMeta{Access: access, HostPorts: hostPorts}, 0o640); err != nil {
 		return e.failed(request, err, "")
 	}
 	return Result{ID: request.ID, OK: true, Output: done, FinishedAt: e.stamp()}
@@ -389,6 +390,10 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
+	hostPorts, err := hostPortsFrom(command, access, e.hostPortsOf(stack.Directory))
+	if err != nil {
+		return e.refuse(request.ID, err)
+	}
 	if err := checkText(command.Compose, access); err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -418,7 +423,7 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 			return revert(e.refuse(request.ID, err))
 		}
 	}
-	result := e.launch(ctx, request, stack.Project, directory, access, "updated")
+	result := e.launch(ctx, request, stack.Project, directory, access, hostPorts, "updated")
 	if !result.OK {
 		return revert(result)
 	}

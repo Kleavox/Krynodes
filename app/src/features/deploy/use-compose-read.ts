@@ -8,6 +8,7 @@ import { useSignedAction } from "./use-signed-action";
 export interface ComposeRead {
   compose: string;
   access: "contained" | "full" | "";
+  hostPorts?: string[];
   files: { name: string; size: number }[];
   images: Record<string, string>;
 }

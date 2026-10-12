@@ -155,6 +155,45 @@ export async function sealSecrets(
   );
 }
 
+export function ReachField({
+  value,
+  onChange,
+  problem,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  problem: string | null;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor="stack-reach" className="text-sm font-medium">
+        Reach this server on
+      </label>
+      <Input
+        id="stack-reach"
+        value={value}
+        placeholder="3000/tcp"
+        autoComplete="off"
+        spellCheck={false}
+        className="font-mono"
+        aria-invalid={problem !== null}
+        aria-describedby="stack-reach-hint"
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <p
+        id="stack-reach-hint"
+        className={cn(
+          "text-xs",
+          problem ? "text-destructive" : "text-muted-foreground",
+        )}
+      >
+        {problem ??
+          "Ports on this server the stack may open, such as 3000/tcp, separated by commas. Leave it empty to keep the server closed to it."}
+      </p>
+    </div>
+  );
+}
+
 export function FullAccessSummary({ text }: { text: string }) {
   const summary = summarize(text);
   if (summary.error) return null;

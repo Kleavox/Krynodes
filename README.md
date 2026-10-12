@@ -473,7 +473,14 @@ stored data, not a live takeover.
   Full access), and Deploy, Rollback and Restore check an older Contained
   stack against these rules again. Each service runs one copy and joins only
   the stack's own networks.
-  Published ports are bound to `127.0.0.1`.
+  Published ports are bound to `127.0.0.1`, and the server can open them:
+  replies to a connection the server started come back, but the stack cannot
+  start one to the server. **Reach this server on** (agent 0.6.7 or newer)
+  lists the ports the stack may open on its server, such as `3000/tcp`, at
+  most 16; the rule covers every network of that stack only, is signed with
+  the compose file and goes when the list is emptied or the stack removed.
+  The rules live in the `KRY-CONTAINED` chain, which INPUT enters for the
+  stacks' bridges.
 - **Full access**: public ports, host network, server folders, builds and
   devices. Before the fingerprint the dialog lists what the stack opens. It
   is root-equivalent; use it for stacks you trust like the server itself.

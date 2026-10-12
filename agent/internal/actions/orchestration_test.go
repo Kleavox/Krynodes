@@ -143,17 +143,17 @@ func TestContainedStacksCannotReachTheServerOrTheCloudMetadata(t *testing.T) {
 	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
 	run.failing = map[string]string{
 		"iptables -C DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP": "",
-		"iptables -C INPUT -i krc+ -j DROP":                          "",
+		"iptables -C INPUT -i krc+ -j KRY-CONTAINED":                 "",
 	}
 	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
 		t.Fatalf("result %#v", result)
 	}
-	for _, call := range []string{"iptables -I DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP", "iptables -I INPUT -i krc+ -j DROP", "ip6tables -C INPUT -i krc+ -j DROP"} {
+	for _, call := range []string{"iptables -I DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP", "iptables -I INPUT 1 -i krc+ -j KRY-CONTAINED", "ip6tables -C INPUT -i krc+ -j KRY-CONTAINED"} {
 		if !slices.Contains(run.calls, call) {
 			t.Fatalf("missing %q in %q", call, run.calls)
 		}
 	}
-	if slices.Contains(run.calls, "ip6tables -I INPUT -i krc+ -j DROP") {
+	if slices.Contains(run.calls, "ip6tables -I INPUT 1 -i krc+ -j KRY-CONTAINED") {
 		t.Fatal("a rule that is already there is not added again")
 	}
 }
@@ -183,14 +183,14 @@ func TestTheContainmentIsInPlaceBeforeDockerStartsAtBoot(t *testing.T) {
 	run.calls = nil
 	run.failing = map[string]string{
 		"iptables -C DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP": "",
-		"iptables -C INPUT -i krc+ -j DROP":                          "",
-		"ip6tables -C INPUT -i krc+ -j DROP":                         "",
+		"iptables -C INPUT -i krc+ -j KRY-CONTAINED":                 "",
+		"ip6tables -C INPUT -i krc+ -j KRY-CONTAINED":                "",
 		"ip6tables -C DOCKER-USER -i krc+ -d fd00:ec2::254 -j DROP":  "",
 	}
 	executor.Contain(context.Background())
 	chain := slices.Index(run.calls, "iptables -N DOCKER-USER")
 	chain6 := slices.Index(run.calls, "ip6tables -N DOCKER-USER")
-	for _, call := range []string{"iptables -I DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP", "iptables -I INPUT -i krc+ -j DROP", "ip6tables -I INPUT -i krc+ -j DROP", "ip6tables -I DOCKER-USER -i krc+ -d fd00:ec2::254 -j DROP"} {
+	for _, call := range []string{"iptables -I DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP", "iptables -I INPUT 1 -i krc+ -j KRY-CONTAINED", "ip6tables -I INPUT 1 -i krc+ -j KRY-CONTAINED", "ip6tables -I DOCKER-USER -i krc+ -d fd00:ec2::254 -j DROP"} {
 		if index := slices.Index(run.calls, call); index < 0 || index < chain || chain < 0 || index < chain6 || chain6 < 0 {
 			t.Fatalf("missing %q after the chains in %q", call, run.calls)
 		}

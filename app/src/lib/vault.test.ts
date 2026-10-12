@@ -285,6 +285,25 @@ describe("moving a stack", () => {
       }).at(-1)?.action,
     ).toBe("purge");
   });
+
+  it("carries the ports a Contained stack reaches to the new server", () => {
+    const create = (hostPorts?: string[]) =>
+      moveSteps({
+        source: A,
+        target: B,
+        targetKey: "KB",
+        project: "listmonk",
+        compose: "x",
+        access: "contained",
+        original: "keep",
+        ...(hostPorts ? { hostPorts } : {}),
+      })[1];
+    expect(create(["3000/tcp", "53/udp"])?.args).toEqual({
+      hostPorts: "3000/tcp,53/udp",
+    });
+    expect(create([])?.args).toBeUndefined();
+    expect(create()?.args).toBeUndefined();
+  });
 });
 
 const node = (

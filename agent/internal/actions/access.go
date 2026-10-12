@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -22,7 +25,54 @@ const (
 )
 
 type stackMeta struct {
-	Access string `json:"access"`
+	Access    string   `json:"access"`
+	HostPorts []string `json:"hostPorts,omitempty"`
+}
+
+const maxHostPorts = 16
+
+var hostPortPattern = regexp.MustCompile(`^(\d{1,5})/(tcp|udp)$`)
+
+func hostPortsFrom(command Command, access string, current []string) ([]string, error) {
+	raw, given := command.Args["hostPorts"]
+	if !given {
+		if access != "contained" {
+			return nil, nil
+		}
+		return current, nil
+	}
+	var ports []string
+	for entry := range strings.SplitSeq(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		match := hostPortPattern.FindStringSubmatch(entry)
+		if match == nil {
+			return nil, fmt.Errorf("%s is not a port such as 3000/tcp", entry)
+		}
+		if number, _ := strconv.Atoi(match[1]); number < 1 || number > 65535 {
+			return nil, fmt.Errorf("%s is not a port between 1 and 65535", entry)
+		}
+		if !slices.Contains(ports, entry) {
+			ports = append(ports, entry)
+		}
+	}
+	switch {
+	case len(ports) > maxHostPorts:
+		return nil, fmt.Errorf("a stack may reach at most %d ports on the server", maxHostPorts)
+	case len(ports) > 0 && access != "contained":
+		return nil, errors.New("reaching the server on chosen ports is for Contained stacks; a Full access stack already reaches it")
+	}
+	return ports, nil
+}
+
+func (e Executor) hostPortsOf(directory string) []string {
+	meta, err := readState[stackMeta](directory, "krynodes.json")
+	if err != nil {
+		return nil
+	}
+	return meta.HostPorts
 }
 
 type shareLimit struct {
@@ -65,10 +115,17 @@ func (e Executor) hasContained() bool {
 
 var guardRules = [][]string{
 	{"iptables", "DOCKER-USER", "-i", guardBridges, "-d", metadataAddress, "-j", "DROP"},
-	{"iptables", "INPUT", "-i", guardBridges, "-j", "DROP"},
-	{"ip6tables", "INPUT", "-i", guardBridges, "-j", "DROP"},
 	{"ip6tables", "DOCKER-USER", "-i", guardBridges, "-d", metadataIPv6, "-j", "DROP"},
 }
+
+const containChain = "KRY-CONTAINED"
+
+var (
+	containTools = []string{"iptables", "ip6tables"}
+	repliesRule  = []string{"-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT"}
+	jumpRule     = []string{"-i", guardBridges, "-j", containChain}
+	oldDropRule  = []string{"-i", guardBridges, "-j", "DROP"}
+)
 
 func (e Executor) Contain(ctx context.Context) {
 	if !e.hasContained() {
@@ -77,21 +134,88 @@ func (e Executor) Contain(ctx context.Context) {
 	e.guard(ctx)
 }
 
+func (e Executor) firewall(ctx context.Context, tool string, args ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, collectTimeout)
+	defer cancel()
+	_, _, err := e.Run(ctx, tool, args...)
+	return err
+}
+
+func (e Executor) ensure(ctx context.Context, tool string, add []string, chain string, rule []string) {
+	if e.firewall(ctx, tool, append([]string{"-C", chain}, rule...)...) == nil {
+		return
+	}
+	if err := e.firewall(ctx, tool, append(add, rule...)...); err != nil {
+		log.Printf("contain %s %s: %v", tool, chain, err)
+	}
+}
+
 func (e Executor) guard(ctx context.Context) {
-	for _, tool := range []string{"iptables", "ip6tables"} {
-		chainCtx, cancel := context.WithTimeout(ctx, collectTimeout)
-		e.Run(chainCtx, tool, "-N", "DOCKER-USER")
-		cancel()
+	for _, tool := range containTools {
+		e.firewall(ctx, tool, "-N", "DOCKER-USER")
 	}
 	for _, rule := range guardRules {
-		ctx, cancel := context.WithTimeout(ctx, collectTimeout)
-		if _, _, err := e.Run(ctx, rule[0], append([]string{"-C"}, rule[1:]...)...); err != nil {
-			if _, _, err := e.Run(ctx, rule[0], append([]string{"-I"}, rule[1:]...)...); err != nil {
-				log.Printf("contain %s %s: %v", rule[0], rule[1], err)
+		e.ensure(ctx, rule[0], []string{"-I", rule[1]}, rule[1], rule[2:])
+	}
+	for _, tool := range containTools {
+		e.firewall(ctx, tool, "-N", containChain)
+		e.ensure(ctx, tool, []string{"-A", containChain}, containChain, []string{"-j", "DROP"})
+		e.ensure(ctx, tool, []string{"-I", containChain, "1"}, containChain, repliesRule)
+		e.reach(ctx, tool)
+		e.ensure(ctx, tool, []string{"-I", "INPUT", "1"}, "INPUT", jumpRule)
+		if e.firewall(ctx, tool, append([]string{"-C", "INPUT"}, oldDropRule...)...) == nil {
+			e.firewall(ctx, tool, append([]string{"-D", "INPUT"}, oldDropRule...)...)
+		}
+	}
+}
+
+func (e Executor) reach(ctx context.Context, tool string) {
+	wanted := e.reachRules()
+	for _, rule := range wanted {
+		e.ensure(ctx, tool, []string{"-I", containChain, "1"}, containChain, rule)
+	}
+	listed, _ := e.output(ctx, tool, "-S", containChain)
+	prefix := "-A " + containChain + " "
+	for line := range strings.SplitSeq(listed, "\n") {
+		rule, found := strings.CutPrefix(strings.TrimSpace(line), prefix)
+		if !found || !strings.HasPrefix(rule, "-i krc") || !strings.Contains(rule, "--dport") {
+			continue
+		}
+		if !slices.ContainsFunc(wanted, func(want []string) bool { return strings.Join(want, " ") == rule }) {
+			e.firewall(ctx, tool, append([]string{"-D", containChain}, strings.Fields(rule)...)...)
+		}
+	}
+}
+
+func (e Executor) reachRules() [][]string {
+	entries, err := os.ReadDir(filepath.Join(e.StateDir, "compose"))
+	if err != nil {
+		return nil
+	}
+	var rules [][]string
+	for _, entry := range entries {
+		directory := filepath.Join(e.StateDir, "compose", entry.Name())
+		ports := e.hostPortsOf(directory)
+		if !entry.IsDir() || len(ports) == 0 || e.accessOf(directory) != "contained" {
+			continue
+		}
+		var config map[string]any
+		if readJSON(filepath.Join(directory, "compose.krynodes.json"), &config) != nil {
+			continue
+		}
+		networks := asMap(config["networks"])
+		for _, name := range sortedKeys(networks) {
+			bridge := asText(asMap(asMap(networks[name])["driver_opts"])["com.docker.network.bridge.name"])
+			if !strings.HasPrefix(bridge, "krc") {
+				continue
+			}
+			for _, port := range ports {
+				number, protocol, _ := strings.Cut(port, "/")
+				rules = append(rules, []string{"-i", bridge, "-p", protocol, "-m", protocol, "--dport", number, "-j", "ACCEPT"})
 			}
 		}
-		cancel()
 	}
+	return rules
 }
 
 var units = []struct {

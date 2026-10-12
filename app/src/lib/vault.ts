@@ -224,6 +224,7 @@ export function moveSteps(input: {
   compose: string;
   access: "contained" | "full";
   secrets?: string;
+  hostPorts?: string[];
   original: "now" | "later" | "keep";
 }): OperationTarget[] {
   return [
@@ -242,6 +243,9 @@ export function moveSteps(input: {
       compose: input.compose,
       access: input.access,
       ...(input.secrets ? { secrets: input.secrets } : {}),
+      ...(input.hostPorts?.length
+        ? { args: { hostPorts: input.hostPorts.join(",") } }
+        : {}),
       attachFrom: 0,
     },
     ...(input.original === "keep"

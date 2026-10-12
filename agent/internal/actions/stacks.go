@@ -228,6 +228,10 @@ func (e Executor) create(ctx context.Context, request Request, command Command, 
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
+	hostPorts, err := hostPortsFrom(command, access, nil)
+	if err != nil {
+		return e.refuse(request.ID, err)
+	}
 	switch {
 	case !projectName.MatchString(name):
 		return e.refuse(request.ID, errors.New("the stack name may hold lowercase letters, digits, - and _"))
@@ -263,7 +267,7 @@ func (e Executor) create(ctx context.Context, request Request, command Command, 
 	if err := writeWhole(directory, "compose.yaml", []byte(command.Compose), 0o640); err != nil {
 		return tidy(e.failed(request, err, ""))
 	}
-	result := e.launch(ctx, request, name, directory, access, "created")
+	result := e.launch(ctx, request, name, directory, access, hostPorts, "created")
 	if !result.OK {
 		return tidy(result)
 	}
