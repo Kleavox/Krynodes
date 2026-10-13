@@ -36,7 +36,7 @@ export function PrivateRangesDialog({
       {open && current.error && (
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Addresses that are not public</DialogTitle>
+            <DialogTitle>Private addresses</DialogTitle>
             <DialogDescription>{errorMessage(current.error)}</DialogDescription>
           </DialogHeader>
         </DialogContent>
@@ -64,10 +64,10 @@ function RangesForm({
   return (
     <DialogContent className="max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0 max-sm:rounded-b-none">
       <DialogHeader>
-        <DialogTitle>Addresses that are not public</DialogTitle>
+        <DialogTitle>Private addresses</DialogTitle>
         <DialogDescription>
-          Listeners bound to these ranges are left out of the public-address
-          finding on every server. One range per line, such as 10.8.0.0/24.
+          Addresses in these ranges are not counted as public on any server. One
+          range per line, such as 10.8.0.0/24.
         </DialogDescription>
       </DialogHeader>
       <textarea

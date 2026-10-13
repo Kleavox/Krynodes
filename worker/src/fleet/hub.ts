@@ -162,20 +162,24 @@ export class FleetHub {
       const nodeIds = Array.isArray(body?.nodeIds)
         ? body.nodeIds.filter((id): id is string => typeof id === "string")
         : [];
-      let poked = 0;
-      for (const nodeId of nodeIds) {
-        for (const ws of this.ctx.getWebSockets(nodeId)) {
-          try {
-            ws.send(JSON.stringify({ type: "poke" }));
-            poked += 1;
-          } catch {
-            continue;
-          }
-        }
-      }
-      return Response.json({ poked });
+      return Response.json({ poked: this.poke(nodeIds) });
     }
     return new Response(null, { status: 404 });
+  }
+
+  private poke(nodeIds: string[]): number {
+    let poked = 0;
+    for (const nodeId of nodeIds) {
+      for (const ws of this.ctx.getWebSockets(nodeId)) {
+        try {
+          ws.send(JSON.stringify({ type: "poke" }));
+          poked += 1;
+        } catch {
+          continue;
+        }
+      }
+    }
+    return poked;
   }
 
   async accept(
@@ -304,14 +308,15 @@ export class FleetHub {
         }
         const node = await this.node(ws, state);
         if (!node) return;
-        const { alerts, ...response } = await receiveReport(
+        const { alerts, next, deleted, ...response } = await receiveReport(
           this.env.DB,
           node,
           parsed.data,
           Date.now(),
         );
         reply({ type: "actions", response });
-        this.announce(["actions", "services"]);
+        this.poke(next);
+        this.announce(deleted ? ["all"] : ["actions", "services"]);
         if (alerts.length > 0) await this.securityMail(node.id, alerts);
       } else {
         invalid();

@@ -32,10 +32,12 @@ export function useSignedAction(toastErrors = true) {
       action,
       mode = "rolling",
       targets,
+      then,
     }: {
       action: Exclude<ActionVerb, "trust" | "heal" | "manual">;
       mode?: BatchMode;
       targets: CommandTarget[];
+      then?: "delete";
     }) => {
       const trust = new Map(
         (services.data?.nodes ?? []).map((node) => [node.id, node.trust]),
@@ -49,6 +51,7 @@ export function useSignedAction(toastErrors = true) {
           action,
           mode,
           targets: await signTargets(session, action, targets),
+          ...(then ? { then } : {}),
         });
       } catch (error) {
         throw error instanceof DOMException && error.name === "NotAllowedError"
@@ -73,10 +76,12 @@ export function useSignedOperation(toastErrors = true) {
       zone,
       reach,
       build,
+      deleteNode,
     }: {
       kind: OperationKind;
       zone?: string;
       reach: string[];
+      deleteNode?: string;
       build: (
         fingerprint: string,
       ) => OperationTarget[] | Promise<OperationTarget[]>;
@@ -121,6 +126,7 @@ export function useSignedOperation(toastErrors = true) {
           kind,
           steps: signed,
           ...(zone ? { zone } : {}),
+          ...(deleteNode ? { deleteNode } : {}),
         });
       } catch (error) {
         throw error instanceof DOMException && error.name === "NotAllowedError"

@@ -107,6 +107,7 @@ type trustOptions struct {
 	config  string
 	keys    []string
 	grant   bool
+	access  string
 }
 
 func parseTrust(args []string) (trustOptions, error) {
@@ -115,6 +116,7 @@ func parseTrust(args []string) (trustOptions, error) {
 	flags.BoolVar(&options.initial, "initial", false, "trust the first devices")
 	flags.BoolVar(&options.reset, "reset", false, "forget every trusted device")
 	flags.BoolVar(&options.grant, "grant", false, "let the trusted devices reach this server")
+	flags.StringVar(&options.access, "access", "", "let this one trusted device reach this server")
 	flags.StringVar(&options.origin, "origin", "", "the dashboard origin, such as https://kry.kleavox.xyz")
 	flags.StringVar(&options.config, "config", defaultConfigPath, "path to the agent config")
 	if err := flags.Parse(args); err != nil {
@@ -153,7 +155,7 @@ func trustDevices(args []string) error {
 	if err != nil {
 		return err
 	}
-	trust, err := actions.ParseTrustArgs(options.origin, options.keys, options.grant)
+	trust, err := actions.ParseTrustArgs(options.origin, options.keys, options.grant, options.access)
 	if err != nil {
 		return err
 	}

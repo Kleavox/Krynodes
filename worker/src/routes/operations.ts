@@ -25,7 +25,7 @@ const HOSTNAME =
 const stepSchema = z.object({
   id: uuid,
   nodeId: uuid,
-  kind: z.enum(["compose", "vault"]),
+  kind: z.enum(["compose", "vault", "host"]),
   name: z.string().min(1).max(128),
   action: z.enum([
     "export",
@@ -38,6 +38,7 @@ const stepSchema = z.object({
     "release",
     "reshare",
     "forget",
+    "uninstall",
   ]),
   signed: signedCommandSchema,
   attachFrom: z.number().int().min(0).max(19).optional(),
@@ -48,6 +49,7 @@ const operationSchema = z.object({
   kind: z.enum(["move", "expose", "unexpose", "split", "reshare"]),
   zone: z.string().regex(HOSTNAME).optional(),
   steps: z.array(stepSchema).min(1).max(20),
+  deleteNode: uuid.optional(),
 });
 
 const commandSchema = z.object({
@@ -159,7 +161,17 @@ function shaped(kind: string, steps: Step[]): boolean {
       const index = released ? 1 : 0;
       if (!is(reshare, "vault", "reshare")) return false;
       if (released && !releasesTo(first!, reshare!, reshare!)) return false;
-      const rest = steps.slice(index + 1);
+      const last = steps.at(-1)!;
+      const leaving = is(last, "host", "uninstall");
+      if (
+        leaving &&
+        (last.name !== "server" ||
+          last.attachFrom !== undefined ||
+          last.nodeId !== reshare!.args.cleanup)
+      ) {
+        return false;
+      }
+      const rest = steps.slice(index + 1, leaving ? -1 : undefined);
       const stores = rest.filter((step) => step.action === "store");
       const forgets = rest.filter((step) => step.action === "forget");
       const holders = (reshare!.args.holders ?? "")
@@ -212,7 +224,7 @@ export function registerOperationRoutes(
   app.post("/api/operations", requireOperator, async (context) => {
     const parsed = operationSchema.safeParse(await readJson(context));
     if (!parsed.success) return invalidRequest(context);
-    const { kind, zone } = parsed.data;
+    const { kind, zone, deleteNode } = parsed.data;
     const steps: Step[] = [];
     for (const step of parsed.data.steps) {
       const command = commandSchema.safeParse(decodeJson(step.signed.command));
@@ -244,10 +256,16 @@ export function registerOperationRoutes(
       if (!isValidTarget(step.kind, step.name)) return invalidRequest(context);
       steps.push({ ...step, args: command.data.args ?? {} });
     }
+    const cleanup = steps.find((step) => step.action === "reshare")?.args
+      .cleanup;
+    const leaving = steps.some((step) => step.action === "uninstall");
     if (
       !shaped(kind, steps) ||
       new Set(steps.map((step) => step.id)).size !== steps.length ||
-      (kind === "split" && !zone)
+      (kind === "split" && !zone) ||
+      (deleteNode !== undefined &&
+        (kind !== "reshare" || deleteNode !== cleanup)) ||
+      (leaving && deleteNode === undefined)
     ) {
       return invalidRequest(context);
     }
@@ -440,8 +458,17 @@ export function registerOperationRoutes(
               .bind(identity.id, zone, new Date(now).toISOString()),
           ]
         : [];
+    const deleting = deleteNode
+      ? [
+          db
+            .prepare(
+              "UPDATE nodes SET deleting_batch = ? WHERE id = ? AND owner_user_id = ?",
+            )
+            .bind(batch.batchId, deleteNode, identity.id),
+        ]
+      : [];
     try {
-      await db.batch([...batch.statements, ...settings]);
+      await db.batch([...batch.statements, ...settings, ...deleting]);
     } catch (error) {
       if (!String(error).includes("UNIQUE")) throw error;
       return context.json(

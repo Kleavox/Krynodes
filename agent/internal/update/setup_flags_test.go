@@ -66,9 +66,61 @@ func TestTheInstallerPassesSetupAfterTheTrustKeys(t *testing.T) {
 		"kry trust --initial --origin https://kry.example key1 key2\n" +
 		"kry setup --recommended --docker --reboot-hour 20\n" +
 		"systemctl restart krynodes.service\n" +
+		"systemctl start --no-block krynodes-exec.service\n" +
 		"kry version\n"
 	if log != want {
 		t.Fatalf("got\n%s\nwant\n%s", log, want)
+	}
+}
+
+const servedArgs = "https://kry.example token-1 --trust https://kry.example --access phone -- phone.-7.key1 laptop.-7.key2 --setup recommended --reboot-hour 20"
+
+func servedInstaller(t *testing.T) string {
+	t.Helper()
+	script, err := os.ReadFile("../../../app/public/install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := strings.Replace(string(script), "\nmain \"$@\"\n", "\n{\n  kry_args='"+servedArgs+"'\n  main $kry_args\n}\n", 1)
+	if served == string(script) {
+		t.Fatal("install.sh no longer ends with main \"$@\"; the Worker cannot serve it")
+	}
+	return served
+}
+
+func TestTheServedInstallerRunsWithTheArgumentsItCarries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "install.sh")
+	if err := os.WriteFile(path, []byte(servedInstaller(t)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log, output, err := runScript(t, path, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	want := "kry enroll --endpoint https://kry.example --token token-1\n" +
+		"kry install-service\n" +
+		"kry trust --initial --origin https://kry.example --access phone -- phone.-7.key1 laptop.-7.key2\n" +
+		"kry setup --recommended --reboot-hour 20\n" +
+		"systemctl restart krynodes.service\n" +
+		"systemctl start --no-block krynodes-exec.service\n" +
+		"kry version\n"
+	if log != want {
+		t.Fatalf("got\n%s\nwant\n%s", log, want)
+	}
+}
+
+func TestAServedInstallerCutShortRunsNothing(t *testing.T) {
+	served := servedInstaller(t)
+	start := strings.LastIndex(served, "\n{\n")
+	dir := t.TempDir()
+	for cut := start; cut < len(served)-1; cut++ {
+		path := filepath.Join(dir, "install.sh")
+		if err := os.WriteFile(path, []byte(served[:cut]), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if log, _, _ := runScript(t, path, false); log != "" {
+			t.Fatalf("a download cut at byte %d (%q) ran:\n%s", cut, served[start:cut], log)
+		}
 	}
 }
 

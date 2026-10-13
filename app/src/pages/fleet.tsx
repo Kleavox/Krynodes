@@ -55,6 +55,7 @@ import {
   type Severity,
 } from "@/lib/health";
 import {
+  halted,
   handleOf,
   maintenanceSpans,
   serverOperation,
@@ -873,8 +874,14 @@ function FleetTable({
               <td className="px-3 py-2.5">
                 <div className="flex min-w-0 items-center gap-2">
                   <StatusDot
-                    tone={operation ? "warn" : nodeTone(state)}
-                    pulse={operation !== null}
+                    tone={
+                      halted(operation)
+                        ? "bad"
+                        : operation
+                          ? "warn"
+                          : nodeTone(state)
+                    }
+                    pulse={operation !== null && !halted(operation)}
                   />
                   <button
                     type="button"
@@ -897,7 +904,11 @@ function FleetTable({
                   )}
                 >
                   {operation ? (
-                    <span className="text-warning">
+                    <span
+                      className={
+                        halted(operation) ? "text-destructive" : "text-warning"
+                      }
+                    >
                       <OperationText operation={operation} />
                     </span>
                   ) : state === "offline" ? (

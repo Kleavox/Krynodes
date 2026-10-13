@@ -36,6 +36,7 @@ export interface NodeRecord {
   update_attempts?: number;
   update_error?: string | null;
   auto_update: number;
+  deleting?: "running" | "stopped" | null;
   connected_at?: string;
   grace_seconds?: number;
 }

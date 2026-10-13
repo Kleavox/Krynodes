@@ -2,6 +2,7 @@ import type { AgentHeartbeat, CheckResult } from "@krynodes/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env";
+import { createBatch, deliverActions } from "../actions/store";
 import { FakeSocket, FakeStorage } from "../test/hub";
 import { seedCheck, seedNode } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
@@ -856,6 +857,54 @@ describe("FleetHub", () => {
       type: "error",
       code: "INVALID_MESSAGE",
     });
+  });
+
+  it("pokes the server whose step comes next as soon as a result arrives", async () => {
+    const t = setup();
+    const OTHER = "33333333-3333-4333-8333-333333333333";
+    seedNode(t.sqlite, { id: OTHER });
+    const ws = await t.connect();
+    const next = new FakeSocket();
+    await t.hub.accept(next as unknown as WebSocket, OTHER, "standalone", 60);
+    const batch = createBatch(t.db, {
+      action: "restart",
+      mode: "rolling",
+      targets: [NODE, OTHER].map((nodeId) => ({
+        nodeId,
+        kind: "docker" as const,
+        name: "adguard",
+      })),
+      requestedBy: "owner@example.test",
+      now: BASE,
+    });
+    await t.db.batch(batch.statements);
+    await deliverActions(t.db, NODE, BASE);
+    await t.hub.webSocketMessage(
+      ws as unknown as WebSocket,
+      JSON.stringify({
+        id: 1,
+        type: "actions",
+        report: {
+          nodeId: NODE,
+          results: [
+            {
+              id: batch.actions[0]!.id,
+              ok: true,
+              exitCode: 0,
+              output: "",
+              finishedAt: new Date(BASE).toISOString(),
+            },
+          ],
+        },
+      }),
+    );
+    expect(ws.replies()[0]).toEqual({
+      id: 1,
+      type: "actions",
+      response: { ok: true, inventoryHash: null },
+    });
+    expect(next.replies()).toEqual([{ type: "poke" }]);
+    expect(ws.replies()).toHaveLength(1);
   });
 
   it("tells an agent below the minimum to update at once, and no one else", async () => {

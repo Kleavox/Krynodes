@@ -249,7 +249,7 @@ func firstTrust(change trustChange, signed signedTrust) (Trust, error) {
 	return next, nil
 }
 
-func ParseTrustArgs(origin string, tokens []string, grant bool) (Trust, error) {
+func ParseTrustArgs(origin string, tokens []string, grant bool, access string) (Trust, error) {
 	host, err := originHost(origin)
 	if err != nil {
 		return Trust{}, err
@@ -270,8 +270,14 @@ func ParseTrustArgs(origin string, tokens []string, grant bool) (Trust, error) {
 		return Trust{}, err
 	}
 	trust := Trust{V: 2, Origin: origin, RPID: host, Version: 1, Core: keys, Access: []string{}, RequireUV: true}
-	if grant {
+	switch {
+	case grant:
 		trust.Access = trust.coreIDs()
+	case access != "":
+		if !slices.Contains(trust.coreIDs(), access) {
+			return Trust{}, fmt.Errorf("%q is not one of the trusted devices", access)
+		}
+		trust.Access = []string{access}
 	}
 	return trust, nil
 }

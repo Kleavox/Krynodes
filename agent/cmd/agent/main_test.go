@@ -183,6 +183,13 @@ func TestTrustArgumentsCarryTheGrant(t *testing.T) {
 	}
 }
 
+func TestTrustArgumentsCarryTheDeviceThatEnrolled(t *testing.T) {
+	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.kleavox.xyz", "--access", "-abc", "--", "-abc.-7.KEY", "def.-7.KEY"})
+	if err != nil || options.access != "-abc" || options.grant || len(options.keys) != 2 {
+		t.Fatalf("options %+v err %v", options, err)
+	}
+}
+
 func TestTheExecutorIsStartedByRequestsAndATimer(t *testing.T) {
 	path := execPathUnit()
 	for _, want := range []string{"PathChanged=/var/lib/kry/actions\n", "Unit=krynodes-exec.service\n", "WantedBy=multi-user.target\n"} {

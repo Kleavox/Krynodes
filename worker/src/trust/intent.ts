@@ -80,6 +80,14 @@ async function verifyIntent(
   }
 }
 
+export function confirmingDevice(context: KrynodesContext): string | null {
+  const header = context.req.header("x-kry-proof");
+  const signed = header
+    ? signedCommandSchema.safeParse(decodeJson(header))
+    : null;
+  return signed?.success ? signed.data.grant.credentialId : null;
+}
+
 export async function confirmed(
   context: KrynodesContext,
   op: string,

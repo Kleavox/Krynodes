@@ -1,14 +1,26 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { app } from "../app";
 import type { Env } from "../env";
 import { createTestDb } from "../test/sqlite-d1";
 
+const INSTALLER = readFileSync(
+  new URL("../../../app/public/install.sh", import.meta.url),
+  "utf8",
+);
+
 function fleet(extra: Partial<Env> = {}) {
   const { db, sqlite } = createTestDb();
   const env = {
     DB: db,
     PUBLIC_ORIGIN: "https://kry.example.test",
+    ASSETS: {
+      fetch: async (request: Request) =>
+        new URL(request.url).pathname === "/install.sh"
+          ? new Response(INSTALLER)
+          : new Response("not found", { status: 404 }),
+    },
     ...extra,
   } as unknown as Env;
   const request = (
@@ -29,15 +41,19 @@ function fleet(extra: Partial<Env> = {}) {
       },
       env,
     );
-  const create = async () => {
-    const response = await request("POST", "/api/enrollments", {});
+  const create = async (setup: unknown = {}) => {
+    const response = await request("POST", "/api/enrollments", setup);
     expect(response.status).toBe(201);
-    const body = (await response.json()) as { id: string; command: string };
-    return {
-      id: body.id,
-      command: body.command,
-      token: body.command.split(" ").at(-1)!,
+    const body = (await response.json()) as {
+      id: string;
+      command: string;
+      enrollmentToken: string;
     };
+    return { id: body.id, command: body.command, token: body.enrollmentToken };
+  };
+  const script = async (token: string) => {
+    const response = await request("GET", `/i/${token}`);
+    return { status: response.status, text: await response.text() };
   };
   const enroll = (token: string, hostname: string) =>
     request(
@@ -65,28 +81,91 @@ function fleet(extra: Partial<Env> = {}) {
       owner_user_id: string;
       enrolled_at: string | null;
     }[];
-  return { sqlite, request, create, enroll, status, nodes };
+  return { sqlite, request, create, script, enroll, status, nodes };
 }
 
+const tail = (text: string) => text.split("\n").slice(-5).join("\n");
+
 describe("enrollment tokens", () => {
-  it("creates no node until an agent enrolls, only an install command", async () => {
+  it("creates no node until an agent enrolls, only a short install command", async () => {
     const { create, nodes, status } = fleet();
-    const { id, command } = await create();
-    expect(command).toMatch(
-      /^curl -fsSL https:\/\/kry\.example\.test\/install\.sh \| sudo sh -s -- https:\/\/kry\.example\.test [A-Za-z0-9_-]{43}$/u,
+    const { id, command, token } = await create();
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(command).toBe(
+      `curl -fsSL https://kry.example.test/i/${token} | sudo sh`,
     );
     expect(nodes()).toEqual([]);
     expect(await status(id)).toEqual({ status: "pending" });
   });
 
-  it("points the command at AGENT_ORIGIN when it is set", async () => {
-    const { create } = fleet({
+  it("points the command and the installer at AGENT_ORIGIN when it is set", async () => {
+    const { create, script } = fleet({
       AGENT_ORIGIN: "https://kry.example.workers.dev",
     });
-    const { command } = await create();
-    expect(command).toMatch(
-      /^curl -fsSL https:\/\/kry\.example\.workers\.dev\/install\.sh \| sudo sh -s -- https:\/\/kry\.example\.workers\.dev \S+$/u,
+    const { command, token } = await create();
+    expect(command).toBe(
+      `curl -fsSL https://kry.example.workers.dev/i/${token} | sudo sh`,
     );
+    const served = await script(token);
+    expect(served.status).toBe(200);
+    expect(served.text.startsWith("#!/bin/sh\n")).toBe(true);
+    expect(tail(served.text)).toBe(
+      `{\n  kry_args='https://kry.example.workers.dev ${token}'\n  main $kry_args\n}\n`,
+    );
+    expect(served.text).not.toContain('main "$@"');
+  });
+
+  it("serves the chosen setup and lets it change until the server enrolls", async () => {
+    const { create, script, request, enroll } = fleet();
+    const { id, token } = await create({
+      recommended: true,
+      docker: true,
+      rebootHour: 20,
+    });
+    expect(tail((await script(token)).text)).toBe(
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker --reboot-hour 20'\n  main $kry_args\n}\n`,
+    );
+    const changed = await request("PATCH", `/api/enrollments/${id}`, {
+      recommended: false,
+      docker: true,
+      rebootHour: null,
+    });
+    expect(changed.status).toBe(200);
+    expect(tail((await script(token)).text)).toBe(
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker'\n  main $kry_args\n}\n`,
+    );
+    expect(
+      (
+        await request("PATCH", `/api/enrollments/${id}`, {
+          recommended: true,
+          docker: true,
+          rebootHour: 24,
+        })
+      ).status,
+    ).toBe(400);
+    await enroll(token, "web-01");
+    expect(
+      (
+        await request("PATCH", `/api/enrollments/${id}`, {
+          recommended: true,
+          docker: true,
+          rebootHour: 3,
+        })
+      ).status,
+    ).toBe(409);
+  });
+
+  it("answers a used or unknown command with a script that says why and stops", async () => {
+    const { create, script, enroll } = fleet();
+    const { token } = await create();
+    await enroll(token, "web-01");
+    for (const code of [token, "x".repeat(43)]) {
+      const served = await script(code);
+      expect(served.status).toBe(200);
+      expect(served.text).toBe(
+        '#!/bin/sh\necho "This install command was already used or has expired. Create a new one in Krynodes." >&2\nexit 1\n',
+      );
+    }
   });
 
   it("creates the node from the hostname when the agent enrolls", async () => {

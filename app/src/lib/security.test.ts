@@ -11,6 +11,7 @@ import {
   rangeLines,
   recipeChoices,
   recommended,
+  shownFindings,
   toUtcHour,
   worst,
 } from "./security";
@@ -134,6 +135,37 @@ describe("the security check on screen", () => {
     expect(
       findingTone({ id: "ssh-password", severity: "serious", detail: "x" }),
     ).toBe("bad");
+  });
+
+  it("recommends the firewall too when no firewall is on", () => {
+    expect(
+      recommended(
+        report({
+          recipes: ["security-updates", "reboot-window", "ssh-keys-only"],
+          findings: [
+            { id: "fail2ban-off", severity: "note", detail: "x" },
+            { id: "firewall-off", severity: "note", detail: "x" },
+          ],
+        }),
+      ),
+    ).toEqual(["fail2ban", "firewall"]);
+  });
+
+  it("leaves the port 53 note out of the list, sorted worst first, and says what freeing it is for", () => {
+    const found = report({
+      findings: [
+        { id: "dns-stub", severity: "note", detail: "port 53" },
+        { id: "ssh-keys", severity: "note", detail: "keys" },
+        { id: "updates-off", severity: "warning", detail: "updates" },
+      ],
+    });
+    expect(shownFindings(found).map((finding) => finding.id)).toEqual([
+      "updates-off",
+      "ssh-keys",
+    ]);
+    expect(
+      recipeChoices(found).find((choice) => choice.id === "free-port-53")?.hint,
+    ).toBe("Only for a DNS server such as AdGuard.");
   });
 
   it("recommends the four safest recipes that are still off and can run", () => {

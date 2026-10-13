@@ -52,6 +52,7 @@ func TestSetupRunsTheRecommendedStepsAndDocker(t *testing.T) {
 		"✓ Restart when needed · 20:00 UTC\n" +
 		"✓ SSH keys only\n" +
 		"✓ Block repeated login failures\n" +
+		"– Firewall already on\n" +
 		"✓ Docker 28.4.0 with Compose\n"
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
@@ -66,6 +67,67 @@ func TestSetupRunsTheRecommendedStepsAndDocker(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(executor.StateDir, name)); (err == nil) != present {
 			t.Fatalf("%s present %v", name, err == nil)
 		}
+	}
+}
+
+func firewallSetup(t *testing.T, answer func(question string) (bool, bool)) (Executor, *fakeRun, string, []string) {
+	t.Helper()
+	executor, run := setupServer(t)
+	rootFile(t, executor, "/etc/ufw/ufw.conf", "ENABLED=no\n")
+	run.respond[listening] = manyListeners
+	var questions []string
+	var out strings.Builder
+	ask := func(question string) (bool, bool) {
+		questions = append(questions, question)
+		return answer(question)
+	}
+	if err := executor.Setup(context.Background(), SetupOptions{Recommended: true, RebootHour: hour(20)}, &out, ask); err != nil {
+		t.Fatal(err)
+	}
+	return executor, run, out.String(), questions
+}
+
+func TestSetupTurnsTheFirewallOnAndAsksAboutEachPublicPort(t *testing.T) {
+	executor, run, got, questions := firewallSetup(t, func(question string) (bool, bool) {
+		return strings.HasPrefix(question, "Keep 80/tcp "), true
+	})
+	want := []string{
+		"Keep 80/tcp (nginx) open to everyone? [y/N] ",
+		"Keep 443/tcp (AdGuardHome) open to everyone? [y/N] ",
+		"Keep 3000/tcp (AdGuardHome) open to everyone? [y/N] ",
+		"Keep 41641/udp (tailscaled) open to everyone? [y/N] ",
+		"Keep 8080/tcp (app) open to everyone? [y/N] ",
+		"Keep 9000/tcp (minio) open to everyone? [y/N] ",
+		"Keep 5432/tcp (postgres) open to everyone? [y/N] ",
+	}
+	if !slices.Equal(questions, want) {
+		t.Fatalf("questions\n%q", questions)
+	}
+	if !strings.Contains(got, "✓ Firewall · also open: 80/tcp\n") {
+		t.Fatalf("got\n%s", got)
+	}
+	calls := strings.Join(run.calls, "\n")
+	for _, call := range []string{"ufw allow 22/tcp comment krynodes", "ufw allow 80/tcp comment krynodes", "ufw --force enable"} {
+		if !strings.Contains(calls, call) {
+			t.Fatalf("missing %q in\n%s", call, calls)
+		}
+	}
+	if strings.Contains(calls, "ufw allow 443/tcp") {
+		t.Fatalf("443 was not kept:\n%s", calls)
+	}
+	if !slices.Contains(executor.appliedRecipes(), "firewall") {
+		t.Fatalf("applied %q", executor.appliedRecipes())
+	}
+}
+
+func TestSetupWithoutATerminalKeepsTheOpenPortsOpen(t *testing.T) {
+	_, run, got, _ := firewallSetup(t, func(string) (bool, bool) { return false, false })
+	open := "80/tcp, 443/tcp, 3000/tcp, 41641/udp, 8080/tcp, 9000/tcp, 5432/tcp"
+	if !strings.Contains(got, "No terminal to ask on, so "+open+" stay open.\n") || !strings.Contains(got, "✓ Firewall · also open: "+open+"\n") {
+		t.Fatalf("got\n%s", got)
+	}
+	if !strings.Contains(strings.Join(run.calls, "\n"), "ufw allow 5432/tcp comment krynodes") {
+		t.Fatalf("calls\n%s", strings.Join(run.calls, "\n"))
 	}
 }
 

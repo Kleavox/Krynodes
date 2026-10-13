@@ -16,6 +16,7 @@ export const queryKeys = {
   checkResults: ["checks", "results"],
   services: ["services"],
   privateRanges: ["settings", "private-ranges"],
+  enrollDefaults: ["settings", "enroll-defaults"],
   nodeActions: (id: string) => ["actions", "node", id],
   action: (id: string | null) => ["actions", "one", id],
   history: (node: string) => ["actions", "history", node],

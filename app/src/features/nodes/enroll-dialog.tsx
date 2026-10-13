@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { CircleCheck } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,13 +17,20 @@ import {
 import {
   useCreateEnrollment,
   useDevices,
+  useEnrollDefaults,
   useEnrollmentStatus,
+  useUpdateEnrollment,
+  type EnrollDefaults,
 } from "@/lib/api";
+import { enrollSetup } from "@/lib/enroll";
 import { enrollmentStep } from "@/lib/enrollment";
 import { errorMessage } from "@/lib/http";
 import { queryKeys } from "@/lib/query-client";
 
 import { EnrollmentCommand } from "./enrollment-command";
+import { SetupOptions } from "./setup-options";
+
+const FALLBACK: EnrollDefaults = { recommended: true, docker: true, hour: 3 };
 
 export function EnrollDialog({
   open,
@@ -34,6 +41,10 @@ export function EnrollDialog({
 }) {
   const client = useQueryClient();
   const create = useCreateEnrollment();
+  const update = useUpdateEnrollment();
+  const defaults = useEnrollDefaults(open);
+  const [chosen, setChosen] = useState<EnrollDefaults | null>(null);
+  const setup = chosen ?? defaults.data ?? FALLBACK;
   const deviceCount = useDevices().data?.devices.length ?? 0;
   const status = useEnrollmentStatus(open ? create.data?.id : undefined);
   const step = enrollmentStep(Boolean(create.data), status.data);
@@ -46,8 +57,20 @@ export function EnrollDialog({
   }, [step, client]);
 
   const close = (next: boolean) => {
-    if (!next) create.reset();
+    if (!next) {
+      create.reset();
+      update.reset();
+      setChosen(null);
+    }
     onOpenChange(next);
+  };
+  const offset = () => new Date().getTimezoneOffset();
+  const start = () => create.mutate(enrollSetup(setup, offset()));
+  const change = (next: EnrollDefaults) => {
+    setChosen(next);
+    if (create.data) {
+      update.mutate({ id: create.data.id, setup: enrollSetup(next, offset()) });
+    }
   };
 
   return (
@@ -64,10 +87,11 @@ export function EnrollDialog({
               </DialogDescription>
               <p className="text-xs text-muted-foreground">
                 {deviceCount > 0
-                  ? `This server will trust your ${deviceCount} trusted ${deviceCount === 1 ? "device" : "devices"} from the start.`
+                  ? `This server will trust your ${deviceCount} trusted ${deviceCount === 1 ? "device" : "devices"} from the start, and the device you confirm with can reach it right away.`
                   : "No trusted device yet. Set one up first (Trusted devices in the account menu) so this server trusts it from the start; until then it takes the first devices the dashboard sends."}
               </p>
             </DialogHeader>
+            <SetupOptions value={setup} onChange={change} />
             {create.error && (
               <p role="alert" className="text-sm text-destructive">
                 {errorMessage(create.error)}
@@ -77,11 +101,7 @@ export function EnrollDialog({
               <Button variant="ghost" onClick={() => close(false)}>
                 Cancel
               </Button>
-              <Button
-                onClick={() => create.mutate()}
-                disabled={create.isPending}
-                autoFocus
-              >
+              <Button onClick={start} disabled={create.isPending} autoFocus>
                 {!create.isPending && <GuardIcon />}
                 {create.isPending ? "Creating…" : "Create install command"}
               </Button>
@@ -98,7 +118,16 @@ export function EnrollDialog({
                 agent, enrolls the server and starts it. The command works once.
               </DialogDescription>
             </DialogHeader>
-            <EnrollmentCommand enrollment={create.data} />
+            <EnrollmentCommand
+              enrollment={create.data}
+              setup={setup}
+              onSetupChange={change}
+            />
+            {update.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {errorMessage(update.error)}
+              </p>
+            )}
             <p
               role="status"
               className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -157,7 +186,7 @@ export function EnrollDialog({
               <Button
                 onClick={() => {
                   create.reset();
-                  create.mutate();
+                  start();
                 }}
                 disabled={create.isPending}
               >

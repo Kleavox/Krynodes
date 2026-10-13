@@ -13,6 +13,7 @@ const SETTLE_MS = 2 * 60_000;
 const STAYED_UP_MS = 90_000;
 
 export type ServerOperation =
+  | { kind: "deleting"; stopped: boolean }
   | { kind: "restarting"; by: string; since: number; actionId: string }
   | { kind: "updating"; version: string; attempt: number; since: number };
 
@@ -31,6 +32,9 @@ export interface ActivityItem {
 }
 
 export const handleOf = (email: string) => displayHandle(null, email);
+
+export const halted = (operation: ServerOperation | null) =>
+  operation?.kind === "deleting" && operation.stopped;
 
 function rebootInFlight(
   node: Pick<NodeRecord, "id" | "connected_at" | "last_seen_at">,
@@ -64,6 +68,9 @@ export function serverOperation(
   actions: ActionRecord[],
   now: number,
 ): ServerOperation | null {
+  if (node.deleting) {
+    return { kind: "deleting", stopped: node.deleting === "stopped" };
+  }
   const reboot = rebootInFlight(node, actions, now);
   if (reboot) {
     return {

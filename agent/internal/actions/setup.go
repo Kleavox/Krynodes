@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 )
@@ -25,6 +28,37 @@ var setupSteps = []struct{ id, title string }{
 	{"reboot-window", "Restart when needed"},
 	{"ssh-keys-only", "SSH keys only"},
 	{"fail2ban", "Block repeated login failures"},
+	{"firewall", "Firewall"},
+}
+
+var neverAsked = []string{"68/udp", "546/udp", "5353/udp", "5355/udp", "5355/tcp"}
+
+func (e Executor) portsToKeep(ctx context.Context, out io.Writer, ask Asker) []string {
+	settings, _ := e.sshSettings(ctx)
+	listeners, _ := e.publicListeners(ctx, settings)
+	var keep []string
+	seen := map[string]bool{}
+	silent := false
+	for _, listener := range listeners {
+		entry := fmt.Sprintf("%d/%s", listener.Port, listener.Protocol)
+		if seen[entry] || slices.Contains(neverAsked, entry) {
+			continue
+		}
+		seen[entry] = true
+		label := entry
+		if listener.Process != "" {
+			label += " (" + listener.Process + ")"
+		}
+		yes, asked := ask("Keep " + label + " open to everyone? [y/N] ")
+		silent = silent || !asked
+		if yes || !asked {
+			keep = append(keep, entry)
+		}
+	}
+	if silent && len(keep) > 0 {
+		fmt.Fprintf(out, "No terminal to ask on, so %s stay open.\n", strings.Join(keep, ", "))
+	}
+	return keep
 }
 
 func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer, ask Asker) error {
@@ -72,7 +106,20 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 				mark("–", step.title, " skipped: first let root or a sudo user log in over SSH with a key")
 				continue
 			}
-			saved, err := recipes.Apply(ctx, env, step.id, args)
+			stepArgs, rest := args, ""
+			if step.id == "firewall" {
+				if e.firewallOf(ctx, platform.Family).active {
+					mark("–", step.title, " already on")
+					continue
+				}
+				kept := e.portsToKeep(ctx, out, ask)
+				stepArgs = maps.Clone(args)
+				stepArgs["ports"] = strings.Join(kept, ",")
+				if len(kept) > 0 {
+					rest = " · also open: " + strings.Join(kept, ", ")
+				}
+			}
+			saved, err := recipes.Apply(ctx, env, step.id, stepArgs)
 			if err == nil {
 				state.Applied[step.id] = appliedRecipe{At: e.Now(), Saved: saved}
 				err = writeJSON(e.StateDir, "recipes.json", state, 0o640)
@@ -81,7 +128,7 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 				mark("✗", step.title, ": "+err.Error())
 				continue
 			}
-			mark("✓", step.title, "")
+			mark("✓", step.title, rest)
 		}
 	}
 	if options.Docker {

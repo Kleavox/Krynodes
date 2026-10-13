@@ -313,24 +313,40 @@ func TestTheTrustReportCarriesCoreAndAccess(t *testing.T) {
 
 func TestParseTrustArgsReadsKeysAndGrant(t *testing.T) {
 	key, _ := newPasskey(t, "cred-1", algES256)
-	trust, err := ParseTrustArgs(testOrigin, []string{"cred-1.-7." + key.PublicKey}, true)
+	trust, err := ParseTrustArgs(testOrigin, []string{"cred-1.-7." + key.PublicKey}, true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if trust.V != 2 || trust.Origin != testOrigin || trust.RPID != testRPID || trust.Version != 1 || len(trust.Core) != 1 || trust.Core[0].ID != "cred-1" || len(trust.Access) != 1 || !trust.RequireUV {
 		t.Fatalf("trust %+v", trust)
 	}
-	plain, err := ParseTrustArgs(testOrigin, []string{"cred-1.-7." + key.PublicKey}, false)
+	plain, err := ParseTrustArgs(testOrigin, []string{"cred-1.-7." + key.PublicKey}, false, "")
 	if err != nil || len(plain.Access) != 0 {
 		t.Fatalf("plain %+v err %v", plain, err)
 	}
 	for _, bad := range [][]string{{"cred-1"}, {"cred-1.x." + key.PublicKey}, {"cred-1.5." + key.PublicKey}, {"cred-1.-7.bm90YWtleQ"}, {}} {
-		if _, err := ParseTrustArgs(testOrigin, bad, false); err == nil {
+		if _, err := ParseTrustArgs(testOrigin, bad, false, ""); err == nil {
 			t.Errorf("%v should be refused", bad)
 		}
 	}
-	if _, err := ParseTrustArgs("kry.kleavox.xyz", []string{"cred-1.-7." + key.PublicKey}, false); err == nil {
+	if _, err := ParseTrustArgs("kry.kleavox.xyz", []string{"cred-1.-7." + key.PublicKey}, false, ""); err == nil {
 		t.Error("an origin without a scheme should be refused")
+	}
+}
+
+func TestParseTrustArgsLetsOnlyTheEnrollingDeviceReachTheServer(t *testing.T) {
+	one, _ := newPasskey(t, "cred-1", algES256)
+	two, _ := newPasskey(t, "cred-2", algES256)
+	keys := []string{"cred-1.-7." + one.PublicKey, "cred-2.-7." + two.PublicKey}
+	trust, err := ParseTrustArgs(testOrigin, keys, false, "cred-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trust.Core) != 2 || len(trust.Access) != 1 || trust.Access[0] != "cred-2" {
+		t.Fatalf("trust %+v", trust)
+	}
+	if _, err := ParseTrustArgs(testOrigin, keys, false, "cred-3"); err == nil {
+		t.Fatal("a device outside the trusted keys cannot be given access")
 	}
 }
 

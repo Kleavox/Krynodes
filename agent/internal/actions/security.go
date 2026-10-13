@@ -129,6 +129,8 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		add("risky-container", "serious", "Containers with full control of the server: "+strings.Join(risky, ", "))
 	}
 	listeners, stub := e.publicListeners(ctx, settings)
+	firewall := e.firewallOf(ctx, platform.Family)
+	listeners = e.throughFirewall(ctx, firewall, listeners)
 	listeners = append(listeners, e.publicContainers(ctx)...)
 	if public := listenerEntries(listeners); len(public) > 0 {
 		add("public-ports", "warning", "Listening on public addresses outside Krynodes: "+strings.Join(public, ", "))
@@ -136,16 +138,8 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 	if len(listeners) > maxListeners {
 		listeners = listeners[:maxListeners]
 	}
-	ufw, _ := os.ReadFile(e.path("/etc/ufw/ufw.conf"))
-	firewall := ufwEnabled.Match(ufw)
-	tool := "ufw"
-	if platform.Family == recipes.RHEL {
-		state, _ := e.output(ctx, "firewall-cmd", "--state")
-		firewall = firewall || strings.TrimSpace(state) == "running"
-		tool = "firewalld"
-	}
-	if !firewall {
-		add("firewall-off", "note", "No firewall is active ("+tool+")")
+	if !firewall.active {
+		add("firewall-off", "note", "No firewall is active ("+firewall.tool+")")
 	}
 	if _, ok := e.output(ctx, "systemctl", "is-active", "--quiet", "fail2ban"); !ok {
 		add("fail2ban-off", "note", "Repeated SSH login failures are not blocked")

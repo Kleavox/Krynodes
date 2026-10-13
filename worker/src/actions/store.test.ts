@@ -197,6 +197,44 @@ describe("action batches", () => {
     expect(await deliverActions(db, B, NOW + MINUTE)).toEqual([]);
   });
 
+  it("starts the steps attached to one source together, and a later step after all of them", async () => {
+    const { db, finish } = setup();
+    const steps: {
+      nodeId: string;
+      action: "reshare" | "store" | "forget";
+      attachFrom?: number;
+    }[] = [
+      { nodeId: A, action: "reshare" },
+      { nodeId: B, action: "store", attachFrom: 0 },
+      { nodeId: C, action: "store", attachFrom: 0 },
+      { nodeId: A, action: "forget" },
+    ];
+    const batch = createBatch(db, {
+      action: "reshare",
+      mode: "rolling",
+      targets: steps.map((step) => ({
+        ...step,
+        kind: "vault" as const,
+        name: "cloudflare",
+      })),
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    const [reshare, storeB, storeC, forget] = batch.actions;
+    const ids = async (nodeId: string, at: number) =>
+      (await deliverActions(db, nodeId, at)).map((action) => action.id);
+    expect(await ids(A, NOW)).toEqual([reshare!.id]);
+    await finish(A, reshare!.id, true, NOW + MINUTE);
+    expect(await ids(B, NOW + MINUTE)).toEqual([storeB!.id]);
+    expect(await ids(C, NOW + MINUTE)).toEqual([storeC!.id]);
+    expect(await ids(A, NOW + MINUTE)).toEqual([]);
+    await finish(B, storeB!.id, true, NOW + 2 * MINUTE);
+    expect(await ids(A, NOW + 2 * MINUTE)).toEqual([]);
+    await finish(C, storeC!.id, true, NOW + 2 * MINUTE);
+    expect(await ids(A, NOW + 2 * MINUTE)).toEqual([forget!.id]);
+  });
+
   it("delivers every action of a parallel batch at once", async () => {
     const { db, queue } = setup();
     await queue("parallel", [A, B]);

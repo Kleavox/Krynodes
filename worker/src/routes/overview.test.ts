@@ -29,6 +29,7 @@ const NODE_KEYS = [
   "update_attempts",
   "update_error",
   "auto_update",
+  "deleting",
 ];
 const CHECK_KEYS = [
   "id",
@@ -100,6 +101,41 @@ describe("GET /api/overview contract", () => {
       [...INCIDENT_KEYS].sort(),
     );
     expect(body.incidents![0]!.node_id).toBe("n1");
+  });
+});
+
+describe("a node being deleted", () => {
+  it("reads running while its batch has work left and stopped once a step did not finish", async () => {
+    const { db, sqlite } = createTestDb();
+    for (const id of ["n1", "n2", "n3"]) seedNode(sqlite, { id });
+    const step = (batch: string, node: string, status: string, at: number) =>
+      sqlite
+        .prepare(
+          `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+             status, requested_by, requested_at)
+           VALUES (?, ?, ?, 'rolling', ?, 'host', 'server', 'uninstall', ?, 'o', '2026-10-13')`,
+        )
+        .run(`${batch}-${at}`, batch, at, node, status);
+    step("b1", "n1", "queued", 0);
+    step("b2", "n2", "done", 0);
+    step("b2", "n2", "failed", 1);
+    sqlite
+      .prepare("UPDATE nodes SET deleting_batch = 'b1' WHERE id = 'n1'")
+      .run();
+    sqlite
+      .prepare("UPDATE nodes SET deleting_batch = 'b2' WHERE id = 'n2'")
+      .run();
+    const response = await app.request(
+      "https://kry.example.test/api/overview",
+      {},
+      { DB: db } as unknown as Env,
+    );
+    const body = (await response.json()) as {
+      nodes: { id: string; deleting: string | null }[];
+    };
+    expect(
+      Object.fromEntries(body.nodes.map((node) => [node.id, node.deleting])),
+    ).toEqual({ n1: "running", n2: "stopped", n3: null });
   });
 });
 

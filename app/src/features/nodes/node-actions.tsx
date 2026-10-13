@@ -61,8 +61,9 @@ export function NodeActions({
   const trust = entry?.trust ?? null;
   const locked = entry?.security?.lockdown ?? false;
   const now = Date.now();
+  const operation = serverOperation(node, services.data?.actions ?? [], now);
   const busy =
-    serverOperation(node, services.data?.actions ?? [], now) !== null;
+    operation !== null && !(operation.kind === "deleting" && operation.stopped);
   const restartable = canRestartServer(node, trust) && !busy;
   const lockable =
     agentCurrent(node) && trust !== null && !!entry?.security && !busy;

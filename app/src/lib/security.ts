@@ -8,7 +8,21 @@ export interface RecipeChoice {
   applied: boolean;
   outside: boolean;
   blocked: string | null;
+  hint: string | null;
 }
+
+const HINTS: Record<string, string> = {
+  "free-port-53": "Only for a DNS server such as AdGuard.",
+};
+
+const HIDDEN = new Set(["dns-stub"]);
+
+const SEVERITY_ORDER = { serious: 0, warning: 1, note: 2 };
+
+export const shownFindings = (report: SecurityReport) =>
+  report.findings
+    .filter((finding) => !HIDDEN.has(finding.id))
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 
 const OFF_FINDING: Record<string, string> = {
   "security-updates": "updates-off",
@@ -39,6 +53,7 @@ const RECOMMENDED = [
   "reboot-window",
   "ssh-keys-only",
   "fail2ban",
+  "firewall",
 ];
 
 const has = (report: SecurityReport, id: string) =>
@@ -75,6 +90,7 @@ export function recipeChoices(report: SecurityReport): RecipeChoice[] {
         id === "ssh-keys-only" && !applied && has(report, "ssh-no-keys")
           ? "First let root or a sudo user log in over SSH with a key."
           : null,
+      hint: HINTS[id] ?? null,
     };
   });
 }

@@ -74,12 +74,18 @@ async function proof(
   );
 }
 
-async function setup(core = true, requireUv = false) {
+async function setup(core = true, requireUv = false, more: string[] = []) {
   const { db, sqlite } = createTestDb();
   seedNode(sqlite, { id: A });
   seedNode(sqlite, { id: B });
   seedCheck(sqlite, { id: CHECK, nodeId: A });
-  const env = { DB: db, PUBLIC_ORIGIN: ORIGIN } as unknown as Env;
+  const env = {
+    DB: db,
+    PUBLIC_ORIGIN: ORIGIN,
+    ASSETS: {
+      fetch: async () => new Response('#!/bin/sh\nmain "$@"\n'),
+    },
+  } as unknown as Env;
   const call = (
     method: string,
     path: string,
@@ -99,20 +105,25 @@ async function setup(core = true, requireUv = false) {
       env,
     );
   const phone = await testPasskey("phone");
-  await call("POST", "/api/devices", {
-    id: phone.id,
-    name: phone.name,
-    alg: phone.alg,
-    publicKey: phone.publicKey,
-    verifies: true,
-  });
+  const others = await Promise.all(more.map((name) => testPasskey(name)));
+  for (const device of [phone, ...others]) {
+    await call("POST", "/api/devices", {
+      id: device.id,
+      name: device.name,
+      alg: device.alg,
+      publicKey: device.publicKey,
+      verifies: true,
+    });
+  }
   if (core) {
-    const print = await fingerprint(phone.publicKey);
+    const prints = await Promise.all(
+      [phone, ...others].map((device) => fingerprint(device.publicKey)),
+    );
     sqlite.prepare("UPDATE nodes SET trust_report = ?").run(
       JSON.stringify({
         version: 1,
-        core: [print],
-        access: [print],
+        core: prints,
+        access: prints,
         passphrase: false,
         requireUv,
       }),
@@ -120,16 +131,20 @@ async function setup(core = true, requireUv = false) {
   }
   const code = async (response: Response) =>
     ((await response.clone().json()) as { code?: string }).code;
-  return { call, phone, code };
+  const installer = async (response: Response) => {
+    const { enrollmentToken } = (await response.json()) as {
+      enrollmentToken: string;
+    };
+    return (await call("GET", `/i/${enrollmentToken}`)).text();
+  };
+  return { call, phone, others, code, installer };
 }
 
 describe("dashboard actions that destroy or hide", () => {
   it("need no fingerprint while the owner has no core devices", async () => {
     const t = await setup(false);
     const enroll = await t.call("POST", "/api/enrollments");
-    expect(
-      ((await enroll.json()) as { command: string }).command,
-    ).not.toContain("--trust");
+    expect(await t.installer(enroll)).not.toContain("--trust");
     expect((await t.call("DELETE", `/api/nodes/${A}`)).status).toBe(204);
   });
 
@@ -210,8 +225,25 @@ describe("dashboard actions that destroy or hide", () => {
       await proof(t.phone, "enrollment.create", "new"),
     );
     expect(enroll.status).toBe(201);
-    expect(((await enroll.json()) as { command: string }).command).toContain(
-      ` --trust ${ORIGIN} --grant -- phone.-7.${t.phone.publicKey}`,
+    expect(await t.installer(enroll)).toContain(
+      ` --trust ${ORIGIN} --grant -- phone.-7.${t.phone.publicKey}'`,
     );
+  });
+
+  it("let the device that made the install command reach the new server", async () => {
+    const t = await setup(true, false, ["laptop"]);
+    const enroll = await t.call(
+      "POST",
+      "/api/enrollments",
+      undefined,
+      await proof(t.phone, "enrollment.create", "new"),
+    );
+    expect(enroll.status).toBe(201);
+    const laptop = t.others[0]!;
+    const script = await t.installer(enroll);
+    expect(script).toContain(` --trust ${ORIGIN} --access phone -- `);
+    expect(script).toContain(`phone.-7.${t.phone.publicKey}`);
+    expect(script).toContain(`laptop.-7.${laptop.publicKey}`);
+    expect(script).not.toContain("--grant");
   });
 });

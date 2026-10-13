@@ -1,26 +1,37 @@
 import { agentUpdatable, MIN_AGENT_VERSION } from "@krynodes/protocol";
+import type { MiddlewareHandler } from "hono";
 
 import type { AgentNode } from "../agent/ingest";
 import { hubFor, streamsOn } from "../fleet/client";
 import { randomToken, readBearerToken, sha256 } from "../lib/crypto";
 import { hostSchema } from "../schemas";
-import { readJson, type KrynodesApp, type KrynodesContext } from "./shared";
+import {
+  readJson,
+  type KrynodesApp,
+  type KrynodesContext,
+  type KrynodesEnv,
+} from "./shared";
+
+export const agentRateLimit: MiddlewareHandler<KrynodesEnv> = async (
+  context,
+  next,
+) => {
+  const limiter = context.env.AGENT_RATE_LIMIT;
+  if (limiter) {
+    const key = context.req.header("cf-connecting-ip") ?? "unknown";
+    const { success } = await limiter.limit({ key });
+    if (!success) {
+      return context.json(
+        { code: "RATE_LIMITED", message: "Too many agent requests." },
+        429,
+      );
+    }
+  }
+  await next();
+};
 
 export function registerAgentRoutes(app: KrynodesApp): void {
-  app.use("/api/agent/*", async (context, next) => {
-    const limiter = context.env.AGENT_RATE_LIMIT;
-    if (limiter) {
-      const key = context.req.header("cf-connecting-ip") ?? "unknown";
-      const { success } = await limiter.limit({ key });
-      if (!success) {
-        return context.json(
-          { code: "RATE_LIMITED", message: "Too many agent requests." },
-          429,
-        );
-      }
-    }
-    await next();
-  });
+  app.use("/api/agent/*", agentRateLimit);
 
   app.post("/api/agent/enroll", async (context) => {
     const token = readBearerToken(context.req.header("authorization"));

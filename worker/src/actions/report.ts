@@ -36,12 +36,50 @@ export async function receiveReport(
   node: AgentNode,
   report: AgentActionsRequest,
   now: number,
-): Promise<{ ok: true; inventoryHash: string | null; alerts: Finding[] }> {
+): Promise<{
+  ok: true;
+  inventoryHash: string | null;
+  alerts: Finding[];
+  next: string[];
+  deleted: boolean;
+}> {
+  let next: string[] = [];
+  let deleted = false;
   if (report.results && report.results.length > 0) {
-    await db.batch([
+    const ids = JSON.stringify(report.results.map((result) => result.id));
+    const done = await db.batch([
       ...(await actionResultStatements(db, node.id, report.results, now)),
       ...sweepStatements(db, now),
+      db
+        .prepare(
+          `DELETE FROM nodes
+           WHERE deleting_batch IN (SELECT batch_id FROM actions
+             WHERE id IN (SELECT value FROM json_each(?)))
+             AND NOT EXISTS (SELECT 1 FROM actions
+               WHERE batch_id = nodes.deleting_batch AND status <> 'done')`,
+        )
+        .bind(ids),
     ]);
+    if ((done.at(-1)?.meta.changes ?? 0) > 0) {
+      deleted = true;
+      const gone = !(await db
+        .prepare("SELECT id FROM nodes WHERE id = ?")
+        .bind(node.id)
+        .first());
+      if (gone) {
+        return { ok: true, inventoryHash: null, alerts: [], next, deleted };
+      }
+    }
+    const waiting = await db
+      .prepare(
+        `SELECT DISTINCT node_id FROM actions
+         WHERE status = 'queued' AND deliverable_at IS NOT NULL
+           AND batch_id IN (SELECT batch_id FROM actions
+             WHERE id IN (SELECT value FROM json_each(?)))`,
+      )
+      .bind(ids)
+      .all<{ node_id: string }>();
+    next = waiting.results.map((row) => row.node_id);
   }
   const inventoryHash = report.inventory
     ? await applyInventory(
@@ -59,5 +97,5 @@ export async function receiveReport(
     inventoryHash !== (node.inventory_hash ?? null)
       ? newSerious(node.security, report.inventory?.security)
       : [];
-  return { ok: true, inventoryHash, alerts };
+  return { ok: true, inventoryHash, alerts, next, deleted };
 }

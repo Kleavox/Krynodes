@@ -99,6 +99,17 @@ describe("server operations", () => {
     ).toBe(null);
   });
 
+  it("is deleting before anything else, and says when the delete stopped", () => {
+    expect(
+      serverOperation(node({ deleting: "running" }), [reboot({})], NOW),
+    ).toEqual({ kind: "deleting", stopped: false });
+    expect(serverOperation(node({ deleting: "stopped" }), [], NOW)).toEqual({
+      kind: "deleting",
+      stopped: true,
+    });
+    expect(serverOperation(node({ deleting: null }), [], NOW)).toBe(null);
+  });
+
   it("is updating while an agent update is in flight", () => {
     expect(
       serverOperation(

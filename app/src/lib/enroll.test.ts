@@ -1,20 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { setupFlags } from "./enroll";
+import { enrollSetup } from "./enroll";
 
-describe("setup in the enroll command", () => {
-  it("adds what is ticked, with the restart hour in UTC", () => {
+describe("setup sent with the enroll command", () => {
+  it("sends what is ticked, with the restart hour in UTC", () => {
     expect(
-      setupFlags({ recommended: true, docker: true, hour: 3, offset: -420 }),
-    ).toBe(" --setup recommended,docker --reboot-hour 20");
+      enrollSetup({ recommended: true, docker: true, hour: 3 }, -420),
+    ).toEqual({ recommended: true, docker: true, rebootHour: 20 });
     expect(
-      setupFlags({ recommended: false, docker: true, hour: 3, offset: -420 }),
-    ).toBe(" --setup docker");
+      enrollSetup({ recommended: false, docker: true, hour: 3 }, -420),
+    ).toEqual({ recommended: false, docker: true, rebootHour: null });
     expect(
-      setupFlags({ recommended: true, docker: false, hour: 3, offset: 330 }),
-    ).toBe(" --setup recommended --reboot-hour 8");
-    expect(
-      setupFlags({ recommended: false, docker: false, hour: 3, offset: 0 }),
-    ).toBe("");
+      enrollSetup({ recommended: true, docker: false, hour: 3 }, 330),
+    ).toEqual({ recommended: true, docker: false, rebootHour: 8 });
   });
 });

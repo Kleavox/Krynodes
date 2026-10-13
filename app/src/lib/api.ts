@@ -30,6 +30,7 @@ import type {
   UsageResponse,
   UsageShare,
 } from "../types";
+import type { EnrollSetup } from "./enroll";
 import { pollEnrollment } from "./enrollment";
 import { apiFetch, errorMessage } from "./http";
 import { guardedFetch } from "./proof";
@@ -140,7 +141,18 @@ interface NewCheck {
 
 export const useCreateEnrollment = () =>
   useApiMutation(
-    () => guardedFetch<Enrollment>("/api/enrollments", send("POST", {})),
+    (setup: EnrollSetup) =>
+      guardedFetch<Enrollment>("/api/enrollments", send("POST", setup)),
+    [],
+  );
+
+export const useUpdateEnrollment = () =>
+  useApiMutation(
+    ({ id, setup }: { id: string; setup: EnrollSetup }) =>
+      apiFetch(
+        `/api/enrollments/${encodeURIComponent(id)}`,
+        send("PATCH", setup),
+      ),
     [],
   );
 
@@ -162,6 +174,30 @@ export function usePrivateRanges(enabled: boolean) {
     enabled,
   });
 }
+
+export interface EnrollDefaults {
+  recommended: boolean;
+  docker: boolean;
+  hour: number;
+}
+
+export function useEnrollDefaults(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.enrollDefaults,
+    queryFn: () => apiFetch<EnrollDefaults>("/api/settings/enroll-defaults"),
+    enabled,
+  });
+}
+
+export const useSaveEnrollDefaults = () =>
+  useApiMutation(
+    (defaults: EnrollDefaults) =>
+      apiFetch<EnrollDefaults>(
+        "/api/settings/enroll-defaults",
+        send("PUT", defaults),
+      ),
+    [queryKeys.enrollDefaults],
+  );
 
 export const useSavePrivateRanges = () =>
   useApiMutation(
@@ -276,6 +312,7 @@ export const postActions = (body: {
   targets: (
     SignedTarget | { nodeId: string; kind: "systemd" | "host"; name: string }
   )[];
+  then?: "delete";
 }) =>
   apiFetch<{ batchId: string; actions: { id: string }[] }>(
     "/api/actions",
@@ -285,7 +322,7 @@ export const postActions = (body: {
 export interface OperationStep {
   id: string;
   nodeId: string;
-  kind: "compose" | "vault";
+  kind: "compose" | "vault" | "host";
   name: string;
   action: ActionVerb;
   signed: unknown;
@@ -297,6 +334,7 @@ export const postOperation = (body: {
   kind: "move" | "expose" | "unexpose" | "split" | "reshare";
   steps: OperationStep[];
   zone?: string;
+  deleteNode?: string;
 }) =>
   apiFetch<{ batchId: string; actions: { id: string }[] }>(
     "/api/operations",

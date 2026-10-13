@@ -1,18 +1,19 @@
+import type { EnrollDefaults } from "./api";
 import { toUtcHour } from "./security";
 
-export function setupFlags(choice: {
+export interface EnrollSetup {
   recommended: boolean;
   docker: boolean;
-  hour: number;
-  offset: number;
-}): string {
-  const steps = [
-    ...(choice.recommended ? ["recommended"] : []),
-    ...(choice.docker ? ["docker"] : []),
-  ];
-  if (steps.length === 0) return "";
-  const hour = choice.recommended
-    ? ` --reboot-hour ${Math.floor(toUtcHour(choice.hour, choice.offset))}`
-    : "";
-  return ` --setup ${steps.join(",")}${hour}`;
+  rebootHour: number | null;
 }
+
+export const enrollSetup = (
+  choice: EnrollDefaults,
+  offset: number,
+): EnrollSetup => ({
+  recommended: choice.recommended,
+  docker: choice.docker,
+  rebootHour: choice.recommended
+    ? Math.floor(toUtcHour(choice.hour, offset))
+    : null,
+});

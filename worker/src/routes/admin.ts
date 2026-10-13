@@ -37,7 +37,14 @@ export function registerAdminRoutes(
               cpu_percent, memory_used_bytes, memory_total_bytes,
               disk_used_bytes, disk_total_bytes, load_1, uptime_seconds,
               created_at, update_requested_version, update_requested_at,
-              update_attempts, update_error, auto_update
+              update_attempts, update_error, auto_update,
+              CASE
+                WHEN deleting_batch IS NULL THEN NULL
+                WHEN EXISTS (SELECT 1 FROM actions WHERE batch_id = nodes.deleting_batch
+                  AND status IN ('failed', 'expired', 'cancelled', 'skipped')) THEN 'stopped'
+                WHEN EXISTS (SELECT 1 FROM actions WHERE batch_id = nodes.deleting_batch
+                  AND status IN ('queued', 'sent')) THEN 'running'
+              END AS deleting
        FROM nodes WHERE owner_user_id = ? ORDER BY created_at DESC`,
       )
         .bind(ownerId)

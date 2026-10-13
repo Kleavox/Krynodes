@@ -76,6 +76,7 @@ const actionRequestSchema = z.object({
     )
     .min(1)
     .max(50),
+  then: z.literal("delete").optional(),
 });
 
 const OWN_STACK = /^\/var\/lib\/kry-exec\/compose\/[^/]+$/u;
@@ -382,10 +383,12 @@ export function registerServiceRoutes(
   app.post("/api/actions", requireOperator, async (context) => {
     const parsed = actionRequestSchema.safeParse(await readJson(context));
     if (!parsed.success) return invalidRequest(context);
-    const { action, mode, targets } = parsed.data;
+    const { action, mode, targets, then } = parsed.data;
     const unsigned = (UNSIGNED_VERBS as readonly string[]).includes(action);
     const logs = action === "logs";
     if (
+      (then !== undefined &&
+        (action !== "uninstall" || targets.length !== 1)) ||
       new Set(targets.map(targetKey)).size !== targets.length ||
       targets.some(
         (target) =>
@@ -665,8 +668,17 @@ export function registerServiceRoutes(
             .bind(new Date(now).toISOString(), credential, identity.id),
         ]
       : [];
+    const deleting = then
+      ? [
+          db
+            .prepare(
+              "UPDATE nodes SET deleting_batch = ? WHERE id = ? AND owner_user_id = ?",
+            )
+            .bind(batch.batchId, targets[0]!.nodeId, identity.id),
+        ]
+      : [];
     try {
-      await db.batch([...batch.statements, ...used]);
+      await db.batch([...batch.statements, ...used, ...deleting]);
     } catch (error) {
       if (!String(error).includes("UNIQUE")) throw error;
       return context.json(

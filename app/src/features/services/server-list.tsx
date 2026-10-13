@@ -10,7 +10,7 @@ import type { DeployRequest } from "@/features/deploy/deploy-dialog";
 import { StackRow } from "@/features/deploy/stack-list";
 import { NodeActions } from "@/features/nodes/node-actions";
 import { nodeState } from "@/lib/format";
-import { serverOperation } from "@/lib/operations";
+import { halted, serverOperation } from "@/lib/operations";
 import type { ServerList } from "@/lib/stacks";
 import { cn } from "@/lib/utils";
 import type { ActionRecord } from "@/types";
@@ -100,8 +100,16 @@ export function ServerServiceList({
                     )}
                   />
                   <StatusDot
-                    tone={operation ? "warn" : away ? "idle" : "ok"}
-                    pulse={operation !== null}
+                    tone={
+                      halted(operation)
+                        ? "bad"
+                        : operation
+                          ? "warn"
+                          : away
+                            ? "idle"
+                            : "ok"
+                    }
+                    pulse={operation !== null && !halted(operation)}
                   />
                   <span className="min-w-0 truncate font-medium">
                     {group.node.name}
@@ -114,7 +122,12 @@ export function ServerServiceList({
                     {away && " · offline"}
                   </span>
                   {operation && (
-                    <span className="font-mono text-xs font-normal text-warning">
+                    <span
+                      className={cn(
+                        "font-mono text-xs font-normal",
+                        halted(operation) ? "text-destructive" : "text-warning",
+                      )}
+                    >
                       <OperationText operation={operation} />
                     </span>
                   )}

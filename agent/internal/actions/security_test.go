@@ -177,9 +177,98 @@ func TestFullAccessStacksMayHoldDockerAndPublicPorts(t *testing.T) {
 	}
 }
 
+const defaultRoute = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n" +
+	"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n" +
+	"tailscale0\t0000400A\t00000000\t0001\t0\t0\t0\t00C0FFFF\t0\t0\t0\n"
+
+const manyListeners = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:80 0.0.0.0:* users:((\"nginx\",pid=2,fd=3))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:((\"AdGuardHome\",pid=3,fd=3))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:3000 0.0.0.0:* users:((\"AdGuardHome\",pid=3,fd=4))\n" +
+	"udp UNCONN 0 0 0.0.0.0:41641 0.0.0.0:* users:((\"tailscaled\",pid=4,fd=5))\n" +
+	"udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:((\"systemd-network\",pid=5,fd=3))\n" +
+	"udp UNCONN 0 0 0.0.0.0:5355 0.0.0.0:* users:((\"systemd-resolve\",pid=6,fd=3))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:5355 0.0.0.0:* users:((\"systemd-resolve\",pid=6,fd=4))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"app\",pid=7,fd=3))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:9000 0.0.0.0:* users:((\"minio\",pid=8,fd=3))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:5432 0.0.0.0:* users:((\"postgres\",pid=9,fd=3))\n"
+
+const ufwRules = "*filter\n:ufw-user-input - [0:0]\n" +
+	"### RULES ###\n\n" +
+	"### tuple ### allow tcp 22 0.0.0.0/0 any 0.0.0.0/0 in\n-A ufw-user-input -p tcp --dport 22 -j ACCEPT\n\n" +
+	"### tuple ### allow tcp 80 0.0.0.0/0 any 0.0.0.0/0 in comment=6b72796e6f646573\n-A ufw-user-input -p tcp --dport 80 -j ACCEPT\n\n" +
+	"### tuple ### allow tcp 443 0.0.0.0/0 any 173.245.48.0/20 in comment=636c6f7564666c617265\n\n" +
+	"### tuple ### allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0\n\n" +
+	"### tuple ### limit any 41641 0.0.0.0/0 any 0.0.0.0/0 in\n\n" +
+	"### tuple ### allow tcp 8080 0.0.0.0/0 any 0.0.0.0/0 in_eth0\n\n" +
+	"### tuple ### allow_log tcp 8999:9001 0.0.0.0/0 any 0.0.0.0/0 in\n\n" +
+	"### tuple ### deny tcp 5432 0.0.0.0/0 any 0.0.0.0/0 in\n\n" +
+	"### tuple ### route:allow tcp 3000 0.0.0.0/0 any 0.0.0.0/0 in\n\n" +
+	"### END RULES ###\nCOMMIT\n"
+
+func publicPortsOf(t *testing.T, executor Executor) string {
+	t.Helper()
+	return strings.TrimPrefix(findingsOf(t, executor)["public-ports"].Detail, "Listening on public addresses outside Krynodes: ")
+}
+
+func TestAFirewallLeavesOutWhatItDoesNotLetInFromEverywhere(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/default/ufw", "IPV6=yes\nDEFAULT_INPUT_POLICY=\"DROP\"\n")
+	rootFile(t, executor, "/etc/ufw/user.rules", ufwRules)
+	rootFile(t, executor, "/etc/ufw/user6.rules", "### tuple ### allow tcp 22 ::/0 any ::/0 in\n")
+	rootFile(t, executor, "/proc/net/route", defaultRoute)
+	run.respond[listening] = manyListeners
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := publicPortsOf(t, executor); got != "80/tcp (nginx), 41641/udp (tailscaled), 8080/tcp (app), 9000/tcp (minio)" {
+		t.Fatalf("public ports %q", got)
+	}
+}
+
+func TestAFirewallThatLetsEverythingInLeavesEveryListenerPublic(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/default/ufw", "DEFAULT_INPUT_POLICY=\"ACCEPT\"\n")
+	run.respond[listening] = manyListeners
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := publicPortsOf(t, executor); !strings.Contains(got, "68/udp (systemd-network)") || !strings.Contains(got, "5432/tcp (postgres)") {
+		t.Fatalf("public ports %q", got)
+	}
+}
+
+func TestFirewalldLetsInTheServicesAndPortsOfTheInternetZone(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rhelServer(t, executor, run)
+	rootFile(t, executor, "/proc/net/route", defaultRoute)
+	run.respond[listening] = manyListeners
+	run.respond["firewall-cmd --get-zone-of-interface=eth0"] = "public\n"
+	run.respond["firewall-cmd --info-zone=public"] = "public (active)\n  target: default\n  interfaces: eth0\n  services: ssh dhcpv6-client http\n  ports: 8080/tcp 41000-42000/udp\n  rich rules: \n"
+	run.respond["firewall-cmd --info-service=ssh"] = "ssh\n  ports: 22/tcp\n"
+	run.respond["firewall-cmd --info-service=dhcpv6-client"] = "dhcpv6-client\n  ports: 546/udp\n"
+	run.respond["firewall-cmd --info-service=http"] = "http\n  ports: 80/tcp\n"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := publicPortsOf(t, executor); got != "80/tcp (nginx), 41641/udp (tailscaled), 8080/tcp (app)" {
+		t.Fatalf("public ports %q", got)
+	}
+	run.respond["firewall-cmd --info-zone=public"] = "public (active)\n  target: ACCEPT\n"
+	if result := runRequest(t, executor, Request{ID: idB, Kind: "host", Name: "server", Action: "scan", ExpiresAt: executorNow.Add(time.Minute).Format(time.RFC3339Nano)}); !result.OK {
+		t.Fatalf("scan %#v", result)
+	}
+	if got := publicPortsOf(t, executor); !strings.Contains(got, "5432/tcp (postgres)") {
+		t.Fatalf("a zone that accepts everything leaves every listener public: %q", got)
+	}
+}
+
 func TestThePublicListenersAreReportedWithTheirAddresses(t *testing.T) {
 	executor, run := securityExecutor(t)
 	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/ufw/ufw.conf", "ENABLED=no\n")
 	run.respond[listening] = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n" +
 		"tcp LISTEN 0 4096 100.79.66.29:57969 0.0.0.0:* users:((\"tailscaled\",pid=2,fd=3))\n" +
 		"udp UNCONN 0 0 0.0.0.0:41641 0.0.0.0:* users:((\"tailscaled\",pid=2,fd=5))\n" +

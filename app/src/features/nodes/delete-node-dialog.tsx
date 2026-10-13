@@ -1,6 +1,7 @@
 import { Fingerprint } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
+import { toast } from "sonner";
 
 import { GuardIcon } from "@/components/confirm-dialog";
 import {
@@ -19,7 +20,6 @@ import {
 } from "@/features/deploy/use-signed-action";
 import { removalReady } from "@/lib/agent";
 import {
-  useAction,
   useCloudflare,
   useDeleteNode,
   useDevices,
@@ -27,10 +27,14 @@ import {
   useServices,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
-import { pieceOf, planRemoval, reshareSteps, vaultNodes } from "@/lib/vault";
+import {
+  pieceOf,
+  planRemoval,
+  reshareSteps,
+  vaultNodes,
+  type OperationTarget,
+} from "@/lib/vault";
 import type { NodeRecord } from "@/types";
-
-const ENDED = ["failed", "expired", "cancelled", "skipped"];
 
 export function DeleteNodeDialog({
   node,
@@ -50,10 +54,7 @@ export function DeleteNodeDialog({
   const services = useServices();
   const overview = useOverview();
   const settings = useCloudflare();
-  const [last, setLast] = useState<string | null>(null);
-  const [stage, setStage] = useState<"spread" | "remove" | null>(null);
   const [keepAgent, setKeepAgent] = useState(false);
-  const tracked = useAction(last);
   const seen = overview.dataUpdatedAt;
   const setId = settings.data?.setId ?? null;
   const zone = settings.data?.zone ?? "";
@@ -70,11 +71,6 @@ export function DeleteNodeDialog({
       setId,
     ) !== null;
   const plan = planRemoval(nodesFor(null), node.id, setId, addresses);
-  const action = tracked.data?.action.id === last ? tracked.data?.action : null;
-  const status = action?.status;
-  const ended = status !== undefined && ENDED.includes(status);
-  const spreadFailed = ended && stage === "spread";
-  const removalFailed = ended && stage === "remove";
   const holds = !plan.ok || plan.needed;
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
@@ -82,18 +78,24 @@ export function DeleteNodeDialog({
     plan.ok &&
     removalReady(node, trust, devices.data?.devices ?? [], Date.now());
   const leaving = offer && !keepAgent;
-  const spreadDone = stage === "spread" && status === "done";
+  const stopped = node.deleting === "stopped";
+  const running = node.deleting === "running";
+  const background = !running && ((holds && plan.ok) || leaving);
 
   const close = (next: boolean) => {
     if (!next) {
       remove.reset();
       operate.reset();
       run.reset();
-      setLast(null);
-      setStage(null);
       setKeepAgent(false);
     }
     onOpenChange(next);
+  };
+  const started = () => {
+    toast.success(
+      `Deleting ${node.name}. It disappears once Krynodes is done.`,
+    );
+    close(false);
   };
   const deleteNow = () =>
     remove.mutate(node.id, {
@@ -103,65 +105,61 @@ export function DeleteNodeDialog({
       },
     });
 
-  const removeAgent = () =>
+  const removeAndDelete = () =>
     run.mutate(
       {
         action: "uninstall",
         targets: [{ nodeId: node.id, kind: "host", name: "server" }],
+        then: "delete",
       },
-      {
-        onSuccess: (batch) => {
-          setStage("remove");
-          setLast(batch.actions[0]?.id ?? null);
-        },
-      },
+      { onSuccess: started },
     );
-
-  useEffect(() => {
-    if (!remove.isIdle || status !== "done") return;
-    if (stage === "spread" && leaving) {
-      if (run.isIdle) removeAgent();
-      return;
-    }
-    deleteNow();
-  });
 
   const spread = () =>
     operate.mutate(
       {
         kind: "reshare",
         reach: [],
+        deleteNode: node.id,
         build: (fingerprint) => {
           const all = nodesFor(fingerprint);
           const chosen = planRemoval(all, node.id, setId, addresses);
           if (!chosen.ok) throw new Error(chosen.reason);
           if (!chosen.needed || !setId) throw new Error("Nothing to spread.");
-          return reshareSteps({
-            releaser: chosen.releaser,
-            assembler: chosen.assembler,
-            holders: chosen.holders,
-            keyOf: Object.fromEntries(
-              all.map((item) => [item.id, item.sealKey ?? ""]),
-            ),
-            set: crypto.randomUUID(),
-            source: setId,
-            cleanup: node.id,
-            zone,
-            forgets: chosen.forgets,
-          });
+          const gone = all.find((item) => item.id === node.id);
+          const uninstall: OperationTarget[] =
+            leaving && gone?.reachable && gone.online
+              ? [
+                  {
+                    nodeId: node.id,
+                    kind: "host",
+                    name: "server",
+                    action: "uninstall",
+                  },
+                ]
+              : [];
+          return [
+            ...reshareSteps({
+              releaser: chosen.releaser,
+              assembler: chosen.assembler,
+              holders: chosen.holders,
+              keyOf: Object.fromEntries(
+                all.map((item) => [item.id, item.sealKey ?? ""]),
+              ),
+              set: crypto.randomUUID(),
+              source: setId,
+              cleanup: node.id,
+              zone,
+              forgets: chosen.forgets,
+            }),
+            ...uninstall,
+          ];
         },
       },
-      {
-        onSuccess: (batch) => {
-          setStage("spread");
-          setLast(batch.actions.at(-1)?.id ?? null);
-        },
-      },
+      { onSuccess: started },
     );
 
-  const spreading = stage === "spread" && !ended && !spreadDone;
-  const removing = run.isPending || (stage === "remove" && !ended);
-  const busy = operate.isPending || spreading || removing || remove.isPending;
+  const busy = operate.isPending || run.isPending || remove.isPending;
   const error = remove.error ?? operate.error ?? run.error;
 
   return (
@@ -186,11 +184,17 @@ export function DeleteNodeDialog({
                   </>
                 )}
               </p>
-              {holds && plan.ok && stage !== "remove" && (
+              {holds && plan.ok && (
                 <p>
                   {piece
                     ? `${node.name} holds a piece of the Cloudflare token. Krynodes first spreads the token across the other servers and removes the tunnel of ${node.name} from Cloudflare, then deletes it.`
                     : `${node.name} has web addresses. Krynodes first removes its tunnel, DNS records and logins from Cloudflare, then deletes it.`}
+                </p>
+              )}
+              {background && (
+                <p>
+                  It runs on its own after your fingerprint, so you can close
+                  this. {node.name} shows as deleting until it is gone.
                 </p>
               )}
               {!plan.ok && (
@@ -200,7 +204,21 @@ export function DeleteNodeDialog({
                     : `${node.name} has web addresses, and Krynodes cannot reach Cloudflare now: ${plan.reason} Deleting anyway leaves them in Cloudflare.`}
                 </p>
               )}
-              {piece && (!plan.ok || spreadFailed) && (
+              {running && (
+                <p className="text-warning">
+                  Krynodes is already deleting {node.name}; it disappears once
+                  that is done. Delete anyway takes it off the dashboard now.
+                </p>
+              )}
+              {stopped && (
+                <p className="text-destructive">
+                  The last try to delete {node.name} stopped before it was done.{" "}
+                  {background
+                    ? "Try again, or delete it anyway."
+                    : "Delete it anyway to take it off the dashboard."}
+                </p>
+              )}
+              {piece && (!plan.ok || stopped) && (
                 <p>
                   If {node.name} may be in the wrong hands, replace the token
                   under{" "}
@@ -213,39 +231,10 @@ export function DeleteNodeDialog({
                   after deleting it.
                 </p>
               )}
-              {spreading && (
-                <p className="text-warning">
-                  Spreading the token. {node.name} is deleted once that
-                  finishes; keep this open.
-                </p>
-              )}
-              {spreadFailed && (
-                <p className="text-destructive">
-                  Spreading the token did not finish, so {node.name} is still
-                  here.
-                </p>
-              )}
-              {stage === "remove" && !ended && (
-                <p className="text-warning">
-                  Removing Krynodes from {node.name}. It is deleted once that
-                  finishes; keep this open.
-                </p>
-              )}
-              {removalFailed && (
-                <p className="text-destructive">
-                  Krynodes could not be removed from {node.name}
-                  {action?.output ? `: ${action.output}` : "."} Delete anyway
-                  leaves it there; run{" "}
-                  <code className="font-mono text-xs">
-                    sudo kry uninstall-service
-                  </code>{" "}
-                  on the server to take it off.
-                </p>
-              )}
             </div>
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {offer && !removalFailed && (
+        {offer && !running && (
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -263,33 +252,39 @@ export function DeleteNodeDialog({
         )}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          {holds &&
-          plan.ok &&
-          stage !== "remove" &&
-          !spreadFailed &&
-          !spreadDone ? (
+          {stopped && background && (
+            <Button variant="ghost" disabled={busy} onClick={deleteNow}>
+              Delete anyway
+            </Button>
+          )}
+          {running ? (
+            <Button
+              variant="destructive"
+              disabled={remove.isPending}
+              onClick={deleteNow}
+            >
+              {!remove.isPending && <GuardIcon />}
+              {remove.isPending ? "Working…" : "Delete anyway"}
+            </Button>
+          ) : holds && plan.ok ? (
             <Button variant="destructive" disabled={busy} onClick={spread}>
-              {!operate.isPending && !spreading && (
-                <Fingerprint aria-hidden="true" />
-              )}
+              {!operate.isPending && <Fingerprint aria-hidden="true" />}
               {operate.isPending
                 ? "Waiting for the fingerprint…"
-                : spreading
-                  ? "Spreading…"
-                  : piece
-                    ? "Spread and delete"
-                    : "Clean up and delete"}
+                : piece
+                  ? "Spread and delete"
+                  : "Clean up and delete"}
             </Button>
-          ) : leaving && !removalFailed && !spreadFailed ? (
-            <Button variant="destructive" disabled={busy} onClick={removeAgent}>
-              {!busy && <Fingerprint aria-hidden="true" />}
+          ) : leaving ? (
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={removeAndDelete}
+            >
+              {!run.isPending && <Fingerprint aria-hidden="true" />}
               {run.isPending
                 ? "Waiting for the fingerprint…"
-                : removing
-                  ? "Removing Krynodes…"
-                  : remove.isPending
-                    ? "Working…"
-                    : "Remove and delete"}
+                : "Remove and delete"}
             </Button>
           ) : (
             <Button
@@ -300,7 +295,7 @@ export function DeleteNodeDialog({
               {!remove.isPending && <GuardIcon />}
               {remove.isPending
                 ? "Working…"
-                : holds || removalFailed
+                : holds || stopped
                   ? "Delete anyway"
                   : "Delete node"}
             </Button>

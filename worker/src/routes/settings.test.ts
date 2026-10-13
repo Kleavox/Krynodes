@@ -48,6 +48,39 @@ const security = {
   ],
 };
 
+describe("enroll defaults", () => {
+  it("start with protections, Docker and 03:00, and keep what is saved", async () => {
+    const { call } = setup();
+    expect(
+      await (await call("GET", "/api/settings/enroll-defaults")).json(),
+    ).toEqual({ recommended: true, docker: true, hour: 3 });
+    const saved = await call("PUT", "/api/settings/enroll-defaults", {
+      recommended: true,
+      docker: false,
+      hour: 22,
+    });
+    expect(saved.status).toBe(200);
+    expect(
+      await (await call("GET", "/api/settings/enroll-defaults")).json(),
+    ).toEqual({ recommended: true, docker: false, hour: 22 });
+  });
+
+  it("refuses an hour outside the day", async () => {
+    const { call } = setup();
+    for (const hour of [-1, 24, 3.5]) {
+      expect(
+        (
+          await call("PUT", "/api/settings/enroll-defaults", {
+            recommended: true,
+            docker: true,
+            hour,
+          })
+        ).status,
+      ).toBe(400);
+    }
+  });
+});
+
 describe("addresses that are not public", () => {
   it("starts empty and stores normalized ranges once each", async () => {
     const { call } = setup();

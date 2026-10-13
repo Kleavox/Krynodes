@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
+import { PrivateRangesDialog } from "@/features/settings/private-ranges-dialog";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -35,13 +36,12 @@ import {
   fromUtcHour,
   recipeChoices,
   recommended,
+  shownFindings,
   toUtcHour,
   type RecipeChoice,
 } from "@/lib/security";
 import { cn } from "@/lib/utils";
 import type { NodeRecord } from "@/types";
-
-import { PrivateRangesDialog } from "./private-ranges-dialog";
 
 const sectionTitle =
   "mb-3 text-[11px] tracking-wider text-muted-foreground uppercase";
@@ -247,10 +247,7 @@ export function SecurityPanel({
   );
   const notice = protectionsNotice(report);
   const unsupported = report.platform?.family === null;
-  const order = { serious: 0, warning: 1, note: 2 };
-  const findings = [...report.findings].sort(
-    (a, b) => order[a.severity] - order[b.severity],
-  );
+  const findings = shownFindings(report);
   return (
     <section
       aria-labelledby="node-security"
@@ -274,22 +271,28 @@ export function SecurityPanel({
         >
           Check now
         </Button>
-        <RowMenu
-          label="Security settings"
-          items={[
-            {
-              label: "Addresses that are not public…",
-              onSelect: () => setRanges(true),
-            },
-          ]}
-        />
       </div>
       <PrivateRangesDialog open={ranges} onOpenChange={setRanges} />
       <ul className="space-y-1.5 text-sm">
         {findings.map((finding) => (
           <li key={finding.id} className="flex gap-2">
             <StatusDot tone={findingTone(finding)} />
-            <span className="min-w-0">{finding.detail}</span>
+            <span className="min-w-0">
+              {finding.detail}
+              {finding.id === "public-ports" && (
+                <span className="block text-xs text-muted-foreground">
+                  Some of these on a private network? Add its range under{" "}
+                  <button
+                    type="button"
+                    className="underline underline-offset-4"
+                    onClick={() => setRanges(true)}
+                  >
+                    Settings, Private addresses
+                  </button>
+                  .
+                </span>
+              )}
+            </span>
           </li>
         ))}
       </ul>
@@ -307,9 +310,9 @@ export function SecurityPanel({
           <li key={choice.id} className="flex items-center gap-2 px-3 py-2">
             <span className="min-w-0 flex-1">
               <span className="block">{choice.title}</span>
-              {choice.blocked && (
+              {(choice.blocked ?? choice.hint) && (
                 <span className="block text-xs text-muted-foreground">
-                  {choice.blocked}
+                  {choice.blocked ?? choice.hint}
                 </span>
               )}
             </span>

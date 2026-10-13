@@ -114,11 +114,18 @@ const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
       AND earlier.status IN ('failed', 'expired', 'cancelled', 'skipped'))`;
 
 const PROMOTE_SQL = `UPDATE actions SET deliverable_at = ?1
-  WHERE status = 'queued' AND deliverable_at IS NULL AND NOT EXISTS (
-    SELECT 1 FROM actions earlier
-    WHERE earlier.batch_id = actions.batch_id
-      AND earlier.position < actions.position
-      AND earlier.status <> 'done')`;
+  WHERE status = 'queued' AND deliverable_at IS NULL AND CASE
+    WHEN attach_from IS NULL THEN NOT EXISTS (
+      SELECT 1 FROM actions earlier
+      WHERE earlier.batch_id = actions.batch_id
+        AND earlier.position < actions.position
+        AND earlier.status <> 'done')
+    ELSE EXISTS (
+      SELECT 1 FROM actions source
+      WHERE source.batch_id = actions.batch_id
+        AND source.position = actions.attach_from
+        AND source.status = 'done')
+    END`;
 
 const iso = (ms: number) => new Date(ms).toISOString();
 

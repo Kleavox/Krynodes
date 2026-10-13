@@ -92,7 +92,7 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
 "
 
   if [ "$mode" = "enroll" ] && { [ -z "$endpoint" ] || [ -z "$token" ]; }; then
-    echo "Usage: curl -fsSL <kry>/install.sh | sudo sh -s -- <endpoint> <enrollment-token>" >&2
+    echo "Usage: curl -fsSL <kry>/i/<code> | sudo sh" >&2
     echo "   or: curl -fsSL <kry>/install.sh | sudo sh -s -- --update" >&2
     echo "Copy the full command from the Krynodes dashboard." >&2
     exit 1
@@ -165,6 +165,7 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
     fi
   fi
   systemctl restart krynodes.service
+  systemctl start --no-block krynodes-exec.service || true
 
   if [ "$mode" = "update" ]; then
     echo "Krynodes agent updated to $("$bin" version)."

@@ -554,6 +554,77 @@ describe("operations in steps", () => {
     ]);
     expect(missing.status).toBe(400);
   });
+
+  it("re-splits, takes Krynodes off the leaving server and marks it for deletion", async () => {
+    const leave = (leaving = B, extra: Step[] = []) => [
+      step({
+        nodeId: B,
+        kind: "vault",
+        name: "cloudflare",
+        action: "release",
+        args: { to: A, key: keyOf(A), set: SET },
+      }),
+      step({
+        nodeId: A,
+        kind: "vault",
+        name: "cloudflare",
+        action: "reshare",
+        args: {
+          holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
+          set: NEXT,
+          cleanup: B,
+          zone: "kleavox.xyz",
+        },
+        attachFrom: 0,
+      }),
+      ...[A, C].map((nodeId) =>
+        step({
+          nodeId,
+          kind: "vault",
+          name: "cloudflare",
+          action: "store",
+          args: { set: NEXT, holders: "2" },
+          attachFrom: 1,
+          attachKey: nodeId,
+        }),
+      ),
+      step({ nodeId: B, kind: "vault", name: "cloudflare", action: "forget" }),
+      ...extra.map(step),
+      step({
+        nodeId: leaving,
+        kind: "host",
+        name: "server",
+        action: "uninstall",
+      }),
+    ];
+    const t = routes();
+    const deleting = () =>
+      t.sqlite
+        .prepare(
+          "SELECT id, deleting_batch FROM nodes WHERE deleting_batch IS NOT NULL",
+        )
+        .all() as { id: string; deleting_batch: string }[];
+    expect(
+      (await t.operate("reshare", leave(), { deleteNode: C })).status,
+    ).toBe(400);
+    expect(
+      (await t.operate("reshare", leave(C), { deleteNode: B })).status,
+    ).toBe(400);
+    expect((await t.operate("reshare", leave())).status).toBe(400);
+    expect(deleting()).toEqual([]);
+    const response = await t.operate("reshare", leave(), { deleteNode: B });
+    expect(response.status).toBe(201);
+    const { batchId } = (await response.json()) as { batchId: string };
+    expect(deleting()).toEqual([{ id: B, deleting_batch: batchId }]);
+    expect(t.rows().map((row) => row.action)).toEqual([
+      "release",
+      "reshare",
+      "store",
+      "store",
+      "forget",
+      "uninstall",
+    ]);
+  });
 });
 
 describe("single steps of agent 0.6.0", () => {
@@ -620,6 +691,36 @@ describe("single steps of agent 0.6.0", () => {
     expect(
       (await single(t, { ...uninstall, nodeId: B, name: "fail2ban" })).status,
     ).toBe(400);
+  });
+
+  it("deletes the server after Krynodes leaves it, when asked to", async () => {
+    const t = routes();
+    const leave = (targets: Step[], action = "uninstall") =>
+      t.call("POST", "/api/actions", {
+        action,
+        then: "delete",
+        targets: targets.map((target) => {
+          const { attachFrom: _, attachKey: __, ...made } = step(target);
+          return made;
+        }),
+      });
+    const server = (nodeId: string) =>
+      ({ nodeId, kind: "host", name: "server", action: "uninstall" }) as const;
+    expect((await leave([server(A), server(B)])).status).toBe(400);
+    expect(
+      (
+        await leave(
+          [{ nodeId: A, kind: "host", name: "server", action: "scan" }],
+          "scan",
+        )
+      ).status,
+    ).toBe(400);
+    const response = await leave([server(A)]);
+    expect(response.status).toBe(201);
+    const { batchId } = (await response.json()) as { batchId: string };
+    expect(
+      t.sqlite.prepare("SELECT deleting_batch FROM nodes WHERE id = ?").get(A),
+    ).toEqual({ deleting_batch: batchId });
   });
 
   it("applies and undoes recipes, locks a server down and checks it unsigned", async () => {

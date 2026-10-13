@@ -55,7 +55,9 @@ changed. **Run workflow** on the Validate workflow deploys by hand.
 - **Access.** Put the dashboard hostname behind a Cloudflare Access application.
   The Worker verifies the Access token itself and answers 401 without one.
 - **Agents** report to the Worker's `workers.dev` address (`AGENT_ORIGIN`),
-  outside the zone, so zone bot protection cannot challenge them.
+  outside the zone, so zone bot protection cannot challenge them. The install
+  command uses the same address once (`/i/<code>`), so Bot Fight Mode can stay
+  on for the zone.
 - **Configuration.** `env.production` in `worker/wrangler.jsonc` holds the
   public values. The GitHub environment `production` supplies the rest:
   secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `KRY_D1_ID`,
@@ -72,17 +74,26 @@ The agent is a single binary, `kry`. **Enroll node** in the dashboard gives one
 command to paste on the server:
 
 ```sh
-curl -fsSL https://<agent-host>/install.sh | sudo sh -s -- https://<agent-host> <token>
+curl -fsSL https://<agent-host>/i/<code> | sudo sh
 ```
 
-It downloads the latest release for the server's architecture, checks its
-SHA-256 and its signature against the release key written into the script
+The code is the one-time enrollment token (30 minutes). The Worker serves
+`app/public/install.sh` with its last line replaced by the arguments that
+token carries: the address, the token, the trusted devices' keys and the
+setup chosen in the dialog. They sit in one `{ … }` block, so a download cut
+anywhere runs nothing. A used or expired code prints why and stops.
+
+The script downloads the latest release for the server's architecture, checks
+its SHA-256 and its signature against the release key written into the script
 (`openssl`, 1.1.1 or newer), installs `/usr/local/bin/kry`, enrolls the node, and starts the
-`krynodes` systemd service (config in `/etc/kry/config.json`). The node takes
-the server's hostname as its name (**Rename node** changes it) and reports every
+`krynodes` systemd service (config in `/etc/kry/config.json`), then runs the
+security check once so the dashboard shows it at once. The node takes the
+server's hostname as its name (**Rename node** changes it) and reports every
 minute. A server that is already enrolled is left alone; to enroll it again,
-run `sudo kry uninstall-service` first. The script is
-`app/public/install.sh`, served as a static asset. Afterwards:
+run `sudo kry uninstall-service` first. With two or more trusted devices, the
+device that confirmed the command can reach the new server right away
+(`kry trust --access`); the others are added through **Change access** as
+before. Afterwards:
 
 ```sh
 sudo systemctl status krynodes
@@ -91,8 +102,9 @@ sudo kry status
 
 The Enroll dialog can also set the server up in the same command: **Apply
 recommended protections** (with a restart hour in your time) and **Install
-Docker** add `--setup recommended,docker --reboot-hour <UTC hour>`. After
-enrolling, the script runs `kry setup`, which prints what it found and did:
+Docker**. They start from **Settings → Enroll defaults** and can change until
+the server enrolls. After enrolling, the script runs `kry setup`, which prints
+what it found and did:
 
 ```text
 Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
@@ -100,8 +112,15 @@ Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
 ✓ Restart when needed · 20:00 UTC
 – SSH keys only skipped: first let root or a sudo user log in over SSH with a key
 ✓ Block repeated login failures
+Keep 80/tcp (nginx) open to everyone? [y/N] y
+✓ Firewall · also open: 80/tcp
 ✓ Docker 28.4.0 with Compose
 ```
+
+The firewall keeps SSH open and asks about every other port that listens on a
+public address. The DHCP client (68, 546/udp), mDNS (5353/udp) and LLMNR
+(5355) need no rule and are not asked about. Without a terminal to ask on, the
+open ports stay open. A firewall that is already on is left as it is.
 
 A step that fails is printed and the next one runs; the server is enrolled
 either way, and the dashboard can turn the rest on later. `sudo kry setup
@@ -320,13 +339,14 @@ The agent never runs anything itself:
 - It keeps its state in `/var/lib/kry-exec`.
 
 To take Krynodes off a server, delete the node in the dashboard while the
-server is online: with **Remove Krynodes from the server** ticked (servers on
-agent 0.6.2 or newer that this device can sign for) the dashboard spreads the
-token, asks the server to remove Krynodes, and deletes the node once the server
-confirms; the removal runs 30 seconds later, after the answer reached
-Krynodes. If the dashboard closes in between, the server stays listed as
-**removed** (never mailed as offline) until you delete it. Without it, or for
-a server that is offline, run:
+server is online: with **Remove Krynodes from the server** ticked (on by
+default for servers on agent 0.6.2 or newer that this device can sign for) one
+fingerprint queues the whole job and the dialog closes. Krynodes spreads the
+token, asks the server to remove Krynodes, and deletes the node once every step
+is done; the removal runs 30 seconds later, after the answer reached Krynodes.
+Meanwhile the server shows as **deleting**; if a step fails it shows **delete
+stopped** and stays, and Delete node offers to try again or **Delete anyway**.
+Without it, or for a server that is offline, run:
 
 ```sh
 sudo kry uninstall-service
@@ -508,7 +528,7 @@ the DNS record, and an older login is removed last, so a protected address is
 never open, not even when a step fails. **Close web address…**, Remove and
 Delete permanently remove what it made, the login last.
 
-**Cloudflare token** (account menu → Cloudflare). Create one token with
+**Cloudflare token** (Settings → Cloudflare). Create one token with
 Account · Cloudflare Tunnel · Edit, Account · Access: Apps and Policies · Edit
 and Zone · DNS · Edit for your zone, expiring in a year, and paste it once. The
 browser splits it with Shamir's scheme: any 2 pieces rebuild it. Every
@@ -517,7 +537,9 @@ server keeps the whole token, two servers must both be online, three or more
 need any two. A new split takes over only once two of its pieces are stored,
 and each server keeps its piece of the split in use until then, so a spread
 that stops half way leaves the token as it was. One token change runs at a
-time; the page shows how many steps are left.
+time; the page shows how many steps are left. Each step wakes the server of the
+next one, and the servers store their new pieces at the same time, so a spread
+takes seconds, not a minute per server.
 A server rebuilds the token only for a signed request, uses it, and erases it.
 Open addresses keep working while servers are down. **Spread again** appears
 when a reachable server holds no piece; **Replace token** splits a new one.
@@ -525,8 +547,8 @@ Krynodes mails 30 days before the token expires.
 
 **Delete node** on a server that holds a piece first spreads the token across
 the other servers, makes the leaving server forget its piece and removes its
-tunnel, DNS records and Access apps, then deletes it. Keep the dialog open
-until it finishes. When the token cannot move (fewer than two pieces online),
+tunnel, DNS records and Access apps, then deletes it, on its own after the
+fingerprint. When the token cannot move (fewer than two pieces online),
 the dialog says why and offers **Delete anyway**; replace the token if the
 server may be in the wrong hands.
 
@@ -550,20 +572,33 @@ is untouched.
 under the same project name, so named volumes stay. The old folder is left as
 it was. A stack that mounts server folders moves as Full access.
 
-**Security check.** Every 6 hours, and after every change below, each server
-checks SSH password and root login, SSH keys, ports open to the internet
-(also ones Krynodes did not open), automatic updates, pending updates and
-restarts, privileged containers and `docker.sock` mounts, OS end of life, and
-a clock that is not synchronized (signed actions depend on it).
-Fleet shows a shield (green, amber, red); the server page lists the findings
-with **Check now**. A new serious finding is mailed under the quiet rules.
+**Security check.** Right after enrolling, every 6 hours, and after every
+change below, each server checks SSH password and root login, SSH keys, ports
+open to the internet (also ones Krynodes did not open), automatic updates,
+pending updates and restarts, privileged containers and `docker.sock` mounts,
+OS end of life, and a clock that is not synchronized (signed actions depend on
+it). Fleet shows a shield (green, amber, red); the server page lists the
+findings with **Check now**. A new serious finding is mailed under the quiet
+rules.
 
-**Addresses that are not public.** The Security panel's ⋯ menu keeps one list
-of address ranges (IPv4 or IPv6, at most 32) for every server, empty until you
-fill it. Listeners bound to an address inside a range, such as a VPN's, are
-left out of the public-ports finding. The agent (0.6.6 or newer) reports each
-listener's address; the Worker applies the list when it shows the report, so
-a change shows at once, without a new check.
+A port counts as open to the internet when the firewall lets it in from
+anywhere (agent 0.6.9 or newer): ufw rules without a source restriction, on any
+interface or on the interface of the default route, or everything when the
+input policy is ACCEPT; firewalld's zone of that interface (or the default
+zone), its services and ports, or everything when its target is ACCEPT. With
+no firewall on, every public listener counts. Ports Docker publishes always
+count, since Docker goes around the host firewall.
+
+**Private addresses** (Settings → Private addresses) keeps one list of address
+ranges (IPv4 or IPv6, at most 32) for every server, empty until you fill it.
+Listeners bound to an address inside a range, such as a VPN's, are left out of
+the public-ports finding. The agent (0.6.6 or newer) reports each listener's
+address; the Worker applies the list when it shows the report, so a change
+shows at once, without a new check.
+
+**Settings** in the header holds what applies to every server: Cloudflare,
+Private addresses, Enroll defaults (what a new install command sets up) and
+Usage.
 
 **Protections** on the server page, each with Turn off (Undo):
 
@@ -584,8 +619,10 @@ only accounts SSH really lets in with a key (`PermitRootLogin`, `AllowUsers`,
 `DenyUsers`, `AllowGroups`, `DenyGroups`, `PubkeyAuthentication`,
 `AuthenticationMethods`, keys in the files `AuthorizedKeysFile` names) and
 leaves root's login rule alone. **Apply
-recommended** turns on the first four with one fingerprint. The agent connects
-outward, so none of them can cut Krynodes off.
+recommended** turns on the first five with one fingerprint, the firewall with
+the ports you tick. The agent connects outward, so none of them can cut
+Krynodes off. Free port 53 is not a finding: it is offered only for a server
+that will run a DNS server.
 
 **Lock down server** (server menu) stops containers that publish ports to the
 internet and the tunnel, and turns on SSH keys only when a key is set up.

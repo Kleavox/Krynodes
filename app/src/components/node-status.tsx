@@ -9,6 +9,15 @@ export function Elapsed({ since }: { since: number }) {
 }
 
 export function OperationText({ operation }: { operation: ServerOperation }) {
+  if (operation.kind === "deleting") {
+    return (
+      <>
+        {operation.stopped
+          ? "Delete stopped · open Delete node to try again"
+          : "Deleting · it disappears once Krynodes finishes"}
+      </>
+    );
+  }
   if (operation.kind === "restarting") {
     return (
       <>
@@ -33,6 +42,13 @@ export function NodeStatus({
   operation: ServerOperation | null;
   offlineDetail?: string;
 }) {
+  if (operation?.kind === "deleting") {
+    return operation.stopped ? (
+      <StatusChip tone="bad" label="delete stopped" />
+    ) : (
+      <StatusChip tone="warn" pulse label="deleting" />
+    );
+  }
   if (operation?.kind === "restarting") {
     return (
       <StatusChip
