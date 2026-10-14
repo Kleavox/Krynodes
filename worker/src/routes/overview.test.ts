@@ -30,6 +30,10 @@ const NODE_KEYS = [
   "update_error",
   "auto_update",
   "deleting",
+  "ipv4",
+  "ipv4_at",
+  "ipv6",
+  "ipv6_at",
 ];
 const CHECK_KEYS = [
   "id",
@@ -59,6 +63,7 @@ const INCIDENT_KEYS = [
   "check_name",
   "node_name",
   "node_id",
+  "update_status",
 ];
 
 describe("GET /api/overview contract", () => {

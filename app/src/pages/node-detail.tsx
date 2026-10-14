@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { errorMessage } from "@/lib/http";
@@ -9,6 +10,11 @@ import { DockerMark } from "@/components/docker-mark";
 import { SecurityMark } from "@/components/security-mark";
 import { PageHeader } from "@/components/page-header";
 import { NodeStatus } from "@/components/node-status";
+import {
+  AddressLock,
+  AddressText,
+  CopyAddress,
+} from "@/components/server-addresses";
 import { StatusDot, checkTone } from "@/components/status";
 import { HeartbeatStrip, newestLatency } from "@/components/strips";
 import { Button } from "@/components/ui/button";
@@ -41,6 +47,7 @@ import {
   timeAgo,
 } from "@/lib/format";
 import { usageLevel } from "@/lib/health";
+import { serverAddresses } from "@/lib/addresses";
 import { findGaps, seriesSummary, withGapBreaks } from "@/lib/series";
 import { maintenanceSpans, serverOperation } from "@/lib/operations";
 import { useNow } from "@/lib/use-now";
@@ -71,6 +78,7 @@ export function NodeDetailPage() {
   const metrics = useNodeMetrics(id, range);
   const results = useCheckResults();
   const services = useServices();
+  const devices = useDevices();
   const now = useNow(5_000);
 
   if (!overview.data) {
@@ -125,6 +133,7 @@ export function NodeDetailPage() {
                 node,
                 services.data?.actions ?? [],
                 now,
+                devices.data?.devices,
               )}
               offlineDetail={`reported ${timeAgo(node.last_seen_at, now)}`}
             />
@@ -175,11 +184,15 @@ export function NodeDetailPage() {
             aria-labelledby="node-details"
             className="rounded-lg border bg-card p-4"
           >
-            <h2 id="node-details" className={sectionTitle}>
-              Details
-            </h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 id="node-details" className={sectionTitle}>
+                Details
+              </h2>
+              <AddressLock className="-mt-2" />
+            </div>
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
               <Fact label="Host" value={node.hostname} />
+              <AddressFacts node={node} />
               <Fact label="System" value={node.operating_system} />
               <Fact label="Architecture" value={node.architecture} />
               <Fact
@@ -387,6 +400,34 @@ function AccessFact({ nodeId }: { nodeId: string }) {
 function liveSince(at: string, now: number): string {
   const time = clockTime(at);
   return dayLabel(at, now) === "Today" ? time : `${shortDate(at)}, ${time}`;
+}
+
+function AddressFacts({ node }: { node: NodeRecord }) {
+  const addresses = serverAddresses(node);
+  const byFamily = (family: 4 | 6) =>
+    addresses.find((address) => address.family === family);
+  return (
+    <>
+      {([4, 6] as const).map((family) => {
+        const address = byFamily(family);
+        return (
+          <Fragment key={family}>
+            <dt className="text-muted-foreground">IPv{family}</dt>
+            <dd className="flex min-w-0 items-center justify-end gap-1 font-mono text-xs leading-5">
+              {address ? (
+                <>
+                  <AddressText address={address} />
+                  <CopyAddress address={address} nodeName={node.name} />
+                </>
+              ) : (
+                "--"
+              )}
+            </dd>
+          </Fragment>
+        );
+      })}
+    </>
+  );
 }
 
 function Fact({ label, value }: { label: string; value: string | null }) {

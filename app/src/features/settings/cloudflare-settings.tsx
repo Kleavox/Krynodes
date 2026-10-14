@@ -2,7 +2,6 @@ import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { PageHeader } from "@/components/page-header";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +19,8 @@ import {
   vaultNodes,
   type VaultNode,
 } from "@/lib/vault";
+
+import { SettingsSection, SUBTITLE } from "./section";
 
 const PERMISSIONS = [
   "Account · Cloudflare Tunnel · Edit",
@@ -66,7 +67,7 @@ function Holders({
   );
 }
 
-export function CloudflarePage() {
+export function CloudflareSettings() {
   const overview = useOverview();
   const services = useServices();
   const settings = useCloudflare();
@@ -150,23 +151,15 @@ export function CloudflarePage() {
     );
 
   return (
-    <>
-      <PageHeader
-        title="Cloudflare"
-        meta={
-          <span className="font-mono text-xs text-muted-foreground">
-            Web addresses use this token
-          </span>
-        }
-      />
-      <div className="max-w-2xl space-y-8">
+    <SettingsSection
+      title="Cloudflare"
+      description="Web addresses use this token to make tunnels, DNS records and logins."
+    >
+      <div className="space-y-8">
         <section aria-labelledby="pieces" className="space-y-3">
-          <h2
-            id="pieces"
-            className="text-[11px] tracking-wider text-muted-foreground uppercase"
-          >
+          <h3 id="pieces" className={SUBTITLE}>
             Where the token is
-          </h2>
+          </h3>
           <p className="text-sm text-muted-foreground">
             The token is split into pieces, one for each server this device can
             reach. Any two pieces rebuild it for a few seconds, and only after a
@@ -207,12 +200,9 @@ export function CloudflarePage() {
         </section>
 
         <section aria-labelledby="paste" className="space-y-3">
-          <h2
-            id="paste"
-            className="text-[11px] tracking-wider text-muted-foreground uppercase"
-          >
+          <h3 id="paste" className={SUBTITLE}>
             {setId ? "Replace token" : "Add a token"}
-          </h2>
+          </h3>
           <p className="text-sm text-muted-foreground">
             In Cloudflare, make an API token with only these permissions and an
             end date a year from now:
@@ -281,6 +271,6 @@ export function CloudflarePage() {
           </Button>
         </section>
       </div>
-    </>
+    </SettingsSection>
   );
 }

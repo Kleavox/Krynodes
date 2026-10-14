@@ -20,6 +20,7 @@ interface FleetDevice {
   removedAt: string | null;
   verifies: boolean | null;
   fingerprint: string;
+  account: string | null;
 }
 
 export interface FleetNode {
@@ -62,7 +63,7 @@ export async function loadFleet(
   const [devices, nodes] = await Promise.all([
     db
       .prepare(
-        `SELECT id, name, alg, public_key, created_at, last_used_at, removed_at, verifies
+        `SELECT id, name, alg, public_key, created_at, last_used_at, removed_at, verifies, account
          FROM devices WHERE owner_user_id = ? ORDER BY created_at, id`,
       )
       .bind(ownerId)
@@ -75,6 +76,7 @@ export async function loadFleet(
         last_used_at: string | null;
         removed_at: string | null;
         verifies: number | null;
+        account: string | null;
       }>(),
     db
       .prepare(
@@ -101,6 +103,7 @@ export async function loadFleet(
       removedAt: row.removed_at,
       verifies: row.verifies === null ? null : row.verifies === 1,
       fingerprint: await fingerprint(row.public_key),
+      account: row.account,
     })),
   );
   const listedNodes = nodes.results.map((row) => ({

@@ -51,10 +51,17 @@ export interface Service {
   longInfo: LongInfo;
 }
 
+interface PublicUpdate {
+  status: string;
+  message: string;
+  at: number;
+}
+
 interface PublicIncident {
   name: string;
   startedAt: number;
   resolvedAt: number | null;
+  updates: PublicUpdate[];
 }
 
 export interface StatusView {
@@ -83,9 +90,17 @@ interface CheckRow {
 }
 
 interface IncidentRow {
+  id: string;
   check_id: string;
   started_at: string;
   resolved_at: string | null;
+}
+
+interface UpdateRow {
+  incident_id: string;
+  status: string;
+  message: string;
+  created_at: string;
 }
 
 function toMs(value: string): number {
@@ -222,10 +237,12 @@ export function serviceState(
 export async function statusVersion(db: D1Database): Promise<string> {
   const row = await db
     .prepare(
-      "SELECT COUNT(*) AS count, MAX(updated_at) AS changed FROM checks WHERE public = 1",
+      `SELECT COUNT(*) AS count, MAX(updated_at) AS changed,
+         (SELECT COUNT(*) || ':' || COALESCE(MAX(created_at), '') FROM incident_updates) AS said
+       FROM checks WHERE public = 1`,
     )
-    .first<{ count: number; changed: string | null }>();
-  return `${row?.count ?? 0}:${row?.changed ?? ""}`;
+    .first<{ count: number; changed: string | null; said: string | null }>();
+  return `${row?.count ?? 0}:${row?.changed ?? ""}:${row?.said ?? ""}`;
 }
 
 export async function loadStatus(
@@ -236,7 +253,7 @@ export async function loadStatus(
   const recentSince = new Date(
     (Math.floor(now / SLOT_MS) - SLOTS) * SLOT_MS,
   ).toISOString();
-  const [checks, incidents, results] = await Promise.all([
+  const [checks, incidents, results, updates] = await Promise.all([
     db
       .prepare(
         `SELECT c.id, c.name, c.public_note, c.status, n.last_seen_at, c.created_at,
@@ -247,7 +264,7 @@ export async function loadStatus(
       .all<CheckRow>(),
     db
       .prepare(
-        `SELECT i.check_id, i.started_at, i.resolved_at
+        `SELECT i.id, i.check_id, i.started_at, i.resolved_at
          FROM incidents i
          WHERE i.check_id IN (SELECT id FROM checks WHERE public = 1 AND enabled = 1)
            AND (i.resolved_at IS NULL OR datetime(i.resolved_at) >= datetime(?))`,
@@ -263,7 +280,26 @@ export async function loadStatus(
       )
       .bind(recentSince)
       .all<WindowRow>(),
+    db
+      .prepare(
+        `SELECT u.incident_id, u.status, u.message, u.created_at
+         FROM incident_updates u
+         WHERE u.incident_id IN (
+           SELECT i.id FROM incidents i
+           WHERE i.check_id IN (SELECT id FROM checks WHERE public = 1 AND enabled = 1)
+             AND (i.resolved_at IS NULL OR datetime(i.resolved_at) >= datetime(?)))
+         ORDER BY u.created_at DESC, u.id DESC`,
+      )
+      .bind(new Date(now - INCIDENT_DAYS * DAY).toISOString())
+      .all<UpdateRow>(),
   ]);
+  const said = new Map<string, PublicUpdate[]>();
+  for (const row of updates.results) {
+    said.set(row.incident_id, [
+      ...(said.get(row.incident_id) ?? []),
+      { status: row.status, message: row.message, at: toMs(row.created_at) },
+    ]);
+  }
 
   const spans = new Map<string, Span[]>();
   for (const row of incidents.results) {
@@ -324,6 +360,7 @@ export async function loadStatus(
         name: names.get(row.check_id) ?? "",
         startedAt: toMs(row.started_at),
         resolvedAt: row.resolved_at ? toMs(row.resolved_at) : null,
+        updates: said.get(row.id) ?? [],
       }))
       .sort((a, b) => b.startedAt - a.startedAt),
   };

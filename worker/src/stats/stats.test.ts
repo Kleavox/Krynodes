@@ -63,20 +63,37 @@ function incident(
   checkId: string,
   startedAt: string,
   resolvedAt: string | null,
-): void {
+): string {
+  const id = crypto.randomUUID();
   sqlite
     .prepare(
       `INSERT INTO incidents (id, check_id, status, started_at, resolved_at, summary)
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run(
-      crypto.randomUUID(),
+      id,
       checkId,
       resolvedAt ? "RESOLVED" : "OPEN",
       startedAt,
       resolvedAt,
       `${checkId} is down: dial tcp 10.0.0.5:22: connection refused`,
     );
+  return id;
+}
+
+function update(
+  sqlite: DatabaseSync,
+  incidentId: string,
+  status: string,
+  message: string,
+  at: string,
+): void {
+  sqlite
+    .prepare(
+      `INSERT INTO incident_updates (id, incident_id, status, message, author, created_at)
+       VALUES (?, ?, ?, ?, 'owner@example.test', ?)`,
+    )
+    .run(crypto.randomUUID(), incidentId, status, message, at);
 }
 
 function fleet() {
@@ -453,11 +470,41 @@ describe("loadStatus", () => {
         name: "Website",
         startedAt: Date.parse("2026-09-28T11:30:00.000Z"),
         resolvedAt: null,
+        updates: [],
       },
       {
         name: "Website",
         startedAt: Date.parse("2026-09-26T10:00:00.000Z"),
         resolvedAt: Date.parse("2026-09-26T10:14:00.000Z"),
+        updates: [],
+      },
+    ]);
+  });
+
+  it("carries each incident's updates, newest first, and changes the version with them", async () => {
+    const { db, sqlite } = fleet();
+    publish(sqlite, "a", { name: "Website" });
+    const id = incident(sqlite, "a", "2026-09-28T11:30:00.000Z", null);
+    const before = await statusVersion(db);
+    update(sqlite, id, "investigating", "Looking", "2026-09-28T11:35:00.000Z");
+    update(
+      sqlite,
+      id,
+      "identified",
+      "The disk is full",
+      "2026-09-28T11:45:00.000Z",
+    );
+    expect(await statusVersion(db)).not.toBe(before);
+    expect((await loadStatus(db, NOW)).incidents[0]!.updates).toEqual([
+      {
+        status: "identified",
+        message: "The disk is full",
+        at: Date.parse("2026-09-28T11:45:00.000Z"),
+      },
+      {
+        status: "investigating",
+        message: "Looking",
+        at: Date.parse("2026-09-28T11:35:00.000Z"),
       },
     ]);
   });
@@ -750,6 +797,26 @@ describe("serveStats", () => {
     expect(html).toContain("Resolved after 14m");
     expect(html).toContain("26 Sep 2026, 10:00 UTC");
     expect(html).not.toContain("refused");
+  });
+
+  it("shows what the team said about an incident, escaped", async () => {
+    const { db, sqlite } = fleet();
+    publish(sqlite, "a", { name: "Website" });
+    const id = incident(sqlite, "a", "2026-09-28T11:30:00.000Z", null);
+    update(
+      sqlite,
+      id,
+      "monitoring",
+      "A fix is out <b>now</b>",
+      "2026-09-28T11:50:00.000Z",
+    );
+    const html = await (await visit(db)).text();
+    expect(html).toContain(
+      '<li class="update"><span class="update-status">Monitoring</span> A fix is out &lt;b&gt;now&lt;/b&gt;',
+    );
+    expect(html).not.toContain("owner@example.test");
+    expect(html).not.toMatch(/\.incidents li[{+]/u);
+    expect(html).toContain(".incidents>li{display:grid");
   });
 
   it("refuses a visitor over the limit before reading D1", async () => {

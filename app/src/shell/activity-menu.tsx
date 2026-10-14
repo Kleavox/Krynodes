@@ -10,7 +10,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useOverview, useServices } from "@/lib/api";
+import { useDevices, useOverview, useServices } from "@/lib/api";
 import { activity, type ActivityItem } from "@/lib/operations";
 import { runningText } from "@/lib/services";
 import { useNow } from "@/lib/use-now";
@@ -41,12 +41,14 @@ function Running({ item, onPick }: { item: ActivityItem; onPick: () => void }) {
 export function ActivityMenu() {
   const services = useServices();
   const overview = useOverview();
+  const devices = useDevices();
   const [open, setOpen] = useState(false);
   const now = useNow(open ? 5_000 : 30_000);
   const list = activity(
     services.data?.actions ?? [],
     overview.data?.nodes ?? [],
     now,
+    devices.data?.devices,
   );
   const running = list.length;
   const close = () => setOpen(false);

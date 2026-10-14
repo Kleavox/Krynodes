@@ -137,7 +137,7 @@ async function setup(core = true, requireUv = false, more: string[] = []) {
     };
     return (await call("GET", `/i/${enrollmentToken}`)).text();
   };
-  return { call, phone, others, code, installer };
+  return { call, phone, others, code, installer, sqlite };
 }
 
 describe("dashboard actions that destroy or hide", () => {
@@ -228,6 +228,50 @@ describe("dashboard actions that destroy or hide", () => {
     expect(await t.installer(enroll)).toContain(
       ` --trust ${ORIGIN} --grant -- phone.-7.${t.phone.publicKey}'`,
     );
+  });
+
+  it("refuse a device that belongs to another account, and leave it out of what to confirm with", async () => {
+    const t = await setup(true, false, ["laptop"]);
+    t.sqlite
+      .prepare("UPDATE devices SET account = ? WHERE id = 'laptop'")
+      .run("friend@example.test");
+    const bare = await t.call("DELETE", `/api/nodes/${A}`);
+    expect(await bare.json()).toMatchObject({
+      code: "PROOF_NEEDED",
+      core: ["phone"],
+    });
+    const laptop = t.others[0]!;
+    const refused = await t.call(
+      "DELETE",
+      `/api/nodes/${A}`,
+      undefined,
+      await proof(laptop, "node.delete", A),
+    );
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({
+      code: "NOT_YOUR_DEVICE",
+      message: "laptop belongs to friend. Use one of your own devices.",
+    });
+  });
+
+  it("give an unclaimed device to the account that first confirms with it", async () => {
+    const t = await setup();
+    const owner = () =>
+      (
+        t.sqlite
+          .prepare("SELECT account FROM devices WHERE id = 'phone'")
+          .get() as { account: string | null }
+      ).account;
+    t.sqlite.prepare("UPDATE devices SET account = NULL").run();
+    expect(owner()).toBeNull();
+    const good = await t.call(
+      "DELETE",
+      `/api/nodes/${A}`,
+      undefined,
+      await proof(t.phone, "node.delete", A),
+    );
+    expect(good.status).toBe(204);
+    expect(owner()).toBe("standalone@localhost");
   });
 
   it("let the device that made the install command reach the new server", async () => {

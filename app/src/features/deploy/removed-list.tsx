@@ -112,18 +112,10 @@ export function RemovedList({
 }) {
   if (items.length === 0) return null;
   return (
-    <section aria-labelledby="removed-stacks">
-      <div className="mb-2 flex min-h-8 items-baseline gap-2">
-        <h2
-          id="removed-stacks"
-          className="shrink-0 text-[11px] tracking-wider text-muted-foreground uppercase"
-        >
-          Removed · {items.length}
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          Kept for 7 days, then deleted with their volumes.
-        </p>
-      </div>
+    <section aria-label="Removed stacks" className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        Kept for 7 days, then deleted with their volumes.
+      </p>
       <ul className="divide-y rounded-lg border bg-card">
         {items.map((item) => (
           <li

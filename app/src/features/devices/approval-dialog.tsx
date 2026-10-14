@@ -12,7 +12,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useApproveProposal, useOpenProposal } from "@/lib/api";
-import { decodeChange, describeChange, predictMissing } from "@/lib/devices";
+import {
+  decodeChange,
+  describeChange,
+  predictMissing,
+  usable,
+} from "@/lib/devices";
 import { capitalize } from "@/lib/format";
 import { approveChange } from "@/lib/passkeys";
 import type { ProposalRecord } from "@/types";
@@ -77,6 +82,7 @@ function Body({
   const approved = proposal?.approvals ?? [];
   const mineApproved = fleet.mine.some((id) => approved.includes(id));
   const signers = fleet.core
+    .filter(usable)
     .map((device) => device.id)
     .filter((id) => !approved.includes(id));
   const me = fleet.mine.find((id) => signers.includes(id));

@@ -27,7 +27,6 @@ import { ActivityMenu } from "./activity-menu";
 import { CommandPalette } from "./command-palette";
 import { SECTIONS } from "./nav";
 import { FaultScreen, Mark } from "./screens";
-import { SettingsMenu } from "./settings-menu";
 
 function attention(
   overview: Overview | undefined,
@@ -126,7 +125,6 @@ export function AppShell({
             Ctrl K
           </kbd>
         </Button>
-        <SettingsMenu />
         <AccountMenu identity={identity} via={via} />
       </header>
       {overview.isRefetchError && (
@@ -249,6 +247,9 @@ function AccountMenu({
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <Link to="/devices">Trusted devices</Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/settings">Settings</Link>
         </DropdownMenuItem>
         {approvals > 0 && (
           <DropdownMenuItem asChild>

@@ -9,11 +9,13 @@ import { z } from "zod";
 import { createBatch, sweepStatements } from "../actions/store";
 import { pokeSoon } from "../fleet/client";
 import { fromB64url } from "../lib/b64url";
+import { notYours } from "../trust/approval";
 import { agentCurrent, loadFleet, type Fleet } from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
   type KrynodesApp,
+  type KrynodesContext,
   type KrynodesEnv,
 } from "./shared";
 
@@ -85,7 +87,8 @@ export function registerDeviceRoutes(
   requireOperator: MiddlewareHandler<KrynodesEnv>,
 ): void {
   app.get("/api/devices", requireOperator, async (context) => {
-    const fleet = await loadFleet(context.env.DB, context.get("identity").id);
+    const identity = context.get("identity");
+    const fleet = await loadFleet(context.env.DB, identity.id);
     return context.json({
       devices: fleet.devices
         .filter((device) => device.removedAt === null)
@@ -99,9 +102,36 @@ export function registerDeviceRoutes(
           verifies: device.verifies,
           fingerprint: device.fingerprint,
           core: fleet.core.includes(device.id),
+          owner: device.account,
+          mine: device.account === identity.email,
         })),
     });
   });
+
+  const ownDevice = async (context: KrynodesContext) => {
+    const identity = context.get("identity");
+    const fleet = await loadFleet(context.env.DB, identity.id);
+    const device = fleet.devices.find(
+      (entry) =>
+        entry.id === context.req.param("id") && entry.removedAt === null,
+    );
+    if (!device) {
+      return {
+        fleet,
+        refused: context.json(
+          { code: "NOT_FOUND", message: "The device was not found." },
+          404,
+        ),
+      };
+    }
+    const other = notYours(device, identity.email);
+    return {
+      fleet,
+      refused: other
+        ? context.json({ code: other.code, message: other.message }, 403)
+        : null,
+    };
+  };
 
   app.post("/api/devices", requireOperator, async (context) => {
     const parsed = deviceSchema.safeParse(await readJson(context));
@@ -134,8 +164,8 @@ export function registerDeviceRoutes(
     }
     try {
       await context.env.DB.prepare(
-        `INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at, verifies)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at, verifies, account)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           device.id,
@@ -145,6 +175,7 @@ export function registerDeviceRoutes(
           device.publicKey,
           new Date().toISOString(),
           device.verifies === undefined ? null : device.verifies ? 1 : 0,
+          context.get("identity").email,
         )
         .run();
     } catch (error) {
@@ -163,6 +194,8 @@ export function registerDeviceRoutes(
   app.patch("/api/devices/:id", requireOperator, async (context) => {
     const parsed = renameSchema.safeParse(await readJson(context));
     if (!parsed.success) return invalidRequest(context);
+    const { refused } = await ownDevice(context);
+    if (refused) return refused;
     const result = await context.env.DB.prepare(
       "UPDATE devices SET name = ? WHERE id = ? AND owner_user_id = ? AND removed_at IS NULL",
     )
@@ -184,7 +217,8 @@ export function registerDeviceRoutes(
   app.delete("/api/devices/:id", requireOperator, async (context) => {
     const ownerId = context.get("identity").id;
     const id = context.req.param("id");
-    const fleet = await loadFleet(context.env.DB, ownerId);
+    const { fleet, refused } = await ownDevice(context);
+    if (refused) return refused;
     if (fleet.core.includes(id)) {
       return context.json(
         {

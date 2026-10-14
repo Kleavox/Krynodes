@@ -8,7 +8,7 @@ import {
   type OperationStep,
 } from "@/lib/api";
 import { failure } from "@/lib/proof";
-import { signersFor } from "@/lib/devices";
+import { signersFor, usable } from "@/lib/devices";
 import {
   actionCommand,
   signCommand,
@@ -92,7 +92,7 @@ export function useSignedOperation(toastErrors = true) {
       );
       const signers =
         reach.length === 0
-          ? all.map((device) => device.id)
+          ? all.filter(usable).map((device) => device.id)
           : signersFor(
               all,
               reach.map((id) => trust.get(id) ?? null),

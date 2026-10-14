@@ -8,6 +8,7 @@ import { Meter } from "@/components/meter";
 import { DockerMark } from "@/components/docker-mark";
 import { SecurityMark } from "@/components/security-mark";
 import { PageHeader } from "@/components/page-header";
+import { AddressLine, AddressLock } from "@/components/server-addresses";
 import { Sparkline } from "@/components/sparkline";
 import { NodeStatus, OperationText } from "@/components/node-status";
 import { StatusDot, nodeTone } from "@/components/status";
@@ -26,8 +27,8 @@ import { AgentVersion } from "@/features/agent/agent-version";
 import { LatestAgent, UpdateNotice } from "@/features/agent/update-notice";
 import { EnrollDialog } from "@/features/nodes/enroll-dialog";
 import { NodeActions } from "@/features/nodes/node-actions";
-import { UsageDialog } from "@/features/usage/usage-dialog";
 import {
+  useDevices,
   useOverview,
   useRecentMetrics,
   useServices,
@@ -55,8 +56,8 @@ import {
   type Severity,
 } from "@/lib/health";
 import {
+  actorOf,
   halted,
-  handleOf,
   maintenanceSpans,
   serverOperation,
   type ServerOperation,
@@ -149,6 +150,7 @@ interface Row {
 export function FleetPage() {
   const overview = useOverview();
   const services = useServices();
+  const devices = useDevices();
   const recent = useRecentMetrics();
   const now = useNow(5_000);
   const desktop = useMediaQuery("(min-width: 768px)");
@@ -221,7 +223,12 @@ export function FleetPage() {
         system: node.operating_system,
         state: nodeState(node, seen),
         agent: agentState(node, agentRelease.version, now),
-        operation: serverOperation(node, services.data?.actions ?? [], now),
+        operation: serverOperation(
+          node,
+          services.data?.actions ?? [],
+          now,
+          devices.data?.devices,
+        ),
         maintenance: maintenanceSpans(services.data?.actions ?? [], node.id),
         busy:
           services.data?.actions.find(
@@ -348,37 +355,40 @@ export function FleetPage() {
                   : []),
               ]}
             />
-            {desktop && (
-              <div className="ml-auto flex items-center gap-3">
-                <LatestAgent release={agentRelease} now={now} />
-                <div
-                  role="group"
-                  aria-label="Layout"
-                  className="flex rounded-md border p-0.5"
-                >
-                  {(
-                    [
-                      ["cards", "Cards", LayoutGrid],
-                      ["list", "List", List],
-                    ] as const
-                  ).map(([value, label, Icon]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      aria-pressed={view === value}
-                      aria-label={label}
-                      title={label}
-                      onClick={() =>
-                        setParam("view", value === "list" ? "list" : null)
-                      }
-                      className="grid size-7 place-items-center rounded-[5px] text-muted-foreground hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
-                    >
-                      <Icon aria-hidden="true" className="size-4" />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="ml-auto flex items-center gap-3">
+              <AddressLock />
+              {desktop && (
+                <>
+                  <LatestAgent release={agentRelease} now={now} />
+                  <div
+                    role="group"
+                    aria-label="Layout"
+                    className="flex rounded-md border p-0.5"
+                  >
+                    {(
+                      [
+                        ["cards", "Cards", LayoutGrid],
+                        ["list", "List", List],
+                      ] as const
+                    ).map(([value, label, Icon]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        aria-pressed={view === value}
+                        aria-label={label}
+                        title={label}
+                        onClick={() =>
+                          setParam("view", value === "list" ? "list" : null)
+                        }
+                        className="grid size-7 place-items-center rounded-[5px] text-muted-foreground hover:text-foreground aria-pressed:bg-accent aria-pressed:text-foreground"
+                      >
+                        <Icon aria-hidden="true" className="size-4" />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <div
@@ -490,7 +500,6 @@ function SummaryTile({
   detail,
   tone,
   to,
-  onOpen,
   children,
 }: {
   label: string;
@@ -498,7 +507,6 @@ function SummaryTile({
   detail: string;
   tone?: "bad" | "warn" | "ok";
   to?: string;
-  onOpen?: () => void;
   children?: ReactNode;
 }) {
   const body = (
@@ -537,17 +545,6 @@ function SummaryTile({
     >
       {body}
     </Link>
-  ) : onOpen ? (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={cn(
-        frame,
-        "w-full text-left transition-colors hover:border-border-strong hover:bg-card-hover",
-      )}
-    >
-      {body}
-    </button>
   ) : (
     <div className={frame}>{body}</div>
   );
@@ -569,7 +566,6 @@ function FleetSummary({
   const summary = fleetSummary(nodes, checks, seen);
   const open = incidents.filter((incident) => incident.status === "OPEN");
   const usage = useUsage();
-  const [showUsage, setShowUsage] = useState(false);
   const estimate = estimateDailyUse(nodes);
   const real = usage.data?.source === "cloudflare" ? usage.data.krynodes : null;
   const use = real ?? estimate;
@@ -635,7 +631,7 @@ function FleetSummary({
         value={`${quota.percent}%`}
         detail={quota.detail}
         tone={level === "over" ? "bad" : level === "warn" ? "warn" : undefined}
-        onOpen={() => setShowUsage(true)}
+        to="/settings/usage"
       >
         <div
           aria-hidden="true"
@@ -651,12 +647,6 @@ function FleetSummary({
           />
         </div>
       </SummaryTile>
-      <UsageDialog
-        open={showUsage}
-        onOpenChange={setShowUsage}
-        usage={usage.data}
-        estimate={estimate}
-      />
     </section>
   );
 }
@@ -702,6 +692,7 @@ function NodeCard({
   onSelect: () => void;
 }) {
   const { node, state, severity, reasons, operation, busy, maintenance } = row;
+  const devices = useDevices().data?.devices;
   const laid = laidSlots(node, recent, now, asOf, maintenance);
   const live = state === "online" || state === "offline";
   return (
@@ -740,11 +731,12 @@ function NodeCard({
             {systemLine(node)}
           </p>
         )}
+        <AddressLine node={node} className="mt-0.5" />
         {busy && !operation && (
           <p className="mt-1 flex items-center gap-1.5 truncate font-mono text-[11px] text-warning">
             <StatusDot tone="warn" pulse />
             <span className="truncate">
-              {runningText(busy)} · {handleOf(busy.requestedBy)}
+              {runningText(busy)} · {actorOf(busy, devices)}
             </span>
           </p>
         )}
@@ -761,6 +753,7 @@ function NodeCard({
               </p>
               <Sparkline
                 values={laid.map((slot) => slot.sample?.cpu ?? null)}
+                times={laid.map((slot) => slot.start)}
                 label={`CPU over the last ${spanOf(laid)}`}
               />
             </div>
@@ -919,6 +912,7 @@ function FleetTable({
                     systemLine(node)
                   )}
                 </p>
+                <AddressLine node={node} className="pl-4" />
               </td>
               {nodeUsage(node).map((item) => (
                 <td key={item.label} className="px-3 py-2.5">
@@ -1005,6 +999,7 @@ function NodePanel({
               {systemLine(node)}
             </p>
           )}
+          <AddressLine node={node} />
         </div>
         {showClose && (
           <Button
@@ -1042,6 +1037,7 @@ function NodePanel({
           <Sparkline
             className="h-12"
             values={laid.map((slot) => slot.sample?.cpu ?? null)}
+            times={laid.map((slot) => slot.start)}
             label={`CPU over the last ${spanOf(laid)}`}
           />
         </div>

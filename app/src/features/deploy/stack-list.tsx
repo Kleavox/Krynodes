@@ -9,7 +9,10 @@ import type { ActionRequest } from "@/features/services/action-dialog";
 import {
   ActionOutcome,
   PendingText,
+  rowGrid,
+  ServerCell,
   ServiceRows,
+  StateCell,
 } from "@/features/services/service-list";
 import { useCancelActions, useServices } from "@/lib/api";
 import { agentCurrent } from "@/lib/devices";
@@ -38,9 +41,6 @@ import {
 } from "./stack-action-dialog";
 import { useSignedAction } from "./use-signed-action";
 
-const ROW =
-  "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
-
 const BRANCH =
   "relative before:absolute before:top-0 before:bottom-0 before:left-5 before:w-px before:bg-border-strong last:before:bottom-auto last:before:h-6 after:absolute after:top-6 after:left-5 after:h-px after:w-3 after:bg-border-strong";
 
@@ -61,7 +61,7 @@ function stackLabel(member: StackMember) {
       : member.stack.access === "full"
         ? " · Full access"
         : "";
-  return `Compose · ${member.stack.running}/${member.stack.total} running${access}`;
+  return `${member.stack.running} of ${member.stack.total} running${access}`;
 }
 
 function LastDeploy({ member }: { member: StackMember }) {
@@ -335,14 +335,16 @@ function StackControls({
 export function StackRow({
   item,
   seen,
-  branch,
+  branch = false,
+  showServer = false,
   locked,
   onRequest,
   onDeploy,
 }: {
   item: ServerStack;
   seen: number;
-  branch: boolean;
+  branch?: boolean;
+  showServer?: boolean;
   locked?: string;
   onRequest: (request: ActionRequest) => void;
   onDeploy: (request: DeployRequest) => void;
@@ -356,7 +358,7 @@ export function StackRow({
     <li className={cn(branch && BRANCH)}>
       <div
         className={cn(
-          ROW,
+          rowGrid(showServer),
           branch && "pl-10",
           offline(member, seen) && "opacity-60",
         )}
@@ -384,9 +386,11 @@ export function StackRow({
             {project}
           </span>
         </span>
-        <span className="col-span-2 truncate font-mono text-xs text-muted-foreground md:col-span-1">
-          {stackLabel(member)}
-        </span>
+        {showServer && <ServerCell node={member.node} />}
+        <StateCell
+          label={stackLabel(member)}
+          server={showServer ? member.node.name : undefined}
+        />
         <span
           className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground md:col-span-1"
           aria-live="polite"
@@ -425,6 +429,7 @@ export function StackRow({
               seen={seen}
               trusted={member.trusted}
               branch
+              showServer={showServer}
               locked={locked}
               onRequest={onRequest}
             />

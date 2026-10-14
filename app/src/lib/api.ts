@@ -20,6 +20,8 @@ import type {
   Enrollment,
   EnrollmentStatus,
   IncidentDetail,
+  IncidentUpdate,
+  IncidentUpdateStatus,
   MetricRange,
   NodeMetrics,
   Overview,
@@ -96,6 +98,27 @@ export function useIncident(id: string) {
     retry: false,
   });
 }
+
+export const usePostIncidentUpdate = (id: string) =>
+  useApiMutation(
+    (update: { status: IncidentUpdateStatus; message: string }) =>
+      apiFetch<IncidentUpdate>(
+        `/api/incidents/${encodeURIComponent(id)}/updates`,
+        send("POST", update),
+      ),
+    [queryKeys.incident(id), queryKeys.overview],
+  );
+
+export const useDeleteIncidentUpdate = (id: string) =>
+  useApiMutation(
+    (updateId: string) =>
+      apiFetch(
+        `/api/incidents/${encodeURIComponent(id)}/updates/${encodeURIComponent(updateId)}`,
+        send("DELETE"),
+      ),
+    [queryKeys.incident(id), queryKeys.overview],
+    true,
+  );
 
 export function useCheckResults() {
   return useQuery({
@@ -174,6 +197,27 @@ export function usePrivateRanges(enabled: boolean) {
     enabled,
   });
 }
+
+export type AddressDisplay = "hidden" | "shown";
+
+export function useAddressDisplay() {
+  return useQuery({
+    queryKey: queryKeys.addressDisplay,
+    queryFn: () =>
+      apiFetch<{ display: AddressDisplay }>("/api/settings/address-display"),
+    staleTime: 5 * MINUTE,
+  });
+}
+
+export const useSaveAddressDisplay = () =>
+  useApiMutation(
+    (display: AddressDisplay) =>
+      apiFetch<{ display: AddressDisplay }>(
+        "/api/settings/address-display",
+        send("PUT", { display }),
+      ),
+    [queryKeys.addressDisplay],
+  );
 
 export interface EnrollDefaults {
   recommended: boolean;

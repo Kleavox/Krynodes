@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { fromB64url } from "../lib/b64url";
 import { verifyAssertion } from "../lib/webauthn";
 import type { Fleet } from "./fleet";
 
@@ -25,11 +26,27 @@ export class Refusal extends Error {
   }
 }
 
+const handle = (email: string) => email.split("@")[0] || email;
+
+export function notYours(
+  device: { name: string; account: string | null },
+  email: string,
+): Refusal | null {
+  return device.account !== null && device.account !== email
+    ? new Refusal(
+        403,
+        "NOT_YOUR_DEVICE",
+        `${device.name} belongs to ${handle(device.account)}. Use one of your own devices.`,
+      )
+    : null;
+}
+
 export async function verifyApproval(
   env: Env,
   fleet: Fleet,
   bytes: Uint8Array<ArrayBuffer>,
   approval: Approval,
+  email: string,
 ) {
   const device = fleet.devices.find(
     (entry) => entry.id === approval.credentialId && entry.removedAt === null,
@@ -37,6 +54,8 @@ export async function verifyApproval(
   if (!device || !fleet.core.includes(device.id)) {
     throw new Refusal(403, "NOT_CORE", "Use the passkey of a trusted device.");
   }
+  const refused = notYours(device, email);
+  if (refused) throw refused;
   const origin = new URL(env.PUBLIC_ORIGIN);
   let uv: boolean;
   try {
@@ -58,5 +77,47 @@ export async function verifyApproval(
       "FINGERPRINT_NEEDED",
       "This passkey did not verify a fingerprint. Use the fingerprint, or choose Use a phone in the passkey window.",
     );
+  }
+  if (device.account === null) {
+    await env.DB.prepare(
+      "UPDATE devices SET account = ? WHERE id = ? AND account IS NULL",
+    )
+      .bind(email, device.id)
+      .run();
+  }
+}
+
+export async function ownersRefusal(
+  env: Env,
+  fleet: Fleet,
+  grants: (Approval & { grant: string })[],
+  email: string,
+): Promise<Refusal | null> {
+  const distinct = new Map(grants.map((grant) => [grant.credentialId, grant]));
+  for (const grant of distinct.values()) {
+    const refused = await signedByOwner(env, fleet, grant, email);
+    if (refused) return refused;
+  }
+  return null;
+}
+
+async function signedByOwner(
+  env: Env,
+  fleet: Fleet,
+  grant: Approval & { grant: string },
+  email: string,
+): Promise<Refusal | null> {
+  const device = fleet.devices.find(
+    (entry) => entry.id === grant.credentialId && entry.removedAt === null,
+  );
+  if (!device) return null;
+  const refused = notYours(device, email);
+  if (refused || device.account !== null) return refused;
+  try {
+    await verifyApproval(env, fleet, fromB64url(grant.grant), grant, email);
+    return null;
+  } catch (error) {
+    if (error instanceof Refusal) return error;
+    throw error;
   }
 }

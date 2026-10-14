@@ -31,7 +31,19 @@ export interface ActivityItem {
   at: number;
 }
 
-export const handleOf = (email: string) => displayHandle(null, email);
+const handleOf = (email: string) => displayHandle(null, email);
+
+interface Named {
+  id: string;
+  name: string;
+}
+
+export const actorOf = (
+  action: Pick<ActionRecord, "deviceId" | "requestedBy">,
+  devices: Named[] = [],
+) =>
+  devices.find((device) => device.id === action.deviceId)?.name ??
+  handleOf(action.requestedBy);
 
 export const halted = (operation: ServerOperation | null) =>
   operation?.kind === "deleting" && operation.stopped;
@@ -67,6 +79,7 @@ export function serverOperation(
   node: NodeRecord,
   actions: ActionRecord[],
   now: number,
+  devices: Named[] = [],
 ): ServerOperation | null {
   if (node.deleting) {
     return { kind: "deleting", stopped: node.deleting === "stopped" };
@@ -75,7 +88,7 @@ export function serverOperation(
   if (reboot) {
     return {
       kind: "restarting",
-      by: handleOf(reboot.requestedBy),
+      by: actorOf(reboot, devices),
       since: parseTimestamp(reboot.requestedAt),
       actionId: reboot.id,
     };
@@ -94,7 +107,12 @@ export function serverOperation(
   return null;
 }
 
-function item(action: ActionRecord, nodeName: string, at: number) {
+function item(
+  action: ActionRecord,
+  nodeName: string,
+  at: number,
+  devices: Named[],
+) {
   return {
     action,
     id: action.id,
@@ -105,7 +123,7 @@ function item(action: ActionRecord, nodeName: string, at: number) {
     label: displayName(action.kind, action.name),
     verb: action.action,
     status: action.status,
-    by: handleOf(action.requestedBy),
+    by: actorOf(action, devices),
     at,
   };
 }
@@ -114,6 +132,7 @@ export function activity(
   actions: ActionRecord[],
   nodes: NodeRecord[],
   now: number,
+  devices: Named[] = [],
 ): ActivityItem[] {
   const names = new Map(nodes.map((node) => [node.id, node.name]));
   const visible = actions.filter(
@@ -126,12 +145,15 @@ export function activity(
         action,
         names.get(action.nodeId)!,
         parseTimestamp(action.requestedAt),
+        devices,
       ),
     );
   for (const node of nodes) {
     const reboot = rebootInFlight(node, visible, now);
     if (!reboot || isPending(reboot)) continue;
-    running.push(item(reboot, node.name, parseTimestamp(reboot.requestedAt)));
+    running.push(
+      item(reboot, node.name, parseTimestamp(reboot.requestedAt), devices),
+    );
   }
   return running;
 }

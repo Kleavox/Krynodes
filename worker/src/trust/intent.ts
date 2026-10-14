@@ -18,6 +18,7 @@ async function verifyIntent(
   fleet: Fleet,
   header: string | undefined,
   expected: { op: string; target: string },
+  email: string,
   now = Date.now(),
 ): Promise<void> {
   if (fleet.core.length === 0) return;
@@ -32,7 +33,7 @@ async function verifyIntent(
   if (!signed.success) throw bad("The confirmation is malformed.");
   const { grant: grantText, ...approval } = signed.data.grant;
   const grantBytes = fromB64url(grantText);
-  await verifyApproval(env, fleet, grantBytes, approval);
+  await verifyApproval(env, fleet, grantBytes, approval, email);
 
   const origin = new URL(env.PUBLIC_ORIGIN);
   const grant = decodeJson(grantText) as Fields;
@@ -94,13 +95,30 @@ export async function confirmed(
   target: string,
   fleet?: Fleet,
 ): Promise<Response | null> {
-  const owned =
-    fleet ?? (await loadFleet(context.env.DB, context.get("identity").id));
+  const identity = context.get("identity");
+  const owned = fleet ?? (await loadFleet(context.env.DB, identity.id));
+  const usable = owned.devices
+    .filter(
+      (device) =>
+        owned.core.includes(device.id) &&
+        (device.account === null || device.account === identity.email),
+    )
+    .map((device) => device.id);
   try {
-    await verifyIntent(context.env, owned, context.req.header("x-kry-proof"), {
-      op,
-      target,
-    });
+    if (owned.core.length > 0 && usable.length === 0) {
+      throw new Refusal(
+        403,
+        "NO_DEVICE_OF_YOURS",
+        "None of the trusted devices is yours. Ask someone who has one to approve a device of yours under Trusted devices.",
+      );
+    }
+    await verifyIntent(
+      context.env,
+      owned,
+      context.req.header("x-kry-proof"),
+      { op, target },
+      identity.email,
+    );
     return null;
   } catch (error) {
     if (!(error instanceof Refusal)) throw error;
@@ -108,13 +126,7 @@ export async function confirmed(
       {
         code: error.code,
         message: error.message,
-        ...(error.code === "PROOF_NEEDED"
-          ? {
-              op,
-              target,
-              core: owned.core,
-            }
-          : {}),
+        ...(error.code === "PROOF_NEEDED" ? { op, target, core: usable } : {}),
       },
       error.status,
     );

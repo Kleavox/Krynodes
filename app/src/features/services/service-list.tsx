@@ -6,10 +6,10 @@ import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useCancelActions } from "@/lib/api";
+import { useCancelActions, useDevices } from "@/lib/api";
 import { capitalize, clockTime, nodeState, parseTimestamp } from "@/lib/format";
 import { historyText } from "@/lib/history";
-import { handleOf } from "@/lib/operations";
+import { actorOf } from "@/lib/operations";
 import {
   actionText,
   displayName,
@@ -34,8 +34,10 @@ const TONE: Record<ServiceState, "ok" | "bad" | "warn" | "idle"> = {
   failed: "bad",
 };
 
-const ROW =
-  "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
+export const rowGrid = (server: boolean) =>
+  server
+    ? "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,0.9fr)_minmax(0,1.2fr)_7.5rem]"
+    : "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
 
 const BRANCH =
   "relative pl-10 before:absolute before:top-0 before:bottom-0 before:left-5 before:w-px before:bg-border-strong last:before:bottom-1/2 after:absolute after:top-1/2 after:left-5 after:h-px after:w-3 after:bg-border-strong";
@@ -43,8 +45,34 @@ const BRANCH =
 const offline = (member: ServiceMember, seen: number) =>
   nodeState(member.node, seen) === "offline";
 
-function stateLabel(member: ServiceMember): string {
-  return `${capitalize(member.entry.kind)} · ${member.entry.state}`;
+export function ServerCell({ node }: { node: { id: string; name: string } }) {
+  return (
+    <Link
+      to={`/nodes/${node.id}`}
+      className="hidden truncate font-mono text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline md:block"
+      title={node.name}
+    >
+      {node.name}
+    </Link>
+  );
+}
+
+export function StateCell({
+  label,
+  server,
+}: {
+  label: string;
+  server?: string;
+}) {
+  return (
+    <span
+      className="col-span-2 truncate font-mono text-xs text-muted-foreground md:col-span-1"
+      title={label}
+    >
+      {server && <span className="md:hidden">{server} · </span>}
+      {label}
+    </span>
+  );
 }
 
 export function ActionOutcome({
@@ -54,7 +82,8 @@ export function ActionOutcome({
   action: ActionRecord;
   nodeName: string;
 }) {
-  const text = `${actionText(action, nodeName)} · ${handleOf(action.requestedBy)}`;
+  const devices = useDevices().data?.devices;
+  const text = `${actionText(action, nodeName)} · ${actorOf(action, devices)}`;
   if (
     !action.output ||
     (action.status !== "failed" && action.status !== "expired")
@@ -80,18 +109,14 @@ export function ActionOutcome({
 export function ActionRow({
   action,
   nodeName,
-  deviceName,
   where = false,
 }: {
   action: ActionRecord;
   nodeName: string;
-  deviceName?: string;
   where?: boolean;
 }) {
   const duration = durationText(action);
-  const extra = [where ? `on ${nodeName}` : null, deviceName ?? null]
-    .filter(Boolean)
-    .join(" · ");
+  const extra = where ? `on ${nodeName}` : "";
   return (
     <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-3 py-2.5 text-sm sm:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)]">
       <span className="font-mono text-xs leading-5 text-muted-foreground">
@@ -120,9 +145,10 @@ export function PendingText({
   action: ActionRecord;
   nodeName: string;
 }) {
+  const devices = useDevices().data?.devices;
   return (
     <span className="font-mono text-xs text-warning">
-      {actionText(action, nodeName)} · {handleOf(action.requestedBy)}
+      {actionText(action, nodeName)} · {actorOf(action, devices)}
       {action.status === "sent" && (
         <>
           {" · "}
@@ -212,6 +238,7 @@ export function ServiceRows({
   seen,
   trusted,
   branch = false,
+  showServer = false,
   locked,
   onRequest,
   children,
@@ -219,9 +246,10 @@ export function ServiceRows({
   id?: string;
   members: ServiceMember[];
   seen: number;
-  trusted: boolean;
+  trusted: boolean | ((member: ServiceMember) => boolean);
   branch?: boolean;
-  locked?: string;
+  showServer?: boolean;
+  locked?: string | ((member: ServiceMember) => string | undefined);
   onRequest: (request: ActionRequest) => void;
   children?: ReactNode;
 }) {
@@ -229,38 +257,40 @@ export function ServiceRows({
     <ul id={id} className={branch ? "py-1" : "divide-y"}>
       {children}
       {members.map((member) => {
-        const label = stateLabel(member);
+        const label = capitalize(member.entry.state);
         const pending = isPending(member.action);
+        const allowed =
+          typeof trusted === "function" ? trusted(member) : trusted;
+        const lock = typeof locked === "function" ? locked(member) : locked;
         return (
           <li
-            key={`${member.entry.kind}:${member.entry.name}`}
+            key={`${member.node.id}:${member.entry.kind}:${member.entry.name}`}
             className={cn(
-              ROW,
+              rowGrid(showServer),
               branch && BRANCH,
               offline(member, seen) && "opacity-60",
             )}
           >
             <span className="flex min-h-8 min-w-0 items-center gap-2">
               <StatusDot
-                tone={locked ? "idle" : TONE[member.entry.state]}
+                tone={lock ? "idle" : TONE[member.entry.state]}
                 pulse={pending}
               />
               <span className="truncate font-medium" title={member.entry.name}>
                 {displayName(member.entry.kind, member.entry.name)}
               </span>
             </span>
-            <span
-              className="col-span-2 truncate font-mono text-xs text-muted-foreground md:col-span-1"
-              title={label}
-            >
-              {label}
-            </span>
+            {showServer && <ServerCell node={member.node} />}
+            <StateCell
+              label={label}
+              server={showServer ? member.node.name : undefined}
+            />
             <span
               className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground empty:hidden md:col-span-1 md:empty:block"
               aria-live="polite"
             >
-              {locked && !pending ? (
-                <span className="text-warning">{locked}</span>
+              {lock && !pending ? (
+                <span className="text-warning">{lock}</span>
               ) : (
                 member.action &&
                 (isPending(member.action) ? (
@@ -277,8 +307,15 @@ export function ServiceRows({
               )}
             </span>
             <div className="col-start-2 row-start-1 md:col-start-auto md:row-start-auto">
-              {trusted && !locked && (
+              {allowed && !lock ? (
                 <MemberControls member={member} onRequest={onRequest} />
+              ) : (
+                !allowed &&
+                !branch && (
+                  <p className="text-right">
+                    <TrustLink />
+                  </p>
+                )
               )}
             </div>
           </li>

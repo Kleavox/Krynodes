@@ -11,6 +11,8 @@ import { createBatch, sweepStatements } from "../actions/store";
 import { pokeSoon } from "../fleet/client";
 import { decodeJson } from "../lib/b64url";
 import { assertionUv } from "../lib/webauthn";
+import { ownersRefusal } from "../trust/approval";
+import { loadFleet } from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
@@ -272,6 +274,18 @@ export function registerOperationRoutes(
 
     const db = context.env.DB;
     const identity = context.get("identity");
+    const refusal = await ownersRefusal(
+      context.env,
+      await loadFleet(db, identity.id),
+      steps.map((step) => step.signed.grant),
+      identity.email,
+    );
+    if (refusal) {
+      return context.json(
+        { code: refusal.code, message: refusal.message },
+        refusal.status,
+      );
+    }
     const now = Date.now();
     const wanted = [...new Set(steps.map((step) => step.nodeId))];
     const nodes = await db

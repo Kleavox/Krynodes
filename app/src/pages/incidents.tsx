@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UPDATE_LABEL } from "@/features/incidents/incident-updates";
 import { useOverview } from "@/lib/api";
 import {
   clockTime,
@@ -157,6 +158,11 @@ function OpenIncident({ incident, now }: { incident: Incident; now: number }) {
         >
           {incident.check_name}
         </Link>
+        {incident.update_status && (
+          <span className="rounded border border-warning/40 px-1.5 font-mono text-[11px] font-normal text-warning">
+            {UPDATE_LABEL[incident.update_status]}
+          </span>
+        )}
         <span className="ml-auto font-mono text-xs text-destructive">
           Ongoing {formatDuration(now - parseTimestamp(incident.started_at))}
         </span>

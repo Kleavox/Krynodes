@@ -48,6 +48,32 @@ const security = {
   ],
 };
 
+describe("server addresses", () => {
+  it("are hidden until shown unless set to always shown", async () => {
+    const { call } = setup();
+    expect(
+      await (await call("GET", "/api/settings/address-display")).json(),
+    ).toEqual({ display: "hidden" });
+    expect(
+      (
+        await call("PUT", "/api/settings/address-display", {
+          display: "shown",
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      await (await call("GET", "/api/settings/address-display")).json(),
+    ).toEqual({ display: "shown" });
+    expect(
+      (
+        await call("PUT", "/api/settings/address-display", {
+          display: "blurred",
+        })
+      ).status,
+    ).toBe(400);
+  });
+});
+
 describe("enroll defaults", () => {
   it("start with protections, Docker and 03:00, and keep what is saved", async () => {
     const { call } = setup();

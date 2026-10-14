@@ -474,7 +474,13 @@ export function registerProposalRoutes(
         );
       }
       const bytes = fromB64url(parsed.data.change);
-      await verifyApproval(context.env, fleet, bytes, parsed.data.approval);
+      await verifyApproval(
+        context.env,
+        fleet,
+        bytes,
+        parsed.data.approval,
+        identity.email,
+      );
       const approvals = [parsed.data.approval];
       const id = crypto.randomUUID();
       const title = describe(fleet, change);
@@ -560,6 +566,7 @@ export function registerProposalRoutes(
         fleet,
         fromB64url(row.change),
         parsed.data.approval,
+        identity.email,
       );
       approvals.push(parsed.data.approval);
       const waiting = missing(fleet, change, approvals);

@@ -1,10 +1,10 @@
 import { Fingerprint } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
-import { PrivateRangesDialog } from "@/features/settings/private-ranges-dialog";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -236,7 +236,6 @@ export function SecurityPanel({
   const services = useServices();
   const scan = useScan();
   const [pending, setPending] = useState<Pending | null>(null);
-  const [ranges, setRanges] = useState(false);
   const entry = services.data?.nodes.find((item) => item.id === node.id);
   const report = entry?.security;
   if (!agentCurrent(node) || !report) return null;
@@ -272,7 +271,6 @@ export function SecurityPanel({
           Check now
         </Button>
       </div>
-      <PrivateRangesDialog open={ranges} onOpenChange={setRanges} />
       <ul className="space-y-1.5 text-sm">
         {findings.map((finding) => (
           <li key={finding.id} className="flex gap-2">
@@ -282,13 +280,12 @@ export function SecurityPanel({
               {finding.id === "public-ports" && (
                 <span className="block text-xs text-muted-foreground">
                   Some of these on a private network? Add its range under{" "}
-                  <button
-                    type="button"
+                  <Link
+                    to="/settings/private-addresses"
                     className="underline underline-offset-4"
-                    onClick={() => setRanges(true)}
                   >
                     Settings, Private addresses
-                  </button>
+                  </Link>
                   .
                 </span>
               )}

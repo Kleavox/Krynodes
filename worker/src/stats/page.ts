@@ -95,7 +95,7 @@ h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-0.01em}
 h2{margin:40px 0 12px;font:500 11px/1.4 ${MONO};letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .services,.incidents{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card)}
 .service{padding:16px}
-.service+.service,.incidents li+li{border-top:1px solid var(--border)}
+.service+.service,.incidents>li+li{border-top:1px solid var(--border)}
 .head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
 .name{min-width:0}
 h3{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
@@ -135,12 +135,16 @@ h3{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
 .legend{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font:11px/1.4 ${MONO};color:var(--muted)}
 .narrow{display:none}
 .basis{margin:8px 0 0;color:var(--muted);font-size:12px}
-.incidents li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:12px 16px}
+.incidents>li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:12px 16px}
 .incident-name{font-weight:500;overflow-wrap:anywhere}
 .incident-time{grid-column:1;color:var(--muted);font:12px/1.4 ${MONO}}
 .incident-open,.incident-resolved{grid-column:2;grid-row:1/3;align-self:center;font:12px/1.4 ${MONO};text-align:right}
 .incident-open{color:var(--down)}
 .incident-resolved{color:var(--muted)}
+.updates{grid-column:1/3;list-style:none;margin:8px 0 0;padding:0 0 0 12px;border-left:2px solid var(--border)}
+.update{padding:4px 0;font-size:14px;overflow-wrap:anywhere}
+.update-status{font-weight:600}
+.update-time{color:var(--muted);font:12px/1.4 ${MONO}}
 .empty{margin:0;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--muted)}
 footer{margin-top:40px;color:var(--muted);font:12px/1.5 ${MONO}}
 .paused{margin:16px 0 0;padding:14px 16px;border:1px solid rgba(139,123,255,.45);border-radius:10px;background:var(--card)}
@@ -272,11 +276,27 @@ function incidentList(view: StatusView, now: number): string {
         incident.resolvedAt === null
           ? `<span class="incident-open">Ongoing for ${formatDuration(now - incident.startedAt)}</span>`
           : `<span class="incident-resolved">Resolved after ${formatDuration(incident.resolvedAt - incident.startedAt)}</span>`;
-      return `<li><span class="incident-name">${escapeHtml(incident.name)}</span>${outcome}<span class="incident-time">${moment(incident.startedAt)}</span></li>`;
+      const said =
+        incident.updates.length === 0
+          ? ""
+          : `<ol class="updates">${incident.updates
+              .map(
+                (update) =>
+                  `<li class="update"><span class="update-status">${UPDATE_LABEL[update.status] ?? "Update"}</span> ${escapeHtml(update.message)} <span class="update-time">${moment(update.at)}</span></li>`,
+              )
+              .join("")}</ol>`;
+      return `<li><span class="incident-name">${escapeHtml(incident.name)}</span>${outcome}<span class="incident-time">${moment(incident.startedAt)}</span>${said}</li>`;
     })
     .join("");
   return `<ul class="incidents">${items}</ul>`;
 }
+
+const UPDATE_LABEL: Record<string, string> = {
+  investigating: "Investigating",
+  identified: "Identified",
+  monitoring: "Monitoring",
+  update: "Update",
+};
 
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#0c0c0e"/><rect x="8" y="8" width="16" height="16" rx="4" fill="#8b7bff"/></svg>',

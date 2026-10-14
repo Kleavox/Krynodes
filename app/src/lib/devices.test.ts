@@ -110,6 +110,17 @@ describe("access", () => {
     expect(signersFor(devices, [])).toEqual([]);
   });
 
+  it("offers only my own devices and unclaimed ones", () => {
+    const devices = [
+      { ...laptop, owner: "me@example.test", mine: true },
+      { ...phone, owner: "friend@example.test", mine: false },
+      { ...tablet, core: true, owner: null, mine: false },
+    ];
+    expect(
+      signersFor(devices, [trust(3, devices, [laptop, phone, tablet])]),
+    ).toEqual(["laptop", "tablet"]);
+  });
+
   it("offers a server restart to a current agent with access", () => {
     const own = trust(1, [laptop], [laptop]);
     expect(canRestartServer(node(N1, "0.6.0"), own)).toBe(true);

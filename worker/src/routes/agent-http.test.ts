@@ -12,6 +12,9 @@ async function setup() {
   const { db, sqlite } = createTestDb();
   seedNode(sqlite, { id: NODE });
   sqlite
+    .prepare("UPDATE nodes SET agent_version = '0.6.10' WHERE id = ?")
+    .run(NODE);
+  sqlite
     .prepare("UPDATE nodes SET agent_token_hash = ? WHERE id = ?")
     .run(await sha256("agent-token"), NODE);
   const hub: Request[] = [];
@@ -46,8 +49,65 @@ async function setup() {
       },
       env,
     );
-  return { call, hub };
+  const row = () =>
+    sqlite
+      .prepare("SELECT ipv4, ipv4_at, ipv6, ipv6_at FROM nodes WHERE id = ?")
+      .get(NODE) as {
+      ipv4: string | null;
+      ipv4_at: string | null;
+      ipv6: string | null;
+      ipv6_at: string | null;
+    };
+  return { call, hub, row };
 }
+
+describe("the server's own addresses", () => {
+  it("are what Cloudflare saw the agent come from, one per family", async () => {
+    const t = await setup();
+    const seen = async (ip: string) =>
+      (
+        await t.call("GET", "/api/agent/address", { "cf-connecting-ip": ip })
+      ).json();
+    expect(await seen("103.28.54.214")).toEqual({
+      address: "103.28.54.214",
+      family: 4,
+    });
+    expect(await seen("2001:db8:1:2::8f2a")).toEqual({
+      address: "2001:db8:1:2::8f2a",
+      family: 6,
+    });
+    const stored = t.row();
+    expect(stored).toMatchObject({
+      ipv4: "103.28.54.214",
+      ipv6: "2001:db8:1:2::8f2a",
+    });
+    expect(stored.ipv4_at).not.toBeNull();
+    expect(stored.ipv6_at).not.toBeNull();
+  });
+
+  it("ignore what is not an address and refuse a stranger", async () => {
+    const t = await setup();
+    expect(
+      await (
+        await t.call("GET", "/api/agent/address", {
+          "cf-connecting-ip": "999.1.1.1",
+        })
+      ).json(),
+    ).toEqual({ address: null });
+    expect(await (await t.call("GET", "/api/agent/address")).json()).toEqual({
+      address: null,
+    });
+    expect(t.row()).toMatchObject({ ipv4: null, ipv6: null });
+    expect(
+      (
+        await t.call("GET", "/api/agent/address", {
+          authorization: "Bearer wrong",
+          "cf-connecting-ip": "103.28.54.214",
+        })
+      ).status,
+    ).toBe(401);
+  });
+});
 
 describe("older agents", () => {
   it("get 410 on the HTTP report routes, which no longer exist", async () => {

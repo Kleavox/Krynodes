@@ -375,6 +375,51 @@ export function serverLists(
   );
 }
 
+export interface ServiceBoard {
+  stacks: ServerStack[];
+  containers: ServiceMember[];
+  units: ServiceMember[];
+  trusted: Set<string>;
+}
+
+const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+const memberOrder = (a: ServiceMember, b: ServiceMember) =>
+  Number(stopped(b)) - Number(stopped(a)) ||
+  byName(
+    displayName(a.entry.kind, a.entry.name),
+    displayName(b.entry.kind, b.entry.name),
+  ) ||
+  a.node.name.localeCompare(b.node.name);
+
+export function serviceBoard(
+  data: ServicesResponse,
+  nodes: NodeRecord[],
+  options: { showSystem: boolean; query: string; notRunning: boolean },
+): ServiceBoard {
+  const lists = serverLists(data, nodes, options);
+  const members = lists.flatMap((list) => list.members);
+  return {
+    stacks: lists
+      .flatMap((list) => list.stacks)
+      .sort(
+        (a, b) =>
+          Number(unhealthy(b)) - Number(unhealthy(a)) ||
+          a.member.stack.project.localeCompare(b.member.stack.project) ||
+          a.member.node.name.localeCompare(b.member.node.name),
+      ),
+    containers: members
+      .filter((member) => member.entry.kind === "docker")
+      .sort(memberOrder),
+    units: members
+      .filter((member) => member.entry.kind === "systemd")
+      .sort(memberOrder),
+    trusted: new Set(
+      lists.filter((list) => list.trusted).map((list) => list.node.id),
+    ),
+  };
+}
+
 export const moveConfirmed = (
   original: "now" | "later" | "keep",
   typed: string,

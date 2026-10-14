@@ -37,6 +37,10 @@ export interface NodeRecord {
   update_error?: string | null;
   auto_update: number;
   deleting?: "running" | "stopped" | null;
+  ipv4?: string | null;
+  ipv4_at?: string | null;
+  ipv6?: string | null;
+  ipv6_at?: string | null;
   connected_at?: string;
   grace_seconds?: number;
 }
@@ -73,11 +77,25 @@ export interface Incident {
   summary: string | null;
   check_name: string;
   node_name: string;
+  update_status?: IncidentUpdateStatus | null;
+}
+
+export type IncidentUpdateStatus =
+  "investigating" | "identified" | "monitoring" | "update";
+
+export interface IncidentUpdate {
+  id: string;
+  status: IncidentUpdateStatus;
+  message: string;
+  author: string;
+  createdAt: string;
 }
 
 export interface IncidentDetail {
   incident: Incident & { check_kind: string; check_target: string };
   results: CheckResult[];
+  updates?: IncidentUpdate[];
+  public?: boolean;
 }
 
 export interface AgentRelease {
@@ -303,6 +321,8 @@ export interface DeviceRecord {
   verifies: boolean | null;
   fingerprint: string;
   core: boolean;
+  owner?: string | null;
+  mine?: boolean;
 }
 
 export interface DevicesResponse {

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/actions"
+	"github.com/Kleavox/krynodes/agent/internal/address"
 	"github.com/Kleavox/krynodes/agent/internal/config"
 	"github.com/Kleavox/krynodes/agent/internal/cycle"
 	"github.com/Kleavox/krynodes/agent/internal/host"
@@ -272,6 +273,7 @@ func runDaemon(args []string, once bool) error {
 
 	log.Printf("%s %s started for node %s", unitName, version, cfg.NodeID)
 	go relay.Watch(ctx, 2*time.Second)
+	go address.Prober{Endpoint: cfg.Endpoint, Token: cfg.Token, Version: version}.Watch(ctx, addressEvery)
 	if err := client.WaitConnected(ctx, 15*time.Second); err == nil {
 		select {
 		case <-client.Ready():
@@ -305,6 +307,8 @@ func runDaemon(args []string, once bool) error {
 }
 
 const tickOffset = 2 * time.Second
+
+const addressEvery = 6 * time.Hour
 
 func untilNextTick(now time.Time, interval time.Duration) time.Duration {
 	since := time.Duration(now.UnixNano()) - tickOffset

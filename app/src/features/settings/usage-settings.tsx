@@ -2,21 +2,16 @@ import { useState, type FormEvent } from "react";
 
 import { CopyCommand } from "@/components/copy-command";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useSaveBudget } from "@/lib/api";
-import { formatBytes, formatThousands, type DailyUse } from "@/lib/budget";
+import { useOverview, useSaveBudget, useUsage } from "@/lib/api";
+import { estimateDailyUse, formatBytes, formatThousands } from "@/lib/budget";
 import { clockTime } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
 import { cn } from "@/lib/utils";
-import type { UsageResponse, UsageShare } from "@/types";
+import type { UsageShare } from "@/types";
+
+import { SettingsSection } from "./section";
 
 const SECRET_COMMAND =
   "pnpm exec wrangler secret put CF_ANALYTICS_TOKEN --config worker/wrangler.jsonc --env production";
@@ -148,17 +143,9 @@ function BudgetForm({ budget }: { budget: UsageShare }) {
   );
 }
 
-export function UsageDialog({
-  open,
-  onOpenChange,
-  usage,
-  estimate,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  usage: UsageResponse | undefined;
-  estimate: DailyUse;
-}) {
+export function UsageSettings() {
+  const usage = useUsage().data;
+  const estimate = estimateDailyUse(useOverview().data?.nodes ?? []);
   const budget = usage?.budget ?? {
     requests: 20_000,
     writes: 30_000,
@@ -174,18 +161,19 @@ export function UsageDialog({
   const account = usage?.source === "cloudflare" ? usage.account : null;
   const mine = real ?? { ...estimate, reads: null };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92dvh] overflow-y-auto max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0 max-sm:rounded-b-none sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>Usage today</DialogTitle>
-          <DialogDescription>
-            {real && usage?.fetchedAt
-              ? `From Cloudflare, updated ${clockTime(usage.fetchedAt)}.`
-              : "Estimated from your servers and their reporting mode."}{" "}
-            Free quotas reset at{" "}
-            {usage ? clockTime(usage.resetAt) : "00:00 UTC"}, midnight UTC.
-          </DialogDescription>
-        </DialogHeader>
+    <SettingsSection
+      title="Usage"
+      description={
+        <>
+          {real && usage?.fetchedAt
+            ? `Today, from Cloudflare, updated ${clockTime(usage.fetchedAt)}.`
+            : "Today, estimated from your servers and their reporting mode."}{" "}
+          Free quotas reset at {usage ? clockTime(usage.resetAt) : "00:00 UTC"},
+          midnight UTC.
+        </>
+      }
+    >
+      <div className="space-y-4">
         {usage?.error && (
           <p
             role="status"
@@ -287,7 +275,7 @@ export function UsageDialog({
             </ol>
           </details>
         )}
-      </DialogContent>
-    </Dialog>
+      </div>
+    </SettingsSection>
   );
 }

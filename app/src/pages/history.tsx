@@ -10,22 +10,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ActionRow } from "@/features/services/service-list";
-import { useDevices, useHistory, useOverview } from "@/lib/api";
+import { useHistory, useOverview } from "@/lib/api";
 import { byDay } from "@/lib/history";
 
 const ALL = "all";
 
 export function HistoryPage() {
   const overview = useOverview();
-  const devices = useDevices();
   const [node, setNode] = useState(ALL);
   const history = useHistory(node === ALL ? "" : node);
   const nodes = (overview.data?.nodes ?? []).filter(
     (entry) => entry.enrolled_at !== null,
   );
   const names = new Map(nodes.map((entry) => [entry.id, entry.name]));
-  const deviceName = (id: string | null) =>
-    devices.data?.devices.find((device) => device.id === id)?.name;
   const actions = (history.data?.pages ?? [])
     .flatMap((page) => page.actions)
     .filter((action) => names.has(action.nodeId));
@@ -76,7 +73,6 @@ export function HistoryPage() {
                   key={action.id}
                   action={action}
                   nodeName={names.get(action.nodeId)!}
-                  deviceName={deviceName(action.deviceId)}
                   where={node === ALL}
                 />
               ))}

@@ -44,7 +44,8 @@ export function registerAdminRoutes(
                   AND status IN ('failed', 'expired', 'cancelled', 'skipped')) THEN 'stopped'
                 WHEN EXISTS (SELECT 1 FROM actions WHERE batch_id = nodes.deleting_batch
                   AND status IN ('queued', 'sent')) THEN 'running'
-              END AS deleting
+              END AS deleting,
+              ipv4, ipv4_at, ipv6, ipv6_at
        FROM nodes WHERE owner_user_id = ? ORDER BY created_at DESC`,
       )
         .bind(ownerId)
@@ -64,7 +65,9 @@ export function registerAdminRoutes(
       context.env.DB.prepare(
         `SELECT i.id, i.check_id, i.status, i.started_at, i.resolved_at,
               i.summary, c.name AS check_name, n.name AS node_name,
-              c.node_id AS node_id
+              c.node_id AS node_id,
+              (SELECT u.status FROM incident_updates u WHERE u.incident_id = i.id
+               ORDER BY u.created_at DESC, u.id DESC LIMIT 1) AS update_status
        FROM incidents i
        JOIN checks c ON c.id = i.check_id
        JOIN nodes n ON n.id = c.node_id

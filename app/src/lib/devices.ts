@@ -67,14 +67,19 @@ const coreIds = (devices: DeviceRecord[], trust: NodeTrust | null) =>
     .filter((device) => trust?.core.includes(device.fingerprint))
     .map((device) => device.id);
 
+export const usable = (device: Pick<DeviceRecord, "owner" | "mine">) =>
+  device.mine === true || !device.owner;
+
 export function signersFor(
   devices: DeviceRecord[],
   targets: (NodeTrust | null)[],
 ): string[] {
   if (targets.length === 0) return [];
   return devices
-    .filter((device) =>
-      targets.every((trust) => trust?.access.includes(device.fingerprint)),
+    .filter(
+      (device) =>
+        usable(device) &&
+        targets.every((trust) => trust?.access.includes(device.fingerprint)),
     )
     .map((device) => device.id);
 }

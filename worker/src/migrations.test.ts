@@ -405,6 +405,40 @@ describe("migration 0027", () => {
   });
 });
 
+describe("migration 0029", () => {
+  it("gives each device the account of the last action it signed, and none without one", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0029");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+    );
+    for (const id of ["phone", "laptop", "spare"]) {
+      sqlite.exec(
+        `INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at) VALUES ('${id}', 'standalone', '${id}', -7, 'k-${id}', '2026-10-01')`,
+      );
+    }
+    const signed = (id: string, device: string, by: string, at: string) =>
+      sqlite.exec(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+           status, requested_by, requested_at, device_id)
+         VALUES ('${id}', 'b-${id}', 0, 'rolling', 'n1', 'docker', 'adguard', 'restart',
+           'done', '${by}', '${at}', '${device}')`,
+      );
+    signed("a1", "phone", "old@example.test", "2026-10-01T10:00:00.000Z");
+    signed("a2", "phone", "owner@example.test", "2026-10-02T10:00:00.000Z");
+    signed("a3", "laptop", "friend@example.test", "2026-10-03T10:00:00.000Z");
+    apply(sqlite, (name) => name.startsWith("0029"));
+    expect(
+      sqlite.prepare("SELECT id, account FROM devices ORDER BY id").all(),
+    ).toEqual([
+      { id: "laptop", account: "friend@example.test" },
+      { id: "phone", account: "owner@example.test" },
+      { id: "spare", account: null },
+    ]);
+  });
+});
+
 describe("migration 0026", () => {
   it("keeps every action and accepts removing Krynodes from a server", () => {
     const sqlite = new DatabaseSync(":memory:");

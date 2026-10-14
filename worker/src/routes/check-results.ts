@@ -1,7 +1,14 @@
 import type { MiddlewareHandler } from "hono";
+import { z } from "zod";
 
 import { expandResults, windowSize, type WindowRow } from "../agent/windows";
-import type { KrynodesApp, KrynodesEnv } from "./shared";
+import {
+  invalidRequest,
+  readJson,
+  type KrynodesApp,
+  type KrynodesContext,
+  type KrynodesEnv,
+} from "./shared";
 
 const SPAN_MS = 4 * 3_600_000;
 const WINDOW_MS = 300_000;
@@ -124,6 +131,110 @@ export function registerCheckResultRoutes(
         incident.check_id,
       ) ?? []
     ).reverse();
-    return context.json({ incident, results });
+    const [updates, check] = await Promise.all([
+      db
+        .prepare(
+          `SELECT id, status, message, author, created_at AS createdAt
+           FROM incident_updates WHERE incident_id = ? ORDER BY created_at, id`,
+        )
+        .bind(incident.id)
+        .all<{
+          id: string;
+          status: string;
+          message: string;
+          author: string;
+          createdAt: string;
+        }>(),
+      db
+        .prepare("SELECT public FROM checks WHERE id = ?")
+        .bind(incident.check_id)
+        .first<{ public: number }>(),
+    ]);
+    return context.json({
+      incident,
+      results,
+      updates: updates.results,
+      public: check?.public === 1,
+    });
   });
+
+  const ownedIncident = (context: KrynodesContext) =>
+    context.env.DB.prepare(
+      `SELECT i.id, i.status FROM incidents i
+       JOIN checks c ON c.id = i.check_id
+       JOIN nodes n ON n.id = c.node_id
+       WHERE i.id = ? AND n.owner_user_id = ?`,
+    )
+      .bind(context.req.param("id"), context.get("identity").id)
+      .first<{ id: string; status: "OPEN" | "RESOLVED" }>();
+
+  app.post("/api/incidents/:id/updates", requireAdmin, async (context) => {
+    const body = updateSchema.safeParse(await readJson(context));
+    if (!body.success) return invalidRequest(context);
+    const incident = await ownedIncident(context);
+    if (!incident) return context.json({ code: "NOT_FOUND" }, 404);
+    if (incident.status !== "OPEN") {
+      return context.json(
+        {
+          code: "INCIDENT_RESOLVED",
+          message: "This incident has resolved; updates go to open ones.",
+        },
+        409,
+      );
+    }
+    const update = {
+      id: crypto.randomUUID(),
+      status: body.data.status,
+      message: body.data.message,
+      author: context.get("identity").email,
+      createdAt: new Date().toISOString(),
+    };
+    await context.env.DB.prepare(
+      `INSERT INTO incident_updates (id, incident_id, status, message, author, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        update.id,
+        incident.id,
+        update.status,
+        update.message,
+        update.author,
+        update.createdAt,
+      )
+      .run();
+    return context.json(update, 201);
+  });
+
+  app.delete(
+    "/api/incidents/:id/updates/:updateId",
+    requireAdmin,
+    async (context) => {
+      const incident = await ownedIncident(context);
+      if (!incident) return context.json({ code: "NOT_FOUND" }, 404);
+      const row = await context.env.DB.prepare(
+        "SELECT author FROM incident_updates WHERE id = ? AND incident_id = ?",
+      )
+        .bind(context.req.param("updateId"), incident.id)
+        .first<{ author: string }>();
+      if (!row) return context.json({ code: "NOT_FOUND" }, 404);
+      if (row.author !== context.get("identity").email) {
+        return context.json(
+          {
+            code: "NOT_YOUR_UPDATE",
+            message: "Only the person who posted an update can delete it.",
+          },
+          403,
+        );
+      }
+      await context.env.DB.prepare("DELETE FROM incident_updates WHERE id = ?")
+        .bind(context.req.param("updateId"))
+        .run();
+      return context.body(null, 204);
+    },
+  );
 }
+
+const updateSchema = z.object({
+  status: z.enum(["investigating", "identified", "monitoring", "update"]),
+  message: z.string().trim().min(1).max(1000),
+});

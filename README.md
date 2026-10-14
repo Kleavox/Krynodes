@@ -212,6 +212,15 @@ and the status page use the browser's time zone. When an alert mail cannot be
 sent (or mail is not set up), the Fleet page says so and why until one goes
 out again.
 
+Anyone who can open Krynodes can post an update on an open incident, from its
+page: a status (Investigating, Identified, Monitoring or Update) and what is
+going on, up to 1,000 characters. Updates need no fingerprint and never mail.
+The incident page lists them between Opened and Resolved with the author's
+name, and only the author can delete one (⋯ **Delete**). An incident still
+resolves only by itself, when its check passes; the Incidents list shows each
+open incident's latest status. When the check is on the status page, its
+updates show there too, without the author.
+
 ### Live connection
 
 Each server keeps one WebSocket open to the Worker (`/api/agent/stream`), held
@@ -245,8 +254,8 @@ fallback and reconnect on their own.
 
 ### Usage and quota shares
 
-The fleet page's **Krynodes quota** tile opens **Usage today**: Krynodes'
-requests, D1 writes and D1 reads against its share of the account's free
+The fleet page's **Krynodes quota** tile opens **Settings → Usage**: today's
+Krynodes requests, D1 writes and D1 reads against its share of the account's free
 quotas (editable there; other projects may share the account), and the whole
 account against the Free plan. Quotas reset at 00:00 UTC.
 
@@ -255,6 +264,21 @@ an API token with one permission (Account, Account Analytics, Read) and save it
 as the GitHub production secret `CF_ANALYTICS_TOKEN`; the next deploy hands it
 to the Worker together with the account and database ids it already has. The
 Worker asks Cloudflare at most every 15 minutes while someone looks.
+
+### Server addresses
+
+Fleet and the server page show each server's public IPv4 and IPv6, for SSH
+and the like. The agent (0.6.10 or newer) calls `GET /api/agent/address` once
+over IPv4 and once over IPv6 when it starts and every 6 hours, and the Worker
+keeps the address Cloudflare saw the call come from. A server behind NAT, as
+on most clouds, so shows its public address rather than its private one. A
+family the newest probe did not reach within an hour is left out, so an
+address the server lost does not linger; older agents show none.
+
+By default an address reads `103.•.•.214` until the lock button (**Show
+addresses**) shows them all in this tab; it is a plain switch, not the
+fingerprint. Copy always copies the whole address. **Settings → Server
+addresses** can show them always, for everyone.
 
 ### Updating the agent
 
@@ -287,8 +311,14 @@ curl -fsSL https://<agent-host>/install.sh | sudo sh -s -- --update
 
 ### Service actions
 
-The dashboard's **Services** page lists each server's systemd units and Docker
-containers, grouped by server, and starts, stops or restarts them. The node
+The dashboard's **Services** page has one tab per kind: **Stacks**,
+**Containers** (those outside a stack), **Systemd** and, when there are any,
+**Removed** stacks. Each tab shows its count and a red dot when something in it
+is not running; rows carry their server and a plain state ("2 of 3 running").
+Search, a server filter and **All** / **Not running** stay in the address, and
+**System services** on the Systemd tab adds the units the operating system
+runs. It starts, stops or restarts them; the server page uses the same tabs
+without the server column. The node
 page and Ctrl K offer the same actions, and a SERVICE check's menu has
 **Restart service**. Every one of them needs a fingerprint, like a deploy
 (see below): a server that trusts no device refuses them.
@@ -298,16 +328,17 @@ The node page's **Actions** menu (and Ctrl K) also has
 reports "restarting the server" and then runs `systemctl reboot --no-block`.
 It refuses while a protection or a Docker install is still running there, since
 a restart in the middle of a package install leaves the package manager broken.
-Each server on the Services page carries the same menu.
 
-Everything in flight is visible to everyone: the server reads
-"Restarting · owner · 1:12" on every page until its agent reports again, its
-services wait with their buttons hidden, a service being restarted shows who
-asked and for how long, and the hourglass button in the top bar lists what
-runs or waits now. **History** (its own tab) lists the actions of the last 90
-days by day, with who asked, from which device, the outcome and how long it
-took, and filters by server; trust updates stay in **Recent changes**. There
-are no pop-up toasts for other people's work.
+Everything in flight is visible to everyone, named by the device that signed
+it (or by the person, when no device did): the server reads
+"Restarting · Owner laptop · 1:12" on every page until its agent reports
+again, its services wait with their buttons hidden ("Waiting for pivox to come
+back"), a service being restarted shows which device asked and for how long,
+and the hourglass button in the top bar lists what runs or waits now.
+**History** (its own tab) lists the actions of the last 90 days by day, with
+the device, the outcome and how long it took, and filters by server; trust
+updates stay in **Recent changes**. There are no pop-up toasts for other
+people's work.
 
 A service's or stack's menu has **Logs**: the last 300 lines
 (`journalctl -u`, `docker logs`, `docker compose logs`), at most 64 KiB, signed
@@ -369,9 +400,9 @@ token again on the Cloudflare page unless Delete node already did.
 
 ### Deploy
 
-The Services page deploys Docker Compose stacks. Each server
-lists its stacks, with their containers folded under them, beside its other
-containers and systemd units; the server page uses the same list. A stack's ⋯
+The Services page deploys Docker Compose stacks. The **Stacks** tab lists every
+server's stacks, with their containers folded under them; the server page uses
+the same tab for its own. A stack's ⋯
 holds its actions, and **Deploy on all N servers** when the project runs on
 more than one. A deploy runs `docker compose pull`, then `up -d`, in the
 stack's own directory, with its own compose files. A failed deploy keeps the images that
@@ -428,6 +459,12 @@ these:
 - **Trusted devices** are the passkeys every server knows. Each one reaches
   (may run actions on) only the servers it is given. A device someone
   registers waits until it is approved, and you get an email.
+- Each device belongs to the Access account that registered it, and the
+  Trusted devices page says whose it is ("Yours", "Owner: budi"). Nobody signs
+  with someone else's device: the Worker refuses it, and the fingerprint
+  prompt offers only your own. Only the owner renames or forgets a device.
+  Devices from before owners existed belong to whoever last used them, and
+  one never used is claimed by the first account that verifies with it.
 - The first device trusts itself on your servers (**Trust on servers**). The
   second one, such as your phone, is approved by the first and reaches every
   server enrolled then.
@@ -596,9 +633,10 @@ the public-ports finding. The agent (0.6.6 or newer) reports each listener's
 address; the Worker applies the list when it shows the report, so a change
 shows at once, without a new check.
 
-**Settings** in the header holds what applies to every server: Cloudflare,
-Private addresses, Enroll defaults (what a new install command sets up) and
-Usage.
+**Settings** (the account menu, under Trusted devices) is its own page for
+what applies to every server: Cloudflare, Private addresses, Server addresses,
+Enroll defaults (what a new install command sets up) and Usage, each at its
+own address (`/settings/usage`).
 
 **Protections** on the server page, each with Turn off (Undo):
 
@@ -648,6 +686,7 @@ A daily cron (03:17 UTC) keeps the database small enough for the Free plan's
 | Server metrics (5-minute windows)  | 8 days                             |
 | Check results                      | latest per check only              |
 | Incidents                          | while open, then 180 days          |
+| Incident updates                   | as long as their incident          |
 | Actions (**History**)              | 90 days                            |
 | Log text fetched with **Logs**     | 1 day; the action stays            |
 | Compose text read with **View**    | 1 day; the action stays            |
@@ -665,8 +704,10 @@ cleanup writes about 3,500 rows a day.
 A second Worker, `stats` (`worker/wrangler.stats.jsonc`), serves a public page at
 `stats.kleavox.xyz` from the same D1 database. It lists only the checks turned
 on under **Status page** in a check's menu: name, optional public note, current
-state, 90 days of incident-based uptime, and recent incidents. It never shows a
-check's kind, target, server or error messages. The page is plain HTML, cached
+state, 90 days of incident-based uptime, and recent incidents with the updates
+posted on them, newest first. It never shows a check's kind, target, server or
+error messages, nor who posted an update. A new or deleted update reaches the
+cached page within about 30 seconds, as a change of state does. The page is plain HTML, cached
 for 10 minutes and rate limited per IP. One small inline script, allowed by its
 hash in the CSP, rewrites times into the visitor's time zone; without script
 they read UTC. CI deploys it after the dashboard.

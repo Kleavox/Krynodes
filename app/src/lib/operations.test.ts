@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ActionRecord, NodeRecord } from "../types";
 import {
   activity,
+  actorOf,
   elapsedText,
   maintenanceSpans,
   plannedNow,
@@ -55,6 +56,18 @@ const reboot = (overrides: Partial<ActionRecord>) =>
     requestedBy: "owner@example.test",
     ...overrides,
   });
+
+describe("who ran an action", () => {
+  it("is the device that signed it, or the person when no device did", () => {
+    const devices = [{ id: "d1", name: "Pixel 8" }];
+    expect(actorOf(action({ deviceId: "d1" }), devices)).toBe("Pixel 8");
+    expect(actorOf(action({ deviceId: null }), devices)).toBe("budi");
+    expect(actorOf(action({ deviceId: "gone" }), devices)).toBe("budi");
+    expect(
+      serverOperation(node(), [reboot({ deviceId: "d1" })], NOW, devices),
+    ).toMatchObject({ kind: "restarting", by: "Pixel 8" });
+  });
+});
 
 describe("server operations", () => {
   it("is restarting while the reboot is on its way and until the agent comes back", () => {

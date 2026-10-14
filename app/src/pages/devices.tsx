@@ -65,10 +65,11 @@ import {
   serverState,
   syncChange,
   twinOf,
+  usable,
   type FleetServer,
   type ServerState,
 } from "@/lib/devices";
-import { timeAgo } from "@/lib/format";
+import { displayHandle, timeAgo } from "@/lib/format";
 import { registerDevice, thisBrowser } from "@/lib/passkeys";
 import { cn } from "@/lib/utils";
 import type { DeviceRecord, ProposalRecord } from "@/types";
@@ -326,18 +327,24 @@ function DeviceRow({
     onSelect: () => void;
     destructive?: boolean;
   }[] = [];
+  const own = usable(device);
   if (device.core && fleet.trusted.length > 0) {
     items.push({ label: "Servers", onSelect: onServers });
   }
-  items.push({ label: "Rename", onSelect: onRename });
+  if (own) items.push({ label: "Rename", onSelect: onRename });
   if (device.core) {
     if (fleet.core.length > 1) {
       items.push({ label: "Remove", onSelect: onRemove, destructive: true });
     }
-  } else {
+  } else if (own) {
     items.push({ label: "Forget", onSelect: onForget, destructive: true });
   }
   const facts = [
+    device.mine
+      ? "Yours"
+      : device.owner
+        ? `Owner: ${displayHandle(null, device.owner)}`
+        : "Not claimed yet",
     formatPrint(device.fingerprint),
     proofText(device),
     device.core ? serversText(fleet, device) : null,
@@ -363,7 +370,11 @@ function DeviceRow({
           {facts.join(" · ")}
         </p>
       </div>
-      <RowMenu label={`Options for ${device.name}`} items={items} />
+      {items.length > 0 ? (
+        <RowMenu label={`Options for ${device.name}`} items={items} />
+      ) : (
+        <span className="size-9 md:size-8" />
+      )}
     </li>
   );
 }

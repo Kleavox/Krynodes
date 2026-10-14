@@ -26,7 +26,8 @@ import {
 import { decodeJson } from "../lib/b64url";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
 import { readPrivateRanges } from "./settings";
-import { readReport } from "../trust/fleet";
+import { ownersRefusal } from "../trust/approval";
+import { loadFleet, readReport } from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
@@ -456,6 +457,20 @@ export function registerServiceRoutes(
 
     const db = context.env.DB;
     const identity = context.get("identity");
+    if (!unsigned) {
+      const refused = await ownersRefusal(
+        context.env,
+        await loadFleet(db, identity.id),
+        targets.map((target) => target.signed!.grant),
+        identity.email,
+      );
+      if (refused) {
+        return context.json(
+          { code: refused.code, message: refused.message },
+          refused.status,
+        );
+      }
+    }
     const now = Date.now();
     const wanted = new Set(targets.map((target) => target.nodeId));
     const nodeIds = JSON.stringify([...wanted]);

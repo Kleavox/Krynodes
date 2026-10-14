@@ -20,6 +20,7 @@ import {
   parseHostPorts,
   reachReady,
   serverLists,
+  serviceBoard,
   stackCommands,
   stackNameProblem,
 } from "./stacks";
@@ -460,6 +461,71 @@ describe("one list per server", () => {
     expect(
       shape(serverLists(data, nodes, { ...all, notRunning: true })),
     ).toEqual([["Callisto", [["shop", []]], []]]);
+  });
+
+  it("sorts every kind into its own flat list, unhealthy first, and knows which servers are trusted", () => {
+    const withUnits: ServicesResponse = {
+      ...data,
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          services: [
+            ...data.nodes[0]!.services,
+            {
+              kind: "systemd",
+              name: "nginx.service",
+              state: "running",
+              since: null,
+              system: false,
+            },
+            {
+              kind: "systemd",
+              name: "cron.service",
+              state: "failed",
+              since: null,
+              system: false,
+            },
+            {
+              kind: "systemd",
+              name: "systemd-journald.service",
+              state: "running",
+              since: null,
+              system: true,
+            },
+          ],
+        },
+        data.nodes[1]!,
+      ],
+    };
+    const board = serviceBoard(withUnits, nodes, all);
+    expect(
+      board.stacks.map((item) => [
+        item.member.stack.project,
+        item.member.node.name,
+      ]),
+    ).toEqual([
+      ["shop", "Callisto"],
+      ["listmonk", "Callisto"],
+      ["listmonk", "Pivox"],
+    ]);
+    expect(board.containers.map((member) => member.entry.name)).toEqual([
+      "adguard",
+    ]);
+    expect(board.units.map((member) => member.entry.name)).toEqual([
+      "cron.service",
+      "nginx.service",
+    ]);
+    expect([...board.trusted]).toEqual(["n1"]);
+    expect(
+      serviceBoard(withUnits, nodes, { ...all, showSystem: true }).units.map(
+        (member) => member.entry.name,
+      ),
+    ).toEqual(["cron.service", "nginx.service", "systemd-journald.service"]);
+    expect(
+      serviceBoard(withUnits, nodes, { ...all, notRunning: true }).units.map(
+        (member) => member.entry.name,
+      ),
+    ).toEqual(["cron.service"]);
   });
 
   it("gives a container to the stack with the longest matching name", () => {
