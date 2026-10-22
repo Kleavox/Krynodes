@@ -59,13 +59,15 @@ type Policy struct {
 }
 
 type App struct {
-	ID              string   `json:"id,omitempty"`
-	Name            string   `json:"name"`
-	Domain          string   `json:"domain"`
-	Type            string   `json:"type,omitempty"`
-	AUD             string   `json:"aud,omitempty"`
-	SessionDuration string   `json:"session_duration,omitempty"`
-	Policies        []Policy `json:"policies,omitempty"`
+	ID                     string   `json:"id,omitempty"`
+	Name                   string   `json:"name"`
+	Domain                 string   `json:"domain"`
+	Type                   string   `json:"type,omitempty"`
+	AUD                    string   `json:"aud,omitempty"`
+	SessionDuration        string   `json:"session_duration,omitempty"`
+	AllowedIdPs            []string `json:"allowed_idps,omitempty"`
+	AutoRedirectToIdentity bool     `json:"auto_redirect_to_identity,omitempty"`
+	Policies               []Policy `json:"policies,omitempty"`
 }
 
 type envelope struct {
@@ -283,7 +285,7 @@ func (c *Client) Guard(ctx context.Context, account, domain, aud string) error {
 	if len(policies) == 0 {
 		return fmt.Errorf("the dashboard's Access application has no policy to reuse")
 	}
-	app := App{Name: Mark + " " + domain, Domain: domain, Type: "self_hosted", SessionDuration: "24h", Policies: policies}
+	app := App{Name: Mark + " " + domain, Domain: domain, Type: "self_hosted", SessionDuration: "24h", AllowedIdPs: apps[index].AllowedIdPs, AutoRedirectToIdentity: apps[index].AutoRedirectToIdentity, Policies: policies}
 	var existing []App
 	for _, found := range apps {
 		if found.Name == app.Name {

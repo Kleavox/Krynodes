@@ -556,7 +556,11 @@ compose.
 opens `<app>-<server>.<zone>` over a Cloudflare Tunnel, with HTTPS and no port
 opened on the server. Who can open it: **Only people I allow** (the same
 Cloudflare Access login as this dashboard), **Login only for a path** (such as
-`/admin`), or **Everyone**. Krynodes makes one tunnel per server
+`/admin`), or **Everyone**. The login copies the dashboard's Access app: its
+policies, its login methods and Instant Auth, so a dashboard that signs in
+straight through one identity provider gives every address the same. An
+address opened by an agent before 0.6.11 copied only the policies; close and
+open it again to follow. Krynodes makes one tunnel per server
 (`krynodes-<server id>`), runs `cloudflared` as a digest-pinned container on
 the stacks' own networks only, and touches only the DNS records, Access apps
 and tunnels it made. A hostname that already exists is refused. The login

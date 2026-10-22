@@ -104,6 +104,31 @@ func TestGuardingAgainNeverLeavesTheAddressOpen(t *testing.T) {
 	}
 }
 
+func TestAGuardedAddressSignsInTheWayTheDashboardDoes(t *testing.T) {
+	cf, fake := client(t)
+	ctx := context.Background()
+	const domain = "listmonk-pivox.kleavox.xyz"
+	if err := cf.Guard(ctx, "acc-1", domain, "aud-1"); err != nil {
+		t.Fatal(err)
+	}
+	dashboard := fake.Apps["dash"]
+	dashboard.AllowedIdPs = []string{"idp-pawl"}
+	dashboard.AutoRedirectToIdentity = true
+	fake.Apps["dash"] = dashboard
+	if err := cf.Guard(ctx, "acc-1", domain, "aud-1"); err != nil {
+		t.Fatal(err)
+	}
+	var guarded []cloudflare.App
+	for _, app := range fake.Apps {
+		if app.Domain == domain {
+			guarded = append(guarded, app)
+		}
+	}
+	if len(guarded) != 1 || !slices.Equal(guarded[0].AllowedIdPs, []string{"idp-pawl"}) || !guarded[0].AutoRedirectToIdentity {
+		t.Fatalf("apps %#v", guarded)
+	}
+}
+
 func mapApps(apps map[string]cloudflare.App) []cloudflare.App {
 	found := []cloudflare.App{}
 	for _, app := range apps {
