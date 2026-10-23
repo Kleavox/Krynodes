@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,8 +40,14 @@ type composeRead struct {
 	Compose   string            `json:"compose"`
 	Access    string            `json:"access"`
 	HostPorts []string          `json:"hostPorts,omitempty"`
+	Secrets   []string          `json:"secrets"`
 	Files     []composeFile     `json:"files"`
 	Images    map[string]string `json:"images"`
+}
+
+type secretChange struct {
+	Keep []string          `json:"keep"`
+	Set  map[string]string `json:"set"`
 }
 
 func (e Executor) opened(sealed string, value any) error {
@@ -190,7 +197,11 @@ func (e Executor) read(ctx context.Context, request Request, stack Stack) Result
 	if err != nil {
 		return e.failed(request, err, "")
 	}
-	output, err := json.Marshal(composeRead{Compose: string(text), Access: e.accessOf(stack.Directory), HostPorts: e.hostPortsOf(stack.Directory), Files: files, Images: e.pinned(ctx, stack)})
+	env, err := readEnv(filepath.Join(stack.Directory, ".env"))
+	if err != nil {
+		return e.failed(request, err, "")
+	}
+	output, err := json.Marshal(composeRead{Compose: string(text), Access: e.accessOf(stack.Directory), HostPorts: e.hostPortsOf(stack.Directory), Secrets: sortedKeys(anyMap(env)), Files: files, Images: e.pinned(ctx, stack)})
 	if err != nil {
 		return e.failed(request, err, "")
 	}
@@ -420,7 +431,7 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 		return revert(e.failed(request, err, ""))
 	}
 	if command.Secrets != "" {
-		if err := e.prepare(request, Command{Secrets: command.Secrets}, directory); err != nil {
+		if err := e.changeSecrets(request, command.Secrets, directory); err != nil {
 			return revert(e.refuse(request.ID, err))
 		}
 	}
@@ -429,6 +440,30 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 		return revert(result)
 	}
 	return result
+}
+
+func (e Executor) changeSecrets(request Request, sealed, directory string) error {
+	var change secretChange
+	if err := e.opened(sealed, &change); err != nil || change.Keep == nil {
+		return e.prepare(request, Command{Secrets: sealed}, directory)
+	}
+	old, err := readEnv(filepath.Join(directory, ".env"))
+	if err != nil {
+		return err
+	}
+	env := map[string]string{}
+	for _, name := range change.Keep {
+		value, found := old[name]
+		if !found {
+			return fmt.Errorf("the secret %s is no longer on this server; add it again", name)
+		}
+		env[name] = value
+	}
+	maps.Copy(env, change.Set)
+	if err := checkSecrets(env); err != nil {
+		return err
+	}
+	return writeEnv(directory, env)
 }
 
 type contextReader struct {

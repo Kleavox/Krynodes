@@ -14,16 +14,20 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/http";
+import { seal } from "@/lib/seal";
 import { parseHostPorts } from "@/lib/stacks";
 
 import {
   AccessChoice,
   FullAccessSummary,
+  HeldSecrets,
   ReachField,
   SecretsEditor,
+  heldProblem,
   sealSecrets,
-  secretsProblem,
+  secretChange,
   type Access,
+  type HeldSecret,
   type SecretRow,
 } from "./stack-fields";
 import { useComposeRead } from "./use-compose-read";
@@ -110,6 +114,7 @@ function ComposeForm({
   const [text, setText] = useState<string | null>(null);
   const [access, setAccess] = useState<Access | null>(null);
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  const [kept, setKept] = useState<HeldSecret[] | null>(null);
   const [reach, setReach] = useState<string | null>(null);
   const [sealing, setSealing] = useState(false);
   const current = text ?? read?.compose ?? "";
@@ -119,16 +124,23 @@ function ComposeForm({
   const hostPorts = parseHostPorts(
     reaching ? (reach ?? (read?.hostPorts ?? []).join(", ")) : "",
   );
-  const problem = secretsProblem(secrets) ?? hostPorts.problem;
+  const before = read?.secrets;
+  const held = kept ?? (before ?? []).map((name) => ({ name, value: null }));
+  const secretsWrong = heldProblem(held, secrets);
+  const problem = secretsWrong ?? hostPorts.problem;
+
+  const sealed = async (sealKey: string) => {
+    if (!before) return sealSecrets(sealKey, secrets);
+    const change = secretChange(held, secrets, before);
+    return change ? seal(sealKey, JSON.stringify(change)) : undefined;
+  };
 
   const save = async () => {
     if (!read || problem) return;
     setSealing(true);
-    let sealed: string | undefined;
+    let locked: string | undefined;
     try {
-      sealed = target.sealKey
-        ? await sealSecrets(target.sealKey, secrets)
-        : undefined;
+      locked = target.sealKey ? await sealed(target.sealKey) : undefined;
     } catch (error) {
       toast.error(errorMessage(error));
       return;
@@ -145,7 +157,7 @@ function ComposeForm({
             name: target.project,
             compose: current,
             access: chosen,
-            ...(sealed ? { secrets: sealed } : {}),
+            ...(locked ? { secrets: locked } : {}),
             ...(reaching
               ? { args: { hostPorts: hostPorts.ports.join(",") } }
               : {}),
@@ -203,14 +215,15 @@ function ComposeForm({
               )}
               <div className="space-y-1.5">
                 <Label>Secrets</Label>
+                {before && <HeldSecrets rows={held} onChange={setKept} />}
                 <SecretsEditor rows={secrets} onChange={setSecrets} />
                 <p className="text-xs text-muted-foreground">
-                  Leave this empty to keep the secrets the stack has now.
+                  {before
+                    ? "A secret stays as it is unless you replace or remove it. Its value never leaves the server."
+                    : "Leave this empty to keep the secrets the stack has now."}
                 </p>
-                {secretsProblem(secrets) && (
-                  <p className="text-xs text-destructive">
-                    {secretsProblem(secrets)}
-                  </p>
+                {secretsWrong && (
+                  <p className="text-xs text-destructive">{secretsWrong}</p>
                 )}
               </div>
             </>

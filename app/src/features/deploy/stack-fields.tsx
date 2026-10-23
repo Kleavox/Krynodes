@@ -141,6 +141,98 @@ export function secretsProblem(rows: SecretRow[]): string | null {
   return null;
 }
 
+export interface HeldSecret {
+  name: string;
+  value: string | null;
+}
+
+export function heldProblem(
+  held: HeldSecret[],
+  added: SecretRow[],
+): string | null {
+  return secretsProblem([
+    ...held.map((row) => ({ name: row.name, value: row.value ?? "" })),
+    ...added,
+  ]);
+}
+
+export function secretChange(
+  held: HeldSecret[],
+  added: SecretRow[],
+  before: string[],
+): { keep: string[]; set: Record<string, string> } | undefined {
+  const named = added.filter((row) => row.name.trim());
+  if (
+    named.length === 0 &&
+    held.length === before.length &&
+    held.every((row) => row.value === null)
+  ) {
+    return undefined;
+  }
+  return {
+    keep: held.filter((row) => row.value === null).map((row) => row.name),
+    set: Object.fromEntries([
+      ...held.flatMap((row) =>
+        row.value === null ? [] : [[row.name, row.value]],
+      ),
+      ...named.map((row) => [row.name.trim(), row.value]),
+    ]),
+  };
+}
+
+export function HeldSecrets({
+  rows,
+  onChange,
+}: {
+  rows: HeldSecret[];
+  onChange: (rows: HeldSecret[]) => void;
+}) {
+  const update = (index: number, value: string | null) =>
+    onChange(rows.map((row, at) => (at === index ? { ...row, value } : row)));
+  return (
+    <ul className="space-y-2">
+      {rows.map((row, index) => (
+        <li key={row.name} className="flex items-center gap-2">
+          <span className="w-2/5 truncate font-mono text-xs">{row.name}</span>
+          {row.value === null ? (
+            <span
+              aria-label={`${row.name} is kept`}
+              className="flex-1 font-mono text-xs text-muted-foreground"
+            >
+              ••••••
+            </span>
+          ) : (
+            <Input
+              aria-label={`New value for ${row.name}`}
+              type="password"
+              value={row.value}
+              autoFocus
+              autoComplete="off"
+              className="flex-1 font-mono text-xs"
+              onChange={(event) => update(index, event.target.value)}
+            />
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => update(index, row.value === null ? "" : null)}
+          >
+            {row.value === null ? "Replace" : "Keep"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Remove ${row.name}`}
+            onClick={() => onChange(rows.filter((_, at) => at !== index))}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export async function sealSecrets(
   sealKey: string,
   rows: SecretRow[],

@@ -549,8 +549,13 @@ doubled, plus 1 GB kept free).
 
 **Secrets.** Name and value pairs, sealed in the browser to the target server
 and written there as a root-only `.env` beside the compose file. Refer to them
-as `${NAME}`. A reinstalled agent has a new key: enter them again with Edit
-compose.
+as `${NAME}`. Edit compose lists the secrets a stack has by name, each shown
+as `••••••`: **Replace** takes a new value, **Remove** drops it, and one left
+alone is kept on the server as it is, so its value never leaves the server and
+Cancel changes nothing. Removing every one empties the `.env`. Agents before
+0.6.12 report no names; there an empty Secrets field keeps them and anything
+entered replaces them all. A reinstalled agent has a new key: enter them again
+with Edit compose.
 
 **Web address.** A stack's ⋯ **Web address…** picks a service and its port and
 opens `<app>-<server>.<zone>` over a Cloudflare Tunnel, with HTTPS and no port
@@ -563,7 +568,10 @@ address opened by an agent before 0.6.11 copied only the policies; close and
 open it again to follow. Krynodes makes one tunnel per server
 (`krynodes-<server id>`), runs `cloudflared` as a digest-pinned container on
 the stacks' own networks only, and touches only the DNS records, Access apps
-and tunnels it made. A hostname that already exists is refused. The login
+and tunnels it made. A hostname that already exists is refused. On a stack
+that has an address, **Web address…** opens with its settings: pick the
+address (or **New address**), change the service, port, or who can open it,
+and **Save** changes it in place; its name stays. The login
 comes first: the Access app is made (or updated in place) before the route and
 the DNS record, and an older login is removed last, so a protected address is
 never open, not even when a step fails. **Close web address…**, Remove and

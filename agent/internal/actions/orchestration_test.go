@@ -402,6 +402,72 @@ func TestReadShowsTheComposeFileItsFilesAndPinnedImages(t *testing.T) {
 	}
 }
 
+func TestReadNamesTheSecretsButNeverTheirValues(t *testing.T) {
+	executor, _ := stackExecutor(t)
+	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	withStacks(&executor, stack)
+	result := runRequest(t, executor, composeRequest(t, idA, "kuma", "read", nil))
+	if !result.OK || !strings.Contains(result.Output, `"secrets":[]`) {
+		t.Fatalf("a stack without secrets says so: %#v", result)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("SMTP_PASSWORD='hunter2'\n# note\nA='1'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result = runRequest(t, executor, composeRequest(t, idB, "kuma", "read", nil))
+	var read struct {
+		Secrets []string `json:"secrets"`
+	}
+	if !result.OK || json.Unmarshal([]byte(result.Output), &read) != nil || !slices.Equal(read.Secrets, []string{"A", "SMTP_PASSWORD"}) || strings.Contains(result.Output, "hunter2") {
+		t.Fatalf("result %#v", result)
+	}
+}
+
+func editSecrets(t *testing.T, env string, change func(Executor) string) (Result, string, string) {
+	t.Helper()
+	executor, run := stackExecutor(t)
+	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	withStacks(&executor, stack)
+	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := composeRequest(t, idA, "kuma", "edit", func(c *Command) { c.Compose, c.Secrets = kumaNext, change(executor) })
+	result := runRequest(t, executor, request)
+	current, _ := os.ReadFile(filepath.Join(dir, ".env"))
+	previous, _ := os.ReadFile(filepath.Join(dir, ".env.previous"))
+	return result, string(current), string(previous)
+}
+
+func TestEditKeepsTheSecretsItIsToldToKeepAndChangesTheRest(t *testing.T) {
+	const before = "A='1'\nB='2'\nC='3'\n"
+	result, current, previous := editSecrets(t, before, func(e Executor) string {
+		return sealFor(t, e, map[string]any{"keep": []string{"A"}, "set": map[string]string{"B": "new", "D": "4"}})
+	})
+	if !result.OK || current != "A='1'\nB='new'\nD='4'\n" || previous != before {
+		t.Fatalf("result %#v current %q previous %q", result, current, previous)
+	}
+	result, current, _ = editSecrets(t, before, func(e Executor) string {
+		return sealFor(t, e, map[string]any{"keep": []string{}, "set": map[string]string{}})
+	})
+	if !result.OK || current != "" {
+		t.Fatalf("removing every secret empties the file: %#v %q", result, current)
+	}
+	result, current, _ = editSecrets(t, before, func(e Executor) string { return sealFor(t, e, map[string]string{"X": "9"}) })
+	if !result.OK || current != "X='9'\n" {
+		t.Fatalf("a page from before replaces them all, as it did: %#v %q", result, current)
+	}
+}
+
+func TestEditRefusesToKeepASecretTheServerDoesNotHave(t *testing.T) {
+	const before = "A='1'\n"
+	result, current, _ := editSecrets(t, before, func(e Executor) string {
+		return sealFor(t, e, map[string]any{"keep": []string{"A", "GONE"}, "set": map[string]string{}})
+	})
+	if result.OK || !strings.Contains(result.Output, "GONE") || current != before {
+		t.Fatalf("result %#v current %q", result, current)
+	}
+}
+
 func TestExportSealsSecretsAndFilesForTheTarget(t *testing.T) {
 	executor, _ := stackExecutor(t)
 	dir, stack := ownKuma(t, executor, "contained", kumaText)

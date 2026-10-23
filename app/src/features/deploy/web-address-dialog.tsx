@@ -93,25 +93,35 @@ function NoToken() {
 
 export function WebAddressDialog({
   target,
+  addresses,
   open,
   onOpenChange,
 }: {
   target: StackTarget;
+  addresses: WebAddress[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {open && <OpenForm target={target} onClose={() => onOpenChange(false)} />}
+      {open && (
+        <OpenForm
+          target={target}
+          addresses={addresses}
+          onClose={() => onOpenChange(false)}
+        />
+      )}
     </Dialog>
   );
 }
 
 function OpenForm({
   target,
+  addresses,
   onClose,
 }: {
   target: StackTarget;
+  addresses: WebAddress[];
   onClose: () => void;
 }) {
   const { read, failure, retry } = useComposeRead({
@@ -120,31 +130,56 @@ function OpenForm({
   });
   const { settings, plan } = usePlan(target.nodeId);
   const operate = useSignedOperation(false);
+  const [picked, setPicked] = useState(addresses[0]?.hostname ?? "");
+  const existing = addresses.find((address) => address.hostname === picked);
   const names = read ? servicesOf(read.compose) : [];
   const [service, setService] = useState<string | null>(null);
-  const chosen = service ?? names[0] ?? "";
+  const chosen =
+    service ??
+    (existing && names.includes(existing.service)
+      ? existing.service
+      : names[0]) ??
+    "";
   const ports = read && chosen ? portsOf(read.compose, chosen) : [];
   const [port, setPort] = useState<string | null>(null);
-  const chosenPort = port ?? (ports[0] ? String(ports[0]) : "");
-  const [mode, setMode] = useState<Mode>("allow");
-  const [path, setPath] = useState("/admin");
+  const chosenPort =
+    port ??
+    (existing?.service === chosen
+      ? String(existing.port)
+      : ports[0]
+        ? String(ports[0])
+        : "");
+  const [mode, setMode] = useState<Mode | null>(null);
+  const chosenMode = mode ?? existing?.mode ?? "allow";
+  const [path, setPath] = useState<string | null>(null);
+  const chosenPath = path ?? existing?.path ?? "/admin";
   const zone = settings?.zone ?? "";
   const suggested = hostnameFor(target.project, target.nodeName, zone).replace(
     `.${zone}`,
     "",
   );
   const [label, setLabel] = useState<string | null>(null);
-  const hostname = `${label ?? suggested}.${zone}`;
-  const needsLogin = mode !== "everyone";
+  const hostname = existing?.hostname ?? `${label ?? suggested}.${zone}`;
+  const needsLogin = chosenMode !== "everyone";
+  const pick = (hostname: string) => {
+    setPicked(hostname);
+    setService(null);
+    setPort(null);
+    setMode(null);
+    setPath(null);
+  };
   const blocked = !settings?.setId
     ? "token"
     : plan && !plan.ok
       ? plan.reason
       : needsLogin && !settings.aud
         ? "Krynodes runs without Cloudflare Access here, so a login cannot be reused. Choose Everyone."
-        : read
-          ? addressProblem(label ?? suggested, chosenPort)
-          : null;
+        : !existing &&
+            addresses.some((address) => address.hostname === hostname)
+          ? "The stack has this address already. Choose it above to change it."
+          : read
+            ? addressProblem(hostname.split(".")[0] ?? "", chosenPort)
+            : null;
 
   const submit = () => {
     if (!plan?.ok || !settings?.setId) return;
@@ -161,8 +196,8 @@ function OpenForm({
             service: chosen,
             port: Number(chosenPort),
             hostname,
-            mode,
-            path,
+            mode: chosenMode,
+            path: chosenPath,
             zone,
             aud: settings.aud ?? "",
             releaser: plan.releaser,
@@ -171,7 +206,9 @@ function OpenForm({
       },
       {
         onSuccess: () => {
-          toast.success(`Opening ${hostname}.`);
+          toast.success(
+            existing ? `Updating ${hostname}.` : `Opening ${hostname}.`,
+          );
           onClose();
         },
       },
@@ -195,6 +232,30 @@ function OpenForm({
         <Reading server={target.nodeName} failure={failure} retry={retry} />
       ) : (
         <div className="space-y-4">
+          {addresses.length > 0 && (
+            <div
+              role="radiogroup"
+              aria-label="Address to change"
+              className="space-y-1.5"
+            >
+              {[...addresses.map((address) => address.hostname), ""].map(
+                (name) => (
+                  <label
+                    key={name}
+                    className="flex cursor-pointer items-center gap-2 font-mono text-xs"
+                  >
+                    <input
+                      type="radio"
+                      name="address-picked"
+                      checked={picked === name}
+                      onChange={() => pick(name)}
+                    />
+                    {name || "New address"}
+                  </label>
+                ),
+              )}
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="address-service">Service</Label>
@@ -229,26 +290,33 @@ function OpenForm({
               />
             </div>
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="address-name">Address</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="address-name"
-                value={label ?? suggested}
-                autoComplete="off"
-                onChange={(event) =>
-                  setLabel(
-                    event.target.value
-                      .toLowerCase()
-                      .replace(/[^a-z0-9-]/gu, ""),
-                  )
-                }
-              />
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                .{zone}
-              </span>
+          {existing ? (
+            <p className="text-xs text-muted-foreground">
+              Saving changes {existing.hostname} in place. To use another name,
+              choose New address.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="address-name">Address</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="address-name"
+                  value={label ?? suggested}
+                  autoComplete="off"
+                  onChange={(event) =>
+                    setLabel(
+                      event.target.value
+                        .toLowerCase()
+                        .replace(/[^a-z0-9-]/gu, ""),
+                    )
+                  }
+                />
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                  .{zone}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
           <div
             role="radiogroup"
             aria-label="Who can open it"
@@ -262,7 +330,7 @@ function OpenForm({
                 <input
                   type="radio"
                   name="address-mode"
-                  checked={mode === option.value}
+                  checked={chosenMode === option.value}
                   onChange={() => setMode(option.value)}
                 />
                 <span>
@@ -276,12 +344,12 @@ function OpenForm({
               </label>
             ))}
           </div>
-          {mode === "path" && (
+          {chosenMode === "path" && (
             <div className="space-y-1.5">
               <Label htmlFor="address-path">Path that needs the login</Label>
               <Input
                 id="address-path"
-                value={path}
+                value={chosenPath}
                 onChange={(event) => setPath(event.target.value)}
               />
             </div>
@@ -309,7 +377,11 @@ function OpenForm({
           onClick={submit}
         >
           {!operate.isPending && <Fingerprint aria-hidden="true" />}
-          {operate.isPending ? "Waiting for the fingerprint…" : "Open"}
+          {operate.isPending
+            ? "Waiting for the fingerprint…"
+            : existing
+              ? "Save"
+              : "Open"}
         </Button>
       </DialogFooter>
     </DialogContent>

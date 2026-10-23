@@ -9,6 +9,7 @@ export interface ComposeRead {
   compose: string;
   access: "contained" | "full" | "";
   hostPorts?: string[];
+  secrets?: string[];
   files: { name: string; size: number }[];
   images: Record<string, string>;
 }

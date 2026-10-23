@@ -288,7 +288,11 @@ function StackControls({
             editable={own}
             {...panelProps("compose")}
           />
-          <WebAddressDialog target={target} {...panelProps("address")} />
+          <WebAddressDialog
+            target={target}
+            addresses={addresses}
+            {...panelProps("address")}
+          />
           <CloseAddressDialog
             target={target}
             addresses={addresses}
