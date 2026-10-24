@@ -564,9 +564,9 @@ describe("formatDuration and banner", () => {
       recentInfo: { since: 0, up: 0, total: 0, lastDown: null },
       longInfo: { since: 0, incidents: 0, downMs: 0, lastDown: null },
     });
-    expect(banner([]).text).toBe("Nothing to show yet");
+    expect(banner([]).text).toBe("Nothing to Show Yet");
     expect(banner([service("up"), service("nodata")]).text).toBe(
-      "All systems operational",
+      "All Systems Operational",
     );
     expect(banner([service("down"), service("up")]).text).toBe(
       "1 service down",
@@ -574,7 +574,7 @@ describe("formatDuration and banner", () => {
     expect(banner([service("down"), service("down")]).text).toBe(
       "2 services down",
     );
-    expect(banner([service("nodata")]).text).toBe("No recent data");
+    expect(banner([service("nodata")]).text).toBe("No Recent Data");
   });
 });
 
@@ -596,7 +596,7 @@ describe("serveStats", () => {
     expect(response.headers.get("content-security-policy")).toContain(
       "default-src 'none'",
     );
-    expect(html).toContain("All systems operational");
+    expect(html).toContain("All Systems Operational");
     expect(html).toContain("Website");
     expect(html).toContain("Main website");
     expect(html).toContain('content="600;url=/?r=1"');
@@ -609,17 +609,17 @@ describe("serveStats", () => {
     expect(html).toContain(
       '<input type="radio" name="range" id="range-day" class="range" checked>',
     );
-    expect(html).toContain('<label for="range-day">24 hours</label>');
-    expect(html).toContain('<label for="range-90">90 days</label>');
+    expect(html).toContain('<label for="range-day">24 Hours</label>');
+    expect(html).toContain('<label for="range-90">90 Days</label>');
     expect(html).toContain("24 hours ago");
     expect(html).toContain("90 days ago");
-    expect(html).toContain('data-tip="11:30–12:00 UTC · no data"');
-    expect(html).toContain('data-tip="Mon, 28 Sep · no incidents"');
+    expect(html).toContain('data-tip="11:30–12:00 UTC · No Data"');
+    expect(html).toContain('data-tip="Mon, 28 Sep · No Incidents"');
     expect(html).toContain(
-      'tabindex="0" data-tip="Since Sun, 27 Sep 12:00 UTC\nNo reports yet" data-local="Since {w:1790510400000}\nNo reports yet">-- uptime</span>',
+      'tabindex="0" data-tip="Since Sun, 27 Sep 12:00 UTC\nNo Reports Yet" data-local="Since {w:1790510400000}\nNo Reports Yet">-- uptime</span>',
     );
     expect(html).toContain(
-      'tabindex="0" data-tip="Since Wed, 1 Jul\nNo downtime recorded">100.00% uptime</span>',
+      'tabindex="0" data-tip="Since Wed, 1 Jul\nNo Downtime Recorded">100.00% uptime</span>',
     );
   });
 
@@ -639,16 +639,16 @@ describe("serveStats", () => {
     const html = await (await visit(db)).text();
     expect(html).toContain(".bar-partial{background:var(--partial)}");
     expect(html).toContain(
-      '<span class="bar bar-partial" data-tip="11:00–11:30 UTC · down 1 of 6" data-local="{w:1790593200000}–{c:1790595000000} · down 1 of 6">',
+      '<span class="bar bar-partial" data-tip="11:00–11:30 UTC · Down 1 of 6" data-local="{w:1790593200000}–{c:1790595000000} · Down 1 of 6">',
     );
     expect(html).toContain(
-      '<span class="bar bar-partial" data-tip="Mon, 28 Sep · down 20m">',
+      '<span class="bar bar-partial" data-tip="Mon, 28 Sep · Down 20m">',
     );
     expect(html).toContain(
-      'tabindex="0" data-tip="Since Sun, 27 Sep 12:00 UTC\n11 of 12 reports up\nLast down 11:15 UTC" data-local="Since {w:1790510400000}\n11 of 12 reports up\nLast down {w:1790594100000}">91.66% uptime</span>',
+      'tabindex="0" data-tip="Since Sun, 27 Sep 12:00 UTC\n11 of 12 reports up\nLast Down 11:15 UTC" data-local="Since {w:1790510400000}\n11 of 12 reports up\nLast Down {w:1790594100000}">91.66% uptime</span>',
     );
     expect(html).toContain(
-      'tabindex="0" data-tip="Since Wed, 1 Jul\n1 incident, down 20m\nLast down Mon, 28 Sep 09:00 UTC" data-local="Since Wed, 1 Jul\n1 incident, down 20m\nLast down {d:1790586000000} {c:1790586000000}">99.98% uptime</span>',
+      'tabindex="0" data-tip="Since Wed, 1 Jul\n1 incident, down 20m\nLast Down Mon, 28 Sep 09:00 UTC" data-local="Since Wed, 1 Jul\n1 incident, down 20m\nLast Down {d:1790586000000} {c:1790586000000}">99.98% uptime</span>',
     );
   });
 
@@ -680,7 +680,7 @@ describe("serveStats", () => {
       {
         tagName: "SPAN",
         attributes: {
-          "data-local": "{c:1790593200000}–{c:1790595000000} · up",
+          "data-local": "{c:1790593200000}–{c:1790595000000} · Up",
         },
       },
       {
@@ -690,7 +690,7 @@ describe("serveStats", () => {
       },
       {
         tagName: "SPAN",
-        attributes: { "data-local": "Last down {w:1790586000000}" },
+        attributes: { "data-local": "Last Down {w:1790586000000}" },
       },
     ].map((element) => ({
       ...element,
@@ -721,11 +721,11 @@ describe("serveStats", () => {
       Object.assign(function () {}, { now: clock.now }),
     );
     expect(elements[0]!.attributes["data-tip" as never]).toBe(
-      "18:00–18:30 · up",
+      "18:00–18:30 · Up",
     );
     expect(elements[1]!.textContent).toBe("28 Sep 2026, 16:00");
     expect(elements[2]!.attributes["data-tip" as never]).toBe(
-      "Last down 16:00",
+      "Last Down 16:00",
     );
     expect(zone.textContent).toBe(
       "Times are in your time zone (Asia/Jakarta).",
@@ -779,7 +779,7 @@ describe("serveStats", () => {
       .run("2026-09-28 11:50:00", NODE);
     const html = await (await visit(db)).text();
     expect(html).toContain("No data");
-    expect(html).toContain("No recent data");
+    expect(html).toContain("No Recent Data");
   });
 
   it("lists incidents with their durations and without their messages", async () => {
@@ -966,7 +966,7 @@ describe("serveStats", () => {
     expect(paused).toContain("Updates paused");
     expect(paused).toContain("stopped refreshing after 20 minutes");
     expect(paused).toContain("28 Sep 2026, 12:00 UTC");
-    expect(paused).toContain('<a class="resume" href="/">Resume updates</a>');
+    expect(paused).toContain('<a class="resume" href="/">Resume Updates</a>');
     expect(paused).toContain("Website");
 
     for (const odd of ["?r=abc", "?r=-5", "?r=1.5x"]) {

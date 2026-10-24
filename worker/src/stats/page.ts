@@ -92,7 +92,7 @@ h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-0.01em}
 .banner-up{color:var(--up);border-color:rgba(52,211,153,.35)}
 .banner-down{color:var(--down);border-color:rgba(240,97,109,.45)}
 .banner-nodata{color:var(--muted)}
-h2{margin:40px 0 12px;font:500 11px/1.4 ${MONO};letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h2{margin:40px 0 12px;font:500 13px/1.4 ${MONO};color:var(--muted)}
 .services,.incidents{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card)}
 .service{padding:16px}
 .service+.service,.incidents>li+li{border-top:1px solid var(--border)}
@@ -171,7 +171,7 @@ export function banner(services: Service[]): {
   tone: ServiceState;
 } {
   if (services.length === 0)
-    return { text: "Nothing to show yet", tone: "nodata" };
+    return { text: "Nothing to Show Yet", tone: "nodata" };
   const down = services.filter((service) => service.state === "down").length;
   if (down > 0) {
     return {
@@ -180,9 +180,9 @@ export function banner(services: Service[]): {
     };
   }
   if (services.every((service) => service.state === "nodata")) {
-    return { text: "No recent data", tone: "nodata" };
+    return { text: "No Recent Data", tone: "nodata" };
   }
-  return { text: "All systems operational", tone: "up" };
+  return { text: "All Systems Operational", tone: "up" };
 }
 
 function uptimeText(value: number | null): string {
@@ -193,38 +193,38 @@ function uptimeText(value: number | null): string {
 
 function dayTip(day: DayBar): string {
   const date = weekday(day.start);
-  if (day.state === "none") return `${date} · not monitored yet`;
-  if (day.state === "up") return `${date} · no incidents`;
-  return `${date} · down ${formatDuration(day.downMs)}`;
+  if (day.state === "none") return `${date} · Not Monitored Yet`;
+  if (day.state === "up") return `${date} · No Incidents`;
+  return `${date} · Down ${formatDuration(day.downMs)}`;
 }
 
 function slotTip(slot: SlotBar, now: number, c: Clock): string {
   const span = `${c.when(slot.start, now)}–${c.clock(slot.start + 30 * 60_000)}${c.zone}`;
-  if (slot.state === "none") return `${span} · not monitored yet`;
-  if (slot.state === "nodata") return `${span} · no data`;
-  if (slot.state === "up") return `${span} · up`;
-  return `${span} · down ${slot.down} of ${slot.up + slot.down}`;
+  if (slot.state === "none") return `${span} · Not Monitored Yet`;
+  if (slot.state === "nodata") return `${span} · No Data`;
+  if (slot.state === "up") return `${span} · Up`;
+  return `${span} · Down ${slot.down} of ${slot.up + slot.down}`;
 }
 
 function recentTip(info: RecentInfo, now: number, c: Clock): string {
   const since = `Since ${c.when(info.since, now)}${c.zone}`;
-  if (info.total === 0) return `${since}\nNo reports yet`;
+  if (info.total === 0) return `${since}\nNo Reports Yet`;
   return [
     since,
     `${info.up} of ${info.total} reports up`,
     info.lastDown === null
-      ? "No downtime recorded"
-      : `Last down ${c.when(info.lastDown, now)}${c.zone}`,
+      ? "No Downtime Recorded"
+      : `Last Down ${c.when(info.lastDown, now)}${c.zone}`,
   ].join("\n");
 }
 
 function longTip(info: LongInfo, c: Clock): string {
   const since = `Since ${weekday(info.since)}`;
-  if (info.lastDown === null) return `${since}\nNo downtime recorded`;
+  if (info.lastDown === null) return `${since}\nNo Downtime Recorded`;
   return [
     since,
     `${info.incidents} ${info.incidents === 1 ? "incident" : "incidents"}, down ${formatDuration(info.downMs)}`,
-    `Last down ${c.weekday(info.lastDown)} ${c.clock(info.lastDown)}${c.zone}`,
+    `Last Down ${c.weekday(info.lastDown)} ${c.clock(info.lastDown)}${c.zone}`,
   ].join("\n");
 }
 
@@ -315,7 +315,7 @@ export function personalize(
     ? ""
     : `<meta http-equiv="refresh" content="${REFRESH_SECONDS};url=/?r=${round + 1}">`;
   const notice = paused
-    ? `<div class="paused" role="status"><p><strong>Updates paused.</strong> This page stopped refreshing after ${(REFRESH_ROUNDS * REFRESH_SECONDS) / 60} minutes. The data below is from ${moment(renderedAt)}.</p><a class="resume" href="/">Resume updates</a></div>`
+    ? `<div class="paused" role="status"><p><strong>Updates paused.</strong> This page stopped refreshing after ${(REFRESH_ROUNDS * REFRESH_SECONDS) / 60} minutes. The data below is from ${moment(renderedAt)}.</p><a class="resume" href="/">Resume Updates</a></div>`
     : "";
   return html
     .replace("<!--refresh-->", refresh)
@@ -347,7 +347,7 @@ export function renderStatus(view: StatusView, now: number): string {
 <h1>Service status</h1>
 <!--paused-->
 <p class="banner banner-${head.tone}">${head.text}</p>
-<div class="section-head"><h2>Services</h2><div class="tabs" role="group" aria-label="Range"><label for="range-day">24 hours</label><label for="range-90">90 days</label></div></div>
+<div class="section-head"><h2>Services</h2><div class="tabs" role="group" aria-label="Range"><label for="range-day">24 Hours</label><label for="range-90">90 Days</label></div></div>
 ${services}
 <p class="basis">The 24-hour view counts check reports; the 90-day view and its uptime come from recorded incidents. Orange means part of a bar was down, red most of it. <span data-zone="">Times are UTC.</span></p>
 <h2>Incidents, last 30 days</h2>

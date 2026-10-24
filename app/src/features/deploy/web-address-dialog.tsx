@@ -219,7 +219,7 @@ function OpenForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          Web address · {target.project} on {target.nodeName}
+          Web Address · {target.project} on {target.nodeName}
         </DialogTitle>
         <DialogDescription>
           Krynodes makes an HTTPS address through a Cloudflare Tunnel. No port
@@ -250,7 +250,7 @@ function OpenForm({
                       checked={picked === name}
                       onChange={() => pick(name)}
                     />
-                    {name || "New address"}
+                    {name || "New Address"}
                   </label>
                 ),
               )}
@@ -279,7 +279,7 @@ function OpenForm({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="address-port">Port inside the container</Label>
+              <Label htmlFor="address-port">Port Inside the Container</Label>
               <Input
                 id="address-port"
                 inputMode="numeric"
@@ -378,7 +378,7 @@ function OpenForm({
         >
           {!operate.isPending && <Fingerprint aria-hidden="true" />}
           {operate.isPending
-            ? "Waiting for the fingerprint…"
+            ? "Waiting for the Fingerprint…"
             : existing
               ? "Save"
               : "Open"}
@@ -528,12 +528,12 @@ function CloseForm({
           onClick={() => void close()}
         >
           {operate.isPending
-            ? "Waiting for the fingerprint…"
+            ? "Waiting for the Fingerprint…"
             : disposal
               ? disposal === "purge"
-                ? "Delete permanently"
+                ? "Delete Permanently"
                 : "Remove"
-              : "Close address"}
+              : "Close Address"}
         </Button>
       </DialogFooter>
     </DialogContent>

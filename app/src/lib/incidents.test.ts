@@ -66,7 +66,7 @@ describe("folding a check's results", () => {
     ]);
     expect(runText(foldResults(twelveDown)[0]!, Date.parse(at(12, 0)))).toEqual(
       {
-        title: "Still down",
+        title: "Still Down",
         when: "09:30 – 10:25",
         body: "12 checks in a row · HTTP 502",
       },
@@ -169,26 +169,26 @@ describe("an incident's header", () => {
         { started_at: at(9, 26), resolved_at: null },
         Date.parse(at(10, 28)),
       ),
-    ).toBe("Open · down 1h 2m");
+    ).toBe("Open · Down 1h 2m");
     expect(
       incidentState(
         { started_at: at(7, 8), resolved_at: at(7, 20) },
         Date.parse(at(10, 28)),
       ),
-    ).toBe("Resolved · lasted 12m");
+    ).toBe("Resolved · Lasted 12m");
   });
 
   it("links what its check watches to Services", () => {
     expect(ownerLink({ kind: "stack", project: "umami" })).toEqual({
-      label: "stack umami",
+      label: "Stack umami",
       to: "/services?q=umami",
     });
     expect(ownerLink({ kind: "container", name: "pihole" })).toEqual({
-      label: "container pihole",
+      label: "Container pihole",
       to: "/services?q=pihole",
     });
     expect(ownerLink({ kind: "systemd", unit: "pihole-FTL.service" })).toEqual({
-      label: "unit pihole-FTL.service",
+      label: "Unit pihole-FTL.service",
       to: "/services?q=pihole-FTL.service&system=1",
     });
   });
@@ -286,13 +286,13 @@ describe("the incident list", () => {
 
   it("sums up the last 30 days", () => {
     expect(last30Text({ count: 3, downMs: 47 * 60_000 })).toBe(
-      "Last 30 days · 3 incidents · 47m down in total",
+      "Last 30 Days · 3 incidents · 47m down in total",
     );
     expect(last30Text({ count: 1, downMs: 4 * 60_000 })).toBe(
-      "Last 30 days · 1 incident · 4m down in total",
+      "Last 30 Days · 1 incident · 4m down in total",
     );
     expect(last30Text({ count: 0, downMs: 0 })).toBe(
-      "Last 30 days · no incidents",
+      "Last 30 Days · No Incidents",
     );
   });
 });

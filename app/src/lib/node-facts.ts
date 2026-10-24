@@ -26,11 +26,11 @@ export function systemFacts(node: NodeRecord): string {
     node.architecture,
     node.uptime_seconds === null
       ? null
-      : `up ${inWords(node.uptime_seconds, false)}`,
-    `reports every ${inWords(node.interval_seconds, true)}`,
-    node.agent_version ? `agent ${node.agent_version}` : null,
+      : `Up ${inWords(node.uptime_seconds, false)}`,
+    `Reports every ${inWords(node.interval_seconds, true)}`,
+    node.agent_version ? `Agent ${node.agent_version}` : null,
     node.hostname && node.hostname !== node.name
-      ? `host ${node.hostname}`
+      ? `Host ${node.hostname}`
       : null,
   ]
     .filter(Boolean)

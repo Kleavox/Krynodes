@@ -59,7 +59,7 @@ export function CommandPalette({
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Search and commands"
+      title="Search and Commands"
       description="Jump to a page or a server, or run an action."
     >
       <CommandInput placeholder="Search pages, nodes and actions" />
@@ -67,13 +67,13 @@ export function CommandPalette({
         <CommandEmpty>No results.</CommandEmpty>
         <CommandGroup heading="Actions">
           <CommandItem onSelect={() => go("/?enroll=1")}>
-            Enroll server
+            Enroll Server
           </CommandItem>
           <CommandItem onSelect={() => go("/devices")}>
-            Trusted devices
+            Trusted Devices
           </CommandItem>
           <CommandItem onSelect={() => go("/checks?add=1")}>
-            Add check
+            Add Check
           </CommandItem>
         </CommandGroup>
         <CommandGroup heading="Pages">

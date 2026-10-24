@@ -45,7 +45,7 @@ const COPY = {
       ownFolder(directory)
         ? "Its containers, networks and volumes are deleted, and so is the folder Krynodes made for it. This cannot be undone."
         : `Its containers, networks and volumes are deleted. Its folder ${directory} stays. This cannot be undone.`,
-    confirm: "Delete permanently",
+    confirm: "Delete Permanently",
   },
 };
 

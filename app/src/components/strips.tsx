@@ -1,26 +1,24 @@
 import { Link } from "react-router";
 
-import { clockTime } from "@/lib/format";
+import { clockTime, titleCase } from "@/lib/format";
 import {
-  barTone,
   heartbeatSummary,
-  incidentDuring,
-  layoutReportSlots,
-  overlaps,
   slotTip,
+  uptimeOf,
   type BarTone,
   type SlotState,
-  type Span,
+  type WorkSpan,
 } from "@/lib/series";
 import { cn } from "@/lib/utils";
-import type { CheckResult, Incident } from "@/types";
 
 const SLOT_CLASS: Record<SlotState, string> = {
   received: "bg-success/85",
   missed: "bg-destructive",
   pending: "bg-border",
   none: "bg-border/50",
-  maintenance: "bg-primary/40",
+  work: "bg-primary/80",
+  routine: "bg-info/80",
+  offline: "bg-muted-foreground/70",
 };
 
 const BAR_CLASS: Record<BarTone, string> = {
@@ -28,25 +26,31 @@ const BAR_CLASS: Record<BarTone, string> = {
   down: "bg-destructive",
   brief: "bg-warning",
   missed: "bg-destructive",
-  maintenance: "bg-primary/40",
+  work: "bg-primary/80",
+  routine: "bg-info/80",
+  offline: "bg-muted-foreground/70",
   empty: "bg-border",
 };
 
 const SLOT_LABEL: Record<SlotState, string> = {
-  received: "reported",
-  missed: "no report",
-  pending: "waiting",
-  none: "not enrolled",
-  maintenance: "maintenance",
+  received: "Reported",
+  missed: "No Report",
+  pending: "Waiting",
+  none: "Not Enrolled",
+  work: "By You",
+  routine: "Routine Restart",
+  offline: "Offline",
 };
 
 export function ReportStrip({
   states,
   starts,
+  labels,
   className,
 }: {
   states: SlotState[];
   starts?: number[];
+  labels?: (string | undefined)[];
   className?: string;
 }) {
   const received = states.filter((state) => state === "received").length;
@@ -63,7 +67,11 @@ export function ReportStrip({
           data-tip={
             starts?.[index] === undefined
               ? undefined
-              : `${clockTime(starts[index])} · ${SLOT_LABEL[state]}`
+              : `${clockTime(starts[index])} · ${
+                  state === "work" && labels?.[index]
+                    ? titleCase(`${labels[index]} by you`)
+                    : SLOT_LABEL[state]
+                }`
           }
           className={cn("bar-tip flex-1 rounded-[2px]", SLOT_CLASS[state])}
         />
@@ -78,45 +86,26 @@ function spanText(seconds: number): string {
     : `${seconds / 60} minutes`;
 }
 
+export interface StripSlot {
+  start: number;
+  tone: BarTone;
+  sample: { latencyMs: number | null } | null;
+  work: WorkSpan | undefined;
+  incident: { id: string } | undefined;
+}
+
 export function HeartbeatStrip({
-  results,
-  incidents,
-  since,
+  slots,
   windowSeconds,
-  graceSeconds,
-  settleSeconds = 0,
-  now,
-  asOf,
-  count = 48,
-  maintenance = [],
   className,
 }: {
-  results: CheckResult[] | undefined;
-  incidents: Pick<Incident, "id" | "started_at" | "resolved_at">[];
-  since: number | null;
+  slots: StripSlot[];
   windowSeconds: number;
-  graceSeconds: number;
-  settleSeconds?: number;
-  now: number;
-  asOf: number | undefined;
-  count?: number;
-  maintenance?: Span[];
   className?: string;
 }) {
-  const laid = layoutReportSlots({
-    slots: results ?? [],
-    slotSeconds: windowSeconds,
-    graceSeconds,
-    settleSeconds,
-    since,
-    now,
-    asOf,
-    count,
-    maintenance,
-  });
   const summary = heartbeatSummary(
-    laid.map((slot) => slot.sample?.status ?? null),
-    spanText(count * windowSeconds),
+    uptimeOf(slots),
+    spanText(slots.length * windowSeconds),
   );
   return (
     <div
@@ -124,36 +113,13 @@ export function HeartbeatStrip({
       aria-label={summary}
       className={cn("flex h-[18px] min-w-0 gap-0.5", className)}
     >
-      {laid.map((slot) => {
-        const down = slot.sample?.status === "DOWN";
-        const incident = down
-          ? incidentDuring(slot.start, windowSeconds * 1000, incidents)
-          : undefined;
-        const planned =
-          slot.state === "maintenance" ||
-          overlaps(maintenance, slot.start, windowSeconds * 1000);
-        const tip = slotTip(
-          slot.start,
-          slot.sample,
-          down && !incident,
-          clockTime,
-          planned && !incident,
-        );
-        const tone = cn(
-          "bar-tip flex-1 rounded-[2px]",
-          BAR_CLASS[
-            barTone(
-              slot.state,
-              slot.sample?.status ?? null,
-              Boolean(incident),
-              planned,
-            )
-          ],
-        );
-        return incident ? (
+      {slots.map((slot) => {
+        const tip = slotTip(slot, slot.tone, clockTime);
+        const tone = cn("bar-tip flex-1 rounded-[2px]", BAR_CLASS[slot.tone]);
+        return slot.incident ? (
           <Link
             key={slot.start}
-            to={`/incidents/${incident.id}`}
+            to={`/incidents/${slot.incident.id}`}
             data-tip={tip}
             aria-label={`${tip}. Open the incident`}
             className={tone}

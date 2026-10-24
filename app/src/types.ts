@@ -107,6 +107,7 @@ export interface IncidentDetail {
   public?: boolean;
   actions?: ActionRecord[];
   lastGood?: { t: string; latencyMs: number | null } | null;
+  quiet?: QuietSpan[];
 }
 
 export interface IncidentBoard {
@@ -181,6 +182,7 @@ export interface RecentSlot {
 export interface RecentNode {
   slotSeconds: number;
   slots: RecentSlot[];
+  quiet?: QuietSpan[];
 }
 
 export interface RecentMetrics {
@@ -194,15 +196,21 @@ export interface CheckResult {
   message: string | null;
 }
 
+export interface QuietSpan {
+  from: string;
+  to: string | null;
+  why: "offline" | "routine";
+}
+
 interface CheckHistory {
   results: CheckResult[];
-  up4h: number | null;
 }
 
 export interface CheckResults {
   windowSeconds: number;
   from: string;
   checks: Record<string, CheckHistory>;
+  nodes?: Record<string, { quiet: QuietSpan[] }>;
 }
 
 export type ServiceKind = "systemd" | "docker";

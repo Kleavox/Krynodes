@@ -47,7 +47,7 @@ function Controls({ item }: { item: RemovedMember }) {
   if (item.blocker) {
     return (
       <p className="text-right text-xs text-muted-foreground">
-        {item.blocker === "Not trusted yet" ? (
+        {item.blocker === "Not Trusted Yet" ? (
           <Link
             to="/devices"
             className="underline underline-offset-4 hover:text-foreground"
@@ -81,7 +81,7 @@ function Controls({ item }: { item: RemovedMember }) {
         label={`${project} on ${node.name} actions`}
         items={[
           {
-            label: "Delete permanently",
+            label: "Delete Permanently",
             destructive: true,
             onSelect: () =>
               setConfirming({

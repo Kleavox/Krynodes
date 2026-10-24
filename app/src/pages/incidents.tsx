@@ -54,7 +54,7 @@ export function IncidentsPage() {
         actions={
           incidents.length > 0 && (
             <FilterChips
-              label="Filter incidents"
+              label="Filter Incidents"
               value={filter}
               onChange={(value) =>
                 setParams(value === "all" ? {} : { status: value }, {
@@ -74,16 +74,16 @@ export function IncidentsPage() {
       {incidents.length === 0 ? (
         hasChecks ? (
           <EmptyState
-            title="No incidents recorded"
+            title="No Incidents Recorded"
             body="An incident opens after consecutive check failures and closes when the check recovers."
           />
         ) : (
           <EmptyState
-            title="No checks configured"
+            title="No Checks Configured"
             body="Add a check to start recording incidents."
             action={
               <Button asChild>
-                <Link to="/checks?add=1">Add check</Link>
+                <Link to="/checks?add=1">Add Check</Link>
               </Button>
             }
           />
@@ -92,7 +92,7 @@ export function IncidentsPage() {
         <div className="space-y-6">
           {filter !== "resolved" &&
             (open.length > 0 ? (
-              <section aria-label="Open incidents" className="space-y-3">
+              <section aria-label="Open Incidents" className="space-y-3">
                 {open.map((incident) => (
                   <OpenIncident
                     key={incident.id}
@@ -105,7 +105,7 @@ export function IncidentsPage() {
             ) : (
               filter === "open" && (
                 <EmptyState
-                  title="Nothing is open"
+                  title="Nothing Is Open"
                   body="Every recorded incident has resolved."
                 />
               )
@@ -116,7 +116,7 @@ export function IncidentsPage() {
                 <div className="mb-2 flex min-h-8 flex-wrap items-baseline gap-x-3">
                   <h2
                     id="resolved-incidents"
-                    className="text-[11px] tracking-wider text-muted-foreground uppercase"
+                    className="text-xs font-medium text-muted-foreground"
                   >
                     Resolved
                   </h2>
@@ -135,7 +135,7 @@ export function IncidentsPage() {
             ) : (
               filter === "resolved" && (
                 <EmptyState
-                  title="No resolved incidents yet"
+                  title="No Resolved Incidents Yet"
                   body="Resolved incidents appear here, newest first."
                 />
               )
@@ -183,7 +183,7 @@ function OpenIncident({
           </span>
         )}
         <span className="text-xs font-normal text-muted-foreground">
-          on{" "}
+          On{" "}
           <Link
             to={`/nodes/${incident.node_id}`}
             className="text-foreground hover:underline"
@@ -200,7 +200,7 @@ function OpenIncident({
           <span className="text-destructive">{incident.summary} · </span>
         )}
         <span className="text-muted-foreground">
-          since{" "}
+          Since{" "}
           {now - start < 86_400_000
             ? clockTime(start)
             : `${shortDate(start)} ${clockTime(start)}`}

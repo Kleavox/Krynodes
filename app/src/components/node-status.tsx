@@ -1,5 +1,5 @@
 import { StatusChip, nodeTone } from "@/components/status";
-import type { NodeState } from "@/lib/format";
+import { capitalize, type NodeState } from "@/lib/format";
 import { elapsedText, type ServerOperation } from "@/lib/operations";
 import { useNow } from "@/lib/use-now";
 
@@ -13,8 +13,8 @@ export function OperationText({ operation }: { operation: ServerOperation }) {
     return (
       <>
         {operation.stopped
-          ? "Delete stopped · open Delete node to try again"
-          : "Deleting · it disappears once Krynodes finishes"}
+          ? "Delete Stopped · Open Delete Node to try again"
+          : "Deleting · It disappears once Krynodes finishes"}
       </>
     );
   }
@@ -27,8 +27,8 @@ export function OperationText({ operation }: { operation: ServerOperation }) {
   }
   return (
     <>
-      Updating agent to {operation.version}
-      {operation.attempt > 1 && ` · try ${operation.attempt} of 3`}
+      Updating Agent to {operation.version}
+      {operation.attempt > 1 && ` · Try ${operation.attempt} of 3`}
     </>
   );
 }
@@ -69,7 +69,7 @@ export function NodeStatus({
         tone="warn"
         pulse
         label="updating"
-        detail={`agent ${operation.version}`}
+        detail={`Agent ${operation.version}`}
       />
     );
   }
@@ -77,7 +77,11 @@ export function NodeStatus({
     <StatusChip
       tone={nodeTone(state)}
       label={state === "disabled" ? "removed" : state}
-      detail={state === "offline" ? offlineDetail : undefined}
+      detail={
+        state === "offline" && offlineDetail
+          ? capitalize(offlineDetail)
+          : undefined
+      }
     />
   );
 }

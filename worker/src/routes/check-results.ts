@@ -4,7 +4,9 @@ import { z } from "zod";
 
 import { loadEstate } from "../actions/attention";
 import type { ActionRow } from "../actions/store";
+import { quietByNode } from "../agent/quiet";
 import { expandResults, windowSize, type WindowRow } from "../agent/windows";
+import { fleetLive, mergeLive } from "../fleet/client";
 import { READ_ONLY, toActionRecord } from "./services";
 import {
   invalidRequest,
@@ -42,10 +44,26 @@ interface IncidentRow {
 }
 
 export const CHECK_RESULTS_SQL = `
-  SELECT w.window_start, w.checks
+  SELECT w.node_id, w.window_start, w.checks, w.uptime_seconds
   FROM nodes n
   JOIN node_windows w ON w.node_id = n.id AND w.window_start >= ?2
   WHERE n.owner_user_id = ?1`;
+
+const QUIET_NODES_SQL = `
+  SELECT id, interval_seconds, last_seen_at, security FROM nodes
+  WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
+
+type QuietWindow = WindowRow & {
+  node_id: string;
+  uptime_seconds: number | null;
+};
+
+interface QuietNode {
+  id: string;
+  interval_seconds: number;
+  last_seen_at: string | null;
+  security: string | null;
+}
 
 const OWNED_CHECKS_SQL = `
   SELECT c.id FROM checks c
@@ -89,7 +107,6 @@ interface CheckHistory {
     latencyMs: number | null;
     message: string | null;
   }[];
-  up4h: number | null;
 }
 
 export function registerCheckResultRoutes(
@@ -101,27 +118,33 @@ export function registerCheckResultRoutes(
     const from = new Date(
       (Math.floor((Date.now() - SPAN_MS) / WINDOW_MS) - 2) * WINDOW_MS,
     ).toISOString();
-    const [rows, owned] = await Promise.all([
+    const [rows, owned, nodes, live] = await Promise.all([
       context.env.DB.prepare(CHECK_RESULTS_SQL)
         .bind(ownerId, from)
-        .all<WindowRow>(),
+        .all<QuietWindow>(),
       context.env.DB.prepare(OWNED_CHECKS_SQL)
         .bind(ownerId)
         .all<{ id: string }>(),
+      context.env.DB.prepare(QUIET_NODES_SQL).bind(ownerId).all<QuietNode>(),
+      fleetLive(context.env, ownerId),
     ]);
     const expanded = expandResults(
       rows.results,
       new Set(owned.results.map((row) => row.id)),
     );
     const checks: Record<string, CheckHistory> = {};
-    for (const [checkId, results] of expanded) {
-      const up = results.filter((result) => result.status === "UP").length;
-      checks[checkId] = {
-        results,
-        up4h: results.length > 0 ? (up / results.length) * 100 : null,
-      };
-    }
-    return context.json({ windowSeconds: 300, from, checks });
+    for (const [checkId, results] of expanded) checks[checkId] = { results };
+    return context.json({
+      windowSeconds: 300,
+      from,
+      checks,
+      nodes: quietByNode(
+        rows.results,
+        mergeLive(nodes.results, live?.nodes ?? null),
+        Date.parse(from),
+        Date.now(),
+      ),
+    });
   });
 
   app.get("/api/incidents/board", requireAdmin, async (context) => {
@@ -244,13 +267,19 @@ export function registerCheckResultRoutes(
     const end =
       (incident.resolved_at ? epoch(incident.resolved_at) : Date.now()) +
       INCIDENT_PAD_MS;
-    const node = await db
-      .prepare("SELECT interval_seconds FROM nodes WHERE id = ?")
-      .bind(incident.node_id)
-      .first<{ interval_seconds: number }>();
+    const owner = context.get("identity").id;
+    const [node, live] = await Promise.all([
+      db
+        .prepare(
+          "SELECT id, interval_seconds, last_seen_at, security FROM nodes WHERE id = ?",
+        )
+        .bind(incident.node_id)
+        .first<QuietNode>(),
+      fleetLive(context.env, owner),
+    ]);
     const rows = await db
       .prepare(
-        `SELECT window_start, checks FROM node_windows
+        `SELECT node_id, window_start, checks, uptime_seconds FROM node_windows
          WHERE node_id = ? AND window_start >= ? AND window_start <= ?
          ORDER BY window_start DESC LIMIT 100`,
       )
@@ -261,7 +290,7 @@ export function registerCheckResultRoutes(
         ).toISOString(),
         new Date(end).toISOString(),
       )
-      .all<WindowRow>();
+      .all<QuietWindow>();
     const results = (
       expandResults(rows.results, new Set([incident.check_id])).get(
         incident.check_id,
@@ -293,7 +322,7 @@ export function registerCheckResultRoutes(
         )
         .bind(incident.node_id, new Date(start).toISOString())
         .all<ActionRow>(),
-      loadEstate(db, context.get("identity").id),
+      loadEstate(db, owner),
     ]);
     const lastGood = results.find(
       (result) =>
@@ -313,6 +342,14 @@ export function registerCheckResultRoutes(
       lastGood: lastGood
         ? { t: lastGood.t, latencyMs: lastGood.latencyMs }
         : null,
+      quiet: node
+        ? (quietByNode(
+            rows.results,
+            mergeLive([node], live?.nodes ?? null),
+            start,
+            now,
+          )[node.id]?.quiet ?? [])
+        : [],
     });
   });
 

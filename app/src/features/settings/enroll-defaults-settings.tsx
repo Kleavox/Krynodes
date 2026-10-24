@@ -15,7 +15,7 @@ export function EnrollDefaultsSettings() {
   const current = useEnrollDefaults(true);
   return (
     <SettingsSection
-      title="Enroll defaults"
+      title="Enroll Defaults"
       description="What a new install command sets up. You can still change it for one server when you enroll it."
     >
       {current.data ? (

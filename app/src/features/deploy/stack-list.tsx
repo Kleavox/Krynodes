@@ -66,7 +66,7 @@ function Addresses({ addresses }: { addresses: WebAddress[] }) {
           className="truncate text-primary underline-offset-4 hover:underline"
         >
           {address.hostname}
-          {address.mode === "everyone" ? "" : " · login"}
+          {address.mode === "everyone" ? "" : " · Login"}
         </a>
       ))}
     </span>
@@ -145,7 +145,7 @@ function StackControls({
   if (blocker) {
     return (
       <p className="text-right text-xs text-muted-foreground">
-        {blocker === "Not trusted yet" ? (
+        {blocker === "Not Trusted Yet" ? (
           <Link
             to="/devices"
             className="underline underline-offset-4 hover:text-foreground"
@@ -170,7 +170,7 @@ function StackControls({
         items={[
           { label: "Deploy", onSelect: deploy },
           ...(member.stack.rollback
-            ? [{ label: "Roll back", onSelect: rollback }]
+            ? [{ label: "Roll Back", onSelect: rollback }]
             : []),
           ...(commands.includes("start")
             ? [{ label: "Start", onSelect: () => direct("start") }]
@@ -193,19 +193,19 @@ function StackControls({
           ...(modern
             ? [
                 {
-                  label: own ? "Edit compose" : "View compose",
+                  label: own ? "Edit Compose" : "View Compose",
                   onSelect: openPanel("compose"),
                 },
-                { label: "Web address…", onSelect: openPanel("address") },
+                { label: "Web Address…", onSelect: openPanel("address") },
                 ...(addresses.length > 0
                   ? [
                       {
-                        label: "Close web address…",
+                        label: "Close Web Address…",
                         onSelect: openPanel("close"),
                       },
                     ]
                   : []),
-                { label: "Move to server…", onSelect: openPanel("move") },
+                { label: "Move to Server…", onSelect: openPanel("move") },
                 ...(own
                   ? []
                   : [
@@ -233,7 +233,7 @@ function StackControls({
                   onSelect: () => confirm("remove"),
                 },
                 {
-                  label: "Delete permanently",
+                  label: "Delete Permanently",
                   destructive: true,
                   onSelect: () => confirm("purge"),
                 },

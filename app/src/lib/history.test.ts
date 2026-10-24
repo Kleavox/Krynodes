@@ -286,7 +286,7 @@ describe("one action line", () => {
       time: "09:24",
       mark: "✕",
       text: "Restart pihole",
-      failure: "exit 1 · port 53 is already allocated",
+      failure: "Exit 1 · port 53 is already allocated",
     });
     expect(JSON.stringify(line)).not.toContain("09:25");
   });
@@ -301,7 +301,7 @@ describe("one action line", () => {
 
   it("says the exit code alone when the output is empty", () => {
     expect(actionLine({ ...failed, output: "" }, { stacks }).failure).toBe(
-      "exit 1",
+      "Exit 1",
     );
   });
 

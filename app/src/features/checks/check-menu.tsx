@@ -48,16 +48,16 @@ export function CheckMenu({
         items={[
           { label: "Edit", onSelect: () => setOpen("edit") },
           { label: paused ? "Resume" : "Pause", onSelect: togglePause },
-          ...(restart ? [{ label: "Restart service", onSelect: restart }] : []),
+          ...(restart ? [{ label: "Restart Service", onSelect: restart }] : []),
           ...(check.kind === "SERVICE"
             ? [
                 {
-                  label: "Restart automatically",
+                  label: "Restart Automatically",
                   onSelect: () => setOpen("auto"),
                 },
               ]
             : []),
-          { label: "Status page", onSelect: () => setOpen("status") },
+          { label: "Status Page", onSelect: () => setOpen("status") },
           {
             label: "Remove",
             destructive: true,
@@ -87,7 +87,7 @@ export function CheckMenu({
         onOpenChange={(next) => setOpen(next ? "remove" : null)}
         title={`Remove ${check.name}?`}
         description="Its results and incidents are deleted with it. To stop it for a while instead, pause it."
-        confirmLabel="Remove check"
+        confirmLabel="Remove Check"
         guarded
         mutation={remove}
         variables={check.id}

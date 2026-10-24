@@ -29,7 +29,7 @@ export function nodeState(
     : "offline";
 }
 
-export type CheckDisplay = CheckStatus | "STALE" | "PAUSED";
+export type CheckDisplay = CheckStatus | "OFFLINE" | "STALE" | "PAUSED";
 
 export function checkDisplayStatus(
   status: CheckStatus,
@@ -37,6 +37,7 @@ export function checkDisplayStatus(
   enabled: boolean | number = true,
 ): CheckDisplay {
   if (!enabled) return "PAUSED";
+  if (node === "offline") return "OFFLINE";
   if (node === "online" || status === "UNKNOWN") return status;
   return "STALE";
 }
@@ -45,7 +46,7 @@ export function publicLabel(
   check: Pick<CheckRecord, "public" | "enabled">,
 ): string | null {
   if (!check.public) return null;
-  return check.enabled ? "public" : "public · paused";
+  return check.enabled ? "Public" : "Public · Paused";
 }
 
 export function percentage(
@@ -95,6 +96,34 @@ export function formatUptime(seconds: number | null): string {
 export function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+const SMALL_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "of",
+  "on",
+  "in",
+  "to",
+  "by",
+  "for",
+  "at",
+  "with",
+  "into",
+  "from",
+]);
+
+export const titleCase = (text: string) =>
+  text
+    .split(" ")
+    .map((word, index) =>
+      index > 0 && SMALL_WORDS.has(word.toLowerCase())
+        ? word.toLowerCase()
+        : capitalize(word),
+    )
+    .join(" ");
 
 export function timeAgo(value: string | null, now = Date.now()): string {
   if (!value) return "never";

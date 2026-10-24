@@ -32,13 +32,13 @@ const io = (change: Partial<NodeRecord> = {}): NodeRecord => ({
 describe("the server page's facts", () => {
   it("say what the server is in one line of words", () => {
     expect(systemFacts(io())).toBe(
-      "Debian 12 · amd64 · up 37 days · reports every minute · agent 0.6.13",
+      "Debian 12 · amd64 · Up 37 days · Reports every minute · Agent 0.6.13",
     );
   });
 
   it("name the host only when it differs from the server", () => {
     expect(systemFacts(io({ hostname: "io-sg1" }))).toBe(
-      "Debian 12 · amd64 · up 37 days · reports every minute · agent 0.6.13 · host io-sg1",
+      "Debian 12 · amd64 · Up 37 days · Reports every minute · Agent 0.6.13 · Host io-sg1",
     );
   });
 
@@ -51,11 +51,11 @@ describe("the server page's facts", () => {
   it("count short spans in hours and minutes, intervals in words", () => {
     expect(
       systemFacts(io({ uptime_seconds: 1, interval_seconds: 300 })),
-    ).toContain("up 1 second · reports every 5 minutes");
+    ).toContain("Up 1 second · Reports every 5 minutes");
     expect(
       systemFacts(io({ uptime_seconds: 5 * 3_600, interval_seconds: 30 })),
-    ).toContain("up 5 hours · reports every 30 seconds");
-    expect(systemFacts(io({ uptime_seconds: 90 * 60 }))).toContain("up 1 hour");
+    ).toContain("Up 5 hours · Reports every 30 seconds");
+    expect(systemFacts(io({ uptime_seconds: 90 * 60 }))).toContain("Up 1 hour");
   });
 
   it("leave out what it does not know", () => {
@@ -67,7 +67,7 @@ describe("the server page's facts", () => {
           operating_system: null,
         }),
       ),
-    ).toBe("amd64 · reports every minute");
+    ).toBe("amd64 · Reports every minute");
   });
 });
 

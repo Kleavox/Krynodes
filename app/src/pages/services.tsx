@@ -80,7 +80,7 @@ export function ServicesPage() {
             <>
               <Button onClick={() => setCreating(true)}>
                 <Plus aria-hidden="true" />
-                New stack
+                New Stack
               </Button>
               <Button
                 variant="outline"
@@ -88,7 +88,7 @@ export function ServicesPage() {
                 onClick={() => refresh.mutate(undefined)}
               >
                 <RefreshCw aria-hidden="true" />
-                {refreshing ? "Refreshing…" : "Refresh all"}
+                {refreshing ? "Refreshing…" : "Refresh All"}
               </Button>
             </>
           )
@@ -97,7 +97,7 @@ export function ServicesPage() {
 
       {nodes.length === 0 ? (
         <EmptyState
-          title="No servers yet"
+          title="No Servers Yet"
           body="Enroll a server from Fleet. Its services appear here within five minutes."
           action={
             <Button asChild>

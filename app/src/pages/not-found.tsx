@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 export function NotFoundPage() {
   return (
     <>
-      <PageHeader title="Page not found" />
+      <PageHeader title="Page Not Found" />
       <EmptyState
         title="There is nothing at this address"
         body="Check the link, or go back to the fleet."

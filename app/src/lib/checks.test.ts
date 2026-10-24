@@ -10,7 +10,7 @@ import type {
 } from "../types";
 import {
   autoRestartLine,
-  checkFigure,
+  checkLive,
   checksByServer,
   checkTargetProblem,
   containerChecksReady,
@@ -184,18 +184,17 @@ describe("checks by server", () => {
     check("HTTP", { id: "gone", node_id: "old", name: "Old", status: "DOWN" }),
   ];
 
-  it("keeps Fleet's server order, down checks first, and counts only what is down now", () => {
+  it("keeps Fleet's server order, down checks first", () => {
     expect(
       checksByServer(checks, nodes, NOW).map((group) => [
         group.node.name,
         group.checks.map((item) => item.name),
-        group.down,
       ]),
     ).toEqual([
-      ["io", ["Umami", "Blog", "SSH"], 1],
-      ["pivox", ["Pi-hole", "tailscaled"], 1],
-      ["calisto", ["MinIO console", "postgresql"], 0],
-      ["old", ["Old"], 0],
+      ["io", ["Umami", "Blog", "SSH"]],
+      ["pivox", ["Pi-hole", "tailscaled"]],
+      ["calisto", ["MinIO console", "postgresql"]],
+      ["old", ["Old"]],
     ]);
   });
 
@@ -271,9 +270,9 @@ describe("the Down box", () => {
   });
 
   it("names an open incident with its updates", () => {
-    expect(incidentLine(0)).toBe("Incident open →");
-    expect(incidentLine(1)).toBe("Incident open · 1 update →");
-    expect(incidentLine(3)).toBe("Incident open · 3 updates →");
+    expect(incidentLine(0)).toBe("Incident Open →");
+    expect(incidentLine(1)).toBe("Incident Open · 1 update →");
+    expect(incidentLine(3)).toBe("Incident Open · 3 updates →");
   });
 
   it("tells a failed auto-restart of the check's unit, with its first error", () => {
@@ -290,95 +289,99 @@ describe("the Down box", () => {
   });
 });
 
-describe("a check's last column", () => {
+describe("a check's live status", () => {
   const latest = (latencyMs: number) => ({
     results: [
       { t: before(60_000), status: "UP" as const, latencyMs, message: null },
     ],
   });
   const opened = { started_at: before(36 * 60_000) } as Incident;
+  const live = (values: Partial<Parameters<typeof checkLive>[0]>) =>
+    checkLive({ check: check("HTTP"), display: "UP", now: NOW, ...values });
 
-  it("says latency for HTTP and TCP", () => {
-    expect(checkFigure(check("HTTP"), "UP", undefined, latest(130), NOW)).toBe(
-      "130ms",
-    );
-    expect(checkFigure(check("TCP"), "UP", undefined, latest(4), NOW)).toBe(
-      "4ms",
-    );
-  });
-
-  it("says how long a container has run and a unit has been active", () => {
+  it("says latency for HTTP and TCP, and how long a container or unit has run", () => {
+    expect(live({ latest: latest(130) })).toEqual({
+      label: "130ms",
+      tone: "ok",
+    });
+    expect(live({ check: check("TCP"), latest: latest(4) }).label).toBe("4ms");
     expect(
-      checkFigure(
-        check("CONTAINER", { since: before(4 * 60_000) }),
-        "UP",
-        undefined,
-        undefined,
-        NOW,
-      ),
-    ).toBe("running 4m");
+      live({ check: check("CONTAINER", { since: before(4 * 60_000) }) }).label,
+    ).toBe("Running 4m");
     expect(
-      checkFigure(
-        check("SERVICE", { since: before(37 * 86_400_000) }),
-        "UP",
-        undefined,
-        latest(9),
-        NOW,
-      ),
-    ).toBe("active 37d");
-  });
-
-  it("says running or active alone when an older agent sent no start", () => {
-    expect(
-      checkFigure(check("CONTAINER"), "UP", undefined, undefined, NOW),
-    ).toBe("running");
-    expect(checkFigure(check("SERVICE"), "UP", undefined, latest(9), NOW)).toBe(
-      "active",
+      live({
+        check: check("SERVICE", { since: before(37 * 86_400_000) }),
+        latest: latest(9),
+      }).label,
+    ).toBe("Active 37d");
+    expect(live({ check: check("CONTAINER") }).label).toBe("Running");
+    expect(live({ check: check("SERVICE"), latest: latest(9) }).label).toBe(
+      "Active",
     );
   });
 
-  it("counts down from the open incident, or says down alone", () => {
+  it("counts down from the open incident, amber until one opens, and names an auto-restart", () => {
+    expect(live({ display: "DOWN", incident: opened })).toEqual({
+      label: "Down 36m",
+      tone: "bad",
+    });
+    expect(live({ display: "DOWN" })).toEqual({ label: "Down", tone: "warn" });
     expect(
-      checkFigure(
-        check("HTTP", { status: "DOWN" }),
-        "DOWN",
-        opened,
-        latest(1),
-        NOW,
-      ),
-    ).toBe("down 36m");
-    expect(
-      checkFigure(
-        check("CONTAINER", { status: "DOWN" }),
-        "DOWN",
-        undefined,
-        undefined,
-        NOW,
-      ),
-    ).toBe("down");
+      live({ display: "DOWN", incident: opened, healing: true }).label,
+    ).toBe("Down 36m · Auto-Restarting");
   });
 
-  it("says nothing before a first result or for an offline server's check", () => {
-    expect(checkFigure(check("HTTP"), "UP", undefined, undefined, NOW)).toBe(
-      "--",
+  it("names work by you instead of down, unless an incident is open", () => {
+    const work = [{ from: NOW - 60_000, to: Infinity, label: "Roll Back" }];
+    expect(live({ display: "DOWN", work })).toEqual({
+      label: "Roll Back by You",
+      tone: "work",
+    });
+    expect(
+      live({ display: "OFFLINE", work, lastSeen: before(60_000) }).label,
+    ).toBe("Roll Back by You");
+    expect(live({ display: "DOWN", work, incident: opened }).label).toBe(
+      "Down 36m",
     );
     expect(
-      checkFigure(
-        check("HTTP", { status: "UNKNOWN" }),
-        "UNKNOWN",
-        undefined,
-        undefined,
-        NOW,
-      ),
-    ).toBe("--");
+      live({
+        display: "DOWN",
+        work: [{ from: NOW - 600_000, to: NOW - 60_000, label: "Restart" }],
+      }).label,
+    ).toBe("Down");
+    expect(live({ work, latest: latest(4) }).label).toBe("4ms");
+  });
+
+  it("tells a server that went offline from its routine restart", () => {
+    expect(live({ display: "OFFLINE", lastSeen: before(12 * 60_000) })).toEqual(
+      { label: "Offline 12m", tone: "off" },
+    );
+    expect(live({ display: "OFFLINE", lastSeen: null }).label).toBe("Offline");
     expect(
-      checkFigure(
-        check("CONTAINER", { since: before(60_000) }),
-        "offline",
-        undefined,
-        latest(1),
-        NOW,
-      ),
-    ).toBe("--");
+      live({
+        display: "OFFLINE",
+        lastSeen: before(3 * 60_000),
+        quiet: [{ from: before(3 * 60_000), to: null, why: "routine" }],
+      }),
+    ).toEqual({ label: "Routine Restart", tone: "info" });
+    expect(
+      live({
+        display: "OFFLINE",
+        lastSeen: before(15 * 60_000),
+        quiet: [
+          { from: before(15 * 60_000), to: before(5 * 60_000), why: "routine" },
+          { from: before(5 * 60_000), to: null, why: "offline" },
+        ],
+      }).label,
+    ).toBe("Offline 15m");
+  });
+
+  it("says paused, or nothing before a first result", () => {
+    expect(
+      live({ check: check("HTTP", { enabled: 0 }), display: "PAUSED" }),
+    ).toEqual({ label: "Paused", tone: "idle" });
+    expect(live({})).toEqual({ label: "--", tone: "ok" });
+    expect(live({ display: "UNKNOWN" })).toEqual({ label: "--", tone: "idle" });
+    expect(live({ display: "STALE" })).toEqual({ label: "--", tone: "idle" });
   });
 });

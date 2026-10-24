@@ -45,7 +45,7 @@ function Holders({
           <StatusDot tone={node.online ? "ok" : "bad"} />
           <span className="truncate">{node.name}</span>
           <span className="ml-auto font-mono text-xs text-muted-foreground">
-            {node.online ? "Holds a piece" : "Holds a piece · offline"}
+            {node.online ? "Holds a Piece" : "Holds a Piece · Offline"}
           </span>
         </li>
       ))}
@@ -54,7 +54,7 @@ function Holders({
           <StatusDot tone="warn" />
           <span className="truncate">{node.name}</span>
           <span className="ml-auto font-mono text-xs text-muted-foreground">
-            No piece yet
+            No Piece Yet
           </span>
         </li>
       ))}
@@ -158,7 +158,7 @@ export function CloudflareSettings() {
       <div className="space-y-8">
         <section aria-labelledby="pieces" className="space-y-3">
           <h3 id="pieces" className={SUBTITLE}>
-            Where the token is
+            Where the Token Is
           </h3>
           <p className="text-sm text-muted-foreground">
             The token is split into pieces, one for each server this device can
@@ -189,7 +189,7 @@ export function CloudflareSettings() {
                 disabled={operate.isPending}
                 onClick={spread}
               >
-                Spread again
+                Spread Again
               </Button>
             ) : (
               <p className="text-sm text-muted-foreground">
@@ -201,7 +201,7 @@ export function CloudflareSettings() {
 
         <section aria-labelledby="paste" className="space-y-3">
           <h3 id="paste" className={SUBTITLE}>
-            {setId ? "Replace token" : "Add a token"}
+            {setId ? "Replace Token" : "Add a Token"}
           </h3>
           <p className="text-sm text-muted-foreground">
             In Cloudflare, make an API token with only these permissions and an
@@ -266,8 +266,8 @@ export function CloudflareSettings() {
             onClick={split}
           >
             {operate.isPending
-              ? "Waiting for the fingerprint…"
-              : "Split across my servers"}
+              ? "Waiting for the Fingerprint…"
+              : "Split Across My Servers"}
           </Button>
         </section>
       </div>

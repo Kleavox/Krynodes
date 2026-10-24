@@ -1,3 +1,9 @@
+import {
+  isWork,
+  workTouches,
+  type OwnerServer,
+} from "@krynodes/protocol/owner";
+
 import type {
   ActionRecord,
   ActionStatus,
@@ -6,7 +12,8 @@ import type {
 } from "../types";
 import { agentState } from "./agent";
 import { displayHandle, parseTimestamp } from "./format";
-import { displayName, isPending } from "./services";
+import type { WorkSpan } from "./series";
+import { displayName, isPending, verb } from "./services";
 
 const REBOOT_WINDOW_MS = 10 * 60_000;
 const SETTLE_MS = 2 * 60_000;
@@ -169,18 +176,20 @@ export function elapsedText(milliseconds: number): string {
 
 const RAN = new Set<ActionStatus>(["queued", "sent", "done", "failed"]);
 
-const NOT_PLANNED = new Set(["logs", "autorestart", "manual"]);
+const NO_SERVER: OwnerServer = { stacks: [], services: [] };
 
-export function maintenanceSpans(
+export function workSpans(
   actions: ActionRecord[],
   nodeId: string,
-): { from: number; to: number }[] {
+  check?: { kind: string; target: string },
+  server: OwnerServer = NO_SERVER,
+): WorkSpan[] {
   return actions
     .filter(
       (action) =>
         action.nodeId === nodeId &&
-        !NOT_PLANNED.has(action.action) &&
-        RAN.has(action.status),
+        RAN.has(action.status) &&
+        (check ? workTouches(check, action, server) : isWork(action)),
     )
     .map((action) => ({
       from: parseTimestamp(action.sentAt ?? action.requestedAt),
@@ -188,6 +197,7 @@ export function maintenanceSpans(
         ? parseTimestamp(action.finishedAt) +
           (action.action === "reboot" ? REBOOT_WINDOW_MS : SETTLE_MS)
         : Infinity,
+      label: verb(action.action),
     }));
 }
 

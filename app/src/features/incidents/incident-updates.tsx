@@ -159,7 +159,7 @@ function TimelineRow({
         <Event
           tone="ok"
           titleClass="text-success"
-          title="Last good check"
+          title="Last Good Check"
           when={
             event.latencyMs === null
               ? stampTime(event.at, now)
@@ -251,7 +251,7 @@ export function UpdateForm({ detail }: { detail: IncidentDetail }) {
           className="h-9 shrink-0"
           disabled={text.length === 0 || post.isPending}
         >
-          {post.isPending ? "Posting…" : "Post update"}
+          {post.isPending ? "Posting…" : "Post Update"}
         </Button>
       </div>
       {post.error && (

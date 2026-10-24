@@ -201,7 +201,7 @@ export const moveBlocker = (
 export function deployBlocker(member: StackMember): string | null {
   if (!agentCurrent(member.node)) return `Needs agent ${MIN_AGENT_VERSION}`;
   if (!member.stack.compose) return "Docker Compose is not installed";
-  if (!member.trusted) return "Not trusted yet";
+  if (!member.trusted) return "Not Trusted Yet";
   return null;
 }
 
@@ -267,10 +267,10 @@ export function newStackBlocker(
   entry: ServicesResponse["nodes"][number] | undefined,
 ): string | null {
   if (!agentCurrent(node)) return `Needs agent ${MIN_AGENT_VERSION}`;
-  if (!entry?.docker) return "Docker not reported yet";
+  if (!entry?.docker) return "Docker Not Reported Yet";
   if (entry.docker === "missing") return "No Docker";
   if (entry.docker === "no-compose") return "Docker without Compose";
-  if ((entry.trust?.access.length ?? 0) === 0) return "Not trusted yet";
+  if ((entry.trust?.access.length ?? 0) === 0) return "Not Trusted Yet";
   return null;
 }
 
@@ -543,7 +543,7 @@ export function servicesAttention(
           ? failureText(failure, now)
           : down
             ? stateText(down, now)
-            : "Not running",
+            : "Not Running",
         primary:
           failure?.action === "deploy" && stack.rollback
             ? "rollback"
@@ -577,7 +577,7 @@ export function servicesAttention(
             : "start",
         target: toTarget(service),
         stack: null,
-        blocker: list.trusted ? null : "Not trusted yet",
+        blocker: list.trusted ? null : "Not Trusted Yet",
         latest: service.action,
       });
     }

@@ -97,7 +97,7 @@ export function InstallDockerDialog({
           >
             {!run.isPending && <Fingerprint aria-hidden="true" />}
             {run.isPending
-              ? "Waiting for the fingerprint…"
+              ? "Waiting for the Fingerprint…"
               : composeOnly
                 ? "Add Compose"
                 : "Install Docker"}

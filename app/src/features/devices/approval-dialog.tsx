@@ -178,8 +178,8 @@ function Body({
           >
             <Fingerprint aria-hidden="true" />
             {working
-              ? "Waiting for the fingerprint…"
-              : "Approve with fingerprint"}
+              ? "Waiting for the Fingerprint…"
+              : "Approve with Fingerprint"}
           </Button>
         )}
       </DialogFooter>

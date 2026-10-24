@@ -322,9 +322,9 @@ describe("a card's words", () => {
 
   it("says an open incident's length and the last resolved one's day", () => {
     const now = Date.parse("2026-10-24T03:28:00.000Z");
-    expect(incidentNote(incidents[0]!, now)).toBe("Incident open · down 1h 2m");
+    expect(incidentNote(incidents[0]!, now)).toBe("Incident Open · Down 1h 2m");
     expect(incidentNote(incidents[1]!, now)).toMatch(
-      /^Last incident 21 Oct, 12m$/u,
+      /^Last Incident 21 Oct, 12m$/u,
     );
   });
 });

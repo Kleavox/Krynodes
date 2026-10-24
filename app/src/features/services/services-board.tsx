@@ -29,7 +29,7 @@ import type { ActionRequest } from "./action-dialog";
 import { ServiceRows } from "./service-list";
 
 const KINDS: { value: KindFilter; label: string }[] = [
-  { value: "all", label: "All kinds" },
+  { value: "all", label: "All Kinds" },
   { value: "stack", label: "Stacks" },
   { value: "docker", label: "Containers" },
   { value: "systemd", label: "Systemd" },
@@ -116,7 +116,7 @@ export function ServicesBoard({
             htmlFor="system-services"
             className="text-xs text-muted-foreground"
           >
-            System services
+            System Services
           </Label>
         </div>
       </div>
@@ -144,7 +144,7 @@ export function ServicesBoard({
                   to={`/nodes/${box.node.id}`}
                   className="ml-auto font-mono text-xs text-primary underline-offset-4 hover:underline"
                 >
-                  Open server →
+                  Open Server →
                 </Link>
               </div>
               {box.stacks.length > 0 && (

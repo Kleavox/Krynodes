@@ -31,7 +31,7 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
     restart: { verb: "Restart", doing: "Restarting…", done: "Restarted" },
     deploy: { verb: "Deploy", doing: "Deploying…", done: "Deployed" },
     rollback: {
-      verb: "Roll back",
+      verb: "Roll Back",
       doing: "Rolling back…",
       done: "Rolled back",
     },
@@ -74,7 +74,7 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
     apply: { verb: "Turn on", doing: "Turning on…", done: "Turned on" },
     undo: { verb: "Turn off", doing: "Turning off…", done: "Turned off" },
     lockdown: {
-      verb: "Lock down",
+      verb: "Lock Down",
       doing: "Locking down…",
       done: "Locked down",
     },
@@ -93,10 +93,10 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
   };
 
 export const RECIPE_TITLES: Record<string, string> = {
-  "security-updates": "Automatic security updates",
-  "reboot-window": "Restart when needed",
+  "security-updates": "Automatic Security Updates",
+  "reboot-window": "Restart When Needed",
   "ssh-keys-only": "SSH keys only",
-  fail2ban: "Block repeated login failures",
+  fail2ban: "Block Repeated Login Failures",
   firewall: "Firewall",
   "free-port-53": "Free port 53",
 };
@@ -129,7 +129,7 @@ export interface ServerGroup {
 }
 
 export function displayName(kind: ActionKind, name: string): string {
-  if (kind === "trust") return "Trusted devices";
+  if (kind === "trust") return "Trusted Devices";
   if (kind === "vault") return "the Cloudflare token";
   if (kind === "host" && name === "docker") return "Docker";
   if (kind === "host") return RECIPE_TITLES[name]?.toLowerCase() ?? "server";
@@ -228,7 +228,7 @@ export function actionText(action: ActionRecord, nodeName: string): string {
     case "failed":
       return action.exitCode === null
         ? "Failed"
-        : `Failed · exit ${action.exitCode}`;
+        : `Failed · Exit ${action.exitCode}`;
     case "expired":
       return "Expired";
     case "cancelled":
@@ -359,6 +359,6 @@ export function autoRestartBlocker(
   }
   if (!serviceForCheck(check, data)) return "The unit is not on this server";
   const entry = data?.nodes.find((item) => item.id === check.node_id);
-  if ((entry?.trust?.access.length ?? 0) === 0) return "Not trusted yet";
+  if ((entry?.trust?.access.length ?? 0) === 0) return "Not Trusted Yet";
   return null;
 }

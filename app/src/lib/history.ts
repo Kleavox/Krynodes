@@ -201,7 +201,7 @@ export function actionLine(
 ) {
   const failure = failed(action)
     ? [
-        action.exitCode === null ? null : `exit ${action.exitCode}`,
+        action.exitCode === null ? null : `Exit ${action.exitCode}`,
         errorLine(action.output),
       ]
         .filter(Boolean)

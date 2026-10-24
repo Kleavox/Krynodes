@@ -228,7 +228,7 @@ describe("action labels", () => {
       ),
     ).toMatch(/^✓ Restarted \d\d:\d\d$/u);
     expect(actionText(action({ status: "failed", exitCode: 1 }), "PIVOX")).toBe(
-      "Failed · exit 1",
+      "Failed · Exit 1",
     );
     expect(actionText(action({ status: "failed" }), "PIVOX")).toBe("Failed");
     expect(actionText(action({ status: "expired" }), "PIVOX")).toBe("Expired");
@@ -484,7 +484,7 @@ describe("restart automatically", () => {
         node("n1", "pivox", "0.6.0"),
         entry({ trust: null }),
       ),
-    ).toBe("Not trusted yet");
+    ).toBe("Not Trusted Yet");
   });
 });
 

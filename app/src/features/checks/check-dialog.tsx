@@ -171,7 +171,7 @@ function CheckForm({
       <form className="space-y-4" onSubmit={submit} noValidate>
         <DialogHeader>
           <DialogTitle>
-            {check ? `Edit ${check.name}` : "Add check"}
+            {check ? `Edit ${check.name}` : "Add Check"}
           </DialogTitle>
           <DialogDescription>
             {check
@@ -180,7 +180,7 @@ function CheckForm({
           </DialogDescription>
         </DialogHeader>
         {choosesNode && (
-          <Field id="check-node" label="Runs on">
+          <Field id="check-node" label="Runs On">
             <Select value={node} onValueChange={chooseNode}>
               <SelectTrigger id="check-node" className="w-full">
                 <SelectValue placeholder="Choose a server" />
@@ -310,8 +310,8 @@ function CheckForm({
             {mutation.isPending
               ? "Saving…"
               : check
-                ? "Save changes"
-                : "Add check"}
+                ? "Save Changes"
+                : "Add Check"}
           </Button>
         </DialogFooter>
       </form>

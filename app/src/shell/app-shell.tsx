@@ -116,7 +116,7 @@ export function AppShell({
           variant="outline"
           size="sm"
           onClick={() => setPaletteOpen(true)}
-          aria-label="Search and commands"
+          aria-label="Search and Commands"
           aria-keyshortcuts="Control+K"
         >
           <Search aria-hidden="true" />
@@ -246,7 +246,7 @@ function AccountMenu({
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/devices">Trusted devices</Link>
+          <Link to="/devices">Trusted Devices</Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/settings">Settings</Link>

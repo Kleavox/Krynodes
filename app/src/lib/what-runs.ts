@@ -169,6 +169,6 @@ export function foldedUnitsText(units: string[]): string {
 export function incidentNote(incident: Incident, now: number): string {
   const start = parseTimestamp(incident.started_at);
   return incident.resolved_at
-    ? `Last incident ${shortDate(start)}, ${formatDuration(parseTimestamp(incident.resolved_at) - start)}`
-    : `Incident open · down ${formatDuration(now - start)}`;
+    ? `Last Incident ${shortDate(start)}, ${formatDuration(parseTimestamp(incident.resolved_at) - start)}`
+    : `Incident Open · Down ${formatDuration(now - start)}`;
 }

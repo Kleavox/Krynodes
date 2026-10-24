@@ -53,7 +53,7 @@ export function NodeDetailPage() {
   if (!node) {
     return (
       <EmptyState
-        title="Server not found"
+        title="Server Not Found"
         body="It may have been deleted."
         action={
           <Button asChild variant="outline">
@@ -88,7 +88,7 @@ export function NodeDetailPage() {
                 now,
                 devices.data?.devices,
               )}
-              offlineDetail={`reported ${timeAgo(node.last_seen_at, now)}`}
+              offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
             />
             <DockerMark nodeId={node.id} />
             <SecurityMark nodeId={node.id} />

@@ -78,3 +78,32 @@ export function touches(
       return action.kind === "systemd" && unitName(action.name) === owner.unit;
   }
 }
+
+export const NOT_WORK: readonly string[] = [
+  "logs",
+  "read",
+  "export",
+  "scan",
+  "autorestart",
+  "manual",
+  "heal",
+  "trust",
+  "store",
+  "release",
+  "reshare",
+  "forget",
+];
+
+export const isWork = (action: { action: string }) =>
+  !NOT_WORK.includes(action.action);
+
+export function workTouches(
+  check: { kind: string; target: string },
+  action: { kind: string; name: string; action: string },
+  server: OwnerServer,
+): boolean {
+  if (!isWork(action)) return false;
+  if (action.kind === "host") return true;
+  const owner = ownerOf(check, server);
+  return owner !== null && touches(owner, action, server);
+}

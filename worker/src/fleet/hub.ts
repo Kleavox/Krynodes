@@ -2,9 +2,9 @@ import { receiveReport, type Finding } from "../actions/report";
 import {
   healStatements,
   heartbeatActions,
-  inMaintenance,
   plannedNodes,
   REBOOT_MS,
+  workingChecks,
 } from "../actions/store";
 import {
   acceptResults,
@@ -18,6 +18,7 @@ import {
   resultStatements,
   type AgentNode,
 } from "../agent/ingest";
+import { restartOf } from "../agent/quiet";
 import { windowStart } from "../agent/windows";
 import type { Env } from "../env";
 import {
@@ -77,23 +78,12 @@ type Roster = Record<string, RosterEntry>;
 
 const offlineAfterMs = (interval: number) => Math.max(90, 3 * interval) * 1000;
 
-function securityOf(security: string | null) {
-  try {
-    return JSON.parse(security ?? "null") as {
-      rebootHour?: number | null;
-      findings?: { id: string }[];
-    } | null;
-  } catch {
-    return null;
-  }
-}
-
 function restarting(security: string | null, seen: number, now: number) {
-  const report = securityOf(security);
+  const restart = restartOf(security);
   return (
     now - seen < REBOOT_MS &&
-    report?.rebootHour === new Date(seen).getUTCHours() &&
-    (report.findings ?? []).some((finding) => finding.id === "reboot-pending")
+    restart.hour === new Date(seen).getUTCHours() &&
+    restart.pending
   );
 }
 
@@ -584,15 +574,24 @@ export class FleetHub {
     state = { ...state, diskFull: disk.full };
     const agent = await loadAgentConfig(db, node);
     const accepted = acceptResults(agent.checks, beat.results ?? []);
-    const maintenance =
-      accepted.some((result) => result.status === "DOWN") &&
-      (await inMaintenance(db, node.id, now, current.connectedAt));
+    const working = accepted.some((result) => result.status === "DOWN")
+      ? await workingChecks(
+          db,
+          {
+            id: node.id,
+            ownerId: current.ownerId,
+            connectedAt: current.connectedAt,
+          },
+          agent.checks,
+          now,
+        )
+      : new Set<string>();
     const ingestion = resultStatements(
       db,
       agent.checks,
       accepted,
       now,
-      maintenance,
+      working,
     );
     const folded = fold(state, beat, accepted, now);
     const leading: D1PreparedStatement[] = [];

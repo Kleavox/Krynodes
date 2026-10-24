@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 
-import { SmallLabel, StatusDot, checkTone } from "@/components/status";
+import { SmallLabel, StatusDot } from "@/components/status";
 import { HeartbeatStrip } from "@/components/strips";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import type { LogsTarget } from "@/features/services/logs-dialog";
 import { useCheckResults, useOverview, useServices } from "@/lib/api";
-import { checkFigure, shownTarget } from "@/lib/checks";
+import { checkLive, kindLabel, shownTarget, type LiveTone } from "@/lib/checks";
 import { agentCurrent } from "@/lib/devices";
 import {
   checkDisplayStatus,
@@ -14,8 +14,8 @@ import {
   nodeState,
   parseTimestamp,
 } from "@/lib/format";
-import { maintenanceSpans, plannedNow } from "@/lib/operations";
-import { uptimeTip } from "@/lib/series";
+import { workSpans } from "@/lib/operations";
+import { heartbeatSlots, uptimeOf, uptimeTip } from "@/lib/series";
 import { isPending, serviceForCheck } from "@/lib/services";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
@@ -25,7 +25,7 @@ import { CheckMenu } from "./check-menu";
 import { CheckTags } from "./down-box";
 
 const ROW =
-  "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2 transition-colors hover:bg-card-hover md:grid-cols-[minmax(0,1.3fr)_minmax(140px,1.2fr)_56px_96px_32px]";
+  "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2 transition-colors hover:bg-card-hover md:grid-cols-[minmax(0,1.3fr)_minmax(140px,1.2fr)_56px_120px_32px]";
 
 export function useCheckView() {
   const overview = useOverview();
@@ -45,25 +45,63 @@ export function useCheckView() {
       check.enabled,
     );
   };
-  const maintenance = (check: CheckRecord) =>
-    maintenanceSpans(services.data?.actions ?? [], check.node_id);
-  const planned = (check: CheckRecord) =>
-    display(check) === "DOWN" && plannedNow(maintenance(check), now);
+  const work = (check: CheckRecord) =>
+    workSpans(
+      services.data?.actions ?? [],
+      check.node_id,
+      check,
+      services.data?.nodes.find((item) => item.id === check.node_id),
+    );
+  const quiet = (check: CheckRecord) =>
+    results.data?.nodes?.[check.node_id]?.quiet ?? [];
   const openIncident = (check: CheckRecord) =>
     incidents.find(
       (incident) =>
         incident.check_id === check.id && incident.status === "OPEN",
     );
-  const figure = (check: CheckRecord) =>
-    check.enabled
-      ? checkFigure(
-          check,
-          display(check),
-          openIncident(check),
-          results.data?.checks[check.id],
-          now,
-        )
-      : "paused";
+  const healing = (check: CheckRecord) => {
+    const { entry } = entryOf(check);
+    return (services.data?.actions ?? []).some(
+      (action) =>
+        isPending(action) &&
+        action.action === "heal" &&
+        action.nodeId === check.node_id &&
+        action.kind === entry?.kind &&
+        action.name === entry?.name,
+    );
+  };
+  const live = (check: CheckRecord) =>
+    checkLive({
+      check,
+      display: display(check),
+      incident: openIncident(check),
+      latest: results.data?.checks[check.id],
+      lastSeen: nodeById.get(check.node_id)?.last_seen_at,
+      work: work(check),
+      quiet: quiet(check),
+      healing: healing(check),
+      now,
+    });
+  const windowOf = (check: CheckRecord) =>
+    Math.max(300, nodeById.get(check.node_id)?.interval_seconds ?? 0);
+  const slots = (check: CheckRecord) => {
+    const node = nodeById.get(check.node_id);
+    const windowSeconds = windowOf(check);
+    return heartbeatSlots({
+      slots: results.data?.checks[check.id]?.results ?? [],
+      incidents: incidents.filter((incident) => incident.check_id === check.id),
+      since: check.enabled ? parseTimestamp(check.created_at) : null,
+      slotSeconds: windowSeconds,
+      graceSeconds: graceSeconds(node?.interval_seconds ?? 0),
+      settleSeconds: windowSeconds,
+      now,
+      asOf: results.data ? results.dataUpdatedAt : undefined,
+      count: 48,
+      work: work(check),
+      quiet: quiet(check),
+    });
+  };
+  const uptime = (check: CheckRecord) => uptimeOf(slots(check));
   const entryOf = (check: CheckRecord) => {
     const entry = serviceForCheck(check, services.data);
     const trusted =
@@ -102,40 +140,33 @@ export function useCheckView() {
         }
       : null;
   };
-  const strip = (check: CheckRecord, className?: string) => {
-    const node = nodeById.get(check.node_id);
-    const windowSeconds = Math.max(300, node?.interval_seconds ?? 0);
-    return (
-      <HeartbeatStrip
-        results={results.data?.checks[check.id]?.results}
-        incidents={incidents.filter(
-          (incident) => incident.check_id === check.id,
-        )}
-        since={check.enabled ? parseTimestamp(check.created_at) : null}
-        windowSeconds={windowSeconds}
-        graceSeconds={graceSeconds(node?.interval_seconds ?? 0)}
-        settleSeconds={windowSeconds}
-        now={now}
-        asOf={results.data ? results.dataUpdatedAt : undefined}
-        count={48}
-        maintenance={maintenance(check)}
-        className={className}
-      />
-    );
-  };
+  const strip = (check: CheckRecord, className?: string) => (
+    <HeartbeatStrip
+      slots={slots(check)}
+      windowSeconds={windowOf(check)}
+      className={className}
+    />
+  );
   return {
     nodes,
     now,
     results,
     display,
-    planned,
+    live,
+    uptime,
+    windowOf,
     openIncident,
-    figure,
     restartFor,
     logsFor,
     strip,
   };
 }
+
+const TONE_NOTE: Partial<Record<LiveTone, string>> = {
+  work: "Down during work you sent. No incident opens unless it stays down afterwards. Not counted against uptime.",
+  info: "The server is in its routine restart. Not counted against uptime.",
+  off: "The server has sent nothing. Counted as down.",
+};
 
 export type CheckView = ReturnType<typeof useCheckView>;
 
@@ -148,30 +179,24 @@ export function CheckRow({
   view: CheckView;
   note?: ReactNode;
 }) {
-  const status = view.display(check);
   const target = shownTarget(check);
-  const history = view.results.data?.checks[check.id];
-  const isPlanned = view.planned(check);
+  const live = view.live(check);
+  const uptime = view.uptime(check);
+  const tip = uptimeTip(uptime, view.windowOf(check) * 1000, clockTime);
   return (
     <li className={cn(ROW, !check.enabled && "text-muted-foreground")}>
       <div className="min-w-0">
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          <span
-            title={
-              isPlanned
-                ? "Down during planned work on its server. No incident opens unless it stays down afterwards."
-                : status
-            }
-          >
+          <span title={TONE_NOTE[live.tone] ?? live.label}>
             <StatusDot
-              tone={isPlanned ? "warn" : checkTone(status)}
-              pulse={isPlanned}
+              tone={live.tone}
+              pulse={live.tone === "work" || live.tone === "info"}
             />
           </span>
           <span className="truncate font-medium" title={check.name}>
             {check.name}
           </span>
-          <SmallLabel>{check.kind}</SmallLabel>
+          <SmallLabel>{kindLabel(check.kind)}</SmallLabel>
           <CheckTags check={check} />
         </p>
         {target && (
@@ -186,30 +211,24 @@ export function CheckRow({
       </div>
       {view.strip(check, "col-span-3 md:col-span-1")}
       <span className="hidden text-right font-mono text-xs md:block">
-        <span className="sr-only">Up 4h </span>
-        {history?.up4h == null ? (
+        <span className="sr-only">Uptime 4h </span>
+        {uptime.percent === null ? (
           "--"
         ) : (
-          <span
-            tabIndex={0}
-            className="tip"
-            data-tip={uptimeTip(history.results, clockTime)}
-          >
-            {history.up4h.toFixed(1)}%
-            <span className="sr-only">
-              {" "}
-              {uptimeTip(history.results, clockTime)}
-            </span>
+          <span tabIndex={0} className="tip" data-tip={tip}>
+            {uptime.percent.toFixed(1)}%<span className="sr-only"> {tip}</span>
           </span>
         )}
       </span>
       <span
         className={cn(
           "col-start-2 row-start-1 text-right font-mono text-xs md:col-start-auto md:row-start-auto",
-          status === "DOWN" && !isPlanned && "text-destructive",
+          (live.tone === "bad" || live.tone === "warn") && "text-destructive",
+          live.tone === "work" && "text-primary",
+          live.tone === "info" && "text-info",
         )}
       >
-        {isPlanned ? "planned" : view.figure(check)}
+        {live.label}
       </span>
       <span className="col-start-3 row-start-1 md:col-start-auto md:row-start-auto">
         <CheckMenu

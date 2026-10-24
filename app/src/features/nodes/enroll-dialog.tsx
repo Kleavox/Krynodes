@@ -79,7 +79,7 @@ export function EnrollDialog({
         {step === "start" && (
           <>
             <DialogHeader>
-              <DialogTitle>Enroll a server</DialogTitle>
+              <DialogTitle>Enroll a Server</DialogTitle>
               <DialogDescription>
                 Krynodes makes a one-time install command. The server shows up
                 here once it enrolls, named after its hostname and reporting
@@ -103,7 +103,7 @@ export function EnrollDialog({
               </Button>
               <Button onClick={start} disabled={create.isPending} autoFocus>
                 {!create.isPending && <GuardIcon />}
-                {create.isPending ? "Creating…" : "Create install command"}
+                {create.isPending ? "Creating…" : "Create Install Command"}
               </Button>
             </DialogFooter>
           </>
@@ -112,7 +112,7 @@ export function EnrollDialog({
         {step === "waiting" && create.data && (
           <>
             <DialogHeader>
-              <DialogTitle>Install the agent</DialogTitle>
+              <DialogTitle>Install the Agent</DialogTitle>
               <DialogDescription>
                 Paste this into a terminal on the server. It downloads the
                 agent, enrolls the server and starts it. The command works once.
@@ -148,7 +148,7 @@ export function EnrollDialog({
             <DialogHeader>
               <CircleCheck aria-hidden="true" className="size-8 text-success" />
               <DialogTitle>
-                {node ? `${node.name} is connected` : "Server connected"}
+                {node ? `${node.name} is connected` : "Server Connected"}
               </DialogTitle>
               <DialogDescription role="status">
                 It reports every minute. Rename it from its Actions menu. The
@@ -162,7 +162,7 @@ export function EnrollDialog({
               {node && (
                 <Button asChild>
                   <Link to={`/nodes/${node.id}`} onClick={() => close(false)}>
-                    Open server
+                    Open Server
                   </Link>
                 </Button>
               )}
@@ -173,7 +173,7 @@ export function EnrollDialog({
         {step === "expired" && (
           <>
             <DialogHeader>
-              <DialogTitle>This command expired</DialogTitle>
+              <DialogTitle>This Command Expired</DialogTitle>
               <DialogDescription>
                 Nothing enrolled with it, and nothing was added to the fleet.
                 Create a new command to try again.
@@ -190,7 +190,7 @@ export function EnrollDialog({
                 }}
                 disabled={create.isPending}
               >
-                Create a new command
+                Create a New Command
               </Button>
             </DialogFooter>
           </>

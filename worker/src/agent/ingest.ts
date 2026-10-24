@@ -315,7 +315,7 @@ export function resultStatements(
   checks: LiveCheck[],
   accepted: CheckResult[],
   now: number,
-  maintenance = false,
+  working: ReadonlySet<string> = new Set(),
 ): Ingestion {
   const byId = new Map(checks.map((check) => [check.id, check]));
   if (accepted.length === 0) return { statements: [], transitions: [] };
@@ -331,7 +331,7 @@ export function resultStatements(
       result.status === "DOWN"
         ? Math.min(
             check.consecutive_failures + 1,
-            maintenance ? INCIDENT_THRESHOLD - 1 : INCIDENT_THRESHOLD,
+            working.has(check.id) ? INCIDENT_THRESHOLD - 1 : INCIDENT_THRESHOLD,
           )
         : 0;
     const since = result.since ?? null;

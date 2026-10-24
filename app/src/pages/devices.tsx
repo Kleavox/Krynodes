@@ -81,9 +81,9 @@ const STATE: Record<ServerState, { label: string; tone: string }> = {
     label: `Needs agent ${MIN_AGENT_VERSION}`,
     tone: "text-muted-foreground",
   },
-  empty: { label: "Not trusted yet", tone: "text-warning" },
+  empty: { label: "Not Trusted Yet", tone: "text-warning" },
   behind: { label: "Behind", tone: "text-warning" },
-  current: { label: "Up to date", tone: "text-success" },
+  current: { label: "Up to Date", tone: "text-success" },
 };
 
 function guessName(): string {
@@ -164,7 +164,7 @@ function SetUpForm({
       }}
     >
       <div className="grid gap-1.5">
-        <Label htmlFor="device-name">Device name</Label>
+        <Label htmlFor="device-name">Device Name</Label>
         <Input
           id="device-name"
           value={setup.name}
@@ -175,7 +175,7 @@ function SetUpForm({
       </div>
       <Button type="submit" className="h-9" disabled={setup.working}>
         <Fingerprint aria-hidden="true" />
-        {setup.working ? "Waiting for the fingerprint…" : label}
+        {setup.working ? "Waiting for the Fingerprint…" : label}
       </Button>
     </form>
   );
@@ -210,7 +210,7 @@ function FirstDevice({ fleet }: { fleet: Fleet }) {
   const setup = useSetUp(fleet, () => undefined);
   return (
     <>
-      <PageHeader title="Trusted devices" />
+      <PageHeader title="Trusted Devices" />
       <section className={cn(SECTION, "max-w-xl p-5")}>
         <Fingerprint aria-hidden="true" className="mb-3 size-6 text-primary" />
         <h2 className="font-medium">Control servers with your fingerprint</h2>
@@ -223,7 +223,7 @@ function FirstDevice({ fleet }: { fleet: Fleet }) {
           Set up this device first. Share the admin login only after your own
           devices are set up.
         </p>
-        <SetUpForm setup={setup} label="Set up this device" />
+        <SetUpForm setup={setup} label="Set Up This Device" />
         <div className="mt-3">
           <HowToVerify />
         </div>
@@ -238,7 +238,7 @@ function NewDevice({ fleet, device }: { fleet: Fleet; device: DeviceRecord }) {
   const joining = fleet.joining.includes(device.id);
   return (
     <>
-      <PageHeader title="Trusted devices" />
+      <PageHeader title="Trusted Devices" />
       <section
         aria-labelledby="new-device"
         className={cn(SECTION, "max-w-xl p-5")}
@@ -251,7 +251,7 @@ function NewDevice({ fleet, device }: { fleet: Fleet; device: DeviceRecord }) {
         >
           {joining
             ? "Approved, your servers are taking it"
-            : "Waiting for approval"}
+            : "Waiting for Approval"}
         </p>
         <h2 id="new-device" className="mt-1 text-lg font-semibold">
           {device.name}
@@ -274,7 +274,7 @@ function NewDevice({ fleet, device }: { fleet: Fleet; device: DeviceRecord }) {
             className="mt-4 h-9 text-destructive"
             onClick={() => setConfirm(true)}
           >
-            Forget this device
+            Forget This Device
           </Button>
         )}
       </section>
@@ -296,7 +296,7 @@ function serversText(fleet: Fleet, device: DeviceRecord): string {
   const count = fleet.trusted.filter((server) =>
     server.trust?.access.includes(device.fingerprint),
   ).length;
-  if (count === 0) return "No servers";
+  if (count === 0) return "No Servers";
   return count === total
     ? `All ${plural(total, "server")}`
     : `${count} of ${plural(total, "server")}`;
@@ -304,7 +304,7 @@ function serversText(fleet: Fleet, device: DeviceRecord): string {
 
 function proofText(device: DeviceRecord): string | null {
   if (device.verifies === null) return null;
-  return device.verifies ? "Fingerprint" : "Cannot sign";
+  return device.verifies ? "Fingerprint" : "Cannot Sign";
 }
 
 function DeviceRow({
@@ -344,11 +344,11 @@ function DeviceRow({
       ? "Yours"
       : device.owner
         ? `Owner: ${displayHandle(null, device.owner)}`
-        : "Not claimed yet",
+        : "Not Claimed Yet",
     formatPrint(device.fingerprint),
     proofText(device),
     device.core ? serversText(fleet, device) : null,
-    device.lastUsedAt ? `Used ${timeAgo(device.lastUsedAt)}` : "Never used",
+    device.lastUsedAt ? `Used ${timeAgo(device.lastUsedAt)}` : "Never Used",
   ].filter(Boolean);
   return (
     <li className="flex items-start gap-3 px-4 py-3 text-sm">
@@ -356,13 +356,13 @@ function DeviceRow({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="min-w-0 truncate font-medium">{device.name}</span>
           {fleet.mine.includes(device.id) && (
-            <Badge variant="outline">This device</Badge>
+            <Badge variant="outline">This Device</Badge>
           )}
           {!device.core && (
             <Badge variant="secondary" className="text-warning">
               {fleet.joining.includes(device.id)
                 ? "Joining"
-                : "Waiting for approval"}
+                : "Waiting for Approval"}
             </Badge>
           )}
         </div>
@@ -406,7 +406,7 @@ function ServerRow({
     if (kind === "behind") items.push({ label: "Sync", onSelect: onSync });
     if (reaching > 0) {
       items.push({
-        label: "Remove every device",
+        label: "Remove Every Device",
         onSelect: onRemoveAll,
         destructive: true,
       });
@@ -443,7 +443,7 @@ function ProposalCard({
   const change = decodeChange(proposal.change);
   const title = change
     ? describeChange(fleet.view, change).title
-    : "Unreadable change";
+    : "Unreadable Change";
   const mineApproved = fleet.mine.some((id) => proposal.approvals.includes(id));
   return (
     <li className={cn(SECTION, "p-4")}>
@@ -491,7 +491,7 @@ function PendingCard({
       <p className="font-medium">Admit {device.name}</p>
       <p className="mt-0.5 text-xs text-muted-foreground">
         Registered {when(device.createdAt)} ·{" "}
-        {twin ? `Same passkey as ${twin.name}` : "Not approved yet"}
+        {twin ? `Same passkey as ${twin.name}` : "Not Approved Yet"}
       </p>
       <p className="mt-2 font-mono text-xs">
         {formatPrint(device.fingerprint)}
@@ -668,7 +668,7 @@ export function DevicesPage() {
   if (!fleet) {
     return (
       <>
-        <PageHeader title="Trusted devices" />
+        <PageHeader title="Trusted Devices" />
         <Skeleton className="h-64" />
       </>
     );
@@ -741,7 +741,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
 
   const addButton = (
     <Button size="sm" className="h-9 md:h-8" onClick={() => setAdding(true)}>
-      Add device
+      Add Device
     </Button>
   );
   let notice: ReactNode = null;
@@ -801,7 +801,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
   return (
     <>
       <PageHeader
-        title="Trusted devices"
+        title="Trusted Devices"
         meta={
           <span className="font-mono text-xs text-muted-foreground">
             {plural(fleet.core.length, "trusted device")}
@@ -854,12 +854,12 @@ function Manage({ fleet }: { fleet: Fleet }) {
               className="ml-auto h-9 md:h-8"
               onClick={() => setAdding((value) => !value)}
             >
-              {adding ? "Close" : "Add device"}
+              {adding ? "Close" : "Add Device"}
             </Button>
           </div>
           {adding && (
             <div className="space-y-2 border-b px-4 py-3">
-              <SetUpForm setup={setup} label="Set up with fingerprint" />
+              <SetUpForm setup={setup} label="Set Up with Fingerprint" />
               <HowToVerify
                 waiting={`It waits until ${fleet.core.length > 2 ? "two of your devices approve" : "one of your devices approves"} it.`}
               />
@@ -975,7 +975,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
         onOpenChange={(open) => !open && setCancelling(null)}
         title="Cancel this change?"
         description="The approvals collected so far are dropped. Nothing reaches your servers."
-        confirmLabel="Cancel change"
+        confirmLabel="Cancel Change"
         mutation={cancel}
         variables={cancelling?.id ?? ""}
       />

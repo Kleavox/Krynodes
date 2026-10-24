@@ -18,8 +18,8 @@ const SECRET_COMMAND =
 
 const FIELDS: { key: keyof UsageShare; label: string }[] = [
   { key: "requests", label: "Requests" },
-  { key: "writes", label: "D1 writes" },
-  { key: "reads", label: "D1 reads" },
+  { key: "writes", label: "D1 Writes" },
+  { key: "reads", label: "D1 Reads" },
 ];
 
 function Bar({ used, limit }: { used: number; limit: number }) {
@@ -61,7 +61,7 @@ function Meter({
         <span>{label}</span>
         <span className="font-mono text-xs text-muted-foreground">
           {used === null
-            ? "No data"
+            ? "No Data"
             : `${format(used)} of ${format(limit)} · ${percent}%`}
         </span>
       </div>
@@ -94,7 +94,7 @@ function BudgetForm({ budget }: { budget: UsageShare }) {
   return (
     <form className="space-y-3" onSubmit={submit}>
       <div>
-        <h3 className="text-sm font-medium">Krynodes share</h3>
+        <h3 className="text-sm font-medium">Krynodes Share</h3>
         <p className="text-xs text-muted-foreground">
           How much of the account's daily quotas Krynodes may use, when other
           projects share the account.
@@ -136,7 +136,7 @@ function BudgetForm({ budget }: { budget: UsageShare }) {
           size="sm"
           disabled={!valid || !changed || save.isPending}
         >
-          {save.isPending ? "Saving…" : "Save share"}
+          {save.isPending ? "Saving…" : "Save Share"}
         </Button>
       </div>
     </form>
@@ -191,13 +191,13 @@ export function UsageSettings() {
             note="Worker requests from agents, the dashboard and the status page."
           />
           <Meter
-            label="D1 writes"
+            label="D1 Writes"
             used={mine.writes}
             limit={budget.writes}
             note="Rows written by reports, history and actions."
           />
           <Meter
-            label="D1 reads"
+            label="D1 Reads"
             used={mine.reads}
             limit={budget.reads}
             note={
@@ -210,7 +210,7 @@ export function UsageSettings() {
         {usage && (
           <section className="border-t pt-4" aria-label="Database">
             <Meter
-              label="Database size"
+              label="Database Size"
               used={usage.storage.bytes}
               limit={usage.storage.limit}
               format={formatBytes}
@@ -231,13 +231,13 @@ export function UsageSettings() {
               note="Free plan quota."
             />
             <Meter
-              label="D1 writes"
+              label="D1 Writes"
               used={account.writes}
               limit={quotas.writes}
               note="Free plan quota."
             />
             <Meter
-              label="D1 reads"
+              label="D1 Reads"
               used={account.reads}
               limit={quotas.reads}
               note="Free plan quota."
@@ -256,7 +256,7 @@ export function UsageSettings() {
         {usage && !usage.configured && (
           <details className="rounded-md border px-3 py-2 text-sm">
             <summary className="cursor-pointer font-medium">
-              Set up real counting
+              Set Up Real Counting
             </summary>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-muted-foreground">
               <li>

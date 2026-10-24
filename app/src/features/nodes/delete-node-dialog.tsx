@@ -254,7 +254,7 @@ export function DeleteNodeDialog({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           {stopped && background && (
             <Button variant="ghost" disabled={busy} onClick={deleteNow}>
-              Delete anyway
+              Delete Anyway
             </Button>
           )}
           {running ? (
@@ -264,16 +264,16 @@ export function DeleteNodeDialog({
               onClick={deleteNow}
             >
               {!remove.isPending && <GuardIcon />}
-              {remove.isPending ? "Working…" : "Delete anyway"}
+              {remove.isPending ? "Working…" : "Delete Anyway"}
             </Button>
           ) : holds && plan.ok ? (
             <Button variant="destructive" disabled={busy} onClick={spread}>
               {!operate.isPending && <Fingerprint aria-hidden="true" />}
               {operate.isPending
-                ? "Waiting for the fingerprint…"
+                ? "Waiting for the Fingerprint…"
                 : piece
-                  ? "Spread and delete"
-                  : "Clean up and delete"}
+                  ? "Spread and Delete"
+                  : "Clean Up and Delete"}
             </Button>
           ) : leaving ? (
             <Button
@@ -283,8 +283,8 @@ export function DeleteNodeDialog({
             >
               {!run.isPending && <Fingerprint aria-hidden="true" />}
               {run.isPending
-                ? "Waiting for the fingerprint…"
-                : "Remove and delete"}
+                ? "Waiting for the Fingerprint…"
+                : "Remove and Delete"}
             </Button>
           ) : (
             <Button
@@ -296,8 +296,8 @@ export function DeleteNodeDialog({
               {remove.isPending
                 ? "Working…"
                 : holds || stopped
-                  ? "Delete anyway"
-                  : "Delete node"}
+                  ? "Delete Anyway"
+                  : "Delete Node"}
             </Button>
           )}
         </AlertDialogFooter>

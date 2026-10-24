@@ -54,11 +54,11 @@ export function agentLine(
   const target = node.update_requested_version ?? latest;
   return [
     node.agent_version,
-    node.auto_update ? "auto update" : null,
+    node.auto_update ? "Auto Update" : null,
     state === "available" ? `${latest} available` : null,
-    state === "updating" ? `updating to ${target}` : null,
-    state === "failed" ? `update to ${target} did not finish` : null,
-    state === "unsupported" ? "too old to connect" : null,
+    state === "updating" ? `Updating to ${target}` : null,
+    state === "failed" ? `Update to ${target} did not finish` : null,
+    state === "unsupported" ? "Too old to connect" : null,
   ]
     .filter(Boolean)
     .join(" · ");

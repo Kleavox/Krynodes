@@ -61,9 +61,9 @@ export function HistoryFeed({
       {groups.flatMap((group) => [
         <li
           key={`day-${group.label}`}
-          className="flex flex-wrap justify-between gap-x-3 bg-muted/40 px-3 py-1 font-mono text-[11px] tracking-wider text-muted-foreground"
+          className="flex flex-wrap justify-between gap-x-3 bg-muted/40 px-3 py-1 font-mono text-[11px] text-muted-foreground"
         >
-          <span className="uppercase">{group.label}</span>
+          <span>{group.label}</span>
           <span>{group.counts}</span>
         </li>,
         ...group.entries.map((entry) =>

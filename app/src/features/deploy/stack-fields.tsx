@@ -22,7 +22,7 @@ const ACCESS: { value: Access; label: string; detail: string }[] = [
   },
   {
     value: "full",
-    label: "Full access",
+    label: "Full Access",
     detail:
       "For your own projects. Ports on the internet, the server's network and folders, devices and builds. It can do anything root can.",
   },
@@ -112,7 +112,7 @@ export function SecretsEditor({
         onClick={() => onChange([...rows, { name: "", value: "" }])}
       >
         <Plus aria-hidden="true" />
-        Add secret
+        Add Secret
       </Button>
       <p className="text-xs text-muted-foreground">
         Refer to them as ${"{NAME}"} in the compose file. They are locked to the
@@ -259,7 +259,7 @@ export function ReachField({
   return (
     <div className="space-y-1.5">
       <label htmlFor="stack-reach" className="text-sm font-medium">
-        Reach this server on
+        Reach This Server On
       </label>
       <Input
         id="stack-reach"
@@ -307,7 +307,7 @@ export function FullAccessSummary({ text }: { text: string }) {
   const dns = summary.internet.some((port) => port.startsWith("53/"));
   return (
     <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
-      <p className="font-medium">What this stack opens</p>
+      <p className="font-medium">What This Stack Opens</p>
       {lines.length === 0 ? (
         <p className="text-muted-foreground">
           Nothing beyond its own containers.

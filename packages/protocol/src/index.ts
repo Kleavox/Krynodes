@@ -20,7 +20,15 @@ export {
   UPDATABLE_FROM,
 } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
-export { ownerOf, touches, type CheckOwner, type OwnerServer } from "./owner";
+export {
+  NOT_WORK,
+  isWork,
+  ownerOf,
+  touches,
+  workTouches,
+  type CheckOwner,
+  type OwnerServer,
+} from "./owner";
 
 export const agentHostSchema = z.object({
   hostname: z.string().min(1).max(255),

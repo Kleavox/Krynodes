@@ -25,8 +25,11 @@ type Results = {
         latencyMs: number | null;
         message: string | null;
       }[];
-      up4h: number | null;
     }
+  >;
+  nodes: Record<
+    string,
+    { quiet: { from: string; to: string | null; why: string }[] }
   >;
 };
 
@@ -67,15 +70,26 @@ describe("GET /api/checks/results", () => {
     expect(entry.results.at(-1)?.latencyMs).toBe(0);
   });
 
-  it("computes uptime over the returned windows only", async () => {
+  it("names when each server went quiet instead of a percentage", async () => {
     const { db, sqlite } = setup();
-    seedResult(sqlite, "c1", ago(5 * 60_000), "UP");
-    seedResult(sqlite, "c1", ago(10 * 60_000), "UP");
-    seedResult(sqlite, "c1", ago(15 * 60_000), "UP");
-    seedResult(sqlite, "c1", ago(20 * 60_000), "DOWN");
-    seedResult(sqlite, "c1", ago(5 * 3_600_000), "DOWN");
+    for (const minutes of [5, 10, 30, 35]) {
+      seedResult(sqlite, "c1", ago(minutes * 60_000), "UP");
+    }
+    const start = (minutes: number) =>
+      new Date(
+        Math.floor((Date.now() - minutes * 60_000) / 300_000) * 300_000,
+      ).toISOString();
 
-    expect((await results(db)).checks.c1?.up4h).toBe(75);
+    const body = await results(db);
+    expect(body.checks.c1).not.toHaveProperty("up4h");
+    expect(body.nodes.n1?.quiet).toEqual([
+      { from: body.from, to: start(35), why: "offline" },
+      {
+        from: new Date(Date.parse(start(30)) + 300_000).toISOString(),
+        to: start(10),
+        why: "offline",
+      },
+    ]);
   });
 
   it("leaves out a check whose results are all older than four hours", async () => {
@@ -152,6 +166,15 @@ describe("GET /api/incidents/:id", () => {
     expect(body.results[1]).toMatchObject({
       latencyMs: null,
       message: "timeout",
+    });
+    const start = (minutes: number) =>
+      Math.floor((Date.now() - minutes * 60_000) / 300_000) * 300_000;
+    expect(
+      (body as unknown as { quiet: { from: string; to: string }[] }).quiet,
+    ).toContainEqual({
+      from: new Date(start(35) + 300_000).toISOString(),
+      to: new Date(start(20)).toISOString(),
+      why: "offline",
     });
   });
 

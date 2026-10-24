@@ -99,18 +99,18 @@ export function NodeActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => refresh.mutate([node.id])}>
-            Refresh services
+            Refresh Services
           </DropdownMenuItem>
           {updatable && (
             <DropdownMenuItem onSelect={() => update.mutate(node.id)}>
-              Update agent to {release.version}
+              Update Agent to {release.version}
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onSelect={() => setDialog("add-check")}>
-            Add check
+            Add Check
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setDialog("edit")}>
-            Rename node
+            Rename Node
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           {installable && (
@@ -125,7 +125,7 @@ export function NodeActions({
               variant={locked ? "default" : "destructive"}
               onSelect={() => setDialog(locked ? "unlock" : "lockdown")}
             >
-              {locked ? "Unlock server" : "Lock down server"}
+              {locked ? "Unlock Server" : "Lock Down Server"}
             </DropdownMenuItem>
           )}
           {restartable && (
@@ -133,14 +133,14 @@ export function NodeActions({
               variant="destructive"
               onSelect={() => setDialog("restart")}
             >
-              Restart server
+              Restart Server
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
             variant="destructive"
             onSelect={() => setDialog("delete")}
           >
-            Delete node
+            Delete Node
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -166,7 +166,7 @@ export function NodeActions({
         }}
         title={`Restart ${node.name}?`}
         description="The server goes offline for a minute or two. Everyone sees it as restarting until it reports again, and its checks open no incidents meanwhile. Services that don't start on boot stay stopped."
-        confirmLabel="Restart server"
+        confirmLabel="Restart Server"
         mutation={reboot}
         variables={{
           action: "reboot",
@@ -187,7 +187,7 @@ export function NodeActions({
             ? "The containers the lock down stopped start again, its web addresses come back, and SSH goes back to how it was."
             : "Containers that publish ports to the internet stop and stay stopped after a restart, its web addresses go offline, and SSH stops accepting passwords when a key is set up. Until you unlock it, nothing starts there: deploys, starts, restarts and new stacks are refused. Unlock brings it all back."
         }
-        confirmLabel={dialog === "unlock" ? "Unlock server" : "Lock down"}
+        confirmLabel={dialog === "unlock" ? "Unlock Server" : "Lock Down"}
         mutation={lock}
         variables={{
           action: dialog === "unlock" ? "unlock" : "lockdown",

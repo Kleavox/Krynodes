@@ -1,27 +1,25 @@
 import type { ReactNode } from "react";
 
-import { capitalize, type CheckDisplay, type NodeState } from "@/lib/format";
+import type { LiveTone } from "@/lib/checks";
+import { titleCase, type NodeState } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Tone = "ok" | "bad" | "warn" | "idle";
+type Tone = LiveTone;
 
 const TONE: Record<Tone, string> = {
   ok: "bg-success",
   bad: "bg-destructive",
   warn: "bg-warning",
   idle: "bg-muted-foreground",
+  off: "border border-muted-foreground",
+  info: "bg-info",
+  work: "bg-primary",
 };
 
 export function nodeTone(state: NodeState): Tone {
   if (state === "online") return "ok";
   if (state === "offline") return "bad";
   if (state === "pending") return "warn";
-  return "idle";
-}
-
-export function checkTone(status: CheckDisplay): Tone {
-  if (status === "UP") return "ok";
-  if (status === "DOWN") return "bad";
   return "idle";
 }
 
@@ -83,7 +81,7 @@ export function StatusChip({
       )}
     >
       <StatusDot tone={tone} pulse={pulse} />
-      <span className="text-foreground">{capitalize(label)}</span>
+      <span className="text-foreground">{titleCase(label)}</span>
       {detail && <span>· {detail}</span>}
     </span>
   );

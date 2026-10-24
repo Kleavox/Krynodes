@@ -24,7 +24,7 @@ describe("the agent in one line", () => {
   it("says its version, auto update and what waits", () => {
     expect(
       agentLine({ ...node("0.6.13"), auto_update: 1 }, "0.6.13", NOW),
-    ).toBe("0.6.13 · auto update");
+    ).toBe("0.6.13 · Auto Update");
     expect(
       agentLine({ ...node("0.6.13"), auto_update: 0 }, "0.6.14", NOW),
     ).toBe("0.6.13 · 0.6.14 available");
@@ -34,7 +34,7 @@ describe("the agent in one line", () => {
         "0.6.14",
         NOW,
       ),
-    ).toBe("0.6.13 · auto update · updating to 0.6.14");
+    ).toBe("0.6.13 · Auto Update · Updating to 0.6.14");
     expect(agentLine({ ...node(null), auto_update: 0 }, null, NOW)).toBe("--");
   });
 });

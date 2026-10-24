@@ -30,10 +30,10 @@ import type { HistoryShow } from "@/types";
 const ALL = "all";
 
 const EMPTY: Record<HistoryShow, string> = {
-  everything: "Nothing happened",
-  actions: "No actions",
-  incidents: "No incidents",
-  failed: "No failed actions",
+  everything: "Nothing Happened",
+  actions: "No Actions",
+  incidents: "No Incidents",
+  failed: "No Failed Actions",
 };
 
 export function HistoryPage() {
@@ -135,7 +135,7 @@ export function HistoryPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL}>All servers</SelectItem>
+                <SelectItem value={ALL}>All Servers</SelectItem>
                 {nodes.map((entry) => (
                   <SelectItem key={entry.id} value={entry.id}>
                     {entry.name}
@@ -161,7 +161,7 @@ export function HistoryPage() {
           {groups.length === 0 ? (
             <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
               {history.isPending
-                ? "Loading history…"
+                ? "Loading History…"
                 : q
                   ? `Nothing${where} matches ${q}. Search another word.`
                   : `${EMPTY[show]}${where} in the last 90 days.`}
@@ -182,7 +182,7 @@ export function HistoryPage() {
                 disabled={history.isFetchingNextPage}
                 onClick={() => void history.fetchNextPage()}
               >
-                {history.isFetchingNextPage ? "Loading…" : "Load older"}
+                {history.isFetchingNextPage ? "Loading…" : "Load Older"}
               </Button>
             </div>
           )}

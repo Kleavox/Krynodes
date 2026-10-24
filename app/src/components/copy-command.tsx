@@ -17,7 +17,7 @@ export function CopyCommand({ command }: { command: string }) {
         {command}
       </pre>
       <Button variant="outline" size="sm" onClick={copy}>
-        {copied ? "Copied" : "Copy command"}
+        {copied ? "Copied" : "Copy Command"}
       </Button>
     </div>
   );

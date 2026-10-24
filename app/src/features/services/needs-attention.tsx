@@ -36,7 +36,7 @@ export function ProblemFix({
       {latest && isPending(latest) ? (
         <PendingText action={latest} nodeName={node.name} />
       ) : problem.blocker ? (
-        problem.blocker === "Not trusted yet" ? (
+        problem.blocker === "Not Trusted Yet" ? (
           <Link
             to="/devices"
             className="font-mono text-xs text-warning underline-offset-4 hover:underline"
@@ -95,7 +95,7 @@ function ProblemRow({
           <span className="font-medium">{problem.name}</span>
           <KindLabel kind={problem.kind} />
           <span className="font-mono text-xs text-muted-foreground">
-            on {node.name}
+            On {node.name}
           </span>
           <span className="font-mono text-xs text-muted-foreground">·</span>
           <span
@@ -141,7 +141,7 @@ export function NeedsAttention({
         className="flex items-center gap-2 px-3 py-2.5 text-sm font-medium"
       >
         <StatusDot tone="bad" />
-        Needs attention
+        Needs Attention
         <span className="font-mono text-xs font-normal text-muted-foreground">
           {problems.length}
         </span>

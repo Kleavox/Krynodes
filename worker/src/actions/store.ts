@@ -1,6 +1,12 @@
-import { agentSupported, type AgentActionResult } from "@krynodes/protocol";
+import {
+  agentSupported,
+  NOT_WORK,
+  workTouches,
+  type AgentActionResult,
+} from "@krynodes/protocol";
 
 import { fromB64url } from "../lib/b64url";
+import { loadEstate } from "./attention";
 
 const ACTION_TTL_MS = 10 * 60_000;
 const ABANDON_MS = 15 * 60_000;
@@ -156,6 +162,22 @@ export function sweepStatements(
 const SETTLE_MS = 2 * 60_000;
 export const REBOOT_MS = 10 * 60_000;
 
+const WORK_SQL = `FROM actions
+  WHERE node_id IN (SELECT value FROM json_each(?1))
+    AND action NOT IN (SELECT value FROM json_each(?5)) AND (
+    (status = 'queued' AND deliverable_at IS NOT NULL)
+    OR (status = 'sent' AND sent_at >= ?4)
+    OR (status IN ('done', 'failed') AND finished_at >=
+      CASE WHEN action = 'reboot' THEN ?3 ELSE ?2 END))`;
+
+const workBinds = (nodeIds: string[], now: number, rebootSince: number) => [
+  JSON.stringify(nodeIds),
+  iso(now - SETTLE_MS),
+  iso(now - rebootSince),
+  iso(now - PLANNED_MS),
+  JSON.stringify(NOT_WORK),
+];
+
 export async function plannedNodes(
   db: D1Database,
   nodeIds: string[],
@@ -164,33 +186,42 @@ export async function plannedNodes(
 ): Promise<Set<string>> {
   if (nodeIds.length === 0) return new Set();
   const rows = await db
-    .prepare(
-      `SELECT DISTINCT node_id FROM actions
-       WHERE node_id IN (SELECT value FROM json_each(?1))
-         AND action NOT IN ('logs', 'autorestart', 'manual') AND (
-         (status = 'queued' AND deliverable_at IS NOT NULL)
-         OR (status = 'sent' AND sent_at >= ?4)
-         OR (status IN ('done', 'failed') AND finished_at >=
-           CASE WHEN action = 'reboot' THEN ?3 ELSE ?2 END))`,
-    )
-    .bind(
-      JSON.stringify(nodeIds),
-      iso(now - SETTLE_MS),
-      iso(now - rebootSince),
-      iso(now - PLANNED_MS),
-    )
+    .prepare(`SELECT DISTINCT node_id ${WORK_SQL}`)
+    .bind(...workBinds(nodeIds, now, rebootSince))
     .all<{ node_id: string }>();
   return new Set(rows.results.map((row) => row.node_id));
 }
 
-export async function inMaintenance(
+export async function workUnderway(
   db: D1Database,
   nodeId: string,
   now: number,
   connectedAt: number,
-): Promise<boolean> {
+): Promise<{ kind: string; name: string; action: string }[]> {
   const rebootSince = now - connectedAt < SETTLE_MS ? REBOOT_MS : SETTLE_MS;
-  return (await plannedNodes(db, [nodeId], now, rebootSince)).has(nodeId);
+  const rows = await db
+    .prepare(`SELECT kind, name, action ${WORK_SQL} ORDER BY requested_at`)
+    .bind(...workBinds([nodeId], now, rebootSince))
+    .all<{ kind: string; name: string; action: string }>();
+  return rows.results;
+}
+
+export async function workingChecks(
+  db: D1Database,
+  node: { id: string; ownerId: string; connectedAt: number },
+  checks: { id: string; kind: string; target: string }[],
+  now: number,
+): Promise<Set<string>> {
+  const work = await workUnderway(db, node.id, now, node.connectedAt);
+  if (work.length === 0) return new Set();
+  const server = (await loadEstate(db, node.ownerId)).server(node.id);
+  return new Set(
+    checks
+      .filter((check) =>
+        work.some((action) => workTouches(check, action, server)),
+      )
+      .map((check) => check.id),
+  );
 }
 
 export function createBatch(

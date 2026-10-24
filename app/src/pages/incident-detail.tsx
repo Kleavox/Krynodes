@@ -12,9 +12,12 @@ import {
   UpdateForm,
 } from "@/features/incidents/incident-updates";
 import { useIncident, useOverview, useServices } from "@/lib/api";
+import { kindLabel } from "@/lib/checks";
 import { graceSeconds, stampTime } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
 import { incidentState, incidentStrip, ownerLink } from "@/lib/incidents";
+import { workSpans } from "@/lib/operations";
+import { heartbeatSlots } from "@/lib/series";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +33,7 @@ export function IncidentDetailPage() {
       <>
         <PageHeader title="Incident" />
         <EmptyState
-          title="Incident not found"
+          title="Incident Not Found"
           body={errorMessage(detail.error)}
         />
       </>
@@ -95,7 +98,7 @@ export function IncidentDetailPage() {
           <>
             <Button asChild variant="outline" size="sm">
               <Link to={`/checks?q=${encodeURIComponent(incident.check_name)}`}>
-                Open check
+                Open Check
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm">
@@ -108,9 +111,9 @@ export function IncidentDetailPage() {
       />
       <div className="space-y-4">
         <p className="-mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-xs text-muted-foreground">
-          <SmallLabel>{incident.check_kind}</SmallLabel>
+          <SmallLabel>{kindLabel(incident.check_kind)}</SmallLabel>
           <span className="min-w-0 break-all">{incident.check_target}</span>
-          <span>· on</span>
+          <span>· On</span>
           <Link
             to={`/nodes/${incident.node_id}`}
             className="text-foreground hover:underline"
@@ -128,23 +131,33 @@ export function IncidentDetailPage() {
         </p>
         <div className="space-y-1">
           <HeartbeatStrip
-            results={strip.results}
-            incidents={[incident]}
-            since={strip.measuredFrom}
+            slots={heartbeatSlots({
+              slots: strip.results,
+              incidents: [incident],
+              since: strip.measuredFrom,
+              slotSeconds: strip.slotSeconds,
+              graceSeconds: open ? graceSeconds(interval) : 0,
+              settleSeconds: open ? windowSeconds : 0,
+              now: strip.until,
+              asOf: open ? detail.dataUpdatedAt : strip.until,
+              count: strip.count,
+              work: workSpans(
+                detail.data.actions ?? [],
+                incident.node_id,
+                { kind: incident.check_kind, target: incident.check_target },
+                server,
+              ),
+              quiet: detail.data.quiet ?? [],
+            })}
             windowSeconds={strip.slotSeconds}
-            graceSeconds={open ? graceSeconds(interval) : 0}
-            settleSeconds={open ? windowSeconds : 0}
-            now={strip.until}
-            asOf={open ? detail.dataUpdatedAt : strip.until}
-            count={strip.count}
           />
           <p className="flex justify-between gap-2 font-mono text-[11px] text-muted-foreground">
             <span>{stampTime(strip.since, now)}</span>
-            <span>{stampTime(incident.started_at, strip.since)} opened</span>
+            <span>{stampTime(incident.started_at, strip.since)} Opened</span>
             <span>
               {incident.resolved_at
-                ? `${stampTime(incident.resolved_at, strip.since)} resolved`
-                : "now"}
+                ? `${stampTime(incident.resolved_at, strip.since)} Resolved`
+                : "Now"}
             </span>
           </p>
         </div>

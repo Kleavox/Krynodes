@@ -5,7 +5,7 @@ import { accountLinks } from "./account";
 describe("accountLinks", () => {
   it("offers the Access sign-out when Zero Trust let the operator in", () => {
     expect(accountLinks("access")).toEqual([
-      { label: "Sign out", href: "/cdn-cgi/access/logout" },
+      { label: "Sign Out", href: "/cdn-cgi/access/logout" },
     ]);
   });
 

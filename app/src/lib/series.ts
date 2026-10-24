@@ -1,4 +1,5 @@
-import { parseTimestamp } from "./format";
+import type { QuietSpan } from "../types";
+import { formatDuration, parseTimestamp, titleCase } from "./format";
 
 export interface Gap {
   from: number;
@@ -43,15 +44,36 @@ export function withGapBreaks<T extends { time: number }>(
 }
 
 export type SlotState =
-  "received" | "missed" | "pending" | "none" | "maintenance";
+  "received" | "missed" | "pending" | "none" | "work" | "routine" | "offline";
 
 export interface Span {
   from: number;
   to: number;
 }
 
+export interface WorkSpan extends Span {
+  label: string;
+}
+
 export const overlaps = (spans: Span[], start: number, size: number) =>
   spans.some((span) => span.from < start + size && span.to > start);
+
+const quietOverlaps = (
+  spans: QuietSpan[],
+  why: QuietSpan["why"],
+  start: number,
+  size: number,
+) =>
+  overlaps(
+    spans
+      .filter((span) => span.why === why)
+      .map((span) => ({
+        from: parseTimestamp(span.from),
+        to: span.to === null ? Infinity : parseTimestamp(span.to),
+      })),
+    start,
+    size,
+  );
 
 interface LaidSlot<T> {
   start: number;
@@ -59,7 +81,7 @@ interface LaidSlot<T> {
   sample: T | null;
 }
 
-export function layoutReportSlots<T extends { t: string }>(options: {
+interface LayoutOptions<T> {
   slots: T[];
   slotSeconds: number;
   graceSeconds: number;
@@ -68,12 +90,18 @@ export function layoutReportSlots<T extends { t: string }>(options: {
   now: number;
   asOf?: number;
   count?: number;
-  maintenance?: Span[];
-}): LaidSlot<T>[] {
+  work?: Span[];
+  quiet?: QuietSpan[];
+}
+
+export function layoutReportSlots<T extends { t: string }>(
+  options: LayoutOptions<T>,
+): LaidSlot<T>[] {
   const count = options.count ?? 30;
   const reference = options.asOf ?? options.now;
   const size = options.slotSeconds * 1000;
   const current = Math.floor(options.now / size);
+  const quiet = options.quiet ?? [];
   const bySlot = new Map(
     options.slots.map((sample) => [
       Math.floor(parseTimestamp(sample.t) / size),
@@ -90,9 +118,13 @@ export function layoutReportSlots<T extends { t: string }>(options: {
         : reference - start <
             (options.graceSeconds + (options.settleSeconds ?? 0)) * 1000
           ? "pending"
-          : overlaps(options.maintenance ?? [], start, size)
-            ? "maintenance"
-            : "missed";
+          : overlaps(options.work ?? [], start, size)
+            ? "work"
+            : quietOverlaps(quiet, "offline", start, size)
+              ? "offline"
+              : quietOverlaps(quiet, "routine", start, size)
+                ? "routine"
+                : "missed";
     return { start, state, sample };
   };
   let last = current;
@@ -127,68 +159,170 @@ export function incidentDuring<
 }
 
 export type BarTone =
-  "up" | "down" | "brief" | "missed" | "maintenance" | "empty";
+  "up" | "down" | "brief" | "missed" | "work" | "routine" | "offline" | "empty";
 
 export function barTone(
   state: SlotState,
   status: "UP" | "DOWN" | null,
   inIncident: boolean,
-  inMaintenance = false,
+  inWork = false,
 ): BarTone {
   if (status === "UP") return "up";
   if (status === "DOWN") {
-    return inIncident ? "down" : inMaintenance ? "maintenance" : "brief";
+    return inIncident ? "down" : inWork ? "work" : "brief";
   }
-  if (state === "maintenance") return "maintenance";
-  return state === "missed" ? "missed" : "empty";
+  if (
+    state === "work" ||
+    state === "routine" ||
+    state === "offline" ||
+    state === "missed"
+  ) {
+    return state;
+  }
+  return "empty";
 }
 
+interface HeartbeatSlot<T> extends LaidSlot<T> {
+  tone: BarTone;
+  work: WorkSpan | undefined;
+}
+
+export function heartbeatSlots<
+  T extends { t: string; status: "UP" | "DOWN" },
+  I extends { started_at: string; resolved_at: string | null },
+>(
+  options: Omit<LayoutOptions<T>, "work"> & {
+    incidents: I[];
+    work?: WorkSpan[];
+  },
+): (HeartbeatSlot<T> & { incident: I | undefined })[] {
+  const size = options.slotSeconds * 1000;
+  return layoutReportSlots(options).map((slot) => {
+    const incident =
+      slot.sample?.status === "DOWN"
+        ? incidentDuring(slot.start, size, options.incidents)
+        : undefined;
+    const work = (options.work ?? []).find((span) =>
+      overlaps([span], slot.start, size),
+    );
+    return {
+      ...slot,
+      incident,
+      work,
+      tone: barTone(
+        slot.state,
+        slot.sample?.status ?? null,
+        Boolean(incident),
+        Boolean(work),
+      ),
+    };
+  });
+}
+
+const SLOT_WORDS: Record<BarTone, string> = {
+  up: "Up",
+  down: "Down",
+  brief: "Down, no incident",
+  work: "By You",
+  routine: "Routine Restart",
+  offline: "Offline",
+  missed: "No Result",
+  empty: "Not Measured",
+};
+
 export function slotTip(
-  start: number,
-  result: { status: "UP" | "DOWN"; latencyMs: number | null } | null,
-  brief: boolean,
+  slot: {
+    start: number;
+    sample: { latencyMs: number | null } | null;
+    work?: { label: string } | undefined;
+  },
+  tone: BarTone,
   clock: (value: number) => string,
-  maintenance = false,
 ): string {
-  if (!result) {
-    return `${clock(start)} · ${maintenance ? "maintenance" : "no result"}`;
-  }
+  const latency = slot.sample?.latencyMs;
   return [
-    clock(start),
-    maintenance && result.status === "DOWN"
-      ? "DOWN, maintenance"
-      : brief
-        ? "DOWN, no incident"
-        : result.status,
-    result.latencyMs === null ? null : `${result.latencyMs}ms`,
+    clock(slot.start),
+    tone === "work" && slot.work
+      ? titleCase(`${slot.work.label} by you`)
+      : SLOT_WORDS[tone],
+    latency === null || latency === undefined ? null : `${latency}ms`,
   ]
     .filter(Boolean)
     .join(" · ");
 }
 
-export function heartbeatSummary(
-  statuses: ("UP" | "DOWN" | null)[],
-  span: string,
-): string {
-  const up = statuses.filter((status) => status === "UP").length;
-  const down = statuses.filter((status) => status === "DOWN").length;
-  if (up + down === 0) return `No results in the last ${span}`;
-  return `${up} up, ${down} down, ${statuses.length - up - down} without results in the last ${span}`;
+export interface Uptime {
+  percent: number | null;
+  up: number;
+  down: number;
+  offline: number;
+  routine: number;
+  work: number;
+  since: number | null;
+  lastDown: number | null;
+}
+
+export function uptimeOf(slots: { start: number; tone: BarTone }[]): Uptime {
+  const count = (...tones: BarTone[]) =>
+    slots.filter((slot) => tones.includes(slot.tone)).length;
+  const up = count("up");
+  const down = count("down", "brief");
+  const offline = count("offline");
+  const counted = up + down + offline;
+  return {
+    percent: counted === 0 ? null : (up / counted) * 100,
+    up,
+    down,
+    offline,
+    routine: count("routine"),
+    work: count("work"),
+    since:
+      slots.find((slot) => slot.tone !== "empty" && slot.tone !== "missed")
+        ?.start ?? null,
+    lastDown:
+      slots.findLast((slot) => slot.tone === "down" || slot.tone === "brief")
+        ?.start ?? null,
+  };
 }
 
 export function uptimeTip(
-  results: { t: string; status: "UP" | "DOWN" }[],
-  clock: (value: string) => string,
+  uptime: Uptime,
+  windowMs: number,
+  clock: (value: number) => string,
 ): string {
-  const [first] = results;
-  if (!first) return "No reports yet";
-  const up = results.filter((result) => result.status === "UP").length;
-  const lastDown = results.findLast((result) => result.status === "DOWN");
+  if (uptime.since === null) return "No Reports Yet";
+  const counted = uptime.up + uptime.down + uptime.offline;
+  const span = (windows: number) => formatDuration(windows * windowMs);
   return [
-    `Since ${clock(first.t)}`,
-    `${up} of ${results.length} reports up`,
-    lastDown ? `Last down ${clock(lastDown.t)}` : "No downtime recorded",
-  ].join("\n");
+    `Since ${clock(uptime.since)}`,
+    `${uptime.up} of ${counted} ${counted === 1 ? "window" : "windows"} up`,
+    uptime.offline > 0 ? `Offline ${span(uptime.offline)}` : null,
+    uptime.routine > 0
+      ? `Routine Restart ${span(uptime.routine)}, not counted`
+      : null,
+    uptime.work > 0 ? `Restart by You ${span(uptime.work)}, not counted` : null,
+    uptime.lastDown !== null
+      ? `Last Down ${clock(uptime.lastDown)}`
+      : uptime.offline === 0
+        ? "No Downtime Recorded"
+        : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function heartbeatSummary(uptime: Uptime, span: string): string {
+  if (uptime.since === null) return `No results in the last ${span}`;
+  const skipped = uptime.routine + uptime.work;
+  return [
+    `${uptime.up} up`,
+    `${uptime.down} down`,
+    uptime.offline > 0 ? `${uptime.offline} offline` : null,
+    skipped > 0 ? `${skipped} not counted` : null,
+  ]
+    .filter(Boolean)
+    .join(", ")
+    .concat(` in the last ${span}`);
 }
 
 export function seriesSummary(
@@ -202,7 +336,7 @@ export function seriesSummary(
   if (last === undefined) return "No data in this range";
   const average =
     present.reduce((sum, value) => sum + value, 0) / present.length;
-  return `now ${format(last)}, min ${format(Math.min(...present))}, max ${format(Math.max(...present))}, average ${format(average)}`;
+  return `Now ${format(last)}, min ${format(Math.min(...present))}, max ${format(Math.max(...present))}, average ${format(average)}`;
 }
 
 const round = (value: number) => Math.round(value * 100) / 100;

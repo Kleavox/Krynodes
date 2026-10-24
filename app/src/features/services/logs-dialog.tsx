@@ -82,7 +82,7 @@ function LogsView({ target }: { target: LogsTarget }) {
   const { waiting, done, output, problem, action, fetchLogs } =
     useLogsRead(target);
   const block = useRef<HTMLPreElement>(null);
-  const [copied, setCopied] = useState<"Copied" | "Copy failed" | null>(null);
+  const [copied, setCopied] = useState<"Copied" | "Copy Failed" | null>(null);
   useEffect(() => {
     if (output && block.current) {
       block.current.scrollTop = block.current.scrollHeight;
@@ -91,13 +91,13 @@ function LogsView({ target }: { target: LogsTarget }) {
 
   const copy = () => {
     if (!output) return;
-    const show = (label: "Copied" | "Copy failed") => {
+    const show = (label: "Copied" | "Copy Failed") => {
       setCopied(label);
       setTimeout(() => setCopied(null), 2_000);
     };
     navigator.clipboard.writeText(output).then(
       () => show("Copied"),
-      () => show("Copy failed"),
+      () => show("Copy Failed"),
     );
   };
   const name = displayName(target.kind, target.name);
@@ -116,7 +116,7 @@ function LogsView({ target }: { target: LogsTarget }) {
                 Fetching the last 300 lines from {target.nodeName}…
               </>
             ) : done && action?.finishedAt ? (
-              `Last 300 lines · fetched ${clockTime(action.finishedAt)}`
+              `Last 300 Lines · Fetched ${clockTime(action.finishedAt)}`
             ) : null}
           </p>
         </AlertDialogDescription>
@@ -144,7 +144,7 @@ function LogsView({ target }: { target: LogsTarget }) {
           </Button>
         )}
         <Button disabled={waiting} onClick={fetchLogs}>
-          Load again
+          Load Again
         </Button>
       </AlertDialogFooter>
     </AlertDialogContent>

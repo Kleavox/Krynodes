@@ -61,17 +61,17 @@ type Original = "now" | "later" | "keep";
 const ORIGINAL: { value: Original; label: string; detail: string }[] = [
   {
     value: "later",
-    label: "Delete later",
+    label: "Delete Later",
     detail: "It waits in Removed for 7 days, then goes.",
   },
   {
     value: "now",
-    label: "Delete now",
+    label: "Delete Now",
     detail: "Its containers, volumes and folder are deleted for good.",
   },
   {
     value: "keep",
-    label: "Keep it",
+    label: "Keep It",
     detail: "It keeps running; the move is a copy.",
   },
 ];
@@ -242,11 +242,11 @@ function MoveForm({
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>Access there</Label>
+            <Label>Access There</Label>
             <AccessChoice value={chosenAccess} onChange={setAccess} />
           </div>
           <fieldset className="space-y-1.5">
-            <legend className="text-sm font-medium">Services that move</legend>
+            <legend className="text-sm font-medium">Services That Move</legend>
             <div className="flex flex-wrap gap-3">
               {all.map((name) => (
                 <label
@@ -271,7 +271,7 @@ function MoveForm({
             </ul>
           )}
           <div className="space-y-1.5">
-            <Label htmlFor="move-compose">Compose file there</Label>
+            <Label htmlFor="move-compose">Compose File There</Label>
             <textarea
               id="move-compose"
               value={text}
@@ -283,7 +283,7 @@ function MoveForm({
           </div>
           {chosenAccess === "full" && <FullAccessSummary text={text} />}
           <div className="space-y-1.5">
-            <Label>More secrets</Label>
+            <Label>More Secrets</Label>
             <SecretsEditor rows={secrets} onChange={setSecrets} />
             {problem && <p className="text-xs text-destructive">{problem}</p>}
           </div>
@@ -356,7 +356,7 @@ function MoveForm({
           onClick={() => void move()}
         >
           {!operate.isPending && <Fingerprint aria-hidden="true" />}
-          {operate.isPending ? "Waiting for the fingerprint…" : "Move"}
+          {operate.isPending ? "Waiting for the Fingerprint…" : "Move"}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -414,7 +414,7 @@ export function AdoptDialog({
             }
           >
             {run.isPending
-              ? "Waiting for the fingerprint…"
+              ? "Waiting for the Fingerprint…"
               : "Move into Krynodes"}
           </Button>
         </AlertDialogFooter>

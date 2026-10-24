@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   barTone,
+  heartbeatSlots,
   incidentDuring,
   findGaps,
   heartbeatSummary,
@@ -11,8 +12,10 @@ import {
   slotTip,
   sparklineSegments,
   untilWindowSettles,
+  uptimeOf,
   uptimeTip,
   withGapBreaks,
+  type BarTone,
 } from "./series";
 
 describe("findGaps", () => {
@@ -254,21 +257,12 @@ describe("incidentDuring", () => {
 });
 
 describe("summaries", () => {
-  it("summarises heartbeat windows, counting the empty ones", () => {
-    expect(heartbeatSummary([null, null], "4 hours")).toBe(
-      "No results in the last 4 hours",
-    );
-    expect(heartbeatSummary(["UP", "DOWN", null, "UP"], "4 hours")).toBe(
-      "2 up, 1 down, 1 without results in the last 4 hours",
-    );
-  });
-
   it("summarises a series without inventing data", () => {
     expect(seriesSummary([null, null], (value) => `${value}%`)).toBe(
       "No data in this range",
     );
     expect(seriesSummary([10, null, 30, 20], (value) => `${value}%`)).toBe(
-      "now 20%, min 10%, max 30%, average 20%",
+      "Now 20%, min 10%, max 30%, average 20%",
     );
   });
 });
@@ -307,61 +301,6 @@ describe("isLonePoint", () => {
   });
 });
 
-describe("uptime tooltip", () => {
-  const result = (t: string, status: "UP" | "DOWN") => ({
-    t,
-    status,
-    latencyMs: 20,
-    message: null,
-  });
-  const clock = (value: string) => `at ${value.slice(11, 16)}`;
-
-  it("says since when, how many reports were up and when it was last down", () => {
-    expect(
-      uptimeTip(
-        [
-          result("2026-09-30T06:10:00.000Z", "UP"),
-          result("2026-09-30T06:15:00.000Z", "DOWN"),
-          result("2026-09-30T06:20:00.000Z", "DOWN"),
-          result("2026-09-30T06:25:00.000Z", "UP"),
-        ],
-        clock,
-      ),
-    ).toBe("Since at 06:10\n2 of 4 reports up\nLast down at 06:20");
-  });
-
-  it("says when nothing went down or nothing was reported", () => {
-    expect(uptimeTip([result("2026-09-30T06:10:00.000Z", "UP")], clock)).toBe(
-      "Since at 06:10\n1 of 1 reports up\nNo downtime recorded",
-    );
-    expect(uptimeTip([], clock)).toBe("No reports yet");
-  });
-});
-
-describe("bar tooltips", () => {
-  const clock = () => "06:10";
-  const result = (status: "UP" | "DOWN", latencyMs: number | null) => ({
-    t: "2026-09-30T06:10:00.000Z",
-    status,
-    latencyMs,
-    message:
-      status === "DOWN"
-        ? "dial tcp 10.0.0.5:443: connect: connection refused"
-        : null,
-  });
-
-  it("shows a failed window like a good one, without its error", () => {
-    expect(slotTip(0, result("UP", 41), false, clock)).toBe(
-      "06:10 · UP · 41ms",
-    );
-    expect(slotTip(0, result("DOWN", null), false, clock)).toBe("06:10 · DOWN");
-    expect(slotTip(0, result("DOWN", null), true, clock)).toBe(
-      "06:10 · DOWN, no incident",
-    );
-    expect(slotTip(0, null, false, clock)).toBe("06:10 · no result");
-  });
-});
-
 describe("bar tones", () => {
   it("paints a window with no result red once the check existed", () => {
     expect(barTone("missed", null, false)).toBe("missed");
@@ -373,27 +312,130 @@ describe("bar tones", () => {
   });
 });
 
-describe("maintenance", () => {
-  it("paints a silent or failing window during planned work as maintenance", () => {
-    const now = Date.parse("2026-10-01T12:00:00.000Z");
-    const laid = layoutReportSlots({
-      slots: [{ t: "2026-10-01T11:40:00.000Z" }],
+describe("why a window has no good result", () => {
+  const now = Date.parse("2026-10-01T12:00:00.000Z");
+  const at = (minutes: number) => now - minutes * 60_000;
+  const iso = (minutes: number) => new Date(at(minutes)).toISOString();
+
+  it("tells work by you, a routine restart and an offline server apart", () => {
+    const slots = heartbeatSlots({
+      slots: [
+        { t: iso(25), status: "UP" as const },
+        { t: iso(20), status: "DOWN" as const },
+      ],
+      incidents: [],
       slotSeconds: 300,
       graceSeconds: 120,
-      since: now - 3_600_000,
+      since: at(60),
       now,
-      count: 4,
-      maintenance: [{ from: now - 15 * 60_000, to: now - 12 * 60_000 }],
+      count: 5,
+      work: [{ from: at(21), to: at(12), label: "Restart" }],
+      quiet: [
+        { from: iso(10), to: iso(5), why: "routine" },
+        { from: iso(5), to: null, why: "offline" },
+      ],
     });
-    expect(laid.map((slot) => slot.state)).toEqual([
-      "received",
-      "maintenance",
-      "missed",
-      "missed",
+    expect(slots.map((slot) => [slot.state, slot.tone])).toEqual([
+      ["received", "up"],
+      ["received", "work"],
+      ["work", "work"],
+      ["routine", "routine"],
+      ["offline", "offline"],
     ]);
-    expect(barTone("maintenance", null, false)).toBe("maintenance");
-    expect(barTone("received", "DOWN", false, true)).toBe("maintenance");
+    expect(slots[2]!.work?.label).toBe("Restart");
+  });
+
+  it("lets an open incident win over work by you", () => {
     expect(barTone("received", "DOWN", true, true)).toBe("down");
     expect(barTone("received", "UP", false, true)).toBe("up");
+    expect(barTone("work", null, false)).toBe("work");
+    expect(barTone("routine", null, false)).toBe("routine");
+    expect(barTone("offline", null, false)).toBe("offline");
+  });
+
+  it("counts offline against uptime and leaves restarts out", () => {
+    const tones = [
+      "up",
+      "up",
+      "down",
+      "brief",
+      "offline",
+      "routine",
+      "work",
+      "work",
+      "missed",
+      "empty",
+    ] as const;
+    const uptime = uptimeOf(
+      tones.map((tone, index) => ({ start: index * 300_000, tone })),
+    );
+    expect(uptime).toEqual({
+      percent: 40,
+      up: 2,
+      down: 2,
+      offline: 1,
+      routine: 1,
+      work: 2,
+      since: 0,
+      lastDown: 3 * 300_000,
+    });
+    const clock = (value: number) => `at ${value / 300_000}`;
+    expect(uptimeTip(uptime, 300_000, clock)).toBe(
+      [
+        "Since at 0",
+        "2 of 5 windows up",
+        "Offline 5m",
+        "Routine Restart 5m, not counted",
+        "Restart by You 10m, not counted",
+        "Last Down at 3",
+      ].join("\n"),
+    );
+    expect(heartbeatSummary(uptime, "4 hours")).toBe(
+      "2 up, 2 down, 1 offline, 3 not counted in the last 4 hours",
+    );
+  });
+
+  it("says when nothing was measured or nothing went down", () => {
+    const none = uptimeOf([{ start: 0, tone: "empty" }]);
+    expect(none.percent).toBeNull();
+    expect(uptimeTip(none, 300_000, String)).toBe("No Reports Yet");
+    expect(heartbeatSummary(none, "4 hours")).toBe(
+      "No results in the last 4 hours",
+    );
+    expect(
+      uptimeTip(uptimeOf([{ start: 0, tone: "up" }]), 300_000, () => "06:10"),
+    ).toBe("Since 06:10\n1 of 1 window up\nNo Downtime Recorded");
+  });
+
+  it("names each window in its tooltip", () => {
+    const clock = () => "06:10";
+    const result = (status: "UP" | "DOWN", latencyMs: number | null) => ({
+      t: "2026-09-30T06:10:00.000Z",
+      status,
+      latencyMs,
+      message: null,
+    });
+    const tip = (
+      tone: BarTone,
+      sample: ReturnType<typeof result> | null = null,
+      label?: string,
+    ) =>
+      slotTip(
+        { start: 0, sample, work: label ? { label } : undefined },
+        tone,
+        clock,
+      );
+    expect(tip("up", result("UP", 41))).toBe("06:10 · Up · 41ms");
+    expect(tip("down", result("DOWN", null))).toBe("06:10 · Down");
+    expect(tip("brief", result("DOWN", null))).toBe(
+      "06:10 · Down, no incident",
+    );
+    expect(tip("work", result("DOWN", null), "Restart")).toBe(
+      "06:10 · Restart by You",
+    );
+    expect(tip("routine")).toBe("06:10 · Routine Restart");
+    expect(tip("offline")).toBe("06:10 · Offline");
+    expect(tip("missed")).toBe("06:10 · No Result");
+    expect(tip("empty")).toBe("06:10 · Not Measured");
   });
 });

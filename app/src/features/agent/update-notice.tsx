@@ -86,7 +86,7 @@ export function LatestAgent({
           : undefined
       }
     >
-      {release.version ? `Latest ${release.version}` : "No release checked"}
+      {release.version ? `Latest ${release.version}` : "No Release Checked"}
       <button
         type="button"
         onClick={() => check.mutate()}

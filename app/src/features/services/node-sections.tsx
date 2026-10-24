@@ -16,9 +16,9 @@ export function RecentActions({ node }: { node: NodeRecord }) {
       <div className="mb-2 flex min-h-8 items-center gap-2">
         <h2
           id="node-recent-actions"
-          className="text-[11px] tracking-wider text-muted-foreground uppercase"
+          className="text-xs font-medium text-muted-foreground"
         >
-          Recent actions
+          Recent Actions
         </h2>
         <Link
           to={`/history?server=${encodeURIComponent(node.id)}`}

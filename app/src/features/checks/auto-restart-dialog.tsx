@@ -69,7 +69,7 @@ export function AutoRestartDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0 max-sm:rounded-b-none">
         <DialogHeader>
-          <DialogTitle>Restart automatically</DialogTitle>
+          <DialogTitle>Restart Automatically</DialogTitle>
           <DialogDescription>
             {unit} on {server}
           </DialogDescription>

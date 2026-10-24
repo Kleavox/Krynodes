@@ -38,6 +38,7 @@ import {
 import { agentState, type AgentState } from "@/lib/agent";
 import { budgetLevel, estimateDailyUse, quotaLine } from "@/lib/budget";
 import {
+  capitalize,
   checkDisplayStatus,
   formatDuration,
   formatUptime,
@@ -59,12 +60,12 @@ import {
 import {
   actorOf,
   halted,
-  maintenanceSpans,
   serverOperation,
+  workSpans,
   type ServerOperation,
 } from "@/lib/operations";
 import { isPending, runningText } from "@/lib/services";
-import { layoutReportSlots, type Span } from "@/lib/series";
+import { layoutReportSlots, overlaps, type WorkSpan } from "@/lib/series";
 import { useMediaQuery } from "@/lib/use-media-query";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
@@ -83,11 +84,13 @@ function laidSlots(
   recent: RecentNode | undefined,
   now: number,
   asOf: number | null,
-  maintenance: Span[],
+  work: WorkSpan[],
 ) {
+  const slotSeconds =
+    recent?.slotSeconds ?? Math.max(300, node.interval_seconds);
   return layoutReportSlots<RecentSlot>({
     slots: recent?.slots ?? [],
-    slotSeconds: recent?.slotSeconds ?? Math.max(300, node.interval_seconds),
+    slotSeconds,
     graceSeconds: graceSeconds(node.interval_seconds),
     settleSeconds: Math.max(300, node.interval_seconds),
     since:
@@ -96,8 +99,13 @@ function laidSlots(
         : null,
     now,
     asOf: asOf ?? undefined,
-    maintenance,
-  });
+    work,
+    quiet: (recent?.quiet ?? []).filter((span) => span.why === "routine"),
+  }).map((slot) => ({
+    ...slot,
+    label: work.find((span) => overlaps([span], slot.start, slotSeconds * 1000))
+      ?.label,
+  }));
 }
 
 function spanOf(laid: { start: number }[]): string {
@@ -108,8 +116,8 @@ function spanOf(laid: { start: number }[]): string {
 }
 
 function checksLine(checks: CheckRecord[], state: NodeState): string {
-  if (checks.length === 0) return "No checks";
-  if (state !== "online") return "Checks not reporting";
+  if (checks.length === 0) return "No Checks";
+  if (state !== "online") return "Checks Not Reporting";
   const up = checks.filter((check) => check.status === "UP").length;
   return `${up}/${checks.length} checks up`;
 }
@@ -141,7 +149,7 @@ interface Row {
   agent: AgentState;
   operation: ServerOperation | null;
   busy: ActionRecord | null;
-  maintenance: Span[];
+  work: WorkSpan[];
 }
 
 export function FleetPage() {
@@ -226,7 +234,7 @@ export function FleetPage() {
           now,
           devices.data?.devices,
         ),
-        maintenance: maintenanceSpans(services.data?.actions ?? [], node.id),
+        work: workSpans(services.data?.actions ?? [], node.id),
         busy:
           services.data?.actions.find(
             (action) =>
@@ -249,9 +257,7 @@ export function FleetPage() {
       operation={
         rows.find((row) => row.node.id === selected.id)?.operation ?? null
       }
-      maintenance={
-        rows.find((row) => row.node.id === selected.id)?.maintenance ?? []
-      }
+      work={rows.find((row) => row.node.id === selected.id)?.work ?? []}
       checks={checksFor(selected.id)}
       recent={recent.data?.nodes[selected.id]}
       release={agentRelease}
@@ -270,7 +276,7 @@ export function FleetPage() {
         actions={
           nodes.length > 0 && (
             <Button onClick={() => setParam("enroll", "1")}>
-              Enroll server
+              Enroll Server
             </Button>
           )
         }
@@ -292,7 +298,7 @@ export function FleetPage() {
 
       {nodes.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8">
-          <h2 className="text-lg font-semibold">Enroll your first server</h2>
+          <h2 className="text-lg font-semibold">Enroll Your First Server</h2>
           <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
             <li>Select Enroll server to get a one-time install command.</li>
             <li>Paste it into a terminal on the server.</li>
@@ -301,7 +307,7 @@ export function FleetPage() {
             </li>
           </ol>
           <Button className="mt-6" onClick={() => setParam("enroll", "1")}>
-            Enroll server
+            Enroll Server
           </Button>
         </div>
       ) : (
@@ -335,7 +341,7 @@ export function FleetPage() {
               />
             </label>
             <FilterChips
-              label="Show servers"
+              label="Show Servers"
               value={filter}
               onChange={(value) =>
                 setParam("filter", value === "all" ? null : value)
@@ -397,7 +403,7 @@ export function FleetPage() {
           >
             {visible.length === 0 ? (
               <EmptyState
-                title="No servers match"
+                title="No Servers Match"
                 body="Change the search or the filter to see the rest."
                 action={
                   <Button
@@ -414,7 +420,7 @@ export function FleetPage() {
                       )
                     }
                   >
-                    Show all servers
+                    Show All Servers
                   </Button>
                 }
               />
@@ -479,7 +485,7 @@ export function FleetPage() {
             <SheetHeader className="p-0">
               <SheetTitle className="truncate">{selected?.name}</SheetTitle>
               <SheetDescription className="sr-only">
-                Server summary
+                Server Summary
               </SheetDescription>
             </SheetHeader>
             {panel}
@@ -509,9 +515,7 @@ function SummaryTile({
 }) {
   const body = (
     <>
-      <p className="text-[11px] tracking-wider text-muted-foreground uppercase">
-        {label}
-      </p>
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
       <p className="mt-1.5 font-mono text-2xl leading-none tracking-tight">
         {value}
       </p>
@@ -580,30 +584,32 @@ function FleetSummary({
       className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4"
     >
       <SummaryTile
-        label="Servers online"
+        label="Servers Online"
         value={`${summary.nodes.online}/${summary.nodes.total}`}
         detail={
           summary.nodes.offline > 0
             ? `${summary.nodes.offline} offline`
-            : "none offline"
+            : "None Offline"
         }
         tone={summary.nodes.offline > 0 ? "bad" : "ok"}
         to={summary.nodes.offline > 0 ? "/?filter=offline" : undefined}
       />
       <SummaryTile
-        label="Checks passing"
+        label="Checks Passing"
         value={`${summary.checks.up}/${summary.checks.total}`}
         detail={
           summary.checks.down > 0
             ? `${summary.checks.down} down`
-            : summary.checks.stale > 0
-              ? `${summary.checks.stale} not reporting`
-              : summary.checks.total > 0
-                ? "all passing"
-                : "no checks yet"
+            : summary.checks.offline > 0
+              ? `${summary.checks.offline} offline`
+              : summary.checks.stale > 0
+                ? `${summary.checks.stale} not reporting`
+                : summary.checks.total > 0
+                  ? "All Passing"
+                  : "No Checks Yet"
         }
         tone={
-          summary.checks.down > 0
+          summary.checks.down > 0 || summary.checks.offline > 0
             ? "bad"
             : summary.checks.stale > 0
               ? "warn"
@@ -611,21 +617,27 @@ function FleetSummary({
                 ? "ok"
                 : undefined
         }
-        to={summary.checks.down > 0 ? "/checks?status=down" : "/checks"}
+        to={
+          summary.checks.down > 0
+            ? "/checks?status=down"
+            : summary.checks.offline > 0
+              ? "/checks?status=offline"
+              : "/checks"
+        }
       />
       <SummaryTile
-        label="Open incidents"
+        label="Open Incidents"
         value={String(open.length)}
         detail={
           open.length > 0
             ? `Longest ${timeAgo(open.at(-1)!.started_at, now).replace(" ago", "")}`
-            : "all quiet"
+            : "All Quiet"
         }
         tone={open.length > 0 ? "bad" : "ok"}
         to={open.length > 0 ? "/incidents?status=open" : "/incidents"}
       />
       <SummaryTile
-        label={real ? "Krynodes quota · today" : "Krynodes quota · est."}
+        label={real ? "Krynodes Quota · Today" : "Krynodes Quota · Est."}
         value={`${quota.percent}%`}
         detail={quota.detail}
         tone={level === "over" ? "bad" : level === "warn" ? "warn" : undefined}
@@ -689,9 +701,9 @@ function NodeCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const { node, state, severity, reasons, operation, busy, maintenance } = row;
+  const { node, state, severity, reasons, operation, busy, work } = row;
   const devices = useDevices().data?.devices;
-  const laid = laidSlots(node, recent, now, asOf, maintenance);
+  const laid = laidSlots(node, recent, now, asOf, work);
   const live = state === "online" || state === "offline";
   return (
     <article
@@ -746,8 +758,8 @@ function NodeCard({
         <>
           {state === "online" ? (
             <div>
-              <p className="font-mono text-[10px] text-muted-foreground uppercase">
-                CPU · last {spanOf(laid)}
+              <p className="font-mono text-[10px] text-muted-foreground">
+                CPU · Last {spanOf(laid)}
               </p>
               <Sparkline
                 values={laid.map((slot) => slot.sample?.cpu ?? null)}
@@ -756,8 +768,8 @@ function NodeCard({
               />
             </div>
           ) : (
-            <p className="font-mono text-[10px] text-muted-foreground uppercase">
-              Last known values
+            <p className="font-mono text-[10px] text-muted-foreground">
+              Last Known Values
             </p>
           )}
           <div className="grid grid-cols-3 gap-3">
@@ -773,11 +785,12 @@ function NodeCard({
           <ReportStrip
             states={laid.map((slot) => slot.state)}
             starts={laid.map((slot) => slot.start)}
+            labels={laid.map((slot) => slot.label)}
           />
         </>
       ) : (
         <p className="text-sm text-muted-foreground">
-          {state === "pending" ? "Waiting for agent enrollment" : "Disabled"}
+          {state === "pending" ? "Waiting for Agent Enrollment" : "Disabled"}
         </p>
       )}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t pt-2.5">
@@ -810,7 +823,7 @@ function ChecksCell({
   if (active === 0)
     return <span className="text-muted-foreground">Paused</span>;
   if (state !== "online") {
-    return <span className="text-muted-foreground">Not reporting</span>;
+    return <span className="text-muted-foreground">Not Reporting</span>;
   }
   return (
     <span>
@@ -840,7 +853,7 @@ function FleetTable({
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
       <table className="w-full table-fixed text-sm">
-        <thead className="border-b text-left text-[11px] tracking-wider text-muted-foreground uppercase">
+        <thead className="border-b text-left text-xs font-medium text-muted-foreground">
           <tr>
             <th className="w-[28%] px-3 py-2 font-normal">Server</th>
             <th className="px-3 py-2 font-normal">CPU</th>
@@ -849,7 +862,7 @@ function FleetTable({
             <th className="w-[13%] px-3 py-2 font-normal">Checks</th>
             <th className="w-[16%] px-3 py-2 font-normal">Agent</th>
             <th className="w-[11%] px-3 py-2 text-right font-normal">
-              Last seen
+              Last Seen
             </th>
           </tr>
         </thead>
@@ -929,7 +942,7 @@ function FleetTable({
                 <AgentVersion node={node} release={release} now={now} />
               </td>
               <td className="px-3 py-2.5 text-right font-mono text-xs text-muted-foreground">
-                {timeAgo(node.last_seen_at, now)}
+                {capitalize(timeAgo(node.last_seen_at, now))}
               </td>
             </tr>
           ))}
@@ -942,9 +955,7 @@ function FleetTable({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border p-2">
-      <dt className="text-[10px] tracking-wider text-muted-foreground uppercase">
-        {label}
-      </dt>
+      <dt className="text-[11px] font-medium text-muted-foreground">{label}</dt>
       <dd className="font-mono text-sm break-words">{value}</dd>
     </div>
   );
@@ -953,7 +964,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function NodePanel({
   node,
   operation,
-  maintenance,
+  work,
   checks,
   recent,
   release,
@@ -965,7 +976,7 @@ function NodePanel({
 }: {
   node: NodeRecord;
   operation: ServerOperation | null;
-  maintenance: Span[];
+  work: WorkSpan[];
   checks: CheckRecord[];
   recent: RecentNode | undefined;
   release: AgentRelease;
@@ -976,7 +987,7 @@ function NodePanel({
   onClose: () => void;
 }) {
   const state = nodeState(node, seen);
-  const laid = laidSlots(node, recent, now, asOf, maintenance);
+  const laid = laidSlots(node, recent, now, asOf, work);
   const { severity, reasons } = nodeHealth(node, checks, seen);
   return (
     <div className="flex flex-col gap-4">
@@ -990,7 +1001,7 @@ function NodePanel({
           <NodeStatus
             state={state}
             operation={operation}
-            offlineDetail={`reported ${timeAgo(node.last_seen_at, now)}`}
+            offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
           />
           {systemLine(node) && (
             <p className="truncate font-mono text-[11px] text-muted-foreground">
@@ -1029,8 +1040,8 @@ function NodePanel({
       </dl>
       {state === "online" && (
         <div>
-          <p className="mb-1 text-[11px] tracking-wider text-muted-foreground uppercase">
-            CPU · last {spanOf(laid)}
+          <p className="mb-1 text-[11px] text-muted-foreground">
+            CPU · Last {spanOf(laid)}
           </p>
           <Sparkline
             className="h-12"
@@ -1046,7 +1057,7 @@ function NodePanel({
       </div>
       <div className="flex flex-wrap gap-2">
         <Button asChild size="sm">
-          <Link to={`/nodes/${node.id}`}>Open server</Link>
+          <Link to={`/nodes/${node.id}`}>Open Server</Link>
         </Button>
         <NodeActions node={node} onDeleted={onClose} />
       </div>

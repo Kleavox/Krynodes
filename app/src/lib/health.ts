@@ -91,6 +91,7 @@ export function fleetSummary(
       total: checks.length,
       up: shown.filter((status) => status === "UP").length,
       down: shown.filter((status) => status === "DOWN").length,
+      offline: shown.filter((status) => status === "OFFLINE").length,
       stale: shown.filter((status) => status === "STALE").length,
     },
   };

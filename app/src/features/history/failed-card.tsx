@@ -75,7 +75,7 @@ function LogsTab({ target }: { target: LogsTarget }) {
           className="h-auto px-0 font-mono text-xs"
           onClick={fetchLogs}
         >
-          Read again
+          Read Again
         </Button>
       )}
     </div>
@@ -175,7 +175,7 @@ export function FailedCard({
           <h3 className="text-sm font-medium">{line.text}</h3>
           <p className="font-mono text-xs text-muted-foreground">
             {[
-              node ? `on ${node.name}` : null,
+              node ? `On ${node.name}` : null,
               line.time,
               line.device,
               line.duration,
@@ -185,7 +185,7 @@ export function FailedCard({
             {action.exitCode !== null && (
               <span className="text-destructive">
                 {" "}
-                · exit {action.exitCode}
+                · Exit {action.exitCode}
               </span>
             )}
           </p>
@@ -199,12 +199,12 @@ export function FailedCard({
               disabled={run.isPending}
               onClick={tryAgain}
             >
-              Try again
+              Try Again
             </Button>
           )}
           {rollBack && (
             <Button size="sm" className="h-9 md:h-8" onClick={rollBack}>
-              Roll back
+              Roll Back
             </Button>
           )}
           <RowMenu

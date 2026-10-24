@@ -1,5 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 
+import { quietByNode, type QuietSpan } from "../agent/quiet";
+import { fleetLive, mergeLive } from "../fleet/client";
 import { findOwnedNode, type KrynodesApp, type KrynodesEnv } from "./shared";
 
 const RANGES = {
@@ -58,6 +60,7 @@ interface RecentRow {
   mem_used: number | null;
   mem_total: number | null;
   samples: number;
+  uptime: number | null;
 }
 
 interface RecentNode {
@@ -68,7 +71,12 @@ interface RecentNode {
     memPct: number | null;
     samples: number;
   }[];
+  quiet: QuietSpan[];
 }
+
+const RECENT_NODES_SQL = `
+  SELECT id, interval_seconds, last_seen_at, security FROM nodes
+  WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
 
 export const RECENT_SQL = `
   SELECT m.node_id,
@@ -77,7 +85,8 @@ export const RECENT_SQL = `
          AVG(m.cpu_percent) AS cpu,
          AVG(m.memory_used_bytes) AS mem_used,
          MAX(m.memory_total_bytes) AS mem_total,
-         SUM(m.samples) AS samples
+         SUM(m.samples) AS samples,
+         MIN(m.uptime_seconds) AS uptime
   FROM nodes n
   JOIN node_windows m
     ON m.node_id = n.id
@@ -131,15 +140,37 @@ export function registerMetricRoutes(
   });
 
   app.get("/api/metrics/recent", requireAdmin, async (context) => {
-    const rows = await context.env.DB.prepare(RECENT_SQL)
-      .bind(context.get("identity").id, new Date().toISOString())
-      .all<RecentRow>();
+    const owner = context.get("identity").id;
+    const now = Date.now();
+    const [rows, owned, live] = await Promise.all([
+      context.env.DB.prepare(RECENT_SQL)
+        .bind(owner, new Date(now).toISOString())
+        .all<RecentRow>(),
+      context.env.DB.prepare(RECENT_NODES_SQL).bind(owner).all<{
+        id: string;
+        interval_seconds: number;
+        last_seen_at: string | null;
+        security: string | null;
+      }>(),
+      fleetLive(context.env, owner),
+    ]);
+    const quiet = quietByNode(
+      rows.results.map((row) => ({
+        node_id: row.node_id,
+        window_start: epochIso(row.slot * row.slot_seconds),
+        uptime_seconds: row.uptime,
+      })),
+      mergeLive(owned.results, live?.nodes ?? null),
+      now - 31 * 300_000,
+      now,
+    );
 
     const nodes: Record<string, RecentNode> = {};
     for (const row of rows.results) {
       const entry = (nodes[row.node_id] ??= {
         slotSeconds: row.slot_seconds,
         slots: [],
+        quiet: quiet[row.node_id]?.quiet ?? [],
       });
       entry.slots.push({
         t: epochIso(row.slot * row.slot_seconds),

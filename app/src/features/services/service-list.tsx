@@ -36,9 +36,9 @@ const TONE: Record<ServiceState, "ok" | "bad" | "warn" | "idle"> = {
 };
 
 const KIND: Record<"stack" | ServiceKind, string> = {
-  stack: "stack",
-  docker: "container",
-  systemd: "systemd",
+  stack: "Stack",
+  docker: "Container",
+  systemd: "Systemd",
 };
 
 export const rowGrid =
@@ -264,7 +264,7 @@ export function TrustLink() {
       to="/devices"
       className="font-mono text-xs text-warning underline-offset-4 hover:underline"
     >
-      Not trusted yet
+      Not Trusted Yet
     </Link>
   );
 }

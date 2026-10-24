@@ -62,7 +62,7 @@ export function AgentDialog({
                   : undefined
               }
             >
-              {release.version ? `Latest ${release.version}` : "Latest unknown"}
+              {release.version ? `Latest ${release.version}` : "Latest Unknown"}
             </span>
             <Button
               variant="link"
@@ -71,7 +71,7 @@ export function AgentDialog({
               onClick={() => check.mutate()}
               disabled={check.isPending}
             >
-              {check.isPending ? "Checking…" : "Check for releases"}
+              {check.isPending ? "Checking…" : "Check for Releases"}
             </Button>
           </p>
         </div>
@@ -100,7 +100,7 @@ export function AgentDialog({
                 onClick={() => request.mutate(node.id)}
                 disabled={request.isPending}
               >
-                {request.isPending ? "Requesting…" : "Update agent"}
+                {request.isPending ? "Requesting…" : "Update Agent"}
               </Button>
             </div>
           )}
@@ -170,7 +170,7 @@ export function AgentDialog({
 
         <label className="flex min-h-9 cursor-pointer items-center justify-between gap-4 border-t pt-3 md:min-h-0">
           <span>
-            <span className="block text-sm">Update automatically</span>
+            <span className="block text-sm">Update Automatically</span>
             <span className="block text-xs text-muted-foreground">
               Installs each new release as soon as Krynodes sees it.
             </span>
@@ -186,7 +186,7 @@ export function AgentDialog({
 
         <details className="text-sm">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-            Update by hand
+            Update by Hand
           </summary>
           <div className="mt-2">
             <CopyCommand command={release.updateCommand} />

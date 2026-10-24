@@ -51,8 +51,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { NodeRecord } from "@/types";
 
-const sectionTitle =
-  "text-[11px] tracking-wider text-muted-foreground uppercase";
+const sectionTitle = "text-xs font-medium text-muted-foreground";
 
 const offset = () => new Date().getTimezoneOffset();
 
@@ -221,12 +220,12 @@ function RecipeDialog({
           >
             {!run.isPending && <Fingerprint aria-hidden="true" />}
             {run.isPending
-              ? "Waiting for the fingerprint…"
+              ? "Waiting for the Fingerprint…"
               : recommend
                 ? "Apply"
                 : turnOn
-                  ? "Turn on"
-                  : "Turn off"}
+                  ? "Turn On"
+                  : "Turn Off"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -263,7 +262,7 @@ export function SecurityPanel({
           Security
         </h2>
         <span className="font-mono text-[11px] text-muted-foreground">
-          checked {timeAgo(report.checkedAt, seen)}
+          Checked {timeAgo(report.checkedAt, seen)}
         </span>
         <Button
           variant="ghost"
@@ -272,7 +271,7 @@ export function SecurityPanel({
           disabled={scan.isPending}
           onClick={() => scan.mutate(node.id)}
         >
-          Check now
+          Check Now
         </Button>
       </div>
       <div className="divide-y rounded-lg border bg-card">
@@ -292,7 +291,7 @@ export function SecurityPanel({
                         to="/settings/private-addresses"
                         className="underline underline-offset-4"
                       >
-                        Settings, Private addresses
+                        Settings, Private Addresses
                       </Link>
                       .
                     </span>
@@ -353,7 +352,7 @@ export function SecurityPanel({
                       ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
                       : "On"
                     : choice.outside
-                      ? "On · set up outside Krynodes"
+                      ? "On · Set up outside Krynodes"
                       : "Off"}
                 </span>
                 {choice.blocked || choice.outside ? (
@@ -365,7 +364,7 @@ export function SecurityPanel({
                       choice.applied
                         ? [
                             {
-                              label: "Turn off",
+                              label: "Turn Off",
                               destructive: true,
                               onSelect: () =>
                                 setPending({ choice, turnOn: false }),
@@ -382,7 +381,7 @@ export function SecurityPanel({
                           ]
                         : [
                             {
-                              label: "Turn on",
+                              label: "Turn On",
                               onSelect: () =>
                                 setPending({ choice, turnOn: true }),
                             },

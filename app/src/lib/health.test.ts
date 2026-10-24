@@ -146,10 +146,11 @@ describe("fleetSummary", () => {
       check("UP"),
       check("DOWN", { id: "c2" }),
       check("UP", { id: "c3", node_id: "n2" }),
+      check("UP", { id: "c4", node_id: "n3" }),
     ];
     expect(fleetSummary(nodes, checks, NOW)).toEqual({
       nodes: { total: 3, online: 1, offline: 1 },
-      checks: { total: 3, up: 1, down: 1, stale: 1 },
+      checks: { total: 4, up: 1, down: 1, offline: 1, stale: 1 },
     });
   });
 });

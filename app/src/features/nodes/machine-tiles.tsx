@@ -201,7 +201,7 @@ function RangeChips({
 }) {
   return (
     <FilterChips
-      label="Time range"
+      label="Time Range"
       value={range}
       options={RANGES}
       onChange={onRange}
@@ -226,7 +226,7 @@ export function MachineTiles({
       <div className="mb-2 flex min-h-8 items-center gap-2">
         <h2
           id="node-machine"
-          className="text-[11px] tracking-wider text-muted-foreground uppercase"
+          className="text-xs font-medium text-muted-foreground"
         >
           Machine
         </h2>
@@ -261,11 +261,9 @@ export function MachineTiles({
                 aria-label={`${tile.title} ${tile.value}. Open its chart`}
                 className="min-w-0 rounded-lg border bg-card p-2.5 text-left transition-colors hover:bg-card-hover"
               >
-                <span className="flex items-baseline justify-between gap-2 text-[11px] tracking-wider text-muted-foreground uppercase">
+                <span className="flex items-baseline justify-between gap-2 text-[11px] text-muted-foreground">
                   <span>{tile.title}</span>
-                  <span className="truncate font-mono tracking-normal normal-case">
-                    {tile.small}
-                  </span>
+                  <span className="truncate font-mono">{tile.small}</span>
                 </span>
                 <span
                   className={cn(

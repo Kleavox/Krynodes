@@ -30,7 +30,7 @@ function Running({ item, onPick }: { item: ActivityItem; onPick: () => void }) {
           </span>
           <span className="block font-mono text-[11px] text-muted-foreground">
             {item.by} · <Elapsed since={item.at} />
-            {item.status === "queued" && " · waiting"}
+            {item.status === "queued" && " · Waiting"}
           </span>
         </span>
       </Link>
@@ -59,7 +59,7 @@ export function ActivityMenu() {
           variant="outline"
           size="sm"
           aria-label={
-            running > 0 ? `${running} in progress` : "Nothing in progress"
+            running > 0 ? `${running} in progress` : "Nothing in Progress"
           }
           className={cn(running > 0 && "border-warning/40")}
         >
@@ -80,8 +80,8 @@ export function ActivityMenu() {
         align="end"
         className="max-h-[70dvh] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-2"
       >
-        <h2 className="px-2 pt-1 pb-1.5 text-[11px] tracking-wider text-muted-foreground uppercase">
-          In progress
+        <h2 className="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">
+          In Progress
         </h2>
         {running === 0 ? (
           <p className="px-2 pb-2 text-sm text-muted-foreground">
@@ -99,7 +99,7 @@ export function ActivityMenu() {
           onClick={close}
           className="mt-1 block border-t px-2 pt-2.5 pb-1 text-sm text-muted-foreground hover:text-foreground"
         >
-          View history
+          View History
         </Link>
       </PopoverContent>
     </Popover>

@@ -208,7 +208,7 @@ describe("stacks", () => {
   it("names why a stack cannot deploy yet", () => {
     const [, listmonk] = groupStacks(data, nodes, "");
     expect(deployBlocker(listmonk!.members[0]!)).toBeNull();
-    expect(deployBlocker(listmonk!.members[1]!)).toBe("Not trusted yet");
+    expect(deployBlocker(listmonk!.members[1]!)).toBe("Not Trusted Yet");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
@@ -342,14 +342,14 @@ describe("stack commands", () => {
       newStackBlocker(node("n1", "pivox", "0.6.0"), entry("no-compose")),
     ).toBe("Docker without Compose");
     expect(newStackBlocker(node("n1", "pivox", "0.6.0"), entry(null))).toBe(
-      "Docker not reported yet",
+      "Docker Not Reported Yet",
     );
     expect(
       newStackBlocker(node("n1", "pivox", "0.6.0"), {
         ...entry("ready"),
         trust: null,
       }),
-    ).toBe("Not trusted yet");
+    ).toBe("Not Trusted Yet");
   });
 
   it("checks a stack name the way the server does", () => {
@@ -419,7 +419,7 @@ describe("removed stacks", () => {
     ).toEqual([
       ["shop", "Callisto", null],
       ["kuma", "Callisto", null],
-      ["ghost", "Pivox", "Docker not reported yet"],
+      ["ghost", "Pivox", "Docker Not Reported Yet"],
     ]);
     expect(list[1]!.action?.action).toBe("restore");
     expect(
@@ -775,7 +775,7 @@ describe("what needs attention on Services", () => {
     expect(problems[3]!.blocker).toBeNull();
     expect(problems[0]!.target.name).toBe("backup.service");
     expect(problems[0]!.stack).toBeNull();
-    expect(problems[0]!.blocker).toBe("Not trusted yet");
+    expect(problems[0]!.blocker).toBe("Not Trusted Yet");
   });
 
   it("says what stopped and when without a failed action", () => {

@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { SmallLabel, StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { LogsDialog, type LogsTarget } from "@/features/services/logs-dialog";
-import { failuresText, incidentLine } from "@/lib/checks";
+import { failuresText, incidentLine, kindLabel } from "@/lib/checks";
 import { publicLabel } from "@/lib/format";
 import type { CheckRecord, Incident, NodeRecord } from "@/types";
 
@@ -28,7 +28,7 @@ export function CheckTags({ check }: { check: CheckRecord }) {
     <>
       {check.auto_restart === 1 && (
         <SmallLabel title="Restarts automatically when this check turns red">
-          AUTO
+          Auto
         </SmallLabel>
       )}
       {shared && <SmallLabel>{shared}</SmallLabel>}
@@ -46,9 +46,9 @@ function DownRow({ item, nodes }: { item: DownItem; nodes: NodeRecord[] }) {
       <div className="min-w-0 space-y-0.5">
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
           <span className="font-medium">{check.name}</span>
-          <SmallLabel>{check.kind}</SmallLabel>
+          <SmallLabel>{kindLabel(check.kind)}</SmallLabel>
           <span className="font-mono text-xs text-muted-foreground">
-            on {node.name}
+            On {node.name}
           </span>
           <CheckTags check={check} />
         </p>
@@ -105,7 +105,7 @@ function DownRow({ item, nodes }: { item: DownItem; nodes: NodeRecord[] }) {
         ) : (
           incident && (
             <Button asChild variant="outline" size="sm" className="h-9 md:h-8">
-              <Link to={`/incidents/${incident.id}`}>Open incident</Link>
+              <Link to={`/incidents/${incident.id}`}>Open Incident</Link>
             </Button>
           )
         )}

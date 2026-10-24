@@ -74,7 +74,7 @@ const HINTS = ["client-device", "security-key", "hybrid"];
 export function nameFor(transports: string[], fallback: string): string {
   if (transports.includes("hybrid")) return "Phone";
   if (transports.some((item) => ["usb", "nfc", "ble"].includes(item))) {
-    return "Security key";
+    return "Security Key";
   }
   return fallback;
 }

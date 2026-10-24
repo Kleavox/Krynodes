@@ -689,8 +689,43 @@ describe("FleetHub", () => {
     expect(t.storage.alarm).toBeNull();
   });
 
+  const restartNginx = (t: ReturnType<typeof setup>) =>
+    t.sqlite
+      .prepare(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+           status, requested_by, requested_at, deliverable_at, sent_at, finished_at)
+         VALUES ('m1', 'b1', 0, 'rolling', ?, 'docker', 'nginx', 'restart', 'sent', 'budi@example.test', ?, ?, ?, NULL)`,
+      )
+      .run(
+        NODE,
+        new Date(BASE).toISOString(),
+        new Date(BASE).toISOString(),
+        new Date(BASE).toISOString(),
+      );
+
+  it("opens the incident of a check the work on its server does not touch", async () => {
+    const t = setup();
+    restartNginx(t);
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
+    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
+    expect(
+      t.sqlite.prepare("SELECT COUNT(*) AS n FROM incidents").get(),
+    ).toEqual({ n: 1 });
+  });
+
   it("opens no incident during planned work on the server, then one at the next failure", async () => {
     const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE checks SET kind = 'CONTAINER', target = 'nginx' WHERE id = ?",
+      )
+      .run(CHECK);
+    t.sqlite
+      .prepare(
+        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', 'nginx', 'running')",
+      )
+      .run(NODE);
     const planned = (status: string, finishedAt: string | null) =>
       t.sqlite
         .prepare(

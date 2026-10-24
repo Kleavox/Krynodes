@@ -25,5 +25,4 @@ export function SettingsSection({
   );
 }
 
-export const SUBTITLE =
-  "text-[11px] tracking-wider text-muted-foreground uppercase";
+export const SUBTITLE = "text-xs font-medium text-muted-foreground";

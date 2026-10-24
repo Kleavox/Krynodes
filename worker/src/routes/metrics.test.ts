@@ -197,6 +197,35 @@ describe("GET /api/metrics/recent", () => {
     expect(details).not.toMatch(/SCAN m\b/u);
   });
 
+  it("tells a routine restart from the server going offline", async () => {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: "n1" });
+    const slot = Math.floor(Date.now() / 300_000);
+    for (const back of [12, 11, 10, 7, 6, 5, 4, 3, 2, 1]) {
+      seedMetric(sqlite, "n1", at((slot - back) * 300 + 5));
+    }
+    sqlite
+      .prepare(
+        "UPDATE node_windows SET uptime_seconds = CASE WHEN window_start = ? THEN 120 ELSE 1000000 END",
+      )
+      .run(new Date((slot - 7) * 300_000).toISOString());
+    const gap = (slot - 9) * 300_000;
+    sqlite.prepare("UPDATE nodes SET security = ? WHERE id = 'n1'").run(
+      JSON.stringify({
+        rebootHour: new Date(gap).getUTCHours(),
+        findings: [],
+      }),
+    );
+    const body = (await (await get(db, "/api/metrics/recent")).json()) as {
+      nodes: Record<string, { quiet: unknown[] }>;
+    };
+    expect(body.nodes.n1?.quiet).toContainEqual({
+      from: new Date(gap).toISOString(),
+      to: new Date((slot - 7) * 300_000).toISOString(),
+      why: "routine",
+    });
+  });
+
   it("reaches back to the oldest slot the fleet strip can show", async () => {
     const { db, sqlite } = createTestDb();
     seedNode(sqlite, { id: "n1" });

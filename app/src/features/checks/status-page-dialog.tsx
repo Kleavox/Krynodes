@@ -66,7 +66,7 @@ function StatusPageForm({
       }}
     >
       <DialogHeader>
-        <DialogTitle>Status page</DialogTitle>
+        <DialogTitle>Status Page</DialogTitle>
         <DialogDescription>
           The public status page shows a check&apos;s name, note, state and
           incidents. Never its kind, target, server or error messages.
@@ -77,7 +77,7 @@ function StatusPageForm({
         <Switch checked={shown} onCheckedChange={setShown} />
       </label>
       {shown && (
-        <Field id="public-note" label="Public note">
+        <Field id="public-note" label="Public Note">
           <Input
             id="public-note"
             value={note}

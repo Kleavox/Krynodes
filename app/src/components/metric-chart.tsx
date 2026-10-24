@@ -31,9 +31,9 @@ export type ChartRow = { time: number } & Record<string, number | null>;
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)"];
 
 const RANGE_LABEL: Record<MetricRange, string> = {
-  "6h": "Last 6 hours",
-  "24h": "Last 24 hours",
-  "7d": "Last 7 days",
+  "6h": "Last 6 Hours",
+  "24h": "Last 24 Hours",
+  "7d": "Last 7 Days",
 };
 
 export function MetricChart({
@@ -77,7 +77,7 @@ export function MetricChart({
 
   return (
     <figure className="min-w-0 rounded-lg border bg-card p-3">
-      <figcaption className="flex items-baseline justify-between gap-2 text-[11px] tracking-wider text-muted-foreground uppercase">
+      <figcaption className="flex items-baseline justify-between gap-2 text-[11px] text-muted-foreground">
         <span>{title}</span>
         <span>{RANGE_LABEL[range]}</span>
       </figcaption>

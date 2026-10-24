@@ -193,7 +193,7 @@ function NewStackForm({
           </Button>
           {failed && (
             <Button onClick={() => setActionId(null)}>
-              Edit and try again
+              Edit and Try Again
             </Button>
           )}
         </DialogFooter>
@@ -204,7 +204,7 @@ function NewStackForm({
   return (
     <DialogContent className={SHEET}>
       <DialogHeader>
-        <DialogTitle>New stack</DialogTitle>
+        <DialogTitle>New Stack</DialogTitle>
         <DialogDescription>
           Paste a Docker Compose file. The server checks it, pulls its images
           and starts it.
@@ -287,7 +287,7 @@ function NewStackForm({
               </li>
               <li>
                 Ports open on the server itself (127.0.0.1). Open one to your
-                browser with Web address in the stack&rsquo;s menu.
+                browser with Web Address in the stack&rsquo;s menu.
               </li>
               <li>
                 The file is kept with the action in History for 90 days; put
@@ -339,7 +339,7 @@ function NewStackForm({
           onClick={() => void create()}
         >
           {!run.isPending && <Fingerprint aria-hidden="true" />}
-          {run.isPending ? "Waiting for the fingerprint…" : "Create"}
+          {run.isPending ? "Waiting for the Fingerprint…" : "Create"}
         </Button>
       </DialogFooter>
     </DialogContent>

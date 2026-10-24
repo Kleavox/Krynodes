@@ -10,8 +10,9 @@ import {
   DELIVER_SQL,
   deliverActions,
   EXPIRE_SQL,
-  inMaintenance,
+  plannedNodes,
   sweepStatements,
+  workUnderway,
   type BatchMode,
 } from "./store";
 
@@ -514,8 +515,35 @@ describe("action batches", () => {
   it("does not count a server still waiting its turn in a rolling batch as planned work", async () => {
     const { db, queue } = setup();
     await queue("rolling", [A, B]);
-    expect(await inMaintenance(db, A, NOW + MINUTE, NOW)).toBe(true);
-    expect(await inMaintenance(db, B, NOW + MINUTE, NOW)).toBe(false);
+    expect(await workUnderway(db, A, NOW + MINUTE, NOW)).toHaveLength(1);
+    expect(await workUnderway(db, B, NOW + MINUTE, NOW)).toEqual([]);
+  });
+
+  it("names the work under way, never Krynodes' own restart, a read or a scan", async () => {
+    const { db, queue } = setup();
+    for (const [action, kind, name] of [
+      ["heal", "systemd", "nginx.service"],
+      ["scan", "host", "server"],
+      ["read", "compose", "umami"],
+    ] as const) {
+      await db.batch(
+        createBatch(db, {
+          action,
+          mode: "parallel",
+          targets: [{ nodeId: B, kind, name }],
+          requestedBy: "owner@example.test",
+          now: NOW,
+        }).statements,
+      );
+    }
+    await deliverActions(db, B, NOW);
+    expect(await workUnderway(db, B, NOW + MINUTE, NOW)).toEqual([]);
+    expect(await plannedNodes(db, [B], NOW + MINUTE)).toEqual(new Set());
+    await queue("parallel", [B]);
+    expect(await workUnderway(db, B, NOW + MINUTE, NOW)).toEqual([
+      { kind: "docker", name: "adguard", action: "restart" },
+    ]);
+    expect(await plannedNodes(db, [B], NOW + MINUTE)).toEqual(new Set([B]));
   });
 
   it("counts work sent to a server as planned for its first 30 minutes only", async () => {
@@ -537,7 +565,7 @@ describe("action batches", () => {
     });
     await db.batch(deploy.statements);
     await deliverActions(db, B, NOW);
-    expect(await inMaintenance(db, B, NOW + 29 * MINUTE, NOW)).toBe(true);
-    expect(await inMaintenance(db, B, NOW + 31 * MINUTE, NOW)).toBe(false);
+    expect(await workUnderway(db, B, NOW + 29 * MINUTE, NOW)).toHaveLength(1);
+    expect(await workUnderway(db, B, NOW + 31 * MINUTE, NOW)).toEqual([]);
   });
 });

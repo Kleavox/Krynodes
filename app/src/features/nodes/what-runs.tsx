@@ -47,8 +47,7 @@ import {
 } from "@/lib/what-runs";
 import type { NodeRecord } from "@/types";
 
-const SECTION_TITLE =
-  "text-[11px] tracking-wider text-muted-foreground uppercase";
+const SECTION_TITLE = "text-xs font-medium text-muted-foreground";
 
 function FoldedUnits({
   card,
@@ -92,7 +91,7 @@ function FoldedUnits({
         </span>
         <KindLabel kind="systemd" />
         <span className="shrink-0 font-mono text-xs text-muted-foreground">
-          all running
+          All Running
         </span>
       </button>
       {open && (
@@ -251,7 +250,7 @@ export function WhatRuns({ node, seen }: { node: NodeRecord; seen: number }) {
       <section aria-labelledby="what-runs">
         <div className="mb-2 flex min-h-8 items-center gap-2">
           <h2 id="what-runs" className={SECTION_TITLE}>
-            What runs on {node.name}
+            What Runs on {node.name}
           </h2>
           {services.data && !trusted && <TrustLink />}
           <Button
@@ -298,7 +297,7 @@ export function WhatRuns({ node, seen }: { node: NodeRecord; seen: number }) {
             id="other-checks"
             className={cn(SECTION_TITLE, "mb-2 flex min-h-8 items-center")}
           >
-            Other checks
+            Other Checks
           </h2>
           <ul className="divide-y rounded-lg border bg-card">
             {other.map((check) => (

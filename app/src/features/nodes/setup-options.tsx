@@ -31,7 +31,7 @@ export function SetupOptions({
         />
         <span>
           <span className="block font-medium">
-            Apply recommended protections
+            Apply Recommended Protections
           </span>
           <span className="block text-xs text-muted-foreground">
             Automatic security updates, restart when needed, SSH keys only,

@@ -40,7 +40,7 @@ function ChangeRow({ fleet, entry }: { fleet: Fleet; entry: ChangeEntry }) {
   ].filter(Boolean);
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-4 py-3 text-sm">
-      <p className="min-w-0 break-words">{entry.title || "Refresh servers"}</p>
+      <p className="min-w-0 break-words">{entry.title || "Refresh Servers"}</p>
       <Badge
         variant="outline"
         className={cn(
@@ -80,7 +80,7 @@ export function RecentChanges({ fleet }: { fleet: Fleet }) {
     >
       <div className="flex min-h-12 items-center border-b px-4">
         <h2 id="changes-heading" className="text-sm font-medium">
-          Recent changes
+          Recent Changes
         </h2>
       </div>
       {changes.length === 0 ? (
@@ -104,7 +104,7 @@ export function RecentChanges({ fleet }: { fleet: Fleet }) {
             disabled={history.isFetchingNextPage}
             onClick={() => void history.fetchNextPage()}
           >
-            {history.isFetchingNextPage ? "Loading…" : "Show older"}
+            {history.isFetchingNextPage ? "Loading…" : "Show Older"}
           </Button>
         )}
       </div>

@@ -62,7 +62,7 @@ export function Reading({
         {errorMessage(failure)}
       </p>
       <Button variant="outline" size="sm" onClick={retry}>
-        Try again
+        Try Again
       </Button>
     </div>
   ) : (
@@ -177,7 +177,7 @@ function ComposeForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          {editable ? "Edit compose" : "Compose file"} · {target.project} on{" "}
+          {editable ? "Edit Compose" : "Compose File"} · {target.project} on{" "}
           {target.nodeName}
         </DialogTitle>
         <DialogDescription>
@@ -191,7 +191,7 @@ function ComposeForm({
       ) : (
         <div className="space-y-4">
           <textarea
-            aria-label="Compose file"
+            aria-label="Compose File"
             value={current}
             rows={16}
             readOnly={!editable}
@@ -245,7 +245,7 @@ function ComposeForm({
             onClick={() => void save()}
           >
             {!run.isPending && <Fingerprint aria-hidden="true" />}
-            {run.isPending ? "Waiting for the fingerprint…" : "Save"}
+            {run.isPending ? "Waiting for the Fingerprint…" : "Save"}
           </Button>
         )}
       </DialogFooter>

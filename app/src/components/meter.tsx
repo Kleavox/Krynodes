@@ -30,12 +30,7 @@ export function Meter({
   return (
     <div className={cn("min-w-0", stale && "opacity-50")}>
       <div className="flex items-baseline justify-between gap-2 font-mono text-[11px]">
-        <span
-          className={cn(
-            "text-muted-foreground uppercase",
-            hideLabel && "sr-only",
-          )}
-        >
+        <span className={cn("text-muted-foreground", hideLabel && "sr-only")}>
           {label}
         </span>
         <span

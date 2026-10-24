@@ -31,7 +31,7 @@ const MODES: { value: BatchMode; label: string; detail: string }[] = [
   },
   {
     value: "parallel",
-    label: "All at once",
+    label: "All at Once",
     detail: "Every server runs it at its next report.",
   },
 ];
@@ -83,7 +83,7 @@ function DeployForm({
   );
   const blocked = request.members.filter((member) => !targets.includes(member));
   const several = targets.length > 1;
-  const word = rollback ? "Roll back" : "Deploy";
+  const word = rollback ? "Roll Back" : "Deploy";
   const [first] = targets;
   const title = several
     ? `${word} ${request.project} on ${targets.length} servers?`
@@ -131,7 +131,7 @@ function DeployForm({
             className="underline underline-offset-4"
             onClick={onClose}
           >
-            {ids.length === 0 ? "Set up trusted devices" : "Change access"}
+            {ids.length === 0 ? "Set Up Trusted Devices" : "Change Access"}
           </Link>
           .
         </p>
@@ -143,13 +143,13 @@ function DeployForm({
                 <li key={member.node.id}>
                   {member.node.name}
                   {offline(member) && (
-                    <span className="text-muted-foreground"> · offline</span>
+                    <span className="text-muted-foreground"> · Offline</span>
                   )}
                 </li>
               ))}
               {blocked.map((member) => (
                 <li key={member.node.id} className="text-muted-foreground">
-                  {member.node.name} · skipped:{" "}
+                  {member.node.name} · Skipped:{" "}
                   {deployBlocker(member) ?? "nothing to roll back to"}
                 </li>
               ))}
@@ -199,7 +199,7 @@ function DeployForm({
           {working
             ? state
               ? "Sending…"
-              : "Waiting for the fingerprint…"
+              : "Waiting for the Fingerprint…"
             : word}
         </Button>
       </AlertDialogFooter>

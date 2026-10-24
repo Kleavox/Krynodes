@@ -423,8 +423,8 @@ describe("fingerprint, always", () => {
 
   it("names a passkey after where it lives and refuses a touch-only one", async () => {
     expect(nameFor(["hybrid", "internal"], "Laptop")).toBe("Phone");
-    expect(nameFor(["usb"], "Laptop")).toBe("Security key");
-    expect(nameFor(["nfc"], "Phone")).toBe("Security key");
+    expect(nameFor(["usb"], "Laptop")).toBe("Security Key");
+    expect(nameFor(["nfc"], "Phone")).toBe("Security Key");
     expect(nameFor(["internal"], "Laptop")).toBe("Laptop");
     const created = (flags: number, transports: string[]) => ({
       create: async (options: CredentialCreationOptions) => {

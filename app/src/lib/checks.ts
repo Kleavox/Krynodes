@@ -7,6 +7,7 @@ import type {
   CheckResult,
   Incident,
   NodeRecord,
+  QuietSpan,
   ServiceEntry,
   ServiceKind,
 } from "../types";
@@ -15,8 +16,21 @@ import {
   formatDuration,
   nodeState,
   parseTimestamp,
+  titleCase,
+  type CheckDisplay,
 } from "./format";
+import type { WorkSpan } from "./series";
 import { failureText } from "./services";
+
+const KIND_LABEL: Record<CheckKind, string> = {
+  HTTP: "HTTP",
+  TCP: "TCP",
+  SERVICE: "Systemd",
+  CONTAINER: "Docker",
+};
+
+export const kindLabel = (kind: string) =>
+  KIND_LABEL[kind as CheckKind] ?? kind;
 
 export const TARGET_HINT: Record<CheckKind, string> = {
   HTTP: "Fetched from the server. Down on errors, timeouts and 5xx answers.",
@@ -105,7 +119,7 @@ export function checksByServer(
   checks: CheckRecord[],
   nodes: NodeRecord[],
   seen: number,
-): { node: NodeRecord; checks: CheckRecord[]; down: number }[] {
+): { node: NodeRecord; checks: CheckRecord[] }[] {
   return nodes.flatMap((node) => {
     const state = nodeState(node, seen);
     const isDown = (check: CheckRecord) =>
@@ -116,9 +130,7 @@ export function checksByServer(
         (a, b) =>
           Number(isDown(b)) - Number(isDown(a)) || a.name.localeCompare(b.name),
       );
-    return own.length === 0
-      ? []
-      : [{ node, checks: own, down: own.filter(isDown).length }];
+    return own.length === 0 ? [] : [{ node, checks: own }];
   });
 }
 
@@ -149,8 +161,8 @@ export const failuresText = (count: number) =>
 
 export const incidentLine = (updates: number) =>
   updates > 0
-    ? `Incident open · ${plural(updates, "update")} →`
-    : "Incident open →";
+    ? `Incident Open · ${plural(updates, "update")} →`
+    : "Incident Open →";
 
 export function autoRestartLine(
   check: Pick<CheckRecord, "kind" | "node_id" | "target" | "auto_restart">,
@@ -172,29 +184,71 @@ export function autoRestartLine(
 }
 
 const RUNNING: Partial<Record<CheckKind, string>> = {
-  CONTAINER: "running",
-  SERVICE: "active",
+  CONTAINER: "Running",
+  SERVICE: "Active",
 };
 
-export function checkFigure(
-  check: CheckRecord,
-  display: string,
-  openIncident: Pick<Incident, "started_at"> | undefined,
-  latest: { results: CheckResult[] } | undefined,
-  now: number,
-): string {
-  if (display === "DOWN") {
-    return openIncident
-      ? `down ${formatDuration(now - parseTimestamp(openIncident.started_at))}`
-      : "down";
+export type LiveTone = "ok" | "bad" | "warn" | "idle" | "off" | "info" | "work";
+
+const covers = (from: number, to: number, now: number) =>
+  from <= now && now < to;
+
+export function checkLive(view: {
+  check: CheckRecord;
+  display: CheckDisplay;
+  incident?: Pick<Incident, "started_at">;
+  latest?: { results: CheckResult[] };
+  lastSeen?: string | null;
+  work?: WorkSpan[];
+  quiet?: QuietSpan[];
+  healing?: boolean;
+  now: number;
+}): { label: string; tone: LiveTone } {
+  const { check, display, incident, now } = view;
+  if (display === "PAUSED") return { label: "Paused", tone: "idle" };
+  const work = (view.work ?? []).find((span) =>
+    covers(span.from, span.to, now),
+  );
+  if (work && !incident && (display === "DOWN" || display === "OFFLINE")) {
+    return { label: titleCase(`${work.label} by you`), tone: "work" };
   }
-  if (display !== "UP") return "--";
+  if (display === "OFFLINE") {
+    const routine = (view.quiet ?? []).some(
+      (span) =>
+        span.why === "routine" &&
+        covers(
+          parseTimestamp(span.from),
+          span.to === null ? Infinity : parseTimestamp(span.to),
+          now,
+        ),
+    );
+    if (routine) return { label: "Routine Restart", tone: "info" };
+    return {
+      label: view.lastSeen
+        ? `Offline ${formatDuration(now - parseTimestamp(view.lastSeen))}`
+        : "Offline",
+      tone: "off",
+    };
+  }
+  if (display === "DOWN") {
+    const down = incident
+      ? `Down ${formatDuration(now - parseTimestamp(incident.started_at))}`
+      : "Down";
+    return {
+      label: view.healing ? `${down} · Auto-Restarting` : down,
+      tone: incident ? "bad" : "warn",
+    };
+  }
+  if (display !== "UP") return { label: "--", tone: "idle" };
   const running = RUNNING[check.kind];
   if (running) {
-    return check.since
-      ? `${running} ${formatDuration(now - parseTimestamp(check.since))}`
-      : running;
+    return {
+      label: check.since
+        ? `${running} ${formatDuration(now - parseTimestamp(check.since))}`
+        : running,
+      tone: "ok",
+    };
   }
-  const latency = latest?.results.at(-1)?.latencyMs ?? null;
-  return latency === null ? "--" : `${latency}ms`;
+  const latency = view.latest?.results.at(-1)?.latencyMs ?? null;
+  return { label: latency === null ? "--" : `${latency}ms`, tone: "ok" };
 }

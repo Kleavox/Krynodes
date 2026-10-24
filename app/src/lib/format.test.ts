@@ -18,6 +18,7 @@ import {
   shortDate,
   stampTime,
   timeAgo,
+  titleCase,
 } from "./format";
 
 const NOW = Date.parse("2026-09-27T12:00:00Z");
@@ -170,9 +171,16 @@ describe("checkDisplayStatus", () => {
   it("trusts a check result only while its node is online", () => {
     expect(checkDisplayStatus("UP", "online")).toBe("UP");
     expect(checkDisplayStatus("DOWN", "online")).toBe("DOWN");
-    expect(checkDisplayStatus("UP", "offline")).toBe("STALE");
+    expect(checkDisplayStatus("UP", "offline")).toBe("OFFLINE");
+    expect(checkDisplayStatus("UNKNOWN", "offline")).toBe("OFFLINE");
     expect(checkDisplayStatus("DOWN", "disabled")).toBe("STALE");
     expect(checkDisplayStatus("UNKNOWN", "pending")).toBe("UNKNOWN");
+  });
+
+  it("title-cases a short label, leaving the small words low", () => {
+    expect(titleCase("roll back by you")).toBe("Roll Back by You");
+    expect(titleCase("open server →")).toBe("Open Server →");
+    expect(titleCase("in the last hour")).toBe("In the Last Hour");
   });
 
   it("shows a paused check as paused whatever it last reported", () => {
@@ -201,7 +209,7 @@ describe("displayHandle", () => {
 describe("publicLabel", () => {
   it("marks public checks and says when the page hides a paused one", () => {
     expect(publicLabel({ public: 0, enabled: 1 })).toBeNull();
-    expect(publicLabel({ public: 1, enabled: 1 })).toBe("public");
-    expect(publicLabel({ public: 1, enabled: 0 })).toBe("public · paused");
+    expect(publicLabel({ public: 1, enabled: 1 })).toBe("Public");
+    expect(publicLabel({ public: 1, enabled: 0 })).toBe("Public · Paused");
   });
 });

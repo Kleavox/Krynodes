@@ -65,7 +65,7 @@ export function runText(
 } {
   const from = stampTime(run.from, now);
   return {
-    title: run.status === "DOWN" ? "Still down" : "Up",
+    title: run.status === "DOWN" ? "Still Down" : "Up",
     when:
       run.count === 1
         ? from
@@ -149,25 +149,25 @@ export function incidentState(
 ): string {
   const start = parseTimestamp(incident.started_at);
   return incident.resolved_at
-    ? `Resolved · lasted ${formatDuration(parseTimestamp(incident.resolved_at) - start)}`
-    : `Open · down ${formatDuration(now - start)}`;
+    ? `Resolved · Lasted ${formatDuration(parseTimestamp(incident.resolved_at) - start)}`
+    : `Open · Down ${formatDuration(now - start)}`;
 }
 
 export function ownerLink(owner: CheckOwner): { label: string; to: string } {
   switch (owner.kind) {
     case "stack":
       return {
-        label: `stack ${owner.project}`,
+        label: `Stack ${owner.project}`,
         to: `/services?q=${encodeURIComponent(owner.project)}`,
       };
     case "container":
       return {
-        label: `container ${owner.name}`,
+        label: `Container ${owner.name}`,
         to: `/services?q=${encodeURIComponent(owner.name)}`,
       };
     case "systemd":
       return {
-        label: `unit ${owner.unit}`,
+        label: `Unit ${owner.unit}`,
         to: `/services?q=${encodeURIComponent(owner.unit)}&system=1`,
       };
   }
@@ -234,6 +234,6 @@ export function latestLine(
 }
 
 export function last30Text(last30: IncidentBoard["last30"]): string {
-  if (last30.count === 0) return "Last 30 days · no incidents";
-  return `Last 30 days · ${last30.count} ${last30.count === 1 ? "incident" : "incidents"} · ${formatDuration(last30.downMs)} down in total`;
+  if (last30.count === 0) return "Last 30 Days · No Incidents";
+  return `Last 30 Days · ${last30.count} ${last30.count === 1 ? "incident" : "incidents"} · ${formatDuration(last30.downMs)} down in total`;
 }

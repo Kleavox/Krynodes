@@ -48,7 +48,7 @@ export function BigPrint({
       )}
       aria-label={print ? `Fingerprint ${formatPrint(print)}` : "Fingerprint"}
     >
-      {print === null ? "…" : print ? formatPrint(print) : "Unreadable key"}
+      {print === null ? "…" : print ? formatPrint(print) : "Unreadable Key"}
     </p>
   );
 }

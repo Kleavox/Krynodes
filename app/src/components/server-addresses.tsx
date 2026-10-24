@@ -87,9 +87,9 @@ function AddressStandIn({ nodeName }: { nodeName: string }) {
 }
 
 const OWNER_CHOICES = [
-  { value: "own", label: "Its own address" },
+  { value: "own", label: "Its Own Address" },
   { value: "router", label: "A router's address" },
-  { value: "detect", label: "Detect automatically" },
+  { value: "detect", label: "Detect Automatically" },
 ] as const;
 
 function OwnerMenu({ node, address }: { node: NodeRecord; address: Address }) {

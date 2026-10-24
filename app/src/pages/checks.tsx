@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router";
 import { EmptyState } from "@/components/empty-state";
 import { FilterChips } from "@/components/filter-chips";
 import { PageHeader } from "@/components/page-header";
+import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,10 +19,12 @@ import {
 } from "@/lib/checks";
 import type { CheckRecord } from "@/types";
 
-type Filter = "all" | "down" | "up";
+type Filter = "all" | "down" | "offline" | "up";
 
 function readFilter(value: string | null): Filter {
-  return value === "down" || value === "up" ? value : "all";
+  return value === "down" || value === "offline" || value === "up"
+    ? value
+    : "all";
 }
 
 export function ChecksPage() {
@@ -66,43 +69,39 @@ export function ChecksPage() {
   const { checks } = overview.data;
   const { display } = view;
   const groups = checksByServer(checks, nodes, overview.dataUpdatedAt);
-  const down = checks.filter(
-    (check) => check.enabled && display(check) === "DOWN",
-  );
-  const up = checks.filter((check) => display(check) === "UP");
+  const isDown = (check: CheckRecord) =>
+    display(check) === "DOWN" && view.live(check).tone !== "work";
+  const isOffline = (check: CheckRecord) =>
+    display(check) === "OFFLINE" && view.live(check).tone === "off";
+  const isUp = (check: CheckRecord) => display(check) === "UP";
+  const down = checks.filter(isDown);
+  const offline = checks.filter(isOffline);
+  const up = checks.filter(isUp);
   const downItems: DownItem[] = groups.flatMap((group) =>
-    group.checks
-      .filter(
-        (check) =>
-          check.enabled && display(check) === "DOWN" && !view.planned(check),
-      )
-      .map((check) => {
-        const incident = view.openIncident(check);
-        return {
-          check,
-          node: group.node,
-          figure: view.figure(check),
-          incident,
-          updates: incident
-            ? (board.data?.latest[incident.id]?.updates ?? 0)
-            : 0,
-          autoLine: autoRestartLine(
-            check,
-            attention.data?.items ?? [],
-            view.now,
-          ),
-          strip: view.strip(check),
-          restart: view.restartFor(check),
-          logs: view.logsFor(check),
-        };
-      }),
+    group.checks.filter(isDown).map((check) => {
+      const incident = view.openIncident(check);
+      return {
+        check,
+        node: group.node,
+        figure: view.live(check).label,
+        incident,
+        updates: incident ? (board.data?.latest[incident.id]?.updates ?? 0) : 0,
+        autoLine: autoRestartLine(check, attention.data?.items ?? [], view.now),
+        strip: view.strip(check),
+        restart: view.restartFor(check),
+        logs: view.logsFor(check),
+      };
+    }),
   );
   const needle = query.trim().toLowerCase();
+  const matches: Record<Filter, (check: CheckRecord) => boolean> = {
+    all: () => true,
+    down: isDown,
+    offline: isOffline,
+    up: isUp,
+  };
   const shown = (check: CheckRecord, serverName: string) =>
-    (filter === "all" ||
-      (filter === "down"
-        ? check.enabled && display(check) === "DOWN"
-        : display(check) === "UP")) &&
+    matches[filter](check) &&
     (!needle ||
       [check.name, check.target, serverName].some((text) =>
         text.toLowerCase().includes(needle),
@@ -111,6 +110,7 @@ export function ChecksPage() {
     .map((group) => ({
       ...group,
       total: group.checks.length,
+      down: group.checks.filter(isDown).length,
       checks: group.checks.filter((check) => shown(check, group.node.name)),
     }))
     .filter((group) => group.checks.length > 0);
@@ -124,24 +124,24 @@ export function ChecksPage() {
             onClick={() => setParam("add", "1")}
             disabled={nodes.length === 0}
           >
-            Add check
+            Add Check
           </Button>
         }
       />
 
       {nodes.length === 0 ? (
         <EmptyState
-          title="No servers yet"
+          title="No Servers Yet"
           body="Enroll a server before adding checks. Checks run on the server's agent."
           action={
             <Button asChild>
-              <Link to="/?enroll=1">Enroll server</Link>
+              <Link to="/?enroll=1">Enroll Server</Link>
             </Button>
           }
         />
       ) : checks.length === 0 ? (
         <EmptyState
-          title="No checks configured"
+          title="No Checks Configured"
           body="Add an HTTP, TCP, container or systemd check to one of your servers."
         />
       ) : (
@@ -157,7 +157,7 @@ export function ChecksPage() {
               className="h-9 w-full sm:w-56 md:h-8"
             />
             <FilterChips
-              label="Filter checks"
+              label="Filter Checks"
               value={filter}
               onChange={(value) =>
                 setParam("status", value === "all" ? null : value)
@@ -165,6 +165,14 @@ export function ChecksPage() {
               options={[
                 { value: "all", label: `All ${checks.length}` },
                 { value: "down", label: `Down ${down.length}` },
+                ...(offline.length > 0 || filter === "offline"
+                  ? [
+                      {
+                        value: "offline" as const,
+                        label: `Offline ${offline.length}`,
+                      },
+                    ]
+                  : []),
                 { value: "up", label: `Up ${up.length}` },
               ]}
             />
@@ -174,31 +182,43 @@ export function ChecksPage() {
               Nothing matches. Change the search or the filter to see the rest.
             </p>
           ) : (
-            visible.map((group) => (
-              <section
-                key={group.node.id}
-                aria-label={group.node.name}
-                className="divide-y rounded-lg border bg-card"
-              >
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2">
-                  <h2 className="text-sm font-medium">{group.node.name}</h2>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {serverChecksText(group.total, group.down)}
-                  </span>
-                  <Link
-                    to={`/nodes/${group.node.id}`}
-                    className="ml-auto font-mono text-xs text-primary underline-offset-4 hover:underline"
-                  >
-                    Open server →
-                  </Link>
-                </div>
-                <ul className="divide-y">
-                  {group.checks.map((check) => (
-                    <CheckRow key={check.id} check={check} view={view} />
-                  ))}
-                </ul>
-              </section>
-            ))
+            visible.map((group) => {
+              const quiet = group.checks.find(
+                (check) => display(check) === "OFFLINE",
+              );
+              const state = quiet && view.live(quiet);
+              return (
+                <section
+                  key={group.node.id}
+                  aria-label={group.node.name}
+                  className="divide-y rounded-lg border bg-card"
+                >
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2">
+                    <h2 className="text-sm font-medium">{group.node.name}</h2>
+                    {state && (
+                      <span className="inline-flex items-center gap-1.5 self-center font-mono text-xs text-muted-foreground">
+                        <StatusDot tone={state.tone} />
+                        {state.label}
+                      </span>
+                    )}
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {serverChecksText(group.total, group.down)}
+                    </span>
+                    <Link
+                      to={`/nodes/${group.node.id}`}
+                      className="ml-auto font-mono text-xs text-primary underline-offset-4 hover:underline"
+                    >
+                      Open Server →
+                    </Link>
+                  </div>
+                  <ul className="divide-y">
+                    {group.checks.map((check) => (
+                      <CheckRow key={check.id} check={check} view={view} />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })
           )}
         </div>
       )}

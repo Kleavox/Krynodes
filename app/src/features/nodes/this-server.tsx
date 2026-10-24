@@ -14,11 +14,11 @@ function reachedBy(
   trust: { core: string[]; access: string[] } | null,
   devices: { name: string; fingerprint: string }[],
 ): string {
-  if ((trust?.core.length ?? 0) === 0) return "Not trusted yet";
+  if ((trust?.core.length ?? 0) === 0) return "Not Trusted Yet";
   const names = devices
     .filter((device) => trust?.access.includes(device.fingerprint))
     .map((device) => device.name);
-  return names.length > 0 ? names.join(", ") : "No access";
+  return names.length > 0 ? names.join(", ") : "No Access";
 }
 
 export function ThisServer({
@@ -39,9 +39,9 @@ export function ThisServer({
     <section aria-labelledby="this-server">
       <h2
         id="this-server"
-        className="mb-2 flex min-h-8 items-center text-[11px] tracking-wider text-muted-foreground uppercase"
+        className="mb-2 flex min-h-8 items-center text-[11px] text-muted-foreground"
       >
-        This server
+        This Server
       </h2>
       <div className="space-y-3 rounded-lg border bg-card p-3">
         <AddressRows node={node} correct />

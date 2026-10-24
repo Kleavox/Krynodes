@@ -5,9 +5,9 @@ import {
   activity,
   actorOf,
   elapsedText,
-  maintenanceSpans,
   plannedNow,
   serverOperation,
+  workSpans,
 } from "./operations";
 
 const NOW = Date.parse("2026-10-01T12:00:00.000Z");
@@ -175,30 +175,54 @@ describe("elapsed time", () => {
   });
 });
 
-describe("maintenance spans", () => {
-  it("covers planned work on a server, two minutes after it ends, ten after a restart, but not the auto-restart switch", () => {
-    const spans = maintenanceSpans(
-      [
-        action({
-          id: "m1",
-          sentAt: ago(30),
-          finishedAt: ago(29),
-          status: "done",
-        }),
-        action({ id: "m2", nodeId: "other" }),
-        action({ id: "m3", action: "logs", sentAt: ago(5) }),
-        reboot({ sentAt: ago(20), finishedAt: ago(19), status: "done" }),
-        action({ id: "m4", sentAt: ago(1) }),
-        action({ id: "m5", action: "autorestart", sentAt: ago(3) }),
-        action({ id: "m6", action: "manual", sentAt: ago(2) }),
-      ],
-      "n1",
-    );
-    expect(spans).toEqual([
-      { from: NOW - 30 * 60_000, to: NOW - 27 * 60_000 },
-      { from: NOW - 20 * 60_000, to: NOW - 9 * 60_000 },
-      { from: NOW - 60_000, to: Infinity },
+describe("work spans", () => {
+  const actions = [
+    action({
+      id: "m1",
+      sentAt: ago(30),
+      finishedAt: ago(29),
+      status: "done",
+    }),
+    action({ id: "m2", nodeId: "other" }),
+    action({ id: "m3", action: "logs", sentAt: ago(5) }),
+    reboot({ sentAt: ago(20), finishedAt: ago(19), status: "done" }),
+    action({ id: "m4", kind: "docker", name: "redis", sentAt: ago(1) }),
+    action({ id: "m5", action: "autorestart", sentAt: ago(3) }),
+    action({ id: "m6", action: "manual", sentAt: ago(2) }),
+    action({ id: "m7", action: "heal", sentAt: ago(4) }),
+    action({ id: "m8", kind: "compose", action: "read", sentAt: ago(6) }),
+    action({ id: "m9", kind: "host", action: "scan", sentAt: ago(7) }),
+  ];
+
+  it("covers work you sent, two minutes after it ends, ten after a restart, never Krynodes' own restart, a read or a scan", () => {
+    expect(workSpans(actions, "n1")).toEqual([
+      { from: NOW - 30 * 60_000, to: NOW - 27 * 60_000, label: "Restart" },
+      { from: NOW - 20 * 60_000, to: NOW - 9 * 60_000, label: "Restart" },
+      { from: NOW - 60_000, to: Infinity, label: "Restart" },
     ]);
+  });
+
+  it("keeps to the work that touches what a check watches", () => {
+    const server = {
+      stacks: [],
+      services: [
+        { kind: "docker" as const, name: "nginx" },
+        { kind: "docker" as const, name: "redis" },
+      ],
+    };
+    expect(
+      workSpans(
+        actions,
+        "n1",
+        { kind: "CONTAINER", target: "nginx" },
+        server,
+      ).map((span) => span.from),
+    ).toEqual([NOW - 30 * 60_000, NOW - 20 * 60_000]);
+    expect(
+      workSpans(actions, "n1", { kind: "HTTP", target: "https://x.test" }).map(
+        (span) => span.from,
+      ),
+    ).toEqual([NOW - 20 * 60_000]);
   });
 });
 

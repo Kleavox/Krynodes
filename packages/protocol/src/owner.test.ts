@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { ownerOf, touches, type OwnerServer } from "./owner";
+import {
+  isWork,
+  ownerOf,
+  touches,
+  workTouches,
+  type OwnerServer,
+} from "./owner";
 
 const pivox: OwnerServer = {
   stacks: [{ project: "pihole", containers: ["pihole-pihole-1"] }],
@@ -117,6 +123,58 @@ describe("touches", () => {
     ).toBe(true);
     expect(
       touches(portainer, { kind: "compose", name: "portainer" }, pivox),
+    ).toBe(false);
+  });
+});
+
+describe("work by you", () => {
+  it("counts what changes something, not reads, settings or Krynodes' own restarts", () => {
+    for (const action of ["restart", "deploy", "stop", "reboot", "lockdown"]) {
+      expect(isWork({ action })).toBe(true);
+    }
+    for (const action of [
+      "logs",
+      "read",
+      "export",
+      "scan",
+      "autorestart",
+      "manual",
+      "heal",
+      "trust",
+      "store",
+      "release",
+      "reshare",
+      "forget",
+    ]) {
+      expect(isWork({ action })).toBe(false);
+    }
+  });
+
+  it("touches only the checks on what it changes, and every check for host work", () => {
+    const umami = { kind: "HTTP", target: "https://umami.kleavox.xyz" };
+    const ssh = { kind: "TCP", target: "51.79.0.10:22" };
+    const deploy = { kind: "compose", name: "umami", action: "deploy" };
+    expect(workTouches(umami, deploy, io)).toBe(true);
+    expect(workTouches(ssh, deploy, io)).toBe(false);
+    expect(
+      workTouches(
+        umami,
+        { kind: "compose", name: "blog", action: "deploy" },
+        io,
+      ),
+    ).toBe(false);
+    expect(
+      workTouches(ssh, { kind: "host", name: "server", action: "reboot" }, io),
+    ).toBe(true);
+    expect(
+      workTouches(ssh, { kind: "host", name: "server", action: "scan" }, io),
+    ).toBe(false);
+    expect(
+      workTouches(
+        { kind: "SERVICE", target: "ssh" },
+        { kind: "systemd", name: "ssh.service", action: "heal" },
+        pivox,
+      ),
     ).toBe(false);
   });
 });
