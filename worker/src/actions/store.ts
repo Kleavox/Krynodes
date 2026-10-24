@@ -78,6 +78,8 @@ export interface ActionRow {
   output: string | null;
   signed: string | null;
   device_id: string | null;
+  hidden_at?: string | null;
+  hidden_by?: string | null;
   attachment?: string | null;
   attach_from?: number | null;
   attach_key?: string | null;

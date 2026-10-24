@@ -64,7 +64,7 @@ export function registerAdminRoutes(
         `SELECT c.id, c.node_id, c.name, c.kind, c.target, c.enabled,
               c.status, c.timeout_seconds, c.latency_ms, c.last_checked_at,
               c.consecutive_failures, c.last_message, c.public, c.public_note,
-              c.auto_restart, c.created_at
+              c.auto_restart, c.created_at, c.since
        FROM checks c
        JOIN nodes n ON n.id = c.node_id
        WHERE n.owner_user_id = ?
@@ -377,6 +377,7 @@ export function registerAdminRoutes(
         "latency_ms = NULL",
         "last_message = NULL",
         "last_checked_at = NULL",
+        "since = NULL",
       );
     }
     if (updates.length === 0) return context.json({ ok: true });

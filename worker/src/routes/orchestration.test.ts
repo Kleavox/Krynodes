@@ -1356,10 +1356,11 @@ describe("the inventory of agent 0.6.0", () => {
       "c2VhbGVk",
     );
     const body = (await (await t.call("GET", "/api/history")).json()) as {
-      actions: { action: string; output: string | null }[];
+      entries: { action?: { action: string; output: string | null } }[];
     };
     expect(
-      body.actions.find((row) => row.action === "release")?.output,
+      body.entries.find((entry) => entry.action?.action === "release")?.action
+        ?.output,
     ).toBeNull();
     await runRetention(t.env);
     expect(

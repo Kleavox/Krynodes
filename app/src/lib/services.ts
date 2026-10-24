@@ -18,7 +18,7 @@ import {
 
 import { agentCurrent } from "./devices";
 
-import { clockTime, nodeState, parseTimestamp } from "./format";
+import { clockTime, nodeState, parseTimestamp, timeAgo } from "./format";
 import { untilWindowSettles } from "./series";
 
 const PENDING_POLL_MS = 5_000;
@@ -238,6 +238,22 @@ export function actionText(action: ActionRecord, nodeName: string): string {
   }
 }
 
+export function errorLine(output: string | null): string | null {
+  const line = (output ?? "")
+    .split("\n")
+    .map((entry) => entry.trim())
+    .findLast((entry) => entry !== "");
+  return line ? line.slice(0, 200) : null;
+}
+
+export function failureText(action: ActionRecord, now: number): string {
+  const detail =
+    errorLine(action.output) ??
+    (action.exitCode === null ? null : `exit ${action.exitCode}`);
+  const what = `${verb(action.action)} ${action.status === "expired" ? "expired" : "failed"} ${timeAgo(action.finishedAt ?? action.requestedAt, now)}`;
+  return detail ? `${what}: ${detail}` : what;
+}
+
 export function durationText(action: ActionRecord): string | null {
   if (!action.sentAt || !action.finishedAt) return null;
   const seconds =
@@ -269,15 +285,19 @@ export function serviceForCheck(
   check: Pick<CheckRecord, "kind" | "target" | "node_id">,
   data: ServicesResponse | undefined,
 ): ServiceEntry | null {
-  if (check.kind !== "SERVICE" || !data) return null;
-  const name = check.target.endsWith(".service")
-    ? check.target
-    : `${check.target}.service`;
+  if ((check.kind !== "SERVICE" && check.kind !== "CONTAINER") || !data) {
+    return null;
+  }
+  const kind = check.kind === "SERVICE" ? "systemd" : "docker";
+  const name =
+    kind === "docker" || check.target.endsWith(".service")
+      ? check.target
+      : `${check.target}.service`;
   return (
     data.nodes
       .find((node) => node.id === check.node_id)
       ?.services.find(
-        (service) => service.kind === "systemd" && service.name === name,
+        (service) => service.kind === kind && service.name === name,
       ) ?? null
   );
 }

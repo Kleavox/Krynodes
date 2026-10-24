@@ -24,6 +24,7 @@ const NODE = {
 const CHECK = "22222222-2222-4222-8222-222222222222";
 const WINDOW = 300_000;
 const BASE = Math.floor(Date.parse("2026-09-27T08:00:00Z") / WINDOW) * WINDOW;
+const STARTED = "2026-09-27T07:59:00Z";
 
 function heartbeat(results?: CheckResult[]): AgentHeartbeat {
   return {
@@ -156,6 +157,46 @@ describe("agent ingestion budget", () => {
       .run();
     const { config } = await loadAgentConfig(db, NODE);
     expect(config.checks.map((check) => check.id)).toEqual(["c-a", "c-b"]);
+  });
+
+  it("stores when a container started", async () => {
+    const { beat, sqlite } = setup();
+    await beat(BASE + 10_000, [{ ...result("UP"), since: STARTED }]);
+    expect(
+      sqlite.prepare("SELECT since FROM checks WHERE id = ?").get(CHECK),
+    ).toEqual({ since: STARTED });
+  });
+
+  it("writes a restart between two checks once", async () => {
+    const { beat, db } = setup();
+    await beat(BASE + 10_000, [{ ...result("UP"), since: STARTED }]);
+    const { checks } = await loadAgentConfig(db, NODE);
+    const restarted = "2026-09-27T08:01:30Z";
+    expect(
+      resultStatements(
+        db,
+        checks,
+        [{ ...result("UP"), since: restarted }],
+        BASE + 70_000,
+      ).statements,
+    ).toHaveLength(1);
+    expect(
+      resultStatements(
+        db,
+        checks,
+        [{ ...result("UP"), since: STARTED }],
+        BASE + 70_000,
+      ).statements,
+    ).toHaveLength(0);
+  });
+
+  it("clears since when a result comes without it", async () => {
+    const { beat, sqlite } = setup();
+    await beat(BASE + 10_000, [{ ...result("UP"), since: STARTED }]);
+    await beat(BASE + 70_000, [result("UP")]);
+    expect(
+      sqlite.prepare("SELECT since FROM checks WHERE id = ?").get(CHECK),
+    ).toEqual({ since: null });
   });
 
   it("drops the unused last_seen_at index", () => {

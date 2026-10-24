@@ -35,12 +35,13 @@ const createdLayout = "2006-01-02 15:04:05 -0700"
 const containerFormat = "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}\t{{.CreatedAt}}\t{{.Ports}}"
 
 type Stack struct {
-	Project   string
-	Directory string
-	Files     []string
-	Running   int
-	Total     int
-	Public    []string
+	Project    string
+	Directory  string
+	Files      []string
+	Running    int
+	Total      int
+	Public     []string
+	Containers []string
 }
 
 type Snapshot struct {
@@ -224,6 +225,7 @@ func parseContainers(output string) ([]Service, []Stack) {
 			newest[project] = created
 		}
 		stack.Total++
+		stack.Containers = append(stack.Containers, name)
 		if state == "running" {
 			stack.Running++
 		}
@@ -238,6 +240,7 @@ func parseContainers(output string) ([]Service, []Stack) {
 		if broken[project] {
 			continue
 		}
+		slices.Sort(stack.Containers)
 		stacks = append(stacks, *stack)
 	}
 	slices.SortFunc(stacks, func(a, b Stack) int { return cmp.Compare(a.Project, b.Project) })

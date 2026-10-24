@@ -1,7 +1,11 @@
+import { ownerOf, touches, type OwnerServer } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
+import { loadEstate } from "../actions/attention";
+import type { ActionRow } from "../actions/store";
 import { expandResults, windowSize, type WindowRow } from "../agent/windows";
+import { READ_ONLY, toActionRecord } from "./services";
 import {
   invalidRequest,
   readJson,
@@ -13,6 +17,8 @@ import {
 const SPAN_MS = 4 * 3_600_000;
 const WINDOW_MS = 300_000;
 const INCIDENT_PAD_MS = 10 * 60_000;
+const BEFORE_MS = 3_600_000;
+const RESOLVED_SPAN_MS = 30 * 86_400_000;
 
 const epoch = (value: string) =>
   Date.parse(
@@ -45,6 +51,36 @@ const OWNED_CHECKS_SQL = `
   SELECT c.id FROM checks c
   JOIN nodes n ON n.id = c.node_id
   WHERE n.owner_user_id = ?1`;
+
+type Watched = Pick<
+  IncidentRow,
+  "node_id" | "check_kind" | "check_target" | "started_at" | "resolved_at"
+>;
+
+function onIncident(
+  incident: Watched,
+  actions: ActionRow[],
+  server: OwnerServer,
+  now: number,
+): ActionRow[] {
+  const from = epoch(incident.started_at) - BEFORE_MS;
+  const to = incident.resolved_at ? epoch(incident.resolved_at) : now;
+  const watched = ownerOf(
+    { kind: incident.check_kind, target: incident.check_target },
+    server,
+  );
+  return actions.filter((action) => {
+    const at = epoch(action.requested_at);
+    return (
+      action.node_id === incident.node_id &&
+      at >= from &&
+      at <= to &&
+      !READ_ONLY.has(action.action) &&
+      ((action.kind === "host" && action.action === "reboot") ||
+        (watched !== null && touches(watched, action, server)))
+    );
+  });
+}
 
 interface CheckHistory {
   results: {
@@ -88,6 +124,106 @@ export function registerCheckResultRoutes(
     return context.json({ windowSeconds: 300, from, checks });
   });
 
+  app.get("/api/incidents/board", requireAdmin, async (context) => {
+    const db = context.env.DB;
+    const owner = context.get("identity").id;
+    const now = Date.now();
+    const owned = `JOIN checks c ON c.id = i.check_id
+       JOIN nodes n ON n.id = c.node_id WHERE n.owner_user_id = ?1`;
+    const [open, updates, resolved, estate] = await Promise.all([
+      db
+        .prepare(
+          `SELECT i.id, i.started_at, i.resolved_at, c.node_id,
+                  c.kind AS check_kind, c.target AS check_target
+           FROM incidents i ${owned} AND i.status = 'OPEN'`,
+        )
+        .bind(owner)
+        .all<Watched & { id: string }>(),
+      db
+        .prepare(
+          `SELECT u.incident_id, u.status, u.message, u.created_at
+           FROM incident_updates u JOIN incidents i ON i.id = u.incident_id
+           ${owned} AND i.status = 'OPEN'
+           ORDER BY u.created_at, u.id`,
+        )
+        .bind(owner)
+        .all<{
+          incident_id: string;
+          status: string;
+          message: string;
+          created_at: string;
+        }>(),
+      db
+        .prepare(
+          `SELECT i.started_at, i.resolved_at FROM incidents i ${owned}
+           AND i.status = 'RESOLVED' AND i.started_at >= ?2`,
+        )
+        .bind(owner, new Date(now - RESOLVED_SPAN_MS).toISOString())
+        .all<{ started_at: string; resolved_at: string }>(),
+      loadEstate(db, owner),
+    ]);
+    const earliest = Math.min(
+      ...open.results.map((incident) => epoch(incident.started_at)),
+    );
+    const actions =
+      open.results.length > 0
+        ? await db
+            .prepare(
+              `SELECT * FROM actions
+               WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
+                 AND requested_at >= ?
+               ORDER BY requested_at, position`,
+            )
+            .bind(owner, new Date(earliest - BEFORE_MS).toISOString())
+            .all<ActionRow>()
+        : { results: [] };
+    const latest: Record<
+      string,
+      {
+        at: string;
+        updates: number;
+        update: { status: string; message: string } | null;
+        action: ReturnType<typeof toActionRecord> | null;
+      }
+    > = {};
+    for (const incident of open.results) {
+      const posted = updates.results.filter(
+        (update) => update.incident_id === incident.id,
+      );
+      const update = posted.at(-1);
+      const action = onIncident(
+        incident,
+        actions.results,
+        estate.server(incident.node_id),
+        now,
+      ).at(-1);
+      if (!update && !action) continue;
+      const actionWins =
+        action !== undefined &&
+        (!update || epoch(action.requested_at) > epoch(update.created_at));
+      latest[incident.id] = {
+        at: actionWins ? action.requested_at : update!.created_at,
+        updates: posted.length,
+        update:
+          !actionWins && update
+            ? { status: update.status, message: update.message }
+            : null,
+        action: actionWins ? toActionRecord(action) : null,
+      };
+    }
+    return context.json({
+      latest,
+      last30: {
+        count: resolved.results.length,
+        downMs: resolved.results.reduce(
+          (total, incident) =>
+            total + epoch(incident.resolved_at) - epoch(incident.started_at),
+          0,
+        ),
+      },
+    });
+  });
+
   app.get("/api/incidents/:id", requireAdmin, async (context) => {
     const db = context.env.DB;
     const incident = await db
@@ -104,7 +240,7 @@ export function registerCheckResultRoutes(
       .bind(context.req.param("id"), context.get("identity").id)
       .first<IncidentRow>();
     if (!incident) return context.json({ code: "NOT_FOUND" }, 404);
-    const start = epoch(incident.started_at) - INCIDENT_PAD_MS;
+    const start = epoch(incident.started_at) - BEFORE_MS;
     const end =
       (incident.resolved_at ? epoch(incident.resolved_at) : Date.now()) +
       INCIDENT_PAD_MS;
@@ -131,7 +267,8 @@ export function registerCheckResultRoutes(
         incident.check_id,
       ) ?? []
     ).reverse();
-    const [updates, check] = await Promise.all([
+    const now = Date.now();
+    const [updates, check, actions, estate] = await Promise.all([
       db
         .prepare(
           `SELECT id, status, message, author, created_at AS createdAt
@@ -149,12 +286,33 @@ export function registerCheckResultRoutes(
         .prepare("SELECT public FROM checks WHERE id = ?")
         .bind(incident.check_id)
         .first<{ public: number }>(),
+      db
+        .prepare(
+          `SELECT * FROM actions WHERE node_id = ? AND requested_at >= ?
+           ORDER BY requested_at, position`,
+        )
+        .bind(incident.node_id, new Date(start).toISOString())
+        .all<ActionRow>(),
+      loadEstate(db, context.get("identity").id),
     ]);
+    const lastGood = results.find(
+      (result) =>
+        result.status === "UP" && epoch(result.t) < epoch(incident.started_at),
+    );
     return context.json({
       incident,
       results,
       updates: updates.results,
       public: check?.public === 1,
+      actions: onIncident(
+        incident,
+        actions.results,
+        estate.server(incident.node_id),
+        now,
+      ).map(toActionRecord),
+      lastGood: lastGood
+        ? { t: lastGood.t, latencyMs: lastGood.latencyMs }
+        : null,
     });
   });
 

@@ -36,7 +36,6 @@ import {
 } from "./shared";
 
 const RECENT_MS = 24 * 3_600_000;
-const HISTORY_PAGE = 50;
 
 const actionRequestSchema = z.object({
   action: z.enum([
@@ -82,7 +81,7 @@ const actionRequestSchema = z.object({
 
 const OWN_STACK = /^\/var\/lib\/kry-exec\/compose\/[^/]+$/u;
 
-const READ_ONLY = new Set(["logs", "read", "scan"]);
+export const READ_ONLY = new Set(["logs", "read", "scan"]);
 
 const commandSchema = z.object({
   v: z.literal(1),
@@ -97,7 +96,7 @@ const refreshSchema = z.object({
   nodeIds: z.array(z.string().uuid()).max(100).optional(),
 });
 
-function toActionRecord(row: ActionRow) {
+export function toActionRecord(row: ActionRow) {
   if (SEALED_VERBS.includes(row.action)) row = { ...row, output: null };
   return {
     id: row.id,
@@ -203,7 +202,7 @@ export function registerServiceRoutes(
     const [stacks, removed, addresses] = await Promise.all([
       db
         .prepare(
-          `SELECT node_id, project, directory, running, total, compose, rollback, access, public FROM stacks
+          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers FROM stacks
            WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
            ORDER BY node_id, project`,
         )
@@ -218,6 +217,7 @@ export function registerServiceRoutes(
           rollback: number;
           access: string | null;
           public: string | null;
+          containers: string | null;
         }>(),
       db
         .prepare(
@@ -273,6 +273,7 @@ export function registerServiceRoutes(
             rollback: stack.rollback === 1,
             access: stack.access,
             public: (parsed(stack.public) as string[] | null) ?? [],
+            containers: (parsed(stack.containers) as string[] | null) ?? [],
           })),
         removed: removed.results
           .filter((stack) => stack.node_id === node.id)
@@ -321,39 +322,6 @@ export function registerServiceRoutes(
       setId: settings?.set_id ?? null,
       aud: context.env.ACCESS_AUD ?? null,
       expiresAt: expiry?.expires ?? null,
-    });
-  });
-
-  app.get("/api/history", requireOperator, async (context) => {
-    const [at, id] = (context.req.query("before") ?? "").split("|");
-    const rows = await context.env.DB.prepare(
-      `SELECT * FROM actions
-       WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?1)
-         AND kind <> 'trust'
-         AND (?2 IS NULL OR node_id = ?2)
-         AND (?3 IS NULL OR requested_at < ?3 OR (requested_at = ?3 AND id < ?4))
-       ORDER BY requested_at DESC, id DESC LIMIT ?5`,
-    )
-      .bind(
-        context.get("identity").id,
-        context.req.query("node") ?? null,
-        at || null,
-        id ?? "",
-        HISTORY_PAGE + 1,
-      )
-      .all<ActionRow>();
-    const page = rows.results.slice(0, HISTORY_PAGE);
-    const last = page.at(-1);
-    return context.json({
-      actions: page.map((row) =>
-        toActionRecord(
-          READ_ONLY.has(row.action) ? { ...row, output: null } : row,
-        ),
-      ),
-      next:
-        rows.results.length > HISTORY_PAGE && last
-          ? `${last.requested_at}|${last.id}`
-          : null,
     });
   });
 

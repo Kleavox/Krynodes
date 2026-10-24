@@ -49,6 +49,7 @@ const CHECK_KEYS = [
   "public_note",
   "auto_restart",
   "created_at",
+  "since",
 ];
 const INCIDENT_KEYS = [
   "id",
@@ -68,6 +69,11 @@ describe("GET /api/overview contract", () => {
     const { db, sqlite } = createTestDb();
     seedNode(sqlite, { id: "n1" });
     seedCheck(sqlite, { id: "c1", nodeId: "n1" });
+    sqlite
+      .prepare(
+        "UPDATE checks SET since = '2026-10-24T09:24:39Z' WHERE id = 'c1'",
+      )
+      .run();
     seedIncident(sqlite, {
       id: "i1",
       checkId: "c1",
@@ -103,6 +109,7 @@ describe("GET /api/overview contract", () => {
       [...INCIDENT_KEYS].sort(),
     );
     expect(body.incidents![0]!.node_id).toBe("n1");
+    expect(body.checks![0]!.since).toBe("2026-10-24T09:24:39Z");
     expect(body.nodes![0]!.addresses).toBeNull();
   });
 });

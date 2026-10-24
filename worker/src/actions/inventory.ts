@@ -40,10 +40,16 @@ interface StackRow {
   rollback: number;
   access: string | null;
   public: string | null;
+  containers: string | null;
 }
 
 const publicOf = (entry: StackEntry) =>
   entry.public && entry.public.length > 0 ? JSON.stringify(entry.public) : null;
+
+const containersOf = (entry: StackEntry) =>
+  entry.containers && entry.containers.length > 0
+    ? JSON.stringify(entry.containers)
+    : null;
 
 function stackChanged(row: StackRow | undefined, entry: StackEntry): boolean {
   return (
@@ -54,7 +60,8 @@ function stackChanged(row: StackRow | undefined, entry: StackEntry): boolean {
     row.compose !== (entry.compose ? 1 : 0) ||
     row.rollback !== (entry.rollback ? 1 : 0) ||
     row.access !== (entry.access ?? null) ||
-    row.public !== publicOf(entry)
+    row.public !== publicOf(entry) ||
+    row.containers !== containersOf(entry)
   );
 }
 
@@ -66,7 +73,7 @@ async function stackStatements(
 ): Promise<D1PreparedStatement[]> {
   const existing = await db
     .prepare(
-      "SELECT project, directory, running, total, compose, rollback, access, public FROM stacks WHERE node_id = ?",
+      "SELECT project, directory, running, total, compose, rollback, access, public, containers FROM stacks WHERE node_id = ?",
     )
     .bind(nodeId)
     .all<StackRow>();
@@ -80,6 +87,7 @@ async function stackStatements(
       rollback: stack.rollback ? 1 : 0,
       access: stack.access ?? null,
       public: publicOf(stack),
+      containers: containersOf(stack),
     }));
   const removed = existing.results
     .filter((row) => !after.has(row.project))
@@ -89,17 +97,19 @@ async function stackStatements(
       ? [
           db
             .prepare(
-              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, public)
+              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, public, containers)
                SELECT ?1, json_extract(value, '$.project'), json_extract(value, '$.directory'),
                       json_extract(value, '$.running'), json_extract(value, '$.total'),
                       json_extract(value, '$.compose'), json_extract(value, '$.rollback'), ?2,
-                      json_extract(value, '$.access'), json_extract(value, '$.public')
+                      json_extract(value, '$.access'), json_extract(value, '$.public'),
+                      json_extract(value, '$.containers')
                FROM json_each(?3) WHERE true
                ON CONFLICT (node_id, project) DO UPDATE SET
                  directory = excluded.directory, running = excluded.running,
                  total = excluded.total, compose = excluded.compose,
                  rollback = excluded.rollback, updated_at = excluded.updated_at,
-                 access = excluded.access, public = excluded.public`,
+                 access = excluded.access, public = excluded.public,
+                 containers = excluded.containers`,
             )
             .bind(nodeId, at, JSON.stringify(upserts)),
         ]

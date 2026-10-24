@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
 	"strings"
@@ -13,28 +14,38 @@ import (
 )
 
 type watchFake struct {
-	mu      sync.Mutex
-	listing []string
-	calls   int
-	saved   []containers.State
-	streams chan *io.PipeWriter
-	waits   chan time.Duration
-	docker  bool
+	mu        sync.Mutex
+	listing   []string
+	inspect   string
+	inspectOK bool
+	inspected [][]string
+	calls     int
+	saved     []containers.State
+	streams   chan *io.PipeWriter
+	waits     chan time.Duration
+	docker    bool
 }
 
 func newWatchFake(listing ...string) *watchFake {
-	return &watchFake{listing: listing, streams: make(chan *io.PipeWriter, 4), waits: make(chan time.Duration, 4), docker: true}
+	return &watchFake{listing: listing, streams: make(chan *io.PipeWriter, 4), waits: make(chan time.Duration, 4), docker: true, inspectOK: true}
 }
 
 func (f *watchFake) watcher(t *testing.T) Watcher {
 	return Watcher{
 		Now: func() time.Time { return time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC) },
 		Run: func(_ context.Context, name string, args ...string) ([]byte, int, error) {
-			if name != "docker" || strings.Join(args, " ") != "ps -a --format "+containers.Format {
-				t.Errorf("ran %s %q", name, args)
-			}
 			f.mu.Lock()
 			defer f.mu.Unlock()
+			if name == "docker" && len(args) > 2 && args[0] == "inspect" && args[1] == "--format" && args[2] == containers.StartedFormat {
+				f.inspected = append(f.inspected, args[3:])
+				if !f.inspectOK {
+					return nil, 1, errors.New("no such object")
+				}
+				return []byte(f.inspect), 0, nil
+			}
+			if name != "docker" || strings.Join(args, " ") != "ps -a --no-trunc --format "+containers.Format {
+				t.Errorf("ran %s %q", name, args)
+			}
 			index := min(f.calls, len(f.listing)-1)
 			f.calls++
 			return []byte(f.listing[index]), 0, nil
@@ -96,6 +107,55 @@ func TestTheWatcherWritesASnapshotAndRefreshesOnEachEvent(t *testing.T) {
 	})
 	io.WriteString(stream, `{"status":"start","id":"a"}`+"\n"+`{"status":"start","id":"b"}`+"\n")
 	fake.waitFor(t, func(state containers.State) bool { return len(state.Containers) == 2 })
+}
+
+func TestASnapshotRecordsWhenRunningContainersStarted(t *testing.T) {
+	up, down := strings.Repeat("a1", 32), strings.Repeat("b2", 32)
+	fake := newWatchFake("web\trunning\tUp 3 days\t" + up + "\tsite\nold\texited\tExited (0) 2 days ago\t" + down + "\tsite\n")
+	fake.inspect = up + "\t2026-10-24T09:24:39.123456789Z\n"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fake.watcher(t).Watch(ctx)
+	<-fake.streams
+	state := fake.waitFor(t, func(state containers.State) bool { return len(state.Containers) == 2 })
+	if state.Containers[0].Started != "2026-10-24T09:24:39Z" || state.Containers[0].Project != "site" {
+		t.Fatalf("running container %#v", state.Containers[0])
+	}
+	if state.Containers[1].Started != "" {
+		t.Fatalf("an exited container has no start: %#v", state.Containers[1])
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.inspected) != 1 || strings.Join(fake.inspected[0], " ") != up {
+		t.Fatalf("inspected %q; only running containers, in one call", fake.inspected)
+	}
+}
+
+func TestAnInspectThatFailsStillSavesTheList(t *testing.T) {
+	fake := newWatchFake("web\trunning\tUp 3 days\t" + strings.Repeat("a1", 32) + "\t\n")
+	fake.inspectOK = false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fake.watcher(t).Watch(ctx)
+	<-fake.streams
+	state := fake.waitFor(t, func(state containers.State) bool { return len(state.Containers) == 1 })
+	if state.Containers[0].Started != "" || state.Containers[0].State != "running" {
+		t.Fatalf("state %#v", state)
+	}
+}
+
+func TestASnapshotWithNothingRunningInspectsNothing(t *testing.T) {
+	fake := newWatchFake("old\texited\tExited (0) 2 days ago\t" + strings.Repeat("b2", 32) + "\t\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fake.watcher(t).Watch(ctx)
+	<-fake.streams
+	fake.waitFor(t, func(state containers.State) bool { return len(state.Containers) == 1 })
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.inspected) != 0 {
+		t.Fatalf("inspected %q", fake.inspected)
+	}
 }
 
 func TestTheWatcherSnapshotsAgainWhenDockerRestarts(t *testing.T) {

@@ -1,9 +1,11 @@
 import type {
   ActionRecord,
+  AttentionItem,
   NodeRecord,
   NodeTrust,
   RemovedStack,
   ServiceEntry,
+  ServiceKind,
   ServicesResponse,
   StackEntry,
   WebAddress,
@@ -14,11 +16,13 @@ import {
 } from "@krynodes/protocol/versions";
 
 import { agentCurrent } from "./devices";
-import { nodeState } from "./format";
+import { capitalize, nodeState, timeAgo } from "./format";
 import {
   displayName,
+  failureText,
   groupByServer,
   isRead,
+  toTarget,
   type ServerGroup,
   type ServiceMember,
 } from "./services";
@@ -214,18 +218,33 @@ export function deployTargets(
     );
 }
 
+const holds = (
+  stack: Pick<StackEntry, "project" | "containers">,
+  name: string,
+) =>
+  stack.containers?.length
+    ? stack.containers.includes(name)
+    : name.startsWith(`${stack.project}-`) ||
+      name.startsWith(`${stack.project}_`);
+
 export function containersOf(
-  project: string,
+  stack: Pick<StackEntry, "project" | "containers">,
   services: ServiceEntry[],
 ): ServiceEntry[] {
   return services
     .filter(
-      (service) =>
-        service.kind === "docker" &&
-        (service.name.startsWith(`${project}-`) ||
-          service.name.startsWith(`${project}_`)),
+      (service) => service.kind === "docker" && holds(stack, service.name),
     )
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+export function stackOf(
+  stacks: Pick<StackEntry, "project" | "containers">[],
+  container: string,
+): string | undefined {
+  return [...stacks]
+    .sort((a, b) => b.project.length - a.project.length)
+    .find((stack) => holds(stack, container))?.project;
 }
 
 export type StackCommand = "start" | "stop" | "restart" | "remove" | "purge";
@@ -311,13 +330,10 @@ export function serverLists(
     const node = byId.get(inventory.id);
     if (!node) continue;
     const everything = base.get(node.id)?.members ?? [];
-    const projects = inventory.stacks
-      .map((stack) => stack.project)
-      .sort((a, b) => b.length - a.length);
     const owner = (member: ServiceMember) =>
-      projects.find(
-        (project) => containersOf(project, [member.entry]).length > 0,
-      );
+      member.entry.kind === "docker"
+        ? stackOf(inventory.stacks, member.entry.name)
+        : undefined;
     const serverMatch = !needle || node.name.toLowerCase().includes(needle);
     const matches = (member: ServiceMember) =>
       serverMatch ||
@@ -375,49 +391,201 @@ export function serverLists(
   );
 }
 
-export interface ServiceBoard {
-  stacks: ServerStack[];
-  containers: ServiceMember[];
-  units: ServiceMember[];
-  trusted: Set<string>;
+export type KindFilter = "all" | "stack" | ServiceKind;
+
+export interface ServerBox extends ServerList {
+  count: string;
+  folded: number;
 }
 
-const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const COUNTED = ["running", "partly", "starting", "stopped", "failed"];
 
-const memberOrder = (a: ServiceMember, b: ServiceMember) =>
-  Number(stopped(b)) - Number(stopped(a)) ||
-  byName(
-    displayName(a.entry.kind, a.entry.name),
-    displayName(b.entry.kind, b.entry.name),
-  ) ||
-  a.node.name.localeCompare(b.node.name);
+const stackHealth = (stack: Pick<StackEntry, "running" | "total">) =>
+  stack.running === stack.total
+    ? "running"
+    : stack.running === 0
+      ? "stopped"
+      : "partly";
 
-export function serviceBoard(
+function serverCount(inventory: ServicesResponse["nodes"][number]): string {
+  const states: string[] = [
+    ...inventory.stacks.map(stackHealth),
+    ...inventory.services
+      .filter(
+        (entry) =>
+          entry.kind === "systemd" || !stackOf(inventory.stacks, entry.name),
+      )
+      .map((entry) => entry.state),
+  ];
+  return COUNTED.map(
+    (state) => [state, states.filter((each) => each === state).length] as const,
+  )
+    .filter(([, count]) => count > 0)
+    .map(([state, count]) => `${count} ${state}`)
+    .join(" · ");
+}
+
+export function serverBoxes(
   data: ServicesResponse,
   nodes: NodeRecord[],
-  options: { showSystem: boolean; query: string; notRunning: boolean },
-): ServiceBoard {
-  const lists = serverLists(data, nodes, options);
-  const members = lists.flatMap((list) => list.members);
-  return {
-    stacks: lists
-      .flatMap((list) => list.stacks)
-      .sort(
-        (a, b) =>
-          Number(unhealthy(b)) - Number(unhealthy(a)) ||
-          a.member.stack.project.localeCompare(b.member.stack.project) ||
-          a.member.node.name.localeCompare(b.member.node.name),
-      ),
-    containers: members
-      .filter((member) => member.entry.kind === "docker")
-      .sort(memberOrder),
-    units: members
-      .filter((member) => member.entry.kind === "systemd")
-      .sort(memberOrder),
-    trusted: new Set(
-      lists.filter((list) => list.trusted).map((list) => list.node.id),
-    ),
+  options: { query: string; kind: KindFilter; showSystem: boolean },
+): ServerBox[] {
+  const counts = new Map(
+    data.nodes.map((inventory) => [inventory.id, serverCount(inventory)]),
+  );
+  return serverLists(data, nodes, {
+    showSystem: true,
+    query: options.query,
+    notRunning: false,
+  })
+    .map((list) => {
+      const members = list.members.filter(
+        (member) =>
+          options.kind === "all" || member.entry.kind === options.kind,
+      );
+      const shown = options.showSystem
+        ? members
+        : members.filter((member) => !member.entry.system);
+      return {
+        ...list,
+        stacks:
+          options.kind === "all" || options.kind === "stack" ? list.stacks : [],
+        members: shown,
+        folded: members.length - shown.length,
+        count: counts.get(list.node.id) ?? "",
+      };
+    })
+    .filter((box) => box.stacks.length + box.members.length + box.folded > 0);
+}
+
+export const foldedText = (count: number) =>
+  `+ ${count} system ${count === 1 ? "service" : "services"}`;
+
+export const stackState = (
+  stack: Pick<StackEntry, "running" | "total" | "access">,
+) =>
+  `${stack.running} of ${stack.total}${stack.access === "full" ? " · Full access" : ""}`;
+
+export interface ServiceProblem {
+  node: NodeRecord;
+  kind: "stack" | ServiceKind;
+  name: string;
+  state: string;
+  reason: string;
+  primary: "rollback" | "start" | "restart";
+  target: {
+    nodeId: string;
+    nodeName: string;
+    kind: "compose" | ServiceKind;
+    name: string;
   };
+  stack: StackMember | null;
+  blocker: string | null;
+  latest: ActionRecord | null;
+}
+
+const finished = (action: ActionRecord) =>
+  action.finishedAt ?? action.requestedAt;
+
+const stateText = (
+  entry: Pick<ServiceEntry, "state" | "since">,
+  now: number,
+) =>
+  entry.since
+    ? `${capitalize(entry.state)} ${timeAgo(entry.since, now)}`
+    : capitalize(entry.state);
+
+export function servicesAttention(
+  data: ServicesResponse,
+  nodes: NodeRecord[],
+  items: AttentionItem[],
+  now: number,
+): ServiceProblem[] {
+  const failures = new Map<string, ActionRecord>();
+  for (const { action } of items) {
+    const inventory = data.nodes.find((entry) => entry.id === action.nodeId);
+    if (!inventory) continue;
+    const project =
+      action.kind === "compose"
+        ? action.name
+        : action.kind === "docker"
+          ? stackOf(inventory.stacks, action.name)
+          : undefined;
+    const key = project
+      ? `${action.nodeId}|stack|${project}`
+      : action.kind === "docker" || action.kind === "systemd"
+        ? `${action.nodeId}|${action.kind}|${action.name}`
+        : null;
+    if (!key) continue;
+    const known = failures.get(key);
+    if (!known || Date.parse(finished(action)) > Date.parse(finished(known))) {
+      failures.set(key, action);
+    }
+  }
+  const problems: ServiceProblem[] = [];
+  for (const list of serverLists(data, nodes, {
+    showSystem: true,
+    query: "",
+    notRunning: false,
+  })) {
+    const { node } = list;
+    for (const { member, containers } of list.stacks) {
+      const { stack } = member;
+      const failure = failures.get(`${node.id}|stack|${stack.project}`);
+      if (stack.running === stack.total && !failure) continue;
+      const down = containers.find(stopped)?.entry;
+      problems.push({
+        node,
+        kind: "stack",
+        name: stack.project,
+        state: `${stack.running} of ${stack.total} running`,
+        reason: failure
+          ? failureText(failure, now)
+          : down
+            ? stateText(down, now)
+            : "Not running",
+        primary:
+          failure?.action === "deploy" && stack.rollback
+            ? "rollback"
+            : stack.running === 0
+              ? "start"
+              : "restart",
+        target: {
+          nodeId: node.id,
+          nodeName: node.name,
+          kind: "compose",
+          name: stack.project,
+        },
+        stack: member,
+        blocker: deployBlocker(member),
+        latest: member.action,
+      });
+    }
+    for (const service of list.members) {
+      const { entry } = service;
+      const failure = failures.get(`${node.id}|${entry.kind}|${entry.name}`);
+      if (entry.state !== "failed" && !failure) continue;
+      problems.push({
+        node,
+        kind: entry.kind,
+        name: displayName(entry.kind, entry.name),
+        state: capitalize(entry.state),
+        reason: failure ? failureText(failure, now) : stateText(entry, now),
+        primary:
+          entry.state === "running" || entry.state === "starting"
+            ? "restart"
+            : "start",
+        target: toTarget(service),
+        stack: null,
+        blocker: list.trusted ? null : "Not trusted yet",
+        latest: service.action,
+      });
+    }
+  }
+  return problems.sort(
+    (a, b) =>
+      a.node.name.localeCompare(b.node.name) || a.name.localeCompare(b.name),
+  );
 }
 
 export const moveConfirmed = (

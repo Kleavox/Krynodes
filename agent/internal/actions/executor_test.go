@@ -476,7 +476,7 @@ func TestTheInventoryListsStacksWithRollback(t *testing.T) {
 	executor, _ := newTrustedExecutor(t)
 	executor.Collect = func(context.Context, []string) (Snapshot, error) {
 		return Snapshot{
-			Stacks:  []Stack{{Project: "listmonk", Directory: "/opt/listmonk", Files: []string{"/opt/listmonk/docker-compose.yml"}, Running: 5, Total: 5}, {Project: "shop", Directory: "/opt/shop", Files: []string{"/opt/shop/compose.yml"}, Running: 1, Total: 2}},
+			Stacks:  []Stack{{Project: "listmonk", Directory: "/opt/listmonk", Files: []string{"/opt/listmonk/docker-compose.yml"}, Running: 5, Total: 5}, {Project: "shop", Directory: "/opt/shop", Files: []string{"/opt/shop/compose.yml"}, Running: 1, Total: 2, Containers: []string{"shop-db-1", "shop-web-1"}}},
 			Compose: true,
 		}, nil
 	}
@@ -493,7 +493,7 @@ func TestTheInventoryListsStacksWithRollback(t *testing.T) {
 	}
 	want := []reporter.StackEntry{
 		{Project: "listmonk", Directory: "/opt/listmonk", Running: 5, Total: 5, Compose: true, Rollback: true},
-		{Project: "shop", Directory: "/opt/shop", Running: 1, Total: 2, Compose: true, Rollback: false},
+		{Project: "shop", Directory: "/opt/shop", Running: 1, Total: 2, Compose: true, Rollback: false, Containers: []string{"shop-db-1", "shop-web-1"}},
 	}
 	if !reflect.DeepEqual(inventory.Stacks, want) {
 		t.Fatalf("stacks\n got %#v\nwant %#v", inventory.Stacks, want)

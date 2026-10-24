@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -32,6 +33,57 @@ func TestParseReadsNamesStatesAndHealth(t *testing.T) {
 		if got[index] != want[index] {
 			t.Fatalf("row %d: got %#v want %#v", index, got[index], want[index])
 		}
+	}
+}
+
+func TestParseReadsTheIDAndTheComposeProject(t *testing.T) {
+	id := strings.Repeat("a1", 32)
+	got := Parse("pihole-pihole-1\trunning\tUp 3 days (healthy)\t" + id + "\tpihole\n" +
+		"portainer\trunning\tUp 6 days\t" + strings.Repeat("b2", 32) + "\t\n" +
+		"web\trunning\tUp 1 second\n")
+	want := []Container{
+		{Name: "pihole-pihole-1", State: "running", Health: "healthy", ID: id, Project: "pihole"},
+		{Name: "portainer", State: "running", ID: strings.Repeat("b2", 32)},
+		{Name: "web", State: "running"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %#v", got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("row %d: got %#v want %#v", index, got[index], want[index])
+		}
+	}
+}
+
+func TestFindReturnsTheNamedContainer(t *testing.T) {
+	state := State{Containers: []Container{{Name: "web", State: "running", Started: "2026-10-24T09:24:39Z"}}}
+	if found, ok := Find(state, "web"); !ok || found.Started != "2026-10-24T09:24:39Z" {
+		t.Fatalf("found %#v %v", found, ok)
+	}
+	if _, ok := Find(state, "db"); ok {
+		t.Fatal("db is not listed")
+	}
+}
+
+func TestParseStartedReadsInspectLines(t *testing.T) {
+	id := strings.Repeat("a1", 32)
+	got := ParseStarted(id + "\t2026-10-24T09:24:39.123456789Z\n" +
+		strings.Repeat("b2", 32) + "\t0001-01-01T00:00:00Z\n" +
+		"broken\n")
+	if len(got) != 1 || got[id] != "2026-10-24T09:24:39Z" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestStartedTravelsInTheStateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), File)
+	if err := os.WriteFile(path, []byte(`{"at":"2026-10-10T12:00:00Z","docker":true,"containers":[{"name":"web","state":"running","project":"site","started":"2026-10-24T09:24:39Z"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := Read(path)
+	if err != nil || state.Containers[0].Started != "2026-10-24T09:24:39Z" || state.Containers[0].Project != "site" {
+		t.Fatalf("state %#v err %v", state, err)
 	}
 }
 

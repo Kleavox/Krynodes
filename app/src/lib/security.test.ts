@@ -8,6 +8,7 @@ import {
   fromUtcHour,
   protectionDetail,
   protectionsNotice,
+  protectionsText,
   rangeLines,
   recipeChoices,
   recommended,
@@ -23,6 +24,17 @@ const report = (over: Partial<SecurityReport> = {}): SecurityReport => ({
   lockdown: false,
   rebootHour: null,
   ...over,
+});
+
+describe("the protections in one line", () => {
+  it("counts what is on, on outside Krynodes and off", () => {
+    expect(protectionsText(report())).toBe(
+      "Protections · 3 on outside Krynodes · 2 off",
+    );
+    expect(protectionsText(report({ recipes: ["fail2ban"] }))).toBe(
+      "Protections · 1 on · 2 on outside Krynodes · 2 off",
+    );
+  });
 });
 
 describe("the security check on screen", () => {

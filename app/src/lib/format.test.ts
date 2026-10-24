@@ -16,6 +16,7 @@ import {
   percentage,
   publicLabel,
   shortDate,
+  stampTime,
   timeAgo,
 } from "./format";
 
@@ -152,6 +153,16 @@ describe("dates", () => {
     const at = new Date(2026, 8, 23, 14, 2).toISOString();
     expect(clockTime(at)).toBe("14:02");
     expect(shortDate(at)).toBe("23 Sep");
+  });
+
+  it("stamps a time with its day unless it is today", () => {
+    const now = new Date(2026, 9, 24, 13, 0).getTime();
+    expect(stampTime(new Date(2026, 9, 24, 0, 5).toISOString(), now)).toBe(
+      "00:05",
+    );
+    expect(stampTime(new Date(2026, 9, 19, 12, 39).toISOString(), now)).toBe(
+      "19 Oct 12:39",
+    );
   });
 });
 

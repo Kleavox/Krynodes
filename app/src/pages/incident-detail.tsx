@@ -1,32 +1,28 @@
+import { ownerOf } from "@krynodes/protocol/owner";
 import { Link, useParams } from "react-router";
 
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
-import { StatusChip, StatusDot } from "@/components/status";
+import { SmallLabel, StatusDot } from "@/components/status";
+import { HeartbeatStrip } from "@/components/strips";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   IncidentTimeline,
   UpdateForm,
 } from "@/features/incidents/incident-updates";
-import { useIncident } from "@/lib/api";
-import {
-  clockTime,
-  formatDuration,
-  parseTimestamp,
-  shortDate,
-} from "@/lib/format";
+import { useIncident, useOverview, useServices } from "@/lib/api";
+import { graceSeconds, stampTime } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
+import { incidentState, incidentStrip, ownerLink } from "@/lib/incidents";
 import { useNow } from "@/lib/use-now";
-
-const SECTION_TITLE =
-  "mb-2 flex min-h-8 items-center text-[11px] tracking-wider text-muted-foreground uppercase";
-
-const when = (value: string) =>
-  `${shortDate(parseTimestamp(value))} ${clockTime(parseTimestamp(value))}`;
+import { cn } from "@/lib/utils";
 
 export function IncidentDetailPage() {
   const { id = "" } = useParams();
   const detail = useIncident(id);
+  const overview = useOverview();
+  const services = useServices();
   const now = useNow();
 
   if (detail.isError) {
@@ -49,11 +45,28 @@ export function IncidentDetailPage() {
     );
   }
 
-  const { incident, results } = detail.data;
+  const { incident } = detail.data;
   const open = incident.status === "OPEN";
-  const start = parseTimestamp(incident.started_at);
-  const end = incident.resolved_at ? parseTimestamp(incident.resolved_at) : now;
-  const duration = formatDuration(end - start);
+  const interval =
+    overview.data?.nodes.find((node) => node.id === incident.node_id)
+      ?.interval_seconds ?? 0;
+  const server = services.data?.nodes.find(
+    (node) => node.id === incident.node_id,
+  );
+  const owner = server
+    ? ownerOf(
+        { kind: incident.check_kind, target: incident.check_target },
+        server,
+      )
+    : null;
+  const watched = owner && ownerLink(owner);
+  const windowSeconds = Math.max(300, interval);
+  const strip = incidentStrip(
+    incident,
+    detail.data.results,
+    windowSeconds,
+    now,
+  );
 
   return (
     <>
@@ -68,99 +81,75 @@ export function IncidentDetailPage() {
         }
         title={incident.check_name}
         meta={
-          <StatusChip
-            tone={open ? "bad" : "idle"}
-            label={open ? "Open" : "Resolved"}
-            detail={open ? `ongoing ${duration}` : `lasted ${duration}`}
-          />
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 font-mono text-xs",
+              open ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            <StatusDot tone={open ? "bad" : "idle"} />
+            {incidentState(incident, now)}
+          </span>
+        }
+        actions={
+          <>
+            <Button asChild variant="outline" size="sm">
+              <Link to={`/checks?q=${encodeURIComponent(incident.check_name)}`}>
+                Open check
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <Link to={`/nodes/${incident.node_id}`}>
+                Open {incident.node_name} →
+              </Link>
+            </Button>
+          </>
         }
       />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] lg:items-start">
-        <div className="order-2 space-y-6 lg:order-none">
-          <section aria-labelledby="incident-updates">
-            <h2 id="incident-updates" className={SECTION_TITLE}>
-              Updates
-            </h2>
-            <div className="space-y-3">
-              {open && <UpdateForm detail={detail.data} />}
-              <IncidentTimeline detail={detail.data} />
-            </div>
-          </section>
-          <section aria-labelledby="incident-results">
-            <h2 id="incident-results" className={SECTION_TITLE}>
-              Results · {results.length}
-            </h2>
-            {results.length === 0 ? (
-              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                No results kept for this incident. Results are kept for 8 days.
-              </p>
-            ) : (
-              <ul className="divide-y rounded-lg border bg-card">
-                {results.map((result) => (
-                  <li
-                    key={result.t}
-                    className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-start gap-x-3 px-3 py-2.5 text-sm"
-                  >
-                    <span className="font-mono text-xs leading-5 text-muted-foreground">
-                      {clockTime(result.t)}
-                    </span>
-                    <span className="flex items-center gap-1.5 font-mono text-[11px] leading-5">
-                      <StatusDot tone={result.status === "UP" ? "ok" : "bad"} />
-                      {result.status}
-                    </span>
-                    <span className="min-w-0 font-mono text-xs leading-5 break-words text-muted-foreground">
-                      {result.message ?? ""}
-                    </span>
-                    <span className="text-right font-mono text-xs leading-5">
-                      {result.latencyMs === null
-                        ? "--"
-                        : `${result.latencyMs}ms`}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
-
-        <section
-          aria-labelledby="incident-details"
-          className="order-1 rounded-lg border bg-card p-4 lg:order-none"
-        >
-          <h2
-            id="incident-details"
-            className="text-[11px] tracking-wider text-muted-foreground uppercase"
+      <div className="space-y-4">
+        <p className="-mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-xs text-muted-foreground">
+          <SmallLabel>{incident.check_kind}</SmallLabel>
+          <span className="min-w-0 break-all">{incident.check_target}</span>
+          <span>· on</span>
+          <Link
+            to={`/nodes/${incident.node_id}`}
+            className="text-foreground hover:underline"
           >
-            Details
-          </h2>
-          <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">Node</dt>
-            <dd className="min-w-0 truncate text-right">
-              <Link
-                to={`/nodes/${incident.node_id}`}
-                className="hover:underline"
-              >
-                {incident.node_name}
+            {incident.node_name}
+          </Link>
+          {watched && (
+            <>
+              <span>·</span>
+              <Link to={watched.to} className="text-foreground hover:underline">
+                {watched.label}
               </Link>
-            </dd>
-            <dt className="text-muted-foreground">Check</dt>
-            <dd className="text-right font-mono text-xs leading-5">
-              {incident.check_kind}
-            </dd>
-            <dt className="text-muted-foreground">Target</dt>
-            <dd className="min-w-0 text-right font-mono text-xs leading-5 break-all">
-              {incident.check_target}
-            </dd>
-            <dt className="text-muted-foreground">Started</dt>
-            <dd className="text-right font-mono text-xs leading-5">
-              {when(incident.started_at)}
-            </dd>
-            <dt className="text-muted-foreground">Resolved</dt>
-            <dd className="text-right font-mono text-xs leading-5">
-              {incident.resolved_at ? when(incident.resolved_at) : "--"}
-            </dd>
-          </dl>
-        </section>
+            </>
+          )}
+        </p>
+        <div className="space-y-1">
+          <HeartbeatStrip
+            results={strip.results}
+            incidents={[incident]}
+            since={strip.measuredFrom}
+            windowSeconds={strip.slotSeconds}
+            graceSeconds={open ? graceSeconds(interval) : 0}
+            settleSeconds={open ? windowSeconds : 0}
+            now={strip.until}
+            asOf={open ? detail.dataUpdatedAt : strip.until}
+            count={strip.count}
+          />
+          <p className="flex justify-between gap-2 font-mono text-[11px] text-muted-foreground">
+            <span>{stampTime(strip.since, now)}</span>
+            <span>{stampTime(incident.started_at, strip.since)} opened</span>
+            <span>
+              {incident.resolved_at
+                ? `${stampTime(incident.resolved_at, strip.since)} resolved`
+                : "now"}
+            </span>
+          </p>
+        </div>
+        {open && <UpdateForm detail={detail.data} />}
+        <IncidentTimeline detail={detail.data} />
       </div>
     </>
   );

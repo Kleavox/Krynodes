@@ -1,30 +1,48 @@
-import {
-  clockTime,
-  dayLabel,
-  formatDuration,
-  formatUptime,
-  shortDate,
-} from "./format";
+import { metricText } from "./format";
 import type { NodeRecord } from "@/types";
 
 export function systemLine(node: NodeRecord): string {
   return [node.operating_system, node.architecture].filter(Boolean).join(" · ");
 }
 
-function liveSince(at: string, now: number): string {
-  const time = clockTime(at);
-  return dayLabel(at, now) === "Today" ? time : `${shortDate(at)}, ${time}`;
+const UNITS = [
+  ["day", 86_400],
+  ["hour", 3_600],
+  ["minute", 60],
+  ["second", 1],
+] as const;
+
+function inWords(seconds: number, single: boolean): string {
+  const [unit, size] =
+    UNITS.find(([, length]) => seconds >= length) ?? UNITS[3];
+  const count = Math.max(1, Math.floor(seconds / size));
+  if (count === 1) return single ? unit : `1 ${unit}`;
+  return `${count} ${unit}s`;
 }
 
-export function systemFacts(node: NodeRecord, now: number): string[] {
+export function systemFacts(node: NodeRecord): string {
   return [
-    node.hostname && node.hostname !== node.name ? `Host ${node.hostname}` : "",
-    systemLine(node),
-    `Up ${formatUptime(node.uptime_seconds)}`,
-    node.connected_at
-      ? `Live since ${liveSince(node.connected_at, now)}`
-      : "Not connected",
-    `Reports every ${formatDuration(node.interval_seconds * 1000)}`,
-    `Agent ${node.agent_version ?? "--"}`,
-  ].filter(Boolean);
+    node.operating_system,
+    node.architecture,
+    node.uptime_seconds === null
+      ? null
+      : `up ${inWords(node.uptime_seconds, false)}`,
+    `reports every ${inWords(node.interval_seconds, true)}`,
+    node.agent_version ? `agent ${node.agent_version}` : null,
+    node.hostname && node.hostname !== node.name
+      ? `host ${node.hostname}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function rangeText(values: (number | null)[], suffix: string): string {
+  const measured = values.filter(
+    (value): value is number => value !== null && Number.isFinite(value),
+  );
+  if (measured.length === 0) return "--";
+  const low = metricText(Math.min(...measured));
+  const high = metricText(Math.max(...measured));
+  return low === high ? `${low}${suffix}` : `${low}–${high}${suffix}`;
 }

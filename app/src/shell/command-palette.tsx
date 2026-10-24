@@ -60,14 +60,14 @@ export function CommandPalette({
       open={open}
       onOpenChange={onOpenChange}
       title="Search and commands"
-      description="Jump to a page or a node, or run an action."
+      description="Jump to a page or a server, or run an action."
     >
       <CommandInput placeholder="Search pages, nodes and actions" />
       <CommandList>
         <CommandEmpty>No results.</CommandEmpty>
         <CommandGroup heading="Actions">
           <CommandItem onSelect={() => go("/?enroll=1")}>
-            Enroll node
+            Enroll server
           </CommandItem>
           <CommandItem onSelect={() => go("/devices")}>
             Trusted devices
@@ -98,7 +98,7 @@ export function CommandPalette({
           </CommandGroup>
         )}
         {nodes.length > 0 && (
-          <CommandGroup heading="Nodes">
+          <CommandGroup heading="Servers">
             {nodes.map((node) => (
               <CommandItem
                 key={node.id}

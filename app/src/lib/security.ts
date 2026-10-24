@@ -107,6 +107,21 @@ export function recommended(report: SecurityReport): string[] {
     .map((choice) => choice.id);
 }
 
+export function protectionsText(report: SecurityReport): string {
+  const choices = recipeChoices(report);
+  const on = choices.filter((choice) => choice.applied).length;
+  const outside = choices.filter((choice) => choice.outside).length;
+  const off = choices.length - on - outside;
+  return [
+    "Protections",
+    on > 0 ? `${on} on` : null,
+    outside > 0 ? `${outside} on outside Krynodes` : null,
+    off > 0 ? `${off} off` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export function firewallPorts(report: SecurityReport): string[] {
   const detail =
     report.findings.find((finding) => finding.id === "public-ports")?.detail ??

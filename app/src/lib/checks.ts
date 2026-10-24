@@ -1,13 +1,29 @@
 import { compareVersions } from "@krynodes/protocol/versions";
 
-import type { CheckKind, ServiceEntry, ServiceKind } from "../types";
+import type {
+  AttentionItem,
+  CheckKind,
+  CheckRecord,
+  CheckResult,
+  Incident,
+  NodeRecord,
+  ServiceEntry,
+  ServiceKind,
+} from "../types";
+import {
+  checkDisplayStatus,
+  formatDuration,
+  nodeState,
+  parseTimestamp,
+} from "./format";
+import { failureText } from "./services";
 
 export const TARGET_HINT: Record<CheckKind, string> = {
-  HTTP: "Fetched from the node. Down on errors, timeouts and 5xx answers.",
-  TCP: "Opened from the node. Down when the connection fails in time.",
-  SERVICE: "A unit on the node. Up while systemd reports it active.",
+  HTTP: "Fetched from the server. Down on errors, timeouts and 5xx answers.",
+  TCP: "Opened from the server. Down when the connection fails in time.",
+  SERVICE: "A unit on the server. Up while systemd reports it active.",
   CONTAINER:
-    "A container on the node. Up while Docker reports it running and not unhealthy.",
+    "A container on the server. Up while Docker reports it running and not unhealthy.",
 };
 
 export const TARGET_PLACEHOLDER: Record<CheckKind, string> = {
@@ -83,4 +99,102 @@ export function checkTargetProblem(
   return /^[a-zA-Z0-9@_.:-]{1,128}$/u.test(value)
     ? null
     : "Use a systemd unit name, such as nginx.service.";
+}
+
+export function checksByServer(
+  checks: CheckRecord[],
+  nodes: NodeRecord[],
+  seen: number,
+): { node: NodeRecord; checks: CheckRecord[]; down: number }[] {
+  return nodes.flatMap((node) => {
+    const state = nodeState(node, seen);
+    const isDown = (check: CheckRecord) =>
+      checkDisplayStatus(check.status, state, check.enabled) === "DOWN";
+    const own = checks
+      .filter((check) => check.node_id === node.id)
+      .sort(
+        (a, b) =>
+          Number(isDown(b)) - Number(isDown(a)) || a.name.localeCompare(b.name),
+      );
+    return own.length === 0
+      ? []
+      : [{ node, checks: own, down: own.filter(isDown).length }];
+  });
+}
+
+const plural = (count: number, word: string) =>
+  `${count} ${word}${count === 1 ? "" : "s"}`;
+
+export const serverChecksText = (count: number, down: number) =>
+  down > 0
+    ? `${plural(count, "check")} · ${down} down`
+    : plural(count, "check");
+
+const bare = (text: string) =>
+  text
+    .replace(/^https?:\/\//u, "")
+    .replace(/\/$/u, "")
+    .replace(/\.service$/u, "")
+    .toLowerCase();
+
+export function shownTarget(
+  check: Pick<CheckRecord, "kind" | "name" | "target">,
+): string | null {
+  const shown = check.target.replace(/^https?:\/\//u, "").replace(/\/$/u, "");
+  return bare(check.target) === bare(check.name) ? null : shown;
+}
+
+export const failuresText = (count: number) =>
+  count >= 2 ? `${count} failures in a row` : null;
+
+export const incidentLine = (updates: number) =>
+  updates > 0
+    ? `Incident open · ${plural(updates, "update")} →`
+    : "Incident open →";
+
+export function autoRestartLine(
+  check: Pick<CheckRecord, "kind" | "node_id" | "target" | "auto_restart">,
+  items: AttentionItem[],
+  now: number,
+): string | null {
+  if (check.kind !== "SERVICE" || check.auto_restart !== 1) return null;
+  const unit = check.target.endsWith(".service")
+    ? check.target
+    : `${check.target}.service`;
+  const failed = items.find(
+    ({ action }) =>
+      action.action === "heal" &&
+      action.nodeId === check.node_id &&
+      action.kind === "systemd" &&
+      action.name === unit,
+  );
+  return failed ? failureText(failed.action, now) : null;
+}
+
+const RUNNING: Partial<Record<CheckKind, string>> = {
+  CONTAINER: "running",
+  SERVICE: "active",
+};
+
+export function checkFigure(
+  check: CheckRecord,
+  display: string,
+  openIncident: Pick<Incident, "started_at"> | undefined,
+  latest: { results: CheckResult[] } | undefined,
+  now: number,
+): string {
+  if (display === "DOWN") {
+    return openIncident
+      ? `down ${formatDuration(now - parseTimestamp(openIncident.started_at))}`
+      : "down";
+  }
+  if (display !== "UP") return "--";
+  const running = RUNNING[check.kind];
+  if (running) {
+    return check.since
+      ? `${running} ${formatDuration(now - parseTimestamp(check.since))}`
+      : running;
+  }
+  const latency = latest?.results.at(-1)?.latencyMs ?? null;
+  return latency === null ? "--" : `${latency}ms`;
 }

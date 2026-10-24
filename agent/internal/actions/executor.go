@@ -351,7 +351,7 @@ func (e Executor) stackEntries(snapshot Snapshot) []reporter.StackEntry {
 		entries = append(entries, reporter.StackEntry{
 			Project: stack.Project, Directory: stack.Directory, Running: stack.Running, Total: stack.Total,
 			Compose: snapshot.Compose, Rollback: len(record.Previous) > 0,
-			Access: e.accessOf(stack.Directory), Public: stack.Public,
+			Access: e.accessOf(stack.Directory), Public: stack.Public, Containers: stack.Containers,
 		})
 	}
 	return entries

@@ -20,6 +20,7 @@ export {
   UPDATABLE_FROM,
 } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
+export { ownerOf, touches, type CheckOwner, type OwnerServer } from "./owner";
 
 export const agentHostSchema = z.object({
   hostname: z.string().min(1).max(255),
@@ -46,6 +47,7 @@ export const checkResultSchema = z.object({
   latencyMs: z.number().int().nonnegative().nullable(),
   message: z.string().max(500).nullable(),
   checkedAt: z.string().datetime().optional(),
+  since: z.string().datetime().nullable().optional(),
 });
 
 export const agentHeartbeatSchema = agentHostSchema.extend({
@@ -262,6 +264,10 @@ export const stackEntrySchema = z
     public: z
       .array(z.string().regex(/^\d{1,5}\/(tcp|udp)$/u))
       .max(64)
+      .optional(),
+    containers: z
+      .array(z.string().refine((name) => isValidTarget("docker", name)))
+      .max(500)
       .optional(),
   })
   .refine((stack) => isValidTarget("compose", stack.project));

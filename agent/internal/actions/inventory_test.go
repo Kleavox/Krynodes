@@ -222,6 +222,7 @@ func TestAStackUsesTheNewestContainersComposeFilesInTheirOrder(t *testing.T) {
 		Project: "listmonk", Directory: "/opt/listmonk",
 		Files:   []string{"/opt/listmonk/docker-compose.yml", "/opt/listmonk/a-override.yml"},
 		Running: 1, Total: 2,
+		Containers: []string{"listmonk_app", "listmonk_db"},
 	}}
 	if !reflect.DeepEqual(stacks, want) {
 		t.Fatalf("stacks\n got %#v\nwant %#v", stacks, want)

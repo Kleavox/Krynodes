@@ -44,6 +44,26 @@ export function agentState(
   return compareVersions(version, latest) >= 0 ? "current" : "available";
 }
 
+export function agentLine(
+  node: Parameters<typeof agentState>[0] & Pick<NodeRecord, "auto_update">,
+  latest: string | null,
+  now: number,
+): string {
+  if (!node.agent_version) return "--";
+  const state = agentState(node, latest, now);
+  const target = node.update_requested_version ?? latest;
+  return [
+    node.agent_version,
+    node.auto_update ? "auto update" : null,
+    state === "available" ? `${latest} available` : null,
+    state === "updating" ? `updating to ${target}` : null,
+    state === "failed" ? `update to ${target} did not finish` : null,
+    state === "unsupported" ? "too old to connect" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 const REMOVES_ITSELF = "0.6.2";
 
 export const removalReady = (

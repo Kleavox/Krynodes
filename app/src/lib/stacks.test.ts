@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  ActionRecord,
+  AttentionItem,
   DockerState,
   NodeRecord,
   ServicesResponse,
@@ -11,6 +13,7 @@ import {
   containersOf,
   daysLeft,
   deployBlocker,
+  foldedText,
   groupStacks,
   moveBlocker,
   moveConfirmed,
@@ -19,10 +22,13 @@ import {
   removedStacks,
   parseHostPorts,
   reachReady,
+  serverBoxes,
   serverLists,
-  serviceBoard,
+  servicesAttention,
   stackCommands,
   stackNameProblem,
+  stackOf,
+  stackState,
 } from "./stacks";
 
 describe("ports a Contained stack may reach on its server", () => {
@@ -219,10 +225,29 @@ describe("stacks", () => {
 
   it("lists a stack's containers", () => {
     expect(
-      containersOf("listmonk", data.nodes[0]!.services).map(
+      containersOf({ project: "listmonk" }, data.nodes[0]!.services).map(
         (entry) => entry.name,
       ),
     ).toEqual(["listmonk-db-1", "listmonk_app"]);
+  });
+
+  it("takes a stack's containers from the agent when it names them", () => {
+    const services = data.nodes[0]!.services;
+    expect(
+      containersOf(
+        { project: "listmonk", containers: ["listmonk_app"] },
+        services,
+      ).map((entry) => entry.name),
+    ).toEqual(["listmonk_app"]);
+    expect(
+      stackOf(
+        [{ project: "listmonk", containers: ["listmonk_app"] }],
+        "listmonk-db-1",
+      ),
+    ).toBeUndefined();
+    expect(stackOf([{ project: "listmonk" }], "listmonk-db-1")).toBe(
+      "listmonk",
+    );
   });
 
   it("words deploys and rollbacks", () => {
@@ -463,69 +488,88 @@ describe("one list per server", () => {
     ).toEqual([["Callisto", [["shop", []]], []]]);
   });
 
-  it("sorts every kind into its own flat list, unhealthy first, and knows which servers are trusted", () => {
+  it("gives every server one box with its count, and folds system services until asked", () => {
+    const unit = (
+      name: string,
+      state: "running" | "failed",
+      system = false,
+    ) => ({ kind: "systemd" as const, name, state, since: null, system });
     const withUnits: ServicesResponse = {
       ...data,
       nodes: [
         {
           ...data.nodes[0]!,
+          stacks: [
+            ...data.nodes[0]!.stacks,
+            stack("vault", { running: 0, total: 1, access: "contained" }),
+            stack("proxy", { running: 1, total: 1, access: "full" }),
+          ],
           services: [
             ...data.nodes[0]!.services,
-            {
-              kind: "systemd",
-              name: "nginx.service",
-              state: "running",
-              since: null,
-              system: false,
-            },
-            {
-              kind: "systemd",
-              name: "cron.service",
-              state: "failed",
-              since: null,
-              system: false,
-            },
-            {
-              kind: "systemd",
-              name: "systemd-journald.service",
-              state: "running",
-              since: null,
-              system: true,
-            },
+            unit("nginx.service", "running"),
+            unit("cron.service", "failed"),
+            unit("systemd-journald.service", "running", true),
+            unit("systemd-logind.service", "running", true),
+            unit("dbus.service", "running", true),
           ],
         },
         data.nodes[1]!,
       ],
     };
-    const board = serviceBoard(withUnits, nodes, all);
+    const options = { query: "", kind: "all" as const, showSystem: false };
+    const boxes = serverBoxes(withUnits, nodes, options);
     expect(
-      board.stacks.map((item) => [
-        item.member.stack.project,
-        item.member.node.name,
+      boxes.map((box) => [
+        box.node.name,
+        box.count,
+        box.stacks.map((item) => item.member.stack.project),
+        box.members.map((member) => member.entry.name),
+        box.folded,
       ]),
     ).toEqual([
-      ["shop", "Callisto"],
-      ["listmonk", "Callisto"],
-      ["listmonk", "Pivox"],
+      [
+        "Callisto",
+        "7 running · 1 partly · 1 stopped · 1 failed",
+        ["shop", "vault", "listmonk", "proxy"],
+        ["cron.service", "adguard", "nginx.service"],
+        3,
+      ],
+      ["Pivox", "1 running", ["listmonk"], [], 0],
     ]);
-    expect(board.containers.map((member) => member.entry.name)).toEqual([
-      "adguard",
-    ]);
-    expect(board.units.map((member) => member.entry.name)).toEqual([
-      "cron.service",
-      "nginx.service",
-    ]);
-    expect([...board.trusted]).toEqual(["n1"]);
     expect(
-      serviceBoard(withUnits, nodes, { ...all, showSystem: true }).units.map(
-        (member) => member.entry.name,
-      ),
-    ).toEqual(["cron.service", "nginx.service", "systemd-journald.service"]);
+      serverBoxes(withUnits, nodes, { ...options, showSystem: true })[0]!
+        .members.length,
+    ).toBe(6);
     expect(
-      serviceBoard(withUnits, nodes, { ...all, notRunning: true }).units.map(
-        (member) => member.entry.name,
+      serverBoxes(withUnits, nodes, { ...options, kind: "systemd" }).map(
+        (box) => [box.node.name, box.stacks.length, box.members.length],
       ),
-    ).toEqual(["cron.service"]);
+    ).toEqual([["Callisto", 0, 2]]);
+    expect(
+      serverBoxes(withUnits, nodes, { ...options, query: "pivox" }).map(
+        (box) => box.node.name,
+      ),
+    ).toEqual(["Pivox"]);
+    expect(
+      serverBoxes(withUnits, nodes, { ...options, query: "nginx" }).map(
+        (box) => [
+          box.node.name,
+          box.members.map((member) => member.entry.name),
+        ],
+      ),
+    ).toEqual([["Callisto", ["nginx.service"]]]);
+    expect(foldedText(3)).toBe("+ 3 system services");
+    expect(foldedText(1)).toBe("+ 1 system service");
+  });
+
+  it("marks only Full access on a stack's state", () => {
+    expect(
+      stackState(stack("vault", { running: 1, total: 2, access: "contained" })),
+    ).toBe("1 of 2");
+    expect(stackState(stack("proxy", { access: "full" }))).toBe(
+      "2 of 2 · Full access",
+    );
+    expect(stackState(stack("blog"))).toBe("2 of 2");
   });
 
   it("gives a container to the stack with the longest matching name", () => {
@@ -560,6 +604,210 @@ describe("moving a stack with web addresses", () => {
     expect(moveBlocker([address], "later")).toMatch(/Close web address/u);
     expect(moveBlocker([address], "keep")).toBeNull();
     expect(moveBlocker([], "now")).toBeNull();
+  });
+});
+
+describe("what needs attention on Services", () => {
+  const now = Date.parse("2026-10-24T10:00:00.000Z");
+  const ago = (minutes: number) =>
+    new Date(now - minutes * 60_000).toISOString();
+  const failed = (overrides: Partial<ActionRecord>): AttentionItem => ({
+    action: {
+      id: "f1",
+      batchId: "b1",
+      position: 0,
+      mode: "rolling",
+      nodeId: "pv",
+      kind: "compose",
+      name: "pihole",
+      action: "restart",
+      status: "failed",
+      requestedBy: "owner@example.test",
+      requestedAt: ago(31),
+      deliverableAt: null,
+      sentAt: ago(31),
+      finishedAt: ago(30),
+      exitCode: 1,
+      output: null,
+      deviceId: null,
+      ...overrides,
+    },
+    incident: null,
+  });
+  const container = (
+    name: string,
+    state: "running" | "stopped",
+    since: string | null = null,
+  ) => ({ kind: "docker" as const, name, state, since, system: false });
+  const servers = [
+    node("pv", "pivox", "0.6.14"),
+    node("io", "io", "0.6.14"),
+    node("cl", "calisto", "0.6.14"),
+  ];
+  const estate: ServicesResponse = {
+    nodes: [
+      {
+        id: "pv",
+        inventoryAt: null,
+        refreshRequestedAt: null,
+        stacks: [
+          stack("pihole", { running: 0, total: 1 }),
+          stack("homeassistant", { running: 1, total: 1 }),
+        ],
+        services: [
+          container("pihole-pihole-1", "stopped"),
+          container("homeassistant-app-1", "running"),
+        ],
+        trust: trusted,
+      },
+      {
+        id: "io",
+        inventoryAt: null,
+        refreshRequestedAt: null,
+        stacks: [
+          stack("umami", { running: 1, total: 2, rollback: true }),
+          stack("blog"),
+        ],
+        services: [
+          container("umami-app-1", "running"),
+          container("umami-db-1", "stopped"),
+          container("blog-web-1", "running"),
+          container("blog-db-1", "running"),
+        ],
+        trust: trusted,
+      },
+      {
+        id: "cl",
+        inventoryAt: null,
+        refreshRequestedAt: null,
+        stacks: [],
+        services: [
+          {
+            kind: "systemd",
+            name: "backup.service",
+            state: "failed",
+            since: ago(40),
+            system: false,
+          },
+          container("portainer", "running"),
+        ],
+        trust: null,
+      },
+    ],
+    actions: [],
+  };
+  const items = [
+    failed({
+      output: "Error response from daemon\nport 53 is already allocated\n",
+    }),
+    failed({
+      id: "f2",
+      kind: "docker",
+      name: "pihole-pihole-1",
+      finishedAt: ago(120),
+      output: "an older failure",
+    }),
+    failed({
+      id: "f3",
+      nodeId: "io",
+      name: "umami",
+      action: "deploy",
+      finishedAt: ago(60),
+      output:
+        "Container umami-db-1 Error\ndependency failed to start: container umami-db-1 exited (1)",
+    }),
+    failed({
+      id: "f4",
+      nodeId: "io",
+      name: "blog",
+      action: "stop",
+      finishedAt: ago(5),
+    }),
+    failed({ id: "f5", nodeId: "io", name: "newapp", action: "create" }),
+    failed({ id: "f6", nodeId: "gone", name: "pihole" }),
+  ];
+
+  it("lists each broken thing once with its reason and the button that fits", () => {
+    const problems = servicesAttention(estate, servers, items, now);
+    expect(
+      problems.map((problem) => [
+        problem.node.name,
+        problem.kind,
+        problem.name,
+        problem.state,
+        problem.reason,
+        problem.primary,
+      ]),
+    ).toEqual([
+      ["calisto", "systemd", "backup", "Failed", "Failed 40m ago", "start"],
+      [
+        "io",
+        "stack",
+        "blog",
+        "2 of 2 running",
+        "Stop failed 5m ago: exit 1",
+        "restart",
+      ],
+      [
+        "io",
+        "stack",
+        "umami",
+        "1 of 2 running",
+        "Deploy failed 1h ago: dependency failed to start: container umami-db-1 exited (1)",
+        "rollback",
+      ],
+      [
+        "pivox",
+        "stack",
+        "pihole",
+        "0 of 1 running",
+        "Restart failed 30m ago: port 53 is already allocated",
+        "start",
+      ],
+    ]);
+    expect(problems[3]!.target).toEqual({
+      nodeId: "pv",
+      nodeName: "pivox",
+      kind: "compose",
+      name: "pihole",
+    });
+    expect(problems[3]!.stack?.stack.project).toBe("pihole");
+    expect(problems[3]!.blocker).toBeNull();
+    expect(problems[0]!.target.name).toBe("backup.service");
+    expect(problems[0]!.stack).toBeNull();
+    expect(problems[0]!.blocker).toBe("Not trusted yet");
+  });
+
+  it("says what stopped and when without a failed action", () => {
+    const quiet: ServicesResponse = {
+      ...estate,
+      nodes: [
+        {
+          ...estate.nodes[0]!,
+          services: [container("pihole-pihole-1", "stopped", ago(120))],
+        },
+      ],
+    };
+    expect(
+      servicesAttention(quiet, servers, [], now).map((problem) => [
+        problem.name,
+        problem.reason,
+        problem.primary,
+      ]),
+    ).toEqual([["pihole", "Stopped 2h ago", "start"]]);
+  });
+
+  it("knows the newest action on what it lists, to show one that runs", () => {
+    const running = { ...items[0]!.action, id: "p1", status: "sent" as const };
+    const problems = servicesAttention(
+      { ...estate, actions: [running] },
+      servers,
+      items,
+      now,
+    );
+    expect(
+      problems.find((problem) => problem.name === "pihole")?.latest?.id,
+    ).toBe("p1");
   });
 });
 

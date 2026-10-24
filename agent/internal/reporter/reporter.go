@@ -81,14 +81,15 @@ type ServiceEntry struct {
 }
 
 type StackEntry struct {
-	Access    string   `json:"access,omitempty"`
-	Public    []string `json:"public,omitempty"`
-	Project   string   `json:"project"`
-	Directory string   `json:"directory"`
-	Running   int      `json:"running"`
-	Total     int      `json:"total"`
-	Compose   bool     `json:"compose"`
-	Rollback  bool     `json:"rollback"`
+	Access     string   `json:"access,omitempty"`
+	Public     []string `json:"public,omitempty"`
+	Project    string   `json:"project"`
+	Directory  string   `json:"directory"`
+	Running    int      `json:"running"`
+	Total      int      `json:"total"`
+	Compose    bool     `json:"compose"`
+	Rollback   bool     `json:"rollback"`
+	Containers []string `json:"containers,omitempty"`
 }
 
 type TrustReport struct {
@@ -198,6 +199,7 @@ type CheckResult struct {
 	LatencyMS *int64  `json:"latencyMs"`
 	Message   *string `json:"message"`
 	CheckedAt string  `json:"checkedAt"`
+	Since     *string `json:"since,omitempty"`
 }
 
 type Client struct {

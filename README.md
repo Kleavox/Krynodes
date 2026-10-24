@@ -168,11 +168,19 @@ typed, so protected units such as ssh or docker itself are not offered. A
 Docker check reads the state `krynodes-containers.service` keeps (below), so a
 container that stops shows within one check cycle; if that state is more than
 3 minutes old the check is down with "Container status is stale". Reading that
-state times nothing, so a Docker check shows no response time (`--`; agents
-before 0.6.13 reported 0 ms); for one, add an HTTP or TCP check on the
-container's port. A failing check is tried twice
+state times nothing, so a Docker check shows how long the container has run
+instead of a response time (`running 4m`), and a systemd check how long the
+unit has been active (`active 37d`); HTTP and TCP checks show their latency
+(`130ms`), and every check that is down says for how long its incident has
+been open (`down 36m`). `--` is left only for a check with no result yet. The
+durations come from agent 0.6.14: `kry watch-containers` reads each running
+container's `State.StartedAt` (one `docker inspect` per snapshot, only when
+containers change) and its compose project, and systemd checks read
+`ActiveEnterTimestamp` with the state in one `systemctl show` per cycle. Older
+agents send none, so their rows say `running` or `active` alone. For a
+container's response time, add an HTTP or TCP check on its port. A failing check is tried twice
 more, 5 seconds apart, before the agent reports it down, and an incident opens
-only at the second such report in a row. A check's menu on the Checks page or the node
+only at the second such report in a row. A check's menu on the Checks page or the server
 page has **Edit** (name, server, kind, target, timeout), **Pause** / **Resume**,
 **Status page** and **Remove**, which asks first. Changing what is checked (kind,
 target or server) or pausing starts the status fresh and closes an open
@@ -215,14 +223,18 @@ and the status page use the browser's time zone. When an alert mail cannot be
 sent (or mail is not set up), the Fleet page says so and why until one goes
 out again.
 
-Anyone who can open Krynodes can post an update on an open incident, from its
-page: a status (Investigating, Identified, Monitoring or Update) and what is
-going on, up to 1,000 characters. Updates need no fingerprint and never mail.
-The incident page lists them between Opened and Resolved with the author's
-name, and only the author can delete one (⋯ **Delete**). An incident still
-resolves only by itself, when its check passes; the Incidents list shows each
-open incident's latest status. When the check is on the status page, its
-updates show there too, without the author.
+Anyone who can open Krynodes can post an update on an open incident, from the
+one-line box on its page: a status (Investigating, Identified, Monitoring or
+Update) and what is going on, up to 1,000 characters. Updates need no
+fingerprint and never mail. The incident page tells everything as one
+timeline, newest first: the check's results folded into runs (`Still down
+09:30 – 10:25 · 12 checks in a row · HTTP 502`), the updates with their
+author (only the author can delete one, ⋯ **Delete**), Opened and Resolved,
+the last good check before it opened, and the actions on what the check
+watches (and the server's restarts) from an hour before it opened. Above it,
+the strip runs from an hour before it opened until now. An incident still
+resolves only by itself, when its check passes. When the check is on the
+status page, its updates show there too, without the author.
 
 ### Live connection
 
@@ -245,8 +257,8 @@ up to a minute.
   deploy or restart; agents are back within seconds and report at once.
 - Agents before 0.6.0 are not supported. A 0.5.x agent still connects and
   is told to update at once to the published release; older agents are
-  refused (426), the Worker refuses every action for them, and the node page
-  shows the command to update such a server by hand.
+  refused (426), the Worker refuses every action for them, and the server
+  page's agent dialog shows the command to update such a server by hand.
 - At a 60-second interval a server costs about 870 D1 writes a day.
 
 Dashboards use the same hub: each tab opens `GET /api/live`, a WebSocket that
@@ -271,7 +283,7 @@ Worker asks Cloudflare at most every 15 minutes while someone looks.
 ### Server addresses
 
 A server card on Fleet has a button (**2 addresses**) that opens its
-addresses, and the server page lists them in its Network card, for SSH and the
+addresses, and the server page lists them under This server, for SSH and the
 like. The agent calls `/api/agent/address` once over IPv4 and once over IPv6
 when it starts and every 6 hours, and the Worker keeps the address Cloudflare
 saw the call come from, with the network it belongs to (`PT Telkom
@@ -298,10 +310,11 @@ address.
 ### Updating the agent
 
 The Worker checks GitHub for the latest `agent-v*` release once a day (or on
-**Check now**); agents never poll GitHub. Each server shows its agent version,
+**Check for releases** in a server's agent dialog); agents never poll GitHub. Each server shows its agent version,
 with an arrow when it is behind, and the **Updates** filter lists them.
 
-- **Update agent** (node detail) or **Update N** (Fleet) asks the agent to update
+- **Update agent** (the agent dialog, from the ⋯ beside Agent under This server
+  on the server page) or **Update N** (Fleet) asks the agent to update
   on its next report. The agent drops the request in
   `/var/lib/kry/update-request`; the root unit `krynodes-update.path` starts
   `kry self-update`, which downloads the release from this repository, checks
@@ -312,7 +325,7 @@ with an arrow when it is behind, and the **Updates** filter lists them.
   without data, resumes where it stopped, and tries five times. The new binary
   must print its version before it is installed, and if the agent does not stay
   up after the restart the old binary comes back. Why an attempt failed shows
-  on the node page.
+  in the agent dialog.
 - A stalled update is asked for again after 15 minutes, three attempts in all,
   before the dashboard calls it failed. Releases are published only once every
   file is uploaded.
@@ -324,21 +337,69 @@ with an arrow when it is behind, and the **Updates** filter lists them.
 curl -fsSL https://<agent-host>/install.sh | sudo sh -s -- --update
 ```
 
+### Pages
+
+Every page puts what is wrong first, says it once and says why.
+
+- **Services**: **Needs attention** lists each stack with fewer containers
+  running than it has, each container or unit that failed, and each thing
+  whose last action is not fixed (below), with the reason (`Restart failed 30
+min ago: port 53 is already allocated`), Logs and the button that fits (Roll
+  back after a failed deploy that can roll back, Start when it is down,
+  Restart otherwise). Below, one box per server (`4 running · 1 stopped`,
+  `Open server →`) with compact rows; their ⋯ holds every action. Search and
+  a kind picker replace the old tabs, system units fold into `+ 3 system
+services` until **System services** is on, and **Removed n** lists removed
+  stacks.
+- **Checks**: **Down** first, each with its reason, how long, failures in a
+  row, its incident and its updates, a failed auto-restart, and Logs and
+  Restart (containers and units) or Open incident; then search, `All · Down ·
+Up`, and one box per server with the 4-hour strip, uptime and the last
+  column above.
+- **Incidents**: open incidents with their latest line, the newest of the
+  last update and the last action on what the check watches (`09:58
+Auto-restart failed: port 53 is already allocated`); then `Last 30 days · 3
+incidents · 47m down in total` and one row per resolved incident with its
+  cause and length.
+- **History**: **Failed, not fixed** cards, each with its output (last lines
+  first) and one tab per container of the stack it touched, read from the
+  server only when opened, the incident it caused, Try again, Roll back and ⋯
+  **Hide**; then **Everything** in one box with days as separators, actions
+  and incident events, Everything / Actions / Incidents / Failed, a server
+  picker and a search over the 90 days (verbs, names, servers, outputs, check
+  names, incident causes). Reads of logs and secrets show only under Actions.
+- **The server page**: a line of facts (`Debian 12 · amd64 · up 37 days ·
+reports every minute · agent 0.6.13`), then **What runs**: one card per
+  stack, per container outside a stack and per unit that is not running, each
+  holding its not fixed action, its checks and its open or last incident;
+  running units fold into one card. **Other checks** holds the checks that
+  watch nothing listed, then **Recent actions**. Beside them: **Machine**
+  (four tiles; one opens its chart), **Security** (findings, one Protections
+  line, Apply, the list in a dialog) and **This server** (addresses, Reached
+  by, Enrolled, the agent; its ⋯ opens the agent's update controls). On a
+  phone the order is the same, the machine after Other checks.
+
+A check watches a stack, a container or a unit (`ownerOf` in
+`packages/protocol`, shared by the Worker and the app), by exact names only:
+a Docker check watches its container, or the container's stack when the
+agent lists that container in it; a systemd check watches its unit (`ssh` and
+`ssh.service` are one); an HTTP check watches the stack whose web address has
+exactly the URL's hostname; a TCP check watches nothing.
+
+A failed or expired action that changes something is **not fixed** until a
+later action on the same thing finishes, the thing is running again or gone,
+or someone hides it (⋯ **Hide**, for everyone, no fingerprint, recorded on the
+action). The Worker works it out over the 90 days (`/api/history/attention`).
+
 ### Service actions
 
-The dashboard's **Services** page has one tab per kind: **Stacks**,
-**Containers** (those outside a stack), **Systemd** and, when there are any,
-**Removed** stacks. Each tab shows its count and a red dot when something in it
-is not running; rows carry their server and a plain state ("2 of 3 running").
-Search, a server filter and **All** / **Not running** stay in the address, and
-**System services** on the Systemd tab adds the units the operating system
-runs. It starts, stops or restarts them; the server page uses the same tabs
-without the server column. The node
-page and Ctrl K offer the same actions, and a SERVICE check's menu has
+The **Services** page starts, stops or restarts stacks, containers and units
+(above). The server page, Ctrl K and a SERVICE check's menu offer the same
+actions; a SERVICE check's menu has
 **Restart service**. Every one of them needs a fingerprint, like a deploy
 (see below): a server that trusts no device refuses them.
 
-The node page's **Actions** menu (and Ctrl K) also has
+The server page's **Actions** menu (and Ctrl K) also has
 **Restart server**: after a confirmation and the same fingerprint, `kry exec`
 reports "restarting the server" and then runs `systemctl reboot --no-block`.
 It refuses while a protection or a Docker install is still running there, since
@@ -350,10 +411,9 @@ it (or by the person, when no device did): the server reads
 again, its services wait with their buttons hidden ("Waiting for pivox to come
 back"), a service being restarted shows which device asked and for how long,
 and the hourglass button in the top bar lists what runs or waits now.
-**History** (its own tab) lists the actions of the last 90 days by day, with
-the device, the outcome and how long it took, and filters by server; trust
-updates stay in **Recent changes**. There are no pop-up toasts for other
-people's work.
+**History** (above) keeps the actions of the last 90 days, with the device,
+the outcome and how long it took; trust updates stay in **Recent changes**.
+There are no pop-up toasts for other people's work.
 
 A service's or stack's menu has **Logs**: the last 300 lines
 (`journalctl -u`, `docker logs`, `docker compose logs`), at most 64 KiB, signed
@@ -381,7 +441,7 @@ The agent never runs anything itself:
 - It never starts, stops or restarts ssh, the network, the firewall (ufw,
   firewalld, nftables, iptables), Docker itself, systemd internals, cloudflared
   or Krynodes; it only reads their logs. The firewall is turned on and off as
-  a protection on the Security panel.
+  a protection under the server page's Security.
 - It keeps its state in `/var/lib/kry-exec`.
 
 To take Krynodes off a server, delete the node in the dashboard while the
@@ -415,16 +475,16 @@ token again on the Cloudflare page unless Delete node already did.
 
 ### Deploy
 
-The Services page deploys Docker Compose stacks. The **Stacks** tab lists every
-server's stacks, with their containers folded under them; the server page uses
-the same tab for its own. A stack's ⋯
+The Services page deploys Docker Compose stacks. Each server's box lists its
+stacks, with their containers folded under them; the server page gives each
+stack a card with the same row. A stack's ⋯
 holds its actions, and **Deploy on all N servers** when the project runs on
 more than one. A deploy runs `docker compose pull`, then `up -d`, in the
 stack's own directory, with its own compose files. A failed deploy keeps the images that
 ran before it, and **Roll back** starts them again.
 
 Servers with Docker and Compose show the Docker logo on Fleet, Services and the
-node page (faded when Compose is missing). A stack's menu also has **Start**, **Stop**, **Restart**, **Remove** and
+server page (faded when Compose is missing). A stack's menu also has **Start**, **Stop**, **Restart**, **Remove** and
 **Delete permanently**, and a container's menu has **Remove**. A removed
 container leaves the list as soon as its server confirms.
 

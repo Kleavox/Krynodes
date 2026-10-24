@@ -242,6 +242,7 @@ describe("compose actions", () => {
         rollback: false,
         access: null,
         public: [],
+        containers: [],
       },
     ]);
     expect(a.trust).toEqual({

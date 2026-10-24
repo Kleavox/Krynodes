@@ -1,36 +1,22 @@
-import { maintenanceSpans, plannedNow } from "@/lib/operations";
-import type { Span } from "@/lib/series";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { EmptyState } from "@/components/empty-state";
 import { FilterChips } from "@/components/filter-chips";
 import { PageHeader } from "@/components/page-header";
-import { StatusDot, checkTone } from "@/components/status";
-import { HeartbeatStrip, newestLatency } from "@/components/strips";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CheckDialog } from "@/features/checks/check-dialog";
-import { CheckMenu } from "@/features/checks/check-menu";
-import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useCheckResults, useOverview, useServices } from "@/lib/api";
-import { isPending, serviceForCheck } from "@/lib/services";
+import { CheckRow, useCheckView } from "@/features/checks/check-row";
+import { DownBox, type DownItem } from "@/features/checks/down-box";
+import { useHistoryAttention, useIncidentBoard, useOverview } from "@/lib/api";
 import {
-  checkDisplayStatus,
-  clockTime,
-  graceSeconds,
-  nodeState,
-  parseTimestamp,
-  publicLabel,
-} from "@/lib/format";
-import { uptimeTip } from "@/lib/series";
-import { useNow } from "@/lib/use-now";
-import { cn } from "@/lib/utils";
-import type { CheckHistory, CheckRecord, Incident, NodeRecord } from "@/types";
-
-const COLUMNS =
-  "md:grid-cols-[76px_minmax(120px,1.2fr)_76px_minmax(120px,1.4fr)_minmax(80px,0.8fr)_minmax(140px,2fr)_64px_64px_32px]";
+  autoRestartLine,
+  checksByServer,
+  serverChecksText,
+} from "@/lib/checks";
+import type { CheckRecord } from "@/types";
 
 type Filter = "all" | "down" | "up";
 
@@ -40,11 +26,11 @@ function readFilter(value: string | null): Filter {
 
 export function ChecksPage() {
   const overview = useOverview();
-  const results = useCheckResults();
-  const services = useServices();
-  const runAction = useSignedAction();
-  const now = useNow(60_000);
+  const attention = useHistoryAttention();
+  const board = useIncidentBoard();
+  const view = useCheckView();
   const [params, setParams] = useSearchParams();
+  const [query, setQuery] = useState(() => params.get("q") ?? "");
   const filter = readFilter(params.get("status"));
 
   const setParam = (key: string, value: string | null) =>
@@ -78,144 +64,146 @@ export function ChecksPage() {
   }
 
   const { checks } = overview.data;
-  const seen = overview.dataUpdatedAt;
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const display = (check: CheckRecord) => {
-    const node = nodeById.get(check.node_id);
-    return checkDisplayStatus(
-      check.status,
-      node ? nodeState(node, seen) : "offline",
-      check.enabled,
-    );
-  };
+  const { display } = view;
+  const groups = checksByServer(checks, nodes, overview.dataUpdatedAt);
   const down = checks.filter(
     (check) => check.enabled && display(check) === "DOWN",
   );
   const up = checks.filter((check) => display(check) === "UP");
-  const visible = filter === "down" ? down : filter === "up" ? up : checks;
+  const downItems: DownItem[] = groups.flatMap((group) =>
+    group.checks
+      .filter(
+        (check) =>
+          check.enabled && display(check) === "DOWN" && !view.planned(check),
+      )
+      .map((check) => {
+        const incident = view.openIncident(check);
+        return {
+          check,
+          node: group.node,
+          figure: view.figure(check),
+          incident,
+          updates: incident
+            ? (board.data?.latest[incident.id]?.updates ?? 0)
+            : 0,
+          autoLine: autoRestartLine(
+            check,
+            attention.data?.items ?? [],
+            view.now,
+          ),
+          strip: view.strip(check),
+          restart: view.restartFor(check),
+          logs: view.logsFor(check),
+        };
+      }),
+  );
+  const needle = query.trim().toLowerCase();
+  const shown = (check: CheckRecord, serverName: string) =>
+    (filter === "all" ||
+      (filter === "down"
+        ? check.enabled && display(check) === "DOWN"
+        : display(check) === "UP")) &&
+    (!needle ||
+      [check.name, check.target, serverName].some((text) =>
+        text.toLowerCase().includes(needle),
+      ));
+  const visible = groups
+    .map((group) => ({
+      ...group,
+      total: group.checks.length,
+      checks: group.checks.filter((check) => shown(check, group.node.name)),
+    }))
+    .filter((group) => group.checks.length > 0);
 
   return (
     <>
       <PageHeader
         title="Checks"
         actions={
-          <>
-            {checks.length > 0 && (
-              <FilterChips
-                label="Filter checks"
-                value={filter}
-                onChange={(value) =>
-                  setParam("status", value === "all" ? null : value)
-                }
-                options={[
-                  { value: "all", label: `All ${checks.length}` },
-                  { value: "down", label: `Down ${down.length}` },
-                  { value: "up", label: `Up ${up.length}` },
-                ]}
-              />
-            )}
-            <Button
-              onClick={() => setParam("add", "1")}
-              disabled={nodes.length === 0}
-            >
-              Add check
-            </Button>
-          </>
+          <Button
+            onClick={() => setParam("add", "1")}
+            disabled={nodes.length === 0}
+          >
+            Add check
+          </Button>
         }
       />
 
       {nodes.length === 0 ? (
         <EmptyState
-          title="No nodes yet"
-          body="Enroll a node before adding checks. Checks run on the node's agent."
+          title="No servers yet"
+          body="Enroll a server before adding checks. Checks run on the server's agent."
           action={
             <Button asChild>
-              <Link to="/?enroll=1">Enroll node</Link>
+              <Link to="/?enroll=1">Enroll server</Link>
             </Button>
           }
         />
       ) : checks.length === 0 ? (
         <EmptyState
           title="No checks configured"
-          body="Add an HTTP, TCP or systemd check to one of your nodes."
-        />
-      ) : visible.length === 0 ? (
-        <EmptyState
-          title={filter === "down" ? "No checks are down" : "No checks are up"}
-          body="Change the filter to see the rest."
+          body="Add an HTTP, TCP, container or systemd check to one of your servers."
         />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <div
-            aria-hidden="true"
-            className={cn(
-              "hidden gap-x-3 border-b px-3 py-2 text-[11px] tracking-wider text-muted-foreground uppercase md:grid",
-              COLUMNS,
-            )}
-          >
-            <span>Status</span>
-            <span>Name</span>
-            <span>Kind</span>
-            <span>Target</span>
-            <span>Node</span>
-            <span>Last 4 hours</span>
-            <span className="text-right">Up 4h</span>
-            <span className="text-right">Latency</span>
-            <span />
+        <div className="space-y-4">
+          <DownBox items={downItems} nodes={nodes} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search checks"
+              aria-label="Search checks"
+              className="h-9 w-full sm:w-56 md:h-8"
+            />
+            <FilterChips
+              label="Filter checks"
+              value={filter}
+              onChange={(value) =>
+                setParam("status", value === "all" ? null : value)
+              }
+              options={[
+                { value: "all", label: `All ${checks.length}` },
+                { value: "down", label: `Down ${down.length}` },
+                { value: "up", label: `Up ${up.length}` },
+              ]}
+            />
           </div>
-          <ul className="divide-y">
-            {visible.map((check) => (
-              <CheckRow
-                key={check.id}
-                check={check}
-                nodes={nodes}
-                node={nodeById.get(check.node_id)}
-                history={results.data?.checks[check.id]}
-                incidents={overview.data.incidents.filter(
-                  (incident) => incident.check_id === check.id,
-                )}
-                now={now}
-                seen={seen}
-                asOf={results.data ? results.dataUpdatedAt : undefined}
-                maintenance={maintenanceSpans(
-                  services.data?.actions ?? [],
-                  check.node_id,
-                )}
-                restart={(() => {
-                  const node = nodeById.get(check.node_id);
-                  const entry = serviceForCheck(check, services.data);
-                  const trusted =
-                    (services.data?.nodes.find(
-                      (entry) => entry.id === check.node_id,
-                    )?.trust?.access.length ?? 0) > 0;
-                  const busy = services.data?.actions.some(
-                    (action) =>
-                      isPending(action) &&
-                      action.nodeId === check.node_id &&
-                      action.kind === "systemd" &&
-                      action.name === entry?.name,
-                  );
-                  return node && entry && trusted && !busy
-                    ? () =>
-                        runAction.mutate({
-                          action: "restart",
-                          targets: [
-                            {
-                              nodeId: node.id,
-                              kind: "systemd",
-                              name: entry.name,
-                            },
-                          ],
-                        })
-                    : undefined;
-                })()}
-              />
-            ))}
-          </ul>
+          {visible.length === 0 ? (
+            <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              Nothing matches. Change the search or the filter to see the rest.
+            </p>
+          ) : (
+            visible.map((group) => (
+              <section
+                key={group.node.id}
+                aria-label={group.node.name}
+                className="divide-y rounded-lg border bg-card"
+              >
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2">
+                  <h2 className="text-sm font-medium">{group.node.name}</h2>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {serverChecksText(group.total, group.down)}
+                  </span>
+                  <Link
+                    to={`/nodes/${group.node.id}`}
+                    className="ml-auto font-mono text-xs text-primary underline-offset-4 hover:underline"
+                  >
+                    Open server →
+                  </Link>
+                </div>
+                <ul className="divide-y">
+                  {group.checks.map((check) => (
+                    <CheckRow key={check.id} check={check} view={view} />
+                  ))}
+                </ul>
+              </section>
+            ))
+          )}
         </div>
       )}
 
-      {results.isError && (
+      {view.results.isError && (
         <p role="status" className="mt-3 text-sm text-destructive">
           Check history could not be loaded. Status and latency are still
           current.
@@ -224,136 +212,5 @@ export function ChecksPage() {
 
       {dialog}
     </>
-  );
-}
-
-function CheckRow({
-  check,
-  nodes,
-  node,
-  history,
-  incidents,
-  now,
-  seen,
-  asOf,
-  maintenance,
-  restart,
-}: {
-  check: CheckRecord;
-  nodes: NodeRecord[];
-  node: NodeRecord | undefined;
-  history: CheckHistory | undefined;
-  incidents: Incident[];
-  now: number;
-  seen: number;
-  restart: (() => void) | undefined;
-  asOf: number | undefined;
-  maintenance: Span[];
-}) {
-  const windowSeconds = Math.max(300, node?.interval_seconds ?? 0);
-  const status = checkDisplayStatus(
-    check.status,
-    node ? nodeState(node, seen) : "offline",
-    check.enabled,
-  );
-  return (
-    <li
-      className={cn(
-        "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-3 py-2.5 transition-colors hover:bg-card-hover",
-        !check.enabled && "text-muted-foreground",
-        COLUMNS,
-      )}
-    >
-      <span className="flex items-center gap-1.5 font-mono text-[11px]">
-        {status === "DOWN" && plannedNow(maintenance, now) ? (
-          <span
-            className="flex items-center gap-1.5"
-            title="Down during planned work on its server. No incident opens unless it stays down afterwards."
-          >
-            <StatusDot tone="warn" pulse />
-            PLANNED
-          </span>
-        ) : (
-          <>
-            <StatusDot tone={checkTone(status)} />
-            {status}
-          </>
-        )}
-      </span>
-      <span className="min-w-0 truncate font-medium" title={check.name}>
-        {check.name}
-        {publicLabel(check) && (
-          <Badge variant="outline" className="ml-2 font-mono text-[10px]">
-            {publicLabel(check)}
-          </Badge>
-        )}
-        {check.auto_restart === 1 && (
-          <Badge
-            variant="outline"
-            className="ml-2 font-mono text-[10px]"
-            title="Restarts automatically when this check turns red"
-          >
-            AUTO
-          </Badge>
-        )}
-        <span className="ml-2 font-mono text-[10px] text-muted-foreground md:hidden">
-          {check.kind}
-        </span>
-      </span>
-      <span className="hidden md:block">
-        <Badge variant="outline" className="font-mono">
-          {check.kind}
-        </Badge>
-      </span>
-      <span
-        className="hidden truncate font-mono text-xs text-muted-foreground md:block"
-        title={check.target}
-      >
-        {check.target}
-      </span>
-      <Link
-        to={`/nodes/${check.node_id}`}
-        className="hidden truncate text-sm hover:underline md:block"
-      >
-        {node?.name ?? "--"}
-      </Link>
-      <HeartbeatStrip
-        results={history?.results}
-        incidents={incidents}
-        since={check.enabled ? parseTimestamp(check.created_at) : null}
-        windowSeconds={windowSeconds}
-        graceSeconds={graceSeconds(node?.interval_seconds ?? 0)}
-        settleSeconds={windowSeconds}
-        now={now}
-        asOf={asOf}
-        count={48}
-        maintenance={maintenance}
-        className="col-span-3 md:col-span-1"
-      />
-      <span className="hidden text-right font-mono text-xs md:block">
-        <span className="sr-only">Up 4h </span>
-        {history?.up4h == null ? (
-          "--"
-        ) : (
-          <span
-            tabIndex={0}
-            className="tip"
-            data-tip={uptimeTip(history.results, clockTime)}
-          >
-            {history.up4h.toFixed(1)}%
-            <span className="sr-only">
-              {" "}
-              {uptimeTip(history.results, clockTime)}
-            </span>
-          </span>
-        )}
-      </span>
-      <span className="hidden text-right font-mono text-xs md:block">
-        {newestLatency(history)}
-      </span>
-      <span className="col-start-3 row-start-1 md:col-start-auto md:row-start-auto">
-        <CheckMenu check={check} nodes={nodes} restart={restart} />
-      </span>
-    </li>
   );
 }

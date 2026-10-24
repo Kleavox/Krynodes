@@ -104,11 +104,9 @@ function Controls({ item }: { item: RemovedMember }) {
 export function RemovedList({
   items,
   seen,
-  showServer,
 }: {
   items: RemovedMember[];
   seen: number;
-  showServer: boolean;
 }) {
   if (items.length === 0) return null;
   return (
@@ -127,7 +125,7 @@ export function RemovedList({
             </span>
             <span className="col-span-2 font-mono text-xs text-muted-foreground md:col-span-1">
               {untilDeleted(item, seen)}
-              {showServer && ` · ${item.node.name}`}
+              {` · ${item.node.name}`}
             </span>
             <span
               className="col-span-2 min-w-0 font-mono text-xs text-muted-foreground md:col-span-1"

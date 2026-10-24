@@ -15,6 +15,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -33,6 +40,7 @@ import {
   firewallPorts,
   protectionDetail,
   protectionsNotice,
+  protectionsText,
   fromUtcHour,
   recipeChoices,
   recommended,
@@ -44,7 +52,7 @@ import { cn } from "@/lib/utils";
 import type { NodeRecord } from "@/types";
 
 const sectionTitle =
-  "mb-3 text-[11px] tracking-wider text-muted-foreground uppercase";
+  "text-[11px] tracking-wider text-muted-foreground uppercase";
 
 const offset = () => new Date().getTimezoneOffset();
 
@@ -236,6 +244,7 @@ export function SecurityPanel({
   const services = useServices();
   const scan = useScan();
   const [pending, setPending] = useState<Pending | null>(null);
+  const [listing, setListing] = useState(false);
   const entry = services.data?.nodes.find((item) => item.id === node.id);
   const report = entry?.security;
   if (!agentCurrent(node) || !report) return null;
@@ -248,19 +257,14 @@ export function SecurityPanel({
   const unsupported = report.platform?.family === null;
   const findings = shownFindings(report);
   return (
-    <section
-      aria-labelledby="node-security"
-      className="rounded-lg border bg-card p-4"
-    >
-      <div className="mb-3 flex items-center gap-2">
-        <div className="min-w-0">
-          <h2 id="node-security" className={sectionTitle + " mb-0"}>
-            Security
-          </h2>
-          <p className="font-mono text-xs text-muted-foreground">
-            Checked {timeAgo(report.checkedAt, seen)}
-          </p>
-        </div>
+    <section aria-labelledby="node-security">
+      <div className="mb-2 flex min-h-8 items-center gap-2">
+        <h2 id="node-security" className={sectionTitle}>
+          Security
+        </h2>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          checked {timeAgo(report.checkedAt, seen)}
+        </span>
         <Button
           variant="ghost"
           size="sm"
@@ -271,101 +275,126 @@ export function SecurityPanel({
           Check now
         </Button>
       </div>
-      <ul className="space-y-1.5 text-sm">
-        {findings.map((finding) => (
-          <li key={finding.id} className="flex gap-2">
-            <StatusDot tone={findingTone(finding)} />
-            <span className="min-w-0">
-              {finding.detail}
-              {finding.id === "public-ports" && (
-                <span className="block text-xs text-muted-foreground">
-                  Some of these on a private network? Add its range under{" "}
-                  <Link
-                    to="/settings/private-addresses"
-                    className="underline underline-offset-4"
-                  >
-                    Settings, Private addresses
-                  </Link>
-                  .
+      <div className="divide-y rounded-lg border bg-card">
+        {findings.length > 0 && (
+          <ul className="space-y-1.5 p-3 text-sm">
+            {findings.map((finding) => (
+              <li key={finding.id} className="flex gap-2">
+                <span className="pt-1.5">
+                  <StatusDot tone={findingTone(finding)} />
                 </span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ul>
-      <h3 className="mt-4 mb-2 text-xs font-medium text-muted-foreground">
-        Protections
-      </h3>
-      {notice && <p className="mb-2 text-xs text-muted-foreground">{notice}</p>}
-      <ul
-        className={cn(
-          "divide-y rounded-md border text-sm",
-          unsupported && "hidden",
+                <span className="min-w-0">
+                  {finding.detail}
+                  {finding.id === "public-ports" && (
+                    <span className="block text-xs text-muted-foreground">
+                      Some of these on a private network? Add its range under{" "}
+                      <Link
+                        to="/settings/private-addresses"
+                        className="underline underline-offset-4"
+                      >
+                        Settings, Private addresses
+                      </Link>
+                      .
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
-      >
-        {choices.map((choice) => (
-          <li key={choice.id} className="flex items-center gap-2 px-3 py-2">
-            <span className="min-w-0 flex-1">
-              <span className="block">{choice.title}</span>
-              {(choice.blocked ?? choice.hint) && (
-                <span className="block text-xs text-muted-foreground">
-                  {choice.blocked ?? choice.hint}
-                </span>
-              )}
-            </span>
-            <span className="font-mono text-xs text-muted-foreground">
-              {choice.applied
-                ? choice.id === "reboot-window" && report.rebootHour !== null
-                  ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
-                  : "On"
-                : choice.outside
-                  ? "On · set up outside Krynodes"
-                  : "Off"}
-            </span>
-            {choice.blocked || choice.outside ? (
-              <span className="size-9 md:size-8" />
-            ) : (
-              <RowMenu
-                label={`${choice.title} actions`}
-                items={
-                  choice.applied
-                    ? [
-                        {
-                          label: "Turn off",
-                          destructive: true,
-                          onSelect: () => setPending({ choice, turnOn: false }),
-                        },
-                        ...(choice.id === "reboot-window"
-                          ? [
-                              {
-                                label: "Change",
-                                onSelect: () =>
-                                  setPending({ choice, turnOn: true }),
-                              },
-                            ]
-                          : []),
-                      ]
-                    : [
-                        {
-                          label: "Turn on",
-                          onSelect: () => setPending({ choice, turnOn: true }),
-                        },
-                      ]
-                }
-              />
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setListing(true)}
+            className="min-w-0 flex-1 text-left text-sm underline-offset-4 hover:underline"
+          >
+            {protectionsText(report)}
+          </button>
+          {steps.length > 0 && !unsupported && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 md:h-8"
+              onClick={() => setPending({ recommend: steps })}
+            >
+              Apply {steps.length}
+            </Button>
+          )}
+        </div>
+      </div>
+      <Dialog open={listing} onOpenChange={setListing}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Protections on {node.name}</DialogTitle>
+            <DialogDescription>
+              {notice ?? protectionsText(report)}
+            </DialogDescription>
+          </DialogHeader>
+          <ul
+            className={cn(
+              "divide-y rounded-md border text-sm",
+              unsupported && "hidden",
             )}
-          </li>
-        ))}
-      </ul>
-      {steps.length > 0 && !unsupported && (
-        <Button
-          className="mt-3 w-full"
-          variant="outline"
-          onClick={() => setPending({ recommend: steps })}
-        >
-          Apply recommended · {steps.length}
-        </Button>
-      )}
+          >
+            {choices.map((choice) => (
+              <li key={choice.id} className="flex items-center gap-2 px-3 py-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block">{choice.title}</span>
+                  {(choice.blocked ?? choice.hint) && (
+                    <span className="block text-xs text-muted-foreground">
+                      {choice.blocked ?? choice.hint}
+                    </span>
+                  )}
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {choice.applied
+                    ? choice.id === "reboot-window" &&
+                      report.rebootHour !== null
+                      ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
+                      : "On"
+                    : choice.outside
+                      ? "On · set up outside Krynodes"
+                      : "Off"}
+                </span>
+                {choice.blocked || choice.outside ? (
+                  <span className="size-9 md:size-8" />
+                ) : (
+                  <RowMenu
+                    label={`${choice.title} actions`}
+                    items={
+                      choice.applied
+                        ? [
+                            {
+                              label: "Turn off",
+                              destructive: true,
+                              onSelect: () =>
+                                setPending({ choice, turnOn: false }),
+                            },
+                            ...(choice.id === "reboot-window"
+                              ? [
+                                  {
+                                    label: "Change",
+                                    onSelect: () =>
+                                      setPending({ choice, turnOn: true }),
+                                  },
+                                ]
+                              : []),
+                          ]
+                        : [
+                            {
+                              label: "Turn on",
+                              onSelect: () =>
+                                setPending({ choice, turnOn: true }),
+                            },
+                          ]
+                    }
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        </DialogContent>
+      </Dialog>
       <RecipeDialog
         key={JSON.stringify(pending)}
         node={node}

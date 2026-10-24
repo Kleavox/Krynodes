@@ -142,6 +142,13 @@ export function shortDate(value: string | number): string {
   return `${date.getDate()} ${MONTHS[date.getMonth()]}`;
 }
 
+export function stampTime(value: string | number, now = Date.now()): string {
+  const at = toEpoch(value);
+  return new Date(at).toDateString() === new Date(now).toDateString()
+    ? clockTime(at)
+    : `${shortDate(at)} ${clockTime(at)}`;
+}
+
 export function dayLabel(value: string, now = Date.now()): string {
   const at = parseTimestamp(value);
   const key = (epoch: number) => new Date(epoch).toDateString();

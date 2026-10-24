@@ -1,4 +1,4 @@
-import { dayLabel, parseTimestamp } from "./format";
+import { parseTimestamp } from "./format";
 
 export interface Gap {
   from: number;
@@ -234,21 +234,6 @@ export function sparklineSegments(
   });
   close();
   return segments;
-}
-
-export function groupByDay<T>(
-  items: T[],
-  at: (item: T) => string,
-  now = Date.now(),
-): { label: string; items: T[] }[] {
-  const groups: { label: string; items: T[] }[] = [];
-  for (const item of items) {
-    const label = dayLabel(at(item), now);
-    const last = groups.at(-1);
-    if (last && last.label === label) last.items.push(item);
-    else groups.push({ label, items: [item] });
-  }
-  return groups;
 }
 
 export function isLonePoint(values: (number | null)[], index: number): boolean {

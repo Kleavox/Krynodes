@@ -3,26 +3,27 @@ import { Link } from "react-router";
 
 import { Elapsed } from "@/components/node-status";
 import { RowMenu } from "@/components/row-menu";
-import { StatusDot } from "@/components/status";
+import { SmallLabel, StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useCancelActions, useDevices } from "@/lib/api";
-import { capitalize, clockTime, nodeState, parseTimestamp } from "@/lib/format";
-import { historyText } from "@/lib/history";
+import { capitalize, nodeState, parseTimestamp } from "@/lib/format";
 import { actorOf } from "@/lib/operations";
 import {
   actionText,
   displayName,
-  durationText,
   isPending,
-  primaryAction,
   toTarget,
-  verb,
   type ServiceMember,
 } from "@/lib/services";
 import { cn } from "@/lib/utils";
 import { agentCurrent } from "@/lib/devices";
-import type { ActionRecord, ServiceAction, ServiceState } from "@/types";
+import type {
+  ActionRecord,
+  ServiceAction,
+  ServiceKind,
+  ServiceState,
+} from "@/types";
 
 import type { ActionRequest } from "./action-dialog";
 import { LogsDialog } from "./logs-dialog";
@@ -34,10 +35,14 @@ const TONE: Record<ServiceState, "ok" | "bad" | "warn" | "idle"> = {
   failed: "bad",
 };
 
-export const rowGrid = (server: boolean) =>
-  server
-    ? "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,0.9fr)_minmax(0,1.2fr)_7.5rem]"
-    : "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
+const KIND: Record<"stack" | ServiceKind, string> = {
+  stack: "stack",
+  docker: "container",
+  systemd: "systemd",
+};
+
+export const rowGrid =
+  "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1.2fr)_7.5rem]";
 
 const BRANCH =
   "relative pl-10 before:absolute before:top-0 before:bottom-0 before:left-5 before:w-px before:bg-border-strong last:before:bottom-1/2 after:absolute after:top-1/2 after:left-5 after:h-px after:w-3 after:bg-border-strong";
@@ -45,31 +50,16 @@ const BRANCH =
 const offline = (member: ServiceMember, seen: number) =>
   nodeState(member.node, seen) === "offline";
 
-export function ServerCell({ node }: { node: { id: string; name: string } }) {
-  return (
-    <Link
-      to={`/nodes/${node.id}`}
-      className="hidden truncate font-mono text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline md:block"
-      title={node.name}
-    >
-      {node.name}
-    </Link>
-  );
+export function KindLabel({ kind }: { kind: "stack" | ServiceKind }) {
+  return <SmallLabel>{KIND[kind]}</SmallLabel>;
 }
 
-export function StateCell({
-  label,
-  server,
-}: {
-  label: string;
-  server?: string;
-}) {
+export function StateCell({ label }: { label: string }) {
   return (
     <span
       className="col-span-2 truncate font-mono text-xs text-muted-foreground md:col-span-1"
       title={label}
     >
-      {server && <span className="md:hidden">{server} · </span>}
       {label}
     </span>
   );
@@ -103,38 +93,6 @@ export function ActionOutcome({
         {action.output}
       </pre>
     </details>
-  );
-}
-
-export function ActionRow({
-  action,
-  nodeName,
-  where = false,
-}: {
-  action: ActionRecord;
-  nodeName: string;
-  where?: boolean;
-}) {
-  const duration = durationText(action);
-  const extra = where ? `on ${nodeName}` : "";
-  return (
-    <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-3 py-2.5 text-sm sm:grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)]">
-      <span className="font-mono text-xs leading-5 text-muted-foreground">
-        {clockTime(action.requestedAt)}
-      </span>
-      <span className="min-w-0 break-words">
-        {historyText(action)}
-        {extra && <span className="text-muted-foreground"> {extra}</span>}
-      </span>
-      <span className="col-start-2 flex min-w-0 flex-wrap items-baseline gap-x-1 font-mono text-xs text-muted-foreground sm:col-start-auto sm:justify-end">
-        {isPending(action) ? (
-          <PendingText action={action} nodeName={nodeName} />
-        ) : (
-          <ActionOutcome action={action} nodeName={nodeName} />
-        )}
-        {duration && <span>· {duration}</span>}
-      </span>
-    </li>
   );
 }
 
@@ -174,7 +132,6 @@ function MemberControls({
   const target = toTarget(member);
   const name = displayName(member.entry.kind, member.entry.name);
   const action = member.action;
-  const primary = primaryAction(member.entry.state);
   const direct = (chosen: ServiceAction) =>
     run.mutate({ action: chosen, targets: [target] });
   if (action && isPending(action)) {
@@ -191,16 +148,6 @@ function MemberControls({
   }
   return (
     <div className="flex items-center justify-end gap-1">
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-8"
-        disabled={run.isPending}
-        aria-label={`${verb(primary)} ${name} on ${member.node.name}`}
-        onClick={() => direct(primary)}
-      >
-        {verb(primary)}
-      </Button>
       <RowMenu
         label={`${name} on ${member.node.name} actions`}
         items={[
@@ -238,7 +185,6 @@ export function ServiceRows({
   seen,
   trusted,
   branch = false,
-  showServer = false,
   locked,
   onRequest,
   children,
@@ -246,10 +192,9 @@ export function ServiceRows({
   id?: string;
   members: ServiceMember[];
   seen: number;
-  trusted: boolean | ((member: ServiceMember) => boolean);
+  trusted: boolean;
   branch?: boolean;
-  showServer?: boolean;
-  locked?: string | ((member: ServiceMember) => string | undefined);
+  locked?: string;
   onRequest: (request: ActionRequest) => void;
   children?: ReactNode;
 }) {
@@ -257,60 +202,48 @@ export function ServiceRows({
     <ul id={id} className={branch ? "py-1" : "divide-y"}>
       {children}
       {members.map((member) => {
-        const label = capitalize(member.entry.state);
         const pending = isPending(member.action);
-        const allowed =
-          typeof trusted === "function" ? trusted(member) : trusted;
-        const lock = typeof locked === "function" ? locked(member) : locked;
         return (
           <li
             key={`${member.node.id}:${member.entry.kind}:${member.entry.name}`}
             className={cn(
-              rowGrid(showServer),
+              rowGrid,
               branch && BRANCH,
               offline(member, seen) && "opacity-60",
             )}
           >
             <span className="flex min-h-8 min-w-0 items-center gap-2">
               <StatusDot
-                tone={lock ? "idle" : TONE[member.entry.state]}
+                tone={locked ? "idle" : TONE[member.entry.state]}
                 pulse={pending}
               />
               <span className="truncate font-medium" title={member.entry.name}>
                 {displayName(member.entry.kind, member.entry.name)}
               </span>
+              {!branch && <KindLabel kind={member.entry.kind} />}
             </span>
-            {showServer && <ServerCell node={member.node} />}
-            <StateCell
-              label={label}
-              server={showServer ? member.node.name : undefined}
-            />
+            <StateCell label={capitalize(member.entry.state)} />
             <span
               className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground empty:hidden md:col-span-1 md:empty:block"
               aria-live="polite"
             >
-              {lock && !pending ? (
-                <span className="text-warning">{lock}</span>
+              {locked && !pending ? (
+                <span className="text-warning">{locked}</span>
               ) : (
                 member.action &&
-                (isPending(member.action) ? (
+                pending && (
                   <PendingText
                     action={member.action}
                     nodeName={member.node.name}
                   />
-                ) : (
-                  <ActionOutcome
-                    action={member.action}
-                    nodeName={member.node.name}
-                  />
-                ))
+                )
               )}
             </span>
             <div className="col-start-2 row-start-1 md:col-start-auto md:row-start-auto">
-              {allowed && !lock ? (
+              {trusted && !locked ? (
                 <MemberControls member={member} onRequest={onRequest} />
               ) : (
-                !allowed &&
+                !trusted &&
                 !branch && (
                   <p className="text-right">
                     <TrustLink />

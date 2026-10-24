@@ -15,14 +15,21 @@ import {
   ActionDialog,
   type ActionRequest,
 } from "@/features/services/action-dialog";
+import { NeedsAttention } from "@/features/services/needs-attention";
 import { ServicesBoard } from "@/features/services/services-board";
-import { useOverview, useRefreshServices, useServices } from "@/lib/api";
+import {
+  useHistoryAttention,
+  useOverview,
+  useRefreshServices,
+  useServices,
+} from "@/lib/api";
 import { refreshPending } from "@/lib/services";
-import { groupStacks } from "@/lib/stacks";
+import { groupStacks, servicesAttention } from "@/lib/stacks";
 
 export function ServicesPage() {
   const overview = useOverview();
   const services = useServices();
+  const attention = useHistoryAttention();
   const refresh = useRefreshServices();
   const [params, setParams] = useSearchParams();
   const [request, setRequest] = useState<ActionRequest | null>(null);
@@ -99,12 +106,23 @@ export function ServicesPage() {
           }
         />
       ) : (
-        <ServicesBoard
-          nodes={nodes}
-          seen={seen}
-          onRequest={setRequest}
-          onDeploy={setDeploy}
-        />
+        <div className="space-y-4">
+          <NeedsAttention
+            problems={servicesAttention(
+              services.data,
+              nodes,
+              attention.data?.items ?? [],
+              Date.now(),
+            )}
+            onDeploy={setDeploy}
+          />
+          <ServicesBoard
+            nodes={nodes}
+            seen={seen}
+            onRequest={setRequest}
+            onDeploy={setDeploy}
+          />
+        </div>
       )}
 
       <DeployDialog

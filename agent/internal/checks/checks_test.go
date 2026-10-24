@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -48,6 +49,32 @@ func TestContainerChecksReadTheWatcherStateOnce(t *testing.T) {
 		if got != want[index] {
 			t.Errorf("%s: got %q want %q", result.CheckID, got, want[index])
 		}
+	}
+}
+
+func TestAContainerCheckSaysSinceWhenItRuns(t *testing.T) {
+	previous := containerState
+	containerState = func() (containers.State, error) {
+		return containers.State{At: time.Now(), Docker: true, Containers: []containers.Container{
+			{Name: "web", State: "running", Started: "2026-10-24T09:24:39Z"},
+			{Name: "old", State: "exited", Started: "2026-10-20T08:00:00Z"},
+			{Name: "fresh", State: "running"},
+		}}, nil
+	}
+	defer func() { containerState = previous }()
+	results := runOnce(context.Background(), []reporter.Check{
+		{ID: "a", Kind: "CONTAINER", Target: "web"},
+		{ID: "b", Kind: "CONTAINER", Target: "old"},
+		{ID: "c", Kind: "CONTAINER", Target: "fresh"},
+	})
+	if results[0].Status != "UP" || results[0].Since == nil || *results[0].Since != "2026-10-24T09:24:39Z" || results[0].LatencyMS != nil {
+		t.Fatalf("running: %#v", results[0])
+	}
+	if results[1].Since != nil {
+		t.Fatalf("a container that is down has no since: %#v", results[1])
+	}
+	if results[2].Status != "UP" || results[2].Since != nil {
+		t.Fatalf("no start known: %#v", results[2])
 	}
 }
 
@@ -137,7 +164,7 @@ func TestServiceChecksShareOneSystemctlCall(t *testing.T) {
 		states := map[string]string{"nginx.service": "active", "docker": "inactive"}
 		var answer strings.Builder
 		for _, unit := range units {
-			answer.WriteString(states[unit] + "\n")
+			answer.WriteString(block(states[unit], ""))
 		}
 		return answer.String(), nil
 	}
@@ -179,8 +206,89 @@ func TestServiceChecksFailTogetherWhenSystemctlCannotAnswer(t *testing.T) {
 
 func TestServiceUnitsNeverReachSystemctlAsOptions(t *testing.T) {
 	args := systemctlArgs([]string{"--help", "nginx.service"})
-	if strings.Join(args, " ") != "is-active -- --help nginx.service" {
+	if strings.Join(args, " ") != "show --property=ActiveState,ActiveEnterTimestamp -- --help nginx.service" {
 		t.Fatalf("args %q", args)
+	}
+}
+
+func TestSystemctlAnswersInUTCAndTheCLocale(t *testing.T) {
+	command := systemctl(context.Background(), []string{"nginx.service"})
+	if !slices.Contains(command.Env, "TZ=UTC") || !slices.Contains(command.Env, "LC_ALL=C") {
+		t.Fatalf("env %q", command.Env)
+	}
+}
+
+func block(state, since string) string {
+	return "ActiveState=" + state + "\nActiveEnterTimestamp=" + since + "\n\n"
+}
+
+func TestShowAnswersOneBlockPerUnitInOrder(t *testing.T) {
+	units := parseShow("ActiveState=active\nActiveEnterTimestamp=Thu 2026-09-17 10:12:01 UTC\n\nActiveEnterTimestamp=\nActiveState=inactive\n")
+	if len(units) != 2 || units[0].state != "active" || units[0].since == nil || *units[0].since != "2026-09-17T10:12:01Z" {
+		t.Fatalf("units %+v", units)
+	}
+	if units[1].state != "inactive" || units[1].since != nil {
+		t.Fatalf("second unit %+v", units[1])
+	}
+}
+
+func TestATimestampOfNAGivesNoSince(t *testing.T) {
+	units := parseShow(block("active", "n/a"))
+	if len(units) != 1 || units[0].state != "active" || units[0].since != nil {
+		t.Fatalf("units %+v", units)
+	}
+}
+
+func TestAnActiveServiceSaysSinceInsteadOfLatency(t *testing.T) {
+	previous := serviceStates
+	serviceStates = func(context.Context, []string) (string, error) {
+		return block("active", "Thu 2026-09-17 10:12:01 UTC") + block("failed", "Wed 2026-09-16 08:00:00 UTC"), nil
+	}
+	defer func() { serviceStates = previous }()
+
+	results := runOnce(context.Background(), []reporter.Check{
+		{ID: "nginx", Kind: "SERVICE", Target: "nginx.service", TimeoutSeconds: 2},
+		{ID: "app", Kind: "SERVICE", Target: "app.service", TimeoutSeconds: 2},
+	})
+	up, down := results[0], results[1]
+	if up.Status != "UP" || up.Since == nil || *up.Since != "2026-09-17T10:12:01Z" || up.LatencyMS != nil {
+		t.Fatalf("active unit %+v", up)
+	}
+	if down.Status != "DOWN" || *down.Message != "failed" || down.Since != nil || down.LatencyMS != nil {
+		t.Fatalf("failed unit %+v", down)
+	}
+}
+
+func TestACountMismatchFailsEveryUnit(t *testing.T) {
+	previous := serviceStates
+	serviceStates = func(context.Context, []string) (string, error) {
+		return block("active", ""), nil
+	}
+	defer func() { serviceStates = previous }()
+
+	results := runOnce(context.Background(), []reporter.Check{
+		{ID: "a", Kind: "SERVICE", Target: "a.service", TimeoutSeconds: 2},
+		{ID: "b", Kind: "SERVICE", Target: "b.service", TimeoutSeconds: 2},
+	})
+	for _, result := range results {
+		if result.Status != "DOWN" || *result.Message != "systemctl answered 1 of 2 units" {
+			t.Fatalf("result %+v", result)
+		}
+	}
+}
+
+func TestOneServiceCheckReadsTheSameAnswer(t *testing.T) {
+	previous := serviceStates
+	var asked []string
+	serviceStates = func(_ context.Context, units []string) (string, error) {
+		asked = units
+		return block("active", "Thu 2026-09-17 10:12:01 UTC"), nil
+	}
+	defer func() { serviceStates = previous }()
+
+	result := Run(context.Background(), reporter.Check{ID: "nginx", Kind: "SERVICE", Target: "nginx.service", TimeoutSeconds: 2})
+	if strings.Join(asked, " ") != "nginx.service" || result.Status != "UP" || result.Since == nil || *result.Since != "2026-09-17T10:12:01Z" || result.LatencyMS != nil {
+		t.Fatalf("asked %q result %+v", asked, result)
 	}
 }
 
@@ -228,9 +336,9 @@ func TestOnlyFailedServicesAreAskedAgain(t *testing.T) {
 	serviceStates = func(_ context.Context, units []string) (string, error) {
 		calls = append(calls, strings.Join(units, " "))
 		if len(calls) == 1 {
-			return "active\nactivating\n", nil
+			return block("active", "") + block("activating", ""), nil
 		}
-		return "active\n", nil
+		return block("active", ""), nil
 	}
 	defer func() { serviceStates, recheckDelay = previous, delay }()
 

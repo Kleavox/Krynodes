@@ -349,6 +349,33 @@ describe("stacks and trust", () => {
     ]);
   });
 
+  it("keeps a stack's containers", async () => {
+    const { db, sqlite, node } = setup();
+    const containers = () =>
+      sqlite
+        .prepare("SELECT containers FROM stacks WHERE node_id = ?")
+        .get(NODE);
+    const apply = (hash: string, names?: string[]) =>
+      applyInventory(
+        db,
+        node(),
+        {
+          hash,
+          services: [],
+          stacks: [{ ...stack("listmonk"), containers: names }],
+        },
+        NOW,
+      );
+    await apply(HASH_A, ["listmonk_app", "listmonk_db"]);
+    expect(containers()).toEqual({
+      containers: '["listmonk_app","listmonk_db"]',
+    });
+    await apply(HASH_B, ["listmonk_app"]);
+    expect(containers()).toEqual({ containers: '["listmonk_app"]' });
+    await apply(HASH_A);
+    expect(containers()).toEqual({ containers: null });
+  });
+
   it("stores the trust report as the agent sends it", async () => {
     const { db, sqlite, node } = setup();
     const stored = () =>

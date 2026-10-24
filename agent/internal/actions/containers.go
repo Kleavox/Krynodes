@@ -131,13 +131,36 @@ func (w Watcher) session(ctx context.Context) {
 }
 
 func (w Watcher) snapshot(ctx context.Context) ([]containers.Container, bool) {
-	output, _, err := w.Run(ctx, "docker", "ps", "-a", "--format", containers.Format)
+	output, _, err := w.Run(ctx, "docker", "ps", "-a", "--no-trunc", "--format", containers.Format)
 	if err != nil {
 		return nil, false
 	}
 	listed := containers.Parse(string(output))
+	w.started(ctx, listed)
 	w.write(containers.State{At: w.Now(), Docker: true, Containers: listed})
 	return listed, true
+}
+
+func (w Watcher) started(ctx context.Context, listed []containers.Container) {
+	var ids []string
+	for _, container := range listed {
+		if container.State == "running" && container.ID != "" {
+			ids = append(ids, container.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	output, _, err := w.Run(ctx, "docker", append([]string{"inspect", "--format", containers.StartedFormat}, ids...)...)
+	if err != nil {
+		return
+	}
+	starts := containers.ParseStarted(string(output))
+	for index := range listed {
+		if listed[index].State == "running" {
+			listed[index].Started = starts[listed[index].ID]
+		}
+	}
 }
 
 func (w Watcher) write(state containers.State) {

@@ -1,0 +1,4 @@
+ALTER TABLE checks ADD COLUMN since TEXT;
+ALTER TABLE actions ADD COLUMN hidden_at TEXT;
+ALTER TABLE actions ADD COLUMN hidden_by TEXT;
+ALTER TABLE stacks ADD COLUMN containers TEXT;

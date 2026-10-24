@@ -9,12 +9,14 @@ import {
   agentActionsResponseSchema,
   agentConfigResponseSchema,
   agentHeartbeatSchema,
+  checkResultSchema,
   heartbeatResponseSchema,
   isProtectedTarget,
   COMMAND_GRACE_MS,
   SESSION_MS,
   TRUST_CHANGE_MS,
   isValidTarget,
+  stackEntrySchema,
 } from "./index";
 
 describe("Krynodes Agent protocol v1", () => {
@@ -89,6 +91,23 @@ describe("Krynodes Agent protocol v1", () => {
           },
         ],
       }).success,
+    ).toBe(false);
+  });
+
+  it("carries since when a check result says it, and only as a time", () => {
+    const result = {
+      checkId: fixture.checks[0]?.id,
+      status: "UP",
+      latencyMs: null,
+      message: null,
+    };
+    expect(
+      checkResultSchema.parse({ ...result, since: "2026-10-24T09:24:39Z" })
+        .since,
+    ).toBe("2026-10-24T09:24:39Z");
+    expect(checkResultSchema.parse(result).since).toBeUndefined();
+    expect(
+      checkResultSchema.safeParse({ ...result, since: "yesterday" }).success,
     ).toBe(false);
   });
 
@@ -961,5 +980,22 @@ describe("orchestration messages of agent 0.5.0", () => {
     ).toBe(false);
     expect(request({ stacks: [{ ...stack, public: ["53"] }] })).toBe(false);
     expect(request({ stacks: [{ ...stack, access: "root" }] })).toBe(false);
+  });
+
+  it("carries a stack's containers by their exact names", () => {
+    const stack = {
+      project: "listmonk",
+      directory: "/var/lib/kry-exec/compose/listmonk",
+      running: 2,
+      total: 2,
+      compose: true,
+      rollback: false,
+    };
+    const accepts = (containers: unknown) =>
+      stackEntrySchema.safeParse({ ...stack, containers }).success;
+    expect(accepts(["listmonk_app", "listmonk_db"])).toBe(true);
+    expect(accepts(undefined)).toBe(true);
+    expect(accepts(["bad;name"])).toBe(false);
+    expect(accepts(Array(501).fill("listmonk_app"))).toBe(false);
   });
 });

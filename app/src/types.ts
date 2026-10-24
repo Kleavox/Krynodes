@@ -73,6 +73,7 @@ export interface CheckRecord {
   public_note: string | null;
   auto_restart?: number;
   created_at: string;
+  since?: string | null;
 }
 
 export interface Incident {
@@ -104,6 +105,21 @@ export interface IncidentDetail {
   results: CheckResult[];
   updates?: IncidentUpdate[];
   public?: boolean;
+  actions?: ActionRecord[];
+  lastGood?: { t: string; latencyMs: number | null } | null;
+}
+
+export interface IncidentBoard {
+  latest: Record<
+    string,
+    {
+      at: string;
+      updates: number;
+      update: { status: IncidentUpdateStatus; message: string } | null;
+      action: ActionRecord | null;
+    }
+  >;
+  last30: { count: number; downMs: number };
 }
 
 export interface AgentRelease {
@@ -178,7 +194,7 @@ export interface CheckResult {
   message: string | null;
 }
 
-export interface CheckHistory {
+interface CheckHistory {
   results: CheckResult[];
   up4h: number | null;
 }
@@ -246,6 +262,7 @@ export interface StackEntry {
   rollback: boolean;
   access?: "contained" | "full" | null;
   public?: string[];
+  containers?: string[];
 }
 
 export interface Finding {
@@ -365,9 +382,41 @@ export interface ChangeEntry {
   closedAt: string;
 }
 
-export interface ActionHistory {
-  actions: ActionRecord[];
+export type HistoryShow = "everything" | "actions" | "incidents" | "failed";
+
+interface HistoryIncident {
+  id: string;
+  checkId: string;
+  checkName: string;
+  nodeId: string;
+  nodeName: string;
+  summary: string | null;
+  startedAt: string;
+  resolvedAt: string | null;
+}
+
+export type HistoryEntry =
+  | { type: "action"; at: string; action: ActionRecord }
+  | {
+      type: "incident";
+      at: string;
+      event: "opened" | "resolved";
+      incident: HistoryIncident;
+    };
+
+export interface HistoryPage {
+  entries: HistoryEntry[];
   next: string | null;
+}
+
+export interface AttentionItem {
+  action: ActionRecord;
+  incident: {
+    id: string;
+    checkName: string;
+    summary: string | null;
+    startedAt: string;
+  } | null;
 }
 
 export interface ChangeHistory {

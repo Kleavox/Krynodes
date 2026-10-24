@@ -47,6 +47,23 @@ export function StatusDot({
   );
 }
 
+export function SmallLabel({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className="shrink-0 rounded border px-1 font-mono text-[10px] leading-4 text-muted-foreground"
+    >
+      {children}
+    </span>
+  );
+}
+
 export function StatusChip({
   tone,
   label,

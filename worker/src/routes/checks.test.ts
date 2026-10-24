@@ -76,7 +76,7 @@ describe("editing a check", () => {
     seedCheck(sqlite, { id: CHECK, nodeId: NODE });
     sqlite
       .prepare(
-        "UPDATE checks SET status = 'DOWN', consecutive_failures = 4, latency_ms = 120, last_message = 'timeout', last_checked_at = '2026-09-30 10:00:00' WHERE id = ?",
+        "UPDATE checks SET status = 'DOWN', consecutive_failures = 4, latency_ms = 120, last_message = 'timeout', last_checked_at = '2026-09-30 10:00:00', since = '2026-09-30T09:00:00Z' WHERE id = ?",
       )
       .run(CHECK);
     seedIncident(sqlite, {
@@ -100,7 +100,7 @@ describe("editing a check", () => {
     const check = () =>
       sqlite
         .prepare(
-          "SELECT node_id, name, kind, target, timeout_seconds, enabled, status, consecutive_failures, latency_ms, last_message, last_checked_at FROM checks WHERE id = ?",
+          "SELECT node_id, name, kind, target, timeout_seconds, enabled, status, consecutive_failures, latency_ms, last_message, last_checked_at, since FROM checks WHERE id = ?",
         )
         .get(CHECK) as Record<string, unknown>;
     const incident = () =>
@@ -124,6 +124,7 @@ describe("editing a check", () => {
     latency_ms: null,
     last_message: null,
     last_checked_at: null,
+    since: null,
   };
 
   it("renames and changes the timeout without touching the status", async () => {

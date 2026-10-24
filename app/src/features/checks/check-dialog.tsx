@@ -176,14 +176,14 @@ function CheckForm({
           <DialogDescription>
             {check
               ? "Servers with a live connection pick it up at once; the rest at their next report."
-              : "The agent on the node runs it on every cycle."}
+              : "The agent on the server runs it on every cycle."}
           </DialogDescription>
         </DialogHeader>
         {choosesNode && (
           <Field id="check-node" label="Runs on">
             <Select value={node} onValueChange={chooseNode}>
               <SelectTrigger id="check-node" className="w-full">
-                <SelectValue placeholder="Choose a node" />
+                <SelectValue placeholder="Choose a server" />
               </SelectTrigger>
               <SelectContent>
                 {enrolled.map((entry) => (
@@ -259,7 +259,7 @@ function CheckForm({
                 value={target}
                 onChange={setTarget}
                 placeholder={TARGET_PLACEHOLDER[kind]}
-                empty={node ? EMPTY[kind]! : "Choose a node first."}
+                empty={node ? EMPTY[kind]! : "Choose a server first."}
                 search={SEARCH[kind]!}
                 invalid={showProblem}
                 describedBy="check-target-hint"

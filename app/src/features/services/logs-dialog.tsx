@@ -41,14 +41,11 @@ export function LogsDialog({
   );
 }
 
-function LogsView({ target }: { target: LogsTarget }) {
+export function useLogsRead(target: LogsTarget) {
   const run = useSignedAction(false);
   const [id, setId] = useState<string | null>(null);
   const action = useAction(id).data?.action;
   const started = useRef(false);
-  const block = useRef<HTMLPreElement>(null);
-  const [copied, setCopied] = useState<"Copied" | "Copy failed" | null>(null);
-
   const fetchLogs = () => {
     setId(null);
     run.mutate(
@@ -73,6 +70,19 @@ function LogsView({ target }: { target: LogsTarget }) {
       (!action || action.status === "queued" || action.status === "sent"));
   const done = !waiting && action?.status === "done";
   const output = done ? action.output || "No log lines." : null;
+  const problem = run.error
+    ? errorMessage(run.error)
+    : !waiting && !done && action
+      ? action.output || "The server did not answer. Try again."
+      : null;
+  return { waiting, done, output, problem, action, fetchLogs };
+}
+
+function LogsView({ target }: { target: LogsTarget }) {
+  const { waiting, done, output, problem, action, fetchLogs } =
+    useLogsRead(target);
+  const block = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState<"Copied" | "Copy failed" | null>(null);
   useEffect(() => {
     if (output && block.current) {
       block.current.scrollTop = block.current.scrollHeight;
@@ -111,18 +121,10 @@ function LogsView({ target }: { target: LogsTarget }) {
           </p>
         </AlertDialogDescription>
       </AlertDialogHeader>
-      {run.error ? (
+      {problem && (
         <p role="alert" className="text-sm text-destructive">
-          {errorMessage(run.error)}
+          {problem}
         </p>
-      ) : (
-        !waiting &&
-        !done &&
-        action && (
-          <p role="alert" className="text-sm text-destructive">
-            {action.output || "The server did not answer. Try again."}
-          </p>
-        )
       )}
       {output && (
         <pre

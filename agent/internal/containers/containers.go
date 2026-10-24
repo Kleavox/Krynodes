@@ -9,16 +9,20 @@ import (
 )
 
 const (
-	File       = "containers.json"
-	Format     = "{{.Names}}\t{{.State}}\t{{.Status}}"
-	maxListed  = 500
-	staleAfter = 3 * time.Minute
+	File          = "containers.json"
+	Format        = "{{.Names}}\t{{.State}}\t{{.Status}}\t{{.ID}}\t{{.Label \"com.docker.compose.project\"}}"
+	StartedFormat = "{{.Id}}\t{{.State.StartedAt}}"
+	maxListed     = 500
+	staleAfter    = 3 * time.Minute
 )
 
 type Container struct {
-	Name   string `json:"name"`
-	State  string `json:"state"`
-	Health string `json:"health,omitempty"`
+	Name    string `json:"name"`
+	State   string `json:"state"`
+	Health  string `json:"health,omitempty"`
+	Project string `json:"project,omitempty"`
+	Started string `json:"started,omitempty"`
+	ID      string `json:"-"`
 }
 
 type State struct {
@@ -37,9 +41,41 @@ func Parse(text string) []Container {
 		if len(listed) == maxListed {
 			break
 		}
-		listed = append(listed, Container{Name: fields[0], State: fields[1], Health: health(fields[2])})
+		listed = append(listed, Container{Name: fields[0], State: fields[1], Health: health(fields[2]), ID: field(fields, 3), Project: field(fields, 4)})
 	}
 	return listed
+}
+
+func field(fields []string, index int) string {
+	if index < len(fields) {
+		return fields[index]
+	}
+	return ""
+}
+
+func ParseStarted(text string) map[string]string {
+	started := map[string]string{}
+	for line := range strings.SplitSeq(text, "\n") {
+		id, at, found := strings.Cut(strings.TrimRight(line, "\r"), "\t")
+		if !found || id == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, at)
+		if err != nil || parsed.Year() < 2000 {
+			continue
+		}
+		started[id] = parsed.UTC().Format(time.RFC3339)
+	}
+	return started
+}
+
+func Find(state State, name string) (Container, bool) {
+	for _, container := range state.Containers {
+		if container.Name == name {
+			return container, true
+		}
+	}
+	return Container{}, false
 }
 
 func health(status string) string {
@@ -73,17 +109,14 @@ func Verdict(state State, readErr error, name string, now time.Time) error {
 	case !state.Docker:
 		return errors.New("Docker is not installed")
 	}
-	for _, container := range state.Containers {
-		if container.Name != name {
-			continue
-		}
-		switch {
-		case container.State != "running":
-			return errors.New(container.State)
-		case container.Health == "unhealthy":
-			return errors.New("unhealthy")
-		}
-		return nil
+	container, found := Find(state, name)
+	switch {
+	case !found:
+		return errors.New("Container not found")
+	case container.State != "running":
+		return errors.New(container.State)
+	case container.Health == "unhealthy":
+		return errors.New("unhealthy")
 	}
-	return errors.New("Container not found")
+	return nil
 }

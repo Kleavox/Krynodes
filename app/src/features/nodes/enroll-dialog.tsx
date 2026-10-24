@@ -162,7 +162,7 @@ export function EnrollDialog({
               {node && (
                 <Button asChild>
                   <Link to={`/nodes/${node.id}`} onClick={() => close(false)}>
-                    Open node
+                    Open server
                   </Link>
                 </Button>
               )}

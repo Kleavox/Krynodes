@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DeviceRecord } from "../types";
-import { agentState, removalReady } from "./agent";
+import { agentLine, agentState, removalReady } from "./agent";
 
 const NOW = Date.parse("2026-09-28T12:00:00Z");
 const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
@@ -19,6 +19,25 @@ function node(
     update_attempts: attempts,
   };
 }
+
+describe("the agent in one line", () => {
+  it("says its version, auto update and what waits", () => {
+    expect(
+      agentLine({ ...node("0.6.13"), auto_update: 1 }, "0.6.13", NOW),
+    ).toBe("0.6.13 · auto update");
+    expect(
+      agentLine({ ...node("0.6.13"), auto_update: 0 }, "0.6.14", NOW),
+    ).toBe("0.6.13 · 0.6.14 available");
+    expect(
+      agentLine(
+        { ...node("0.6.13", "0.6.14", ago(1)), auto_update: 1 },
+        "0.6.14",
+        NOW,
+      ),
+    ).toBe("0.6.13 · auto update · updating to 0.6.14");
+    expect(agentLine({ ...node(null), auto_update: 0 }, null, NOW)).toBe("--");
+  });
+});
 
 describe("agentState", () => {
   it("is unknown without a known release or a real agent version", () => {

@@ -269,7 +269,9 @@ export function FleetPage() {
         title="Fleet"
         actions={
           nodes.length > 0 && (
-            <Button onClick={() => setParam("enroll", "1")}>Enroll node</Button>
+            <Button onClick={() => setParam("enroll", "1")}>
+              Enroll server
+            </Button>
           )
         }
       />
@@ -292,14 +294,14 @@ export function FleetPage() {
         <div className="rounded-lg border border-dashed p-8">
           <h2 className="text-lg font-semibold">Enroll your first server</h2>
           <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
-            <li>Select Enroll node to get a one-time install command.</li>
+            <li>Select Enroll server to get a one-time install command.</li>
             <li>Paste it into a terminal on the server.</li>
             <li>
               The server appears here within a minute, named after its hostname.
             </li>
           </ol>
           <Button className="mt-6" onClick={() => setParam("enroll", "1")}>
-            Enroll node
+            Enroll server
           </Button>
         </div>
       ) : (
@@ -477,7 +479,7 @@ export function FleetPage() {
             <SheetHeader className="p-0">
               <SheetTitle className="truncate">{selected?.name}</SheetTitle>
               <SheetDescription className="sr-only">
-                Node summary
+                Server summary
               </SheetDescription>
             </SheetHeader>
             {panel}
@@ -1044,7 +1046,7 @@ function NodePanel({
       </div>
       <div className="flex flex-wrap gap-2">
         <Button asChild size="sm">
-          <Link to={`/nodes/${node.id}`}>Open node</Link>
+          <Link to={`/nodes/${node.id}`}>Open server</Link>
         </Button>
         <NodeActions node={node} onDeleted={onClose} />
       </div>

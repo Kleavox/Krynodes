@@ -6,17 +6,17 @@ import { PageHeader } from "@/components/page-header";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { UPDATE_LABEL } from "@/features/incidents/incident-updates";
-import { useOverview } from "@/lib/api";
+import { useIncidentBoard, useOverview } from "@/lib/api";
 import {
   clockTime,
   formatDuration,
   parseTimestamp,
   shortDate,
 } from "@/lib/format";
-import { groupByDay } from "@/lib/series";
+import { UPDATE_LABEL, last30Text, latestLine } from "@/lib/incidents";
 import { useNow } from "@/lib/use-now";
-import type { Incident } from "@/types";
+import { cn } from "@/lib/utils";
+import type { Incident, IncidentBoard } from "@/types";
 
 type Filter = "all" | "open" | "resolved";
 
@@ -26,6 +26,7 @@ function readFilter(value: string | null): Filter {
 
 export function IncidentsPage() {
   const overview = useOverview();
+  const board = useIncidentBoard();
   const now = useNow();
   const [params, setParams] = useSearchParams();
   const filter = readFilter(params.get("status"));
@@ -96,6 +97,7 @@ export function IncidentsPage() {
                   <OpenIncident
                     key={incident.id}
                     incident={incident}
+                    latest={board.data?.latest[incident.id]}
                     now={now}
                   />
                 ))}
@@ -109,32 +111,35 @@ export function IncidentsPage() {
               )
             ))}
           {filter !== "open" &&
-            (resolved.length > 0
-              ? groupByDay(
-                  resolved,
-                  (incident) => incident.started_at,
-                  now,
-                ).map((group) => (
-                  <section
-                    key={group.label}
-                    aria-label={`Resolved ${group.label}`}
+            (resolved.length > 0 ? (
+              <section aria-labelledby="resolved-incidents">
+                <div className="mb-2 flex min-h-8 flex-wrap items-baseline gap-x-3">
+                  <h2
+                    id="resolved-incidents"
+                    className="text-[11px] tracking-wider text-muted-foreground uppercase"
                   >
-                    <h2 className="mb-2 text-[11px] tracking-wider text-muted-foreground uppercase">
-                      {group.label}
-                    </h2>
-                    <ul className="divide-y rounded-lg border bg-card">
-                      {group.items.map((incident) => (
-                        <ResolvedRow key={incident.id} incident={incident} />
-                      ))}
-                    </ul>
-                  </section>
-                ))
-              : filter === "resolved" && (
-                  <EmptyState
-                    title="No resolved incidents yet"
-                    body="Resolved incidents appear here, grouped by day."
-                  />
-                ))}
+                    Resolved
+                  </h2>
+                  {board.data && (
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {last30Text(board.data.last30)}
+                    </span>
+                  )}
+                </div>
+                <ul className="divide-y rounded-lg border bg-card">
+                  {resolved.map((incident) => (
+                    <ResolvedRow key={incident.id} incident={incident} />
+                  ))}
+                </ul>
+              </section>
+            ) : (
+              filter === "resolved" && (
+                <EmptyState
+                  title="No resolved incidents yet"
+                  body="Resolved incidents appear here, newest first."
+                />
+              )
+            ))}
           {incidents.length >= 50 && (
             <p className="text-xs text-muted-foreground">
               Showing the latest 50 incidents.
@@ -146,7 +151,21 @@ export function IncidentsPage() {
   );
 }
 
-function OpenIncident({ incident, now }: { incident: Incident; now: number }) {
+function OpenIncident({
+  incident,
+  latest,
+  now,
+}: {
+  incident: Incident;
+  latest: IncidentBoard["latest"][string] | undefined;
+  now: number;
+}) {
+  const start = parseTimestamp(incident.started_at);
+  const line = latest ? latestLine(latest) : null;
+  const failed =
+    !latest?.update &&
+    (latest?.action?.status === "failed" ||
+      latest?.action?.status === "expired");
   return (
     <article className="rounded-lg border border-l-[3px] border-destructive/45 border-l-destructive bg-destructive/5 p-3.5">
       <div className="flex flex-wrap items-center gap-2 font-medium">
@@ -163,23 +182,39 @@ function OpenIncident({ incident, now }: { incident: Incident; now: number }) {
             {UPDATE_LABEL[incident.update_status]}
           </span>
         )}
+        <span className="text-xs font-normal text-muted-foreground">
+          on{" "}
+          <Link
+            to={`/nodes/${incident.node_id}`}
+            className="text-foreground hover:underline"
+          >
+            {incident.node_name}
+          </Link>
+        </span>
         <span className="ml-auto font-mono text-xs text-destructive">
-          Ongoing {formatDuration(now - parseTimestamp(incident.started_at))}
+          Down {formatDuration(now - start)}
         </span>
       </div>
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        Node{" "}
-        <Link
-          to={`/nodes/${incident.node_id}`}
-          className="text-foreground hover:underline"
-        >
-          {incident.node_name}
-        </Link>{" "}
-        · started {shortDate(incident.started_at)}{" "}
-        {clockTime(incident.started_at)}
+      <p className="mt-1.5 font-mono text-xs break-words">
+        {incident.summary && (
+          <span className="text-destructive">{incident.summary} · </span>
+        )}
+        <span className="text-muted-foreground">
+          since{" "}
+          {now - start < 86_400_000
+            ? clockTime(start)
+            : `${shortDate(start)} ${clockTime(start)}`}
+        </span>
       </p>
-      {incident.summary && (
-        <p className="mt-1 font-mono text-xs break-words">{incident.summary}</p>
+      {latest && line && (
+        <p className="mt-1.5 flex gap-2 border-t border-destructive/20 pt-1.5 font-mono text-xs">
+          <span className="shrink-0 text-muted-foreground">
+            {clockTime(latest.at)}
+          </span>
+          <span className={cn("min-w-0 break-words", failed && "text-warning")}>
+            {line}
+          </span>
+        </p>
       )}
     </article>
   );
@@ -191,12 +226,11 @@ function ResolvedRow({ incident }: { incident: Incident }) {
     ? parseTimestamp(incident.resolved_at)
     : null;
   return (
-    <li className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2.5 transition-colors hover:bg-card-hover md:grid-cols-[auto_minmax(0,1.2fr)_minmax(0,1fr)_150px_70px]">
-      <StatusDot tone="idle" />
-      <span
-        className="min-w-0 truncate"
-        title={incident.summary ?? incident.check_name}
-      >
+    <li className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2.5 transition-colors hover:bg-card-hover md:grid-cols-[110px_minmax(0,1fr)_minmax(0,0.6fr)_minmax(0,1.2fr)_60px]">
+      <span className="font-mono text-xs text-muted-foreground">
+        {shortDate(start)} {clockTime(start)}
+      </span>
+      <span className="min-w-0 truncate">
         <span className="sr-only">Resolved: </span>
         <Link to={`/incidents/${incident.id}`} className="hover:underline">
           {incident.check_name}
@@ -204,12 +238,15 @@ function ResolvedRow({ incident }: { incident: Incident }) {
       </span>
       <Link
         to={`/nodes/${incident.node_id}`}
-        className="hidden truncate text-sm text-muted-foreground hover:underline md:block"
+        className="hidden truncate font-mono text-xs text-muted-foreground hover:underline md:block"
       >
         {incident.node_name}
       </Link>
-      <span className="hidden font-mono text-xs text-muted-foreground md:block">
-        {clockTime(start)} → {end === null ? "--" : clockTime(end)}
+      <span
+        className="hidden truncate font-mono text-xs text-muted-foreground md:block"
+        title={incident.summary ?? undefined}
+      >
+        {incident.summary ?? ""}
       </span>
       <span className="text-right font-mono text-xs">
         {end === null ? "--" : formatDuration(end - start)}

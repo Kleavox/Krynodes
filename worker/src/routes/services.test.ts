@@ -519,90 +519,6 @@ describe("cancel, refresh, history and retention", () => {
     expect((await call("GET", "/api/services")).status).toBe(200);
   });
 
-  it("pages the history newest first without losing a batch at the edge", async () => {
-    const { call, sqlite } = setup();
-    const insert = sqlite.prepare(
-      `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action, status, requested_by, requested_at)
-       VALUES (?, ?, ?, 'rolling', ?, 'docker', 'adguard', 'restart', 'done', 'o', ?)`,
-    );
-    const at = (minute: number) =>
-      new Date(Date.UTC(2026, 8, 29, 10, minute)).toISOString();
-    const ids: string[] = [];
-    for (let minute = 0; minute < 5; minute += 1) {
-      const id = `old-${minute}`;
-      insert.run(id, id, 0, A, at(minute));
-      ids.push(id);
-    }
-    for (let position = 0; position < 3; position += 1) {
-      const id = `batch-${position}`;
-      insert.run(id, "batch", position, [A, B, C][position]!, at(10));
-      ids.push(id);
-    }
-    for (let minute = 20; minute < 68; minute += 1) {
-      const id = `new-${minute}`;
-      insert.run(id, id, 0, B, at(minute));
-      ids.push(id);
-    }
-    const first = (await (await call("GET", "/api/history")).json()) as {
-      actions: { id: string; requestedAt: string }[];
-      next: string | null;
-    };
-    expect(first.actions).toHaveLength(50);
-    expect(first.actions[0]!.id).toBe("new-67");
-    expect(first.next).not.toBeNull();
-    const second = (await (
-      await call(
-        "GET",
-        `/api/history?before=${encodeURIComponent(first.next!)}`,
-      )
-    ).json()) as { actions: { id: string }[]; next: string | null };
-    expect(second.next).toBeNull();
-    const seen = [...first.actions, ...second.actions].map(
-      (action) => action.id,
-    );
-    expect(new Set(seen).size).toBe(seen.length);
-    expect([...seen].sort()).toEqual([...ids].sort());
-  });
-
-  it("filters the history by server, leaves out other owners, trust updates and log text", async () => {
-    const { call, sqlite } = setup();
-    const insert = sqlite.prepare(
-      `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action, status, requested_by, requested_at, output)
-       VALUES (?, ?, 0, 'parallel', ?, 'docker', 'adguard', ?, 'done', 'o', ?, ?)`,
-    );
-    const now = new Date().toISOString();
-    insert.run("on-a", "b1", A, "restart", now, "restarted");
-    insert.run("logs-a", "b2", A, "logs", now, "secret lines");
-    insert.run("on-b", "b3", B, "restart", now, null);
-    insert.run("foreign", "b4", FOREIGN, "restart", now, null);
-    sqlite
-      .prepare(
-        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action, status, requested_by, requested_at)
-         VALUES ('trust-a', 'b5', 0, 'parallel', ?, 'trust', 'devices', 'trust', 'done', 'o', ?)`,
-      )
-      .run(A, now);
-    const all = (await (await call("GET", "/api/history")).json()) as {
-      actions: { id: string; output: string | null }[];
-    };
-    expect(all.actions.map((action) => action.id).sort()).toEqual([
-      "logs-a",
-      "on-a",
-      "on-b",
-    ]);
-    expect(
-      all.actions.find((action) => action.id === "logs-a")!.output,
-    ).toBeNull();
-    expect(all.actions.find((action) => action.id === "on-a")!.output).toBe(
-      "restarted",
-    );
-    const onB = (await (
-      await call("GET", `/api/history?node=${B}`)
-    ).json()) as {
-      actions: { id: string }[];
-    };
-    expect(onB.actions.map((action) => action.id)).toEqual(["on-b"]);
-  });
-
   it("forgets actions after 90 days", async () => {
     const { env, sqlite } = setup();
     for (const [id, days] of [
@@ -803,6 +719,29 @@ describe("removed stacks", () => {
         directory: "/home/alice/old",
         removedAt: "2026-10-04T10:00:00.000Z",
       },
+    ]);
+  });
+
+  it("sends a stack's containers, [] when the agent sent none", async () => {
+    const t = withRemoved();
+    t.sqlite
+      .prepare(
+        `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, containers)
+         VALUES (?, 'shop', '/opt/shop', 2, 2, 1, 0, datetime('now'), '["shop-db-1","shop-web-1"]')`,
+      )
+      .run(A);
+    const body = (await (await t.call("GET", "/api/services")).json()) as {
+      nodes: {
+        id: string;
+        stacks: { project: string; containers: string[] }[];
+      }[];
+    };
+    const stacks = body.nodes.find((node) => node.id === A)!.stacks;
+    expect(
+      stacks.map(({ project, containers }) => ({ project, containers })),
+    ).toEqual([
+      { project: "kuma", containers: [] },
+      { project: "shop", containers: ["shop-db-1", "shop-web-1"] },
     ]);
   });
 

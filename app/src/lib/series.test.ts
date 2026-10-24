@@ -4,7 +4,6 @@ import {
   barTone,
   incidentDuring,
   findGaps,
-  groupByDay,
   heartbeatSummary,
   isLonePoint,
   layoutReportSlots,
@@ -305,28 +304,6 @@ describe("isLonePoint", () => {
       false,
     ]);
     expect(isLonePoint([7], 0)).toBe(true);
-  });
-});
-
-describe("groupByDay", () => {
-  it("groups items by local day label, preserving order", () => {
-    const now = new Date(2026, 8, 27, 12).getTime();
-    const items = [
-      { id: "a", at: new Date(2026, 8, 27, 9).toISOString() },
-      { id: "b", at: new Date(2026, 8, 26, 21).toISOString() },
-      { id: "c", at: new Date(2026, 8, 26, 2).toISOString() },
-      { id: "d", at: new Date(2026, 8, 23, 9).toISOString() },
-    ];
-    expect(
-      groupByDay(items, (item) => item.at, now).map((group) => [
-        group.label,
-        group.items.map((item) => item.id),
-      ]),
-    ).toEqual([
-      ["Today", ["a"]],
-      ["Yesterday", ["b", "c"]],
-      ["23 Sep", ["d"]],
-    ]);
   });
 });
 

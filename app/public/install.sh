@@ -104,7 +104,7 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
   fi
 
   if [ "$mode" = "update" ] && [ ! -f "$config" ]; then
-    echo "No enrolled agent here ($config is missing). Use the Enroll node command instead." >&2
+    echo "No enrolled agent here ($config is missing). Use the Enroll server command instead." >&2
     exit 1
   fi
   if [ "$mode" = "enroll" ] && [ -f "$config" ]; then

@@ -72,13 +72,6 @@ export function ReportStrip({
   );
 }
 
-export function newestLatency(
-  history: { results: CheckResult[] } | undefined,
-): string {
-  const latency = history?.results.at(-1)?.latencyMs ?? null;
-  return latency === null ? "--" : `${latency}ms`;
-}
-
 function spanText(seconds: number): string {
   return seconds % 3600 === 0
     ? `${seconds / 3600} hours`

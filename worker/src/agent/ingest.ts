@@ -36,6 +36,7 @@ export interface LiveCheck {
   timeout_seconds: number;
   status: "UNKNOWN" | "UP" | "DOWN";
   consecutive_failures: number;
+  since: string | null;
 }
 
 interface Transition {
@@ -59,7 +60,7 @@ function sqliteTime(epochMs: number): string {
 export async function loadAgentConfig(db: D1Database, node: AgentNode) {
   const rows = await db
     .prepare(
-      `SELECT id, name, kind, target, timeout_seconds, status, consecutive_failures
+      `SELECT id, name, kind, target, timeout_seconds, status, consecutive_failures, since
        FROM checks WHERE node_id = ? AND enabled = 1
        ORDER BY created_at, id`,
     )
@@ -333,9 +334,11 @@ export function resultStatements(
             maintenance ? INCIDENT_THRESHOLD - 1 : INCIDENT_THRESHOLD,
           )
         : 0;
+    const since = result.since ?? null;
     if (
       result.status === check.status &&
-      failures === check.consecutive_failures
+      failures === check.consecutive_failures &&
+      since === check.since
     ) {
       continue;
     }
@@ -344,7 +347,7 @@ export function resultStatements(
         .prepare(
           `UPDATE checks
            SET status = ?, latency_ms = ?, last_checked_at = ?,
-               consecutive_failures = ?, last_message = ?, updated_at = ?
+               consecutive_failures = ?, last_message = ?, updated_at = ?, since = ?
            WHERE id = ?`,
         )
         .bind(
@@ -354,6 +357,7 @@ export function resultStatements(
           failures,
           result.message,
           sqliteTime(now),
+          since,
           check.id,
         ),
     );

@@ -155,6 +155,83 @@ describe("GET /api/incidents/:id", () => {
     });
   });
 
+  function umami() {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: "n1" });
+    sqlite
+      .prepare(
+        "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('web', 'n1', 'Umami', 'HTTP', 'https://umami.example.test/')",
+      )
+      .run();
+    sqlite
+      .prepare(
+        `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, containers)
+         VALUES ('n1', 'umami', '/var/lib/kry-exec/compose/umami', 1, 2, 1, 1, datetime('now'), '["umami-app-1","umami-db-1"]')`,
+      )
+      .run();
+    sqlite
+      .prepare(
+        `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at)
+         VALUES ('umami.example.test', 'n1', 'umami', 'app', 3000, 'allow', 'o', '2026-10-01')`,
+      )
+      .run();
+    const opened = Date.now() - 30 * 60_000;
+    const minutes = (offset: number) =>
+      new Date(opened + offset * 60_000).toISOString();
+    seedIncident(sqlite, {
+      id: "i1",
+      checkId: "web",
+      status: "OPEN",
+      startedAt: minutes(0),
+    });
+    const act = (
+      id: string,
+      kind: string,
+      name: string,
+      action: string,
+      offset: number,
+    ) =>
+      sqlite
+        .prepare(
+          `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action, status, requested_by, requested_at)
+           VALUES (?, ?, 0, 'rolling', 'n1', ?, ?, ?, 'done', 'o', ?)`,
+        )
+        .run(id, id, kind, name, action, minutes(offset));
+    return { db, sqlite, minutes, act };
+  }
+
+  it("lists the actions on what its check watches, oldest first", async () => {
+    const t = umami();
+    t.act("deploy", "compose", "umami", "deploy", -2);
+    t.act("blog", "compose", "blog", "restart", 5);
+    t.act("reboot", "host", "server", "reboot", 10);
+    t.act("logs", "compose", "umami", "logs", 12);
+    t.act("old", "compose", "umami", "restart", -120);
+    t.act("container", "docker", "umami-app-1", "restart", 15);
+    const body = (await (await open(t.db, "i1")).json()) as {
+      actions: { id: string }[];
+    };
+    expect(body.actions.map((action) => action.id)).toEqual([
+      "deploy",
+      "reboot",
+      "container",
+    ]);
+  });
+
+  it("tells its last good check before it opened", async () => {
+    const t = umami();
+    seedResult(t.sqlite, "web", t.minutes(-12), "UP", 192);
+    seedResult(t.sqlite, "web", t.minutes(-2), "DOWN", null);
+    seedResult(t.sqlite, "web", t.minutes(10), "UP", 40);
+    const body = (await (await open(t.db, "i1")).json()) as {
+      lastGood: { t: string; latencyMs: number | null } | null;
+    };
+    expect(body.lastGood?.latencyMs).toBe(192);
+    const at = Date.parse(body.lastGood!.t);
+    expect(at).toBeLessThan(Date.parse(t.minutes(0)));
+    expect(at).toBeGreaterThan(Date.parse(t.minutes(-20)));
+  });
+
   it("answers 404 for an unknown incident or someone else's", async () => {
     const { db, sqlite } = setup();
     seedNode(sqlite, { id: "n2", owner: "someone-else" });
@@ -167,5 +244,121 @@ describe("GET /api/incidents/:id", () => {
     });
     expect((await open(db, "missing")).status).toBe(404);
     expect((await open(db, "i2")).status).toBe(404);
+  });
+});
+
+describe("GET /api/incidents/board", () => {
+  const MINUTE = 60_000;
+  function board() {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: "n1" });
+    seedNode(sqlite, { id: "n2", owner: "someone-else" });
+    const check = (id: string, node: string, kind: string, target: string) =>
+      sqlite
+        .prepare(
+          "INSERT INTO checks (id, node_id, name, kind, target) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(id, node, id, kind, target);
+    const incident = (
+      id: string,
+      checkId: string,
+      started: number,
+      resolved: number | null,
+    ) =>
+      sqlite
+        .prepare(
+          `INSERT INTO incidents (id, check_id, status, started_at, resolved_at, summary)
+           VALUES (?, ?, ?, ?, ?, 'down')`,
+        )
+        .run(
+          id,
+          checkId,
+          resolved === null ? "OPEN" : "RESOLVED",
+          ago(started),
+          resolved === null ? null : ago(resolved),
+        );
+    const update = (incidentId: string, minutes: number) =>
+      sqlite
+        .prepare(
+          `INSERT INTO incident_updates (id, incident_id, status, message, author, created_at)
+           VALUES (?, ?, 'investigating', ?, ?, ?)`,
+        )
+        .run(
+          crypto.randomUUID(),
+          incidentId,
+          `looking at it ${minutes}`,
+          OWNER,
+          ago(minutes * MINUTE),
+        );
+    const read = async () =>
+      (await (
+        await app.request("https://kry.example.test/api/incidents/board", {}, {
+          DB: db,
+        } as unknown as Env)
+      ).json()) as {
+        latest: Record<
+          string,
+          {
+            at: string;
+            updates: number;
+            update: { message: string } | null;
+            action: { id: string; status: string } | null;
+          }
+        >;
+        last30: { count: number; downMs: number };
+      };
+    return { sqlite, check, incident, update, read };
+  }
+
+  it("gives each open incident its newest line and counts the updates", async () => {
+    const t = board();
+    t.check("pihole", "n1", "SERVICE", "pihole-FTL.service");
+    t.sqlite
+      .prepare(
+        "INSERT INTO services (node_id, kind, name, state) VALUES ('n1', 'systemd', 'pihole-FTL.service', 'failed')",
+      )
+      .run();
+    t.incident("i1", "pihole", 60 * MINUTE, null);
+    t.update("i1", 50);
+    t.update("i1", 40);
+    const healed = ago(30 * MINUTE);
+    t.sqlite
+      .prepare(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action, status, requested_by, requested_at, output)
+         VALUES ('heal', 'heal', 0, 'rolling', 'n1', 'systemd', 'pihole-FTL.service', 'heal', 'failed', 'o', ?, 'port 53 is already allocated')`,
+      )
+      .run(healed);
+    t.check("blog", "n1", "HTTP", "https://blog.example.test");
+    t.incident("i2", "blog", 20 * MINUTE, null);
+    t.update("i2", 5);
+    t.check("theirs", "n2", "HTTP", "https://theirs.example.test");
+    t.incident("i3", "theirs", 20 * MINUTE, null);
+    const body = await t.read();
+    expect(Object.keys(body.latest).sort()).toEqual(["i1", "i2"]);
+    expect(body.latest.i1).toMatchObject({
+      at: healed,
+      updates: 2,
+      update: null,
+      action: { id: "heal", status: "failed" },
+    });
+    expect(body.latest.i2).toMatchObject({
+      updates: 1,
+      update: { message: "looking at it 5" },
+      action: null,
+    });
+  });
+
+  it("adds up the last 30 days of resolved incidents", async () => {
+    const t = board();
+    t.check("blog", "n1", "HTTP", "https://blog.example.test");
+    t.incident("a", "blog", 3 * 86_400_000, 3 * 86_400_000 - 10 * MINUTE);
+    t.incident("b", "blog", 2 * 86_400_000, 2 * 86_400_000 - 20 * MINUTE);
+    t.incident("c", "blog", 86_400_000, 86_400_000 - 17 * MINUTE);
+    t.incident("old", "blog", 40 * 86_400_000, 40 * 86_400_000 - MINUTE);
+    t.incident("open", "blog", 10 * MINUTE, null);
+    expect((await t.read()).last30).toEqual({
+      count: 3,
+      downMs: 47 * MINUTE,
+    });
   });
 });

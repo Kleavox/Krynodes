@@ -1,12 +1,14 @@
 package checks
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -17,15 +19,52 @@ import (
 )
 
 func systemctlArgs(units []string) []string {
-	return append([]string{"is-active", "--"}, units...)
+	return append([]string{"show", "--property=ActiveState,ActiveEnterTimestamp", "--"}, units...)
+}
+
+func systemctl(ctx context.Context, units []string) *exec.Cmd {
+	command := exec.CommandContext(ctx, "systemctl", systemctlArgs(units)...)
+	command.Env = append(os.Environ(), "TZ=UTC", "LC_ALL=C")
+	return command
 }
 
 var serviceStates = func(ctx context.Context, units []string) (string, error) {
-	output, err := exec.CommandContext(ctx, "systemctl", systemctlArgs(units)...).Output()
+	output, err := systemctl(ctx, units).Output()
 	if len(output) > 0 {
 		return string(output), nil
 	}
 	return "", err
+}
+
+type unitState struct {
+	state string
+	since *string
+}
+
+const showLayout = "Mon 2006-01-02 15:04:05 MST"
+
+func parseShow(output string) []unitState {
+	var units []unitState
+	for block := range strings.SplitSeq(strings.ReplaceAll(output, "\r\n", "\n"), "\n\n") {
+		if strings.TrimSpace(block) == "" {
+			continue
+		}
+		var unit unitState
+		for line := range strings.SplitSeq(block, "\n") {
+			key, value, _ := strings.Cut(line, "=")
+			switch key {
+			case "ActiveState":
+				unit.state = value
+			case "ActiveEnterTimestamp":
+				if at, err := time.Parse(showLayout, value); err == nil {
+					since := at.UTC().Format(time.RFC3339)
+					unit.since = &since
+				}
+			}
+		}
+		units = append(units, unit)
+	}
+	return units
 }
 
 var containerState = func() (containers.State, error) {
@@ -35,6 +74,9 @@ var containerState = func() (containers.State, error) {
 func containerResult(check reporter.Check, state containers.State, err error) reporter.CheckResult {
 	found := result(check, time.Now(), containers.Verdict(state, err, check.Target, time.Now()))
 	found.LatencyMS = nil
+	if container, listed := containers.Find(state, check.Target); listed && found.Status == "UP" && container.Started != "" {
+		found.Since = &container.Started
+	}
 	return found
 }
 
@@ -83,7 +125,7 @@ func runOnce(ctx context.Context, definitions []reporter.Check) []reporter.Check
 	var stateErr error
 
 	for index, definition := range definitions {
-		if definition.Kind == "SERVICE" && validUnit(definition.Target) {
+		if definition.Kind == "SERVICE" {
 			services = append(services, index)
 			continue
 		}
@@ -120,28 +162,45 @@ func timeoutOf(check reporter.Check) time.Duration {
 
 func runServices(ctx context.Context, definitions []reporter.Check, services []int, results []reporter.CheckResult) {
 	timeout := time.Duration(0)
-	units := make([]string, 0, len(services))
+	var units []string
 	for _, index := range services {
-		timeout = max(timeout, timeoutOf(definitions[index]))
-		units = append(units, definitions[index].Target)
-	}
-	serviceCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	started := time.Now()
-	output, err := serviceStates(serviceCtx, units)
-	states := strings.Fields(output)
-	if err == nil && len(states) != len(units) {
-		err = fmt.Errorf("systemctl answered %d of %d units", len(states), len(units))
-	}
-	for position, index := range services {
-		var failure error
-		switch {
-		case err != nil:
-			failure = err
-		case states[position] != "active":
-			failure = errors.New(states[position])
+		if validUnit(definitions[index].Target) {
+			timeout = max(timeout, timeoutOf(definitions[index]))
+			units = append(units, definitions[index].Target)
 		}
-		results[index] = result(definitions[index], started, failure)
+	}
+	var states []unitState
+	var err error
+	if len(units) > 0 {
+		serviceCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		var output string
+		output, err = serviceStates(serviceCtx, units)
+		states = parseShow(output)
+		if err == nil && len(states) != len(units) {
+			err = fmt.Errorf("systemctl answered %d of %d units", len(states), len(units))
+		}
+	}
+	asked := 0
+	for _, index := range services {
+		var unit unitState
+		failure := errors.New("invalid service unit")
+		if validUnit(definitions[index].Target) {
+			failure = err
+			if err == nil {
+				unit = states[asked]
+				if unit.state != "active" {
+					failure = errors.New(cmp.Or(unit.state, "systemctl gave no answer"))
+				}
+			}
+			asked++
+		}
+		found := result(definitions[index], time.Now(), failure)
+		found.LatencyMS = nil
+		if failure == nil {
+			found.Since = unit.since
+		}
+		results[index] = found
 	}
 }
 
@@ -157,7 +216,9 @@ func Run(ctx context.Context, check reporter.Check) reporter.CheckResult {
 	case "TCP":
 		err = runTCP(checkCtx, check.Target)
 	case "SERVICE":
-		err = runService(checkCtx, check.Target)
+		results := make([]reporter.CheckResult, 1)
+		runServices(ctx, []reporter.Check{check}, []int{0}, results)
+		return results[0]
 	case "CONTAINER":
 		state, readErr := containerState()
 		return containerResult(check, state, readErr)
@@ -211,23 +272,6 @@ func runTCP(ctx context.Context, target string) error {
 
 func validUnit(target string) bool {
 	return target != "" && !strings.ContainsAny(target, " \t\r\n/\\;&|`$(){}[]")
-}
-
-func runService(ctx context.Context, target string) error {
-	if !validUnit(target) {
-		return fmt.Errorf("invalid service unit")
-	}
-	output, err := serviceStates(ctx, []string{target})
-	state := strings.TrimSpace(output)
-	switch {
-	case state == "active":
-		return nil
-	case state != "":
-		return errors.New(state)
-	case err != nil:
-		return err
-	}
-	return errors.New("systemctl gave no answer")
 }
 
 func truncate(value string, limit int) string {

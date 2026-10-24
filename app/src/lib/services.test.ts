@@ -308,6 +308,21 @@ describe("polling, checks and outcomes", () => {
     ).toBeNull();
   });
 
+  it("finds the container behind a CONTAINER check by its exact name", () => {
+    expect(
+      serviceForCheck(
+        { kind: "CONTAINER", target: "adguard", node_id: "n2" },
+        data,
+      ),
+    ).toMatchObject({ kind: "docker", name: "adguard", state: "stopped" });
+    expect(
+      serviceForCheck(
+        { kind: "CONTAINER", target: "nginx", node_id: "n1" },
+        data,
+      ),
+    ).toBeNull();
+  });
+
   it("says what runs and how it ended, in words people read", () => {
     expect(runningText(action({ status: "sent" }), "PIVOX")).toBe(
       "Restarting adguard on PIVOX",

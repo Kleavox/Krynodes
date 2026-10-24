@@ -9,8 +9,8 @@ import { toast } from "sonner";
 
 import type {
   AddressOwner,
-  ActionHistory,
   ActionRecord,
+  AttentionItem,
   ActionVerb,
   BatchMode,
   ChangeHistory,
@@ -20,6 +20,9 @@ import type {
   DevicesResponse,
   Enrollment,
   EnrollmentStatus,
+  HistoryPage,
+  HistoryShow,
+  IncidentBoard,
   IncidentDetail,
   IncidentUpdate,
   IncidentUpdateStatus,
@@ -35,6 +38,7 @@ import type {
 } from "../types";
 import type { EnrollSetup } from "./enroll";
 import { pollEnrollment } from "./enrollment";
+import { historyPath } from "./history";
 import { apiFetch, errorMessage } from "./http";
 import { guardedFetch } from "./proof";
 import { keepWhileSameNode, queryKeys } from "./query-client";
@@ -107,7 +111,7 @@ export const usePostIncidentUpdate = (id: string) =>
         `/api/incidents/${encodeURIComponent(id)}/updates`,
         send("POST", update),
       ),
-    [queryKeys.incident(id), queryKeys.overview],
+    [queryKeys.incident(id), queryKeys.overview, queryKeys.incidentBoard],
   );
 
 export const useDeleteIncidentUpdate = (id: string) =>
@@ -117,7 +121,7 @@ export const useDeleteIncidentUpdate = (id: string) =>
         `/api/incidents/${encodeURIComponent(id)}/updates/${encodeURIComponent(updateId)}`,
         send("DELETE"),
       ),
-    [queryKeys.incident(id), queryKeys.overview],
+    [queryKeys.incident(id), queryKeys.overview, queryKeys.incidentBoard],
     true,
   );
 
@@ -492,15 +496,42 @@ const page = (path: string, before: string) =>
     ? `${path}${path.includes("?") ? "&" : "?"}before=${encodeURIComponent(before)}`
     : path;
 
-export function useHistory(node: string) {
+export function useHistory(params: {
+  node?: string;
+  show: HistoryShow;
+  q: string;
+}) {
+  const path = historyPath(params);
   return useInfiniteQuery({
-    queryKey: queryKeys.history(node),
-    queryFn: ({ pageParam }) =>
-      apiFetch<ActionHistory>(
-        page(node ? `/api/history?node=${node}` : "/api/history", pageParam),
-      ),
+    queryKey: queryKeys.history(path),
+    queryFn: ({ pageParam }) => apiFetch<HistoryPage>(page(path, pageParam)),
     initialPageParam: "",
     getNextPageParam: (last) => last.next ?? undefined,
+  });
+}
+
+export function useHistoryAttention() {
+  return useQuery({
+    queryKey: queryKeys.attention,
+    queryFn: () =>
+      apiFetch<{ items: AttentionItem[] }>("/api/history/attention"),
+    refetchInterval: () => untilWindowSettles(Date.now()),
+  });
+}
+
+export const useHideAction = () =>
+  useApiMutation(
+    (id: string) =>
+      apiFetch(`/api/history/${encodeURIComponent(id)}/hide`, send("POST")),
+    [["actions"]],
+    true,
+  );
+
+export function useIncidentBoard() {
+  return useQuery({
+    queryKey: queryKeys.incidentBoard,
+    queryFn: () => apiFetch<IncidentBoard>("/api/incidents/board"),
+    refetchInterval: () => untilWindowSettles(Date.now()),
   });
 }
 

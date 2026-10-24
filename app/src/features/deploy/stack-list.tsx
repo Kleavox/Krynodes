@@ -7,10 +7,9 @@ import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import type { ActionRequest } from "@/features/services/action-dialog";
 import {
-  ActionOutcome,
+  KindLabel,
   PendingText,
   rowGrid,
-  ServerCell,
   ServiceRows,
   StateCell,
 } from "@/features/services/service-list";
@@ -24,6 +23,7 @@ import {
   ownFolder,
   reachReady,
   stackCommands,
+  stackState,
   type ServerStack,
   type StackMember,
 } from "@/lib/stacks";
@@ -54,30 +54,9 @@ const tone = (member: StackMember) =>
       ? "bad"
       : "warn";
 
-function stackLabel(member: StackMember) {
-  const access =
-    member.stack.access === "contained"
-      ? " · Contained"
-      : member.stack.access === "full"
-        ? " · Full access"
-        : "";
-  return `${member.stack.running} of ${member.stack.total} running${access}`;
-}
-
-function LastDeploy({ member }: { member: StackMember }) {
-  const action = member.action;
-  if (!action) return <span>No deploy yet</span>;
-  return isPending(action) ? (
-    <PendingText action={action} nodeName={member.node.name} />
-  ) : (
-    <ActionOutcome action={action} nodeName={member.node.name} />
-  );
-}
-
 function Addresses({ addresses }: { addresses: WebAddress[] }) {
-  if (addresses.length === 0) return null;
   return (
-    <span className="col-span-2 flex min-w-0 flex-wrap gap-x-3 font-mono text-xs md:col-span-4">
+    <span className="flex min-w-0 flex-wrap gap-x-3">
       {addresses.map((address) => (
         <a
           key={address.hostname}
@@ -183,31 +162,16 @@ function StackControls({
     onRequest({ action: "deploy", project, members: [member] });
   const rollback = () =>
     onRequest({ action: "rollback", project, members: [member] });
-  const failed =
-    action?.action === "deploy" &&
-    action.status === "failed" &&
-    member.stack.rollback;
-  const down = member.stack.running === 0;
   const everywhere = peers.filter((peer) => deployBlocker(peer) === null);
   return (
     <div className="flex items-center justify-end gap-1">
-      <Button
-        variant={failed || down ? "default" : "outline"}
-        size="sm"
-        className="h-9 md:h-8"
-        aria-label={`${failed ? "Roll back" : "Deploy"} ${project} on ${member.node.name}`}
-        onClick={failed ? rollback : deploy}
-      >
-        {failed ? "Roll back" : "Deploy"}
-      </Button>
       <RowMenu
         label={`${project} on ${member.node.name} actions`}
         items={[
-          ...(failed
-            ? [{ label: "Deploy", onSelect: deploy }]
-            : member.stack.rollback
-              ? [{ label: "Roll back", onSelect: rollback }]
-              : []),
+          { label: "Deploy", onSelect: deploy },
+          ...(member.stack.rollback
+            ? [{ label: "Roll back", onSelect: rollback }]
+            : []),
           ...(commands.includes("start")
             ? [{ label: "Start", onSelect: () => direct("start") }]
             : []),
@@ -340,7 +304,6 @@ export function StackRow({
   item,
   seen,
   branch = false,
-  showServer = false,
   locked,
   onRequest,
   onDeploy,
@@ -348,7 +311,6 @@ export function StackRow({
   item: ServerStack;
   seen: number;
   branch?: boolean;
-  showServer?: boolean;
   locked?: string;
   onRequest: (request: ActionRequest) => void;
   onDeploy: (request: DeployRequest) => void;
@@ -358,11 +320,12 @@ export function StackRow({
   const project = member.stack.project;
   const listId = `containers-${member.node.id}-${project}`;
   const addresses = member.addresses ?? [];
+  const action = member.action;
   return (
     <li className={cn(branch && BRANCH)}>
       <div
         className={cn(
-          rowGrid(showServer),
+          rowGrid,
           branch && "pl-10",
           offline(member, seen) && "opacity-60",
         )}
@@ -389,20 +352,19 @@ export function StackRow({
           <span className="truncate font-medium" title={member.stack.directory}>
             {project}
           </span>
+          <KindLabel kind="stack" />
         </span>
-        {showServer && <ServerCell node={member.node} />}
-        <StateCell
-          label={stackLabel(member)}
-          server={showServer ? member.node.name : undefined}
-        />
+        <StateCell label={stackState(member.stack)} />
         <span
-          className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground md:col-span-1"
+          className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground empty:hidden md:col-span-1 md:empty:block"
           aria-live="polite"
         >
-          {locked && !isPending(member.action) ? (
+          {action && isPending(action) ? (
+            <PendingText action={action} nodeName={member.node.name} />
+          ) : locked ? (
             <span className="text-warning">{locked}</span>
           ) : (
-            <LastDeploy member={member} />
+            addresses.length > 0 && <Addresses addresses={addresses} />
           )}
         </span>
         <div className="col-start-2 row-start-1 md:col-start-auto md:row-start-auto">
@@ -416,11 +378,6 @@ export function StackRow({
           )}
         </div>
       </div>
-      {addresses.length > 0 && (
-        <div className={cn("px-3 pb-2", branch ? "pl-16" : "pl-10")}>
-          <Addresses addresses={addresses} />
-        </div>
-      )}
       {open && (
         <div id={listId} className={branch ? "pl-6" : "pl-1"}>
           {containers.length === 0 ? (
@@ -433,7 +390,6 @@ export function StackRow({
               seen={seen}
               trusted={member.trusted}
               branch
-              showServer={showServer}
               locked={locked}
               onRequest={onRequest}
             />
