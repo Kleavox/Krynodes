@@ -49,16 +49,39 @@ async function setup() {
       },
       env,
     );
+  const fromNetwork = (
+    method: string,
+    ip: string,
+    cf: unknown,
+    body?: unknown,
+  ) => {
+    const request = new Request(`https://kry.example.test/api/agent/address`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer agent-token",
+        "cf-connecting-ip": ip,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    Object.defineProperty(request, "cf", { value: cf });
+    return app.request(request, undefined, env);
+  };
   const row = () =>
     sqlite
-      .prepare("SELECT ipv4, ipv4_at, ipv6, ipv6_at FROM nodes WHERE id = ?")
+      .prepare(
+        "SELECT ipv4, ipv4_at, ipv6, ipv6_at, ipv4_network, ipv6_network, interfaces FROM nodes WHERE id = ?",
+      )
       .get(NODE) as {
       ipv4: string | null;
       ipv4_at: string | null;
       ipv6: string | null;
       ipv6_at: string | null;
+      ipv4_network: string | null;
+      ipv6_network: string | null;
+      interfaces: string | null;
     };
-  return { call, hub, row };
+  return { call, fromNetwork, hub, row };
 }
 
 describe("the server's own addresses", () => {
@@ -106,6 +129,111 @@ describe("the server's own addresses", () => {
         })
       ).status,
     ).toBe(401);
+  });
+
+  it("keep the network Cloudflare names for each family", async () => {
+    const t = await setup();
+    await t.fromNetwork("GET", "103.28.54.214", {
+      asOrganization: "PT Telkom Indonesia",
+    });
+    await t.fromNetwork("GET", "2001:db8:1:2::8f2a", undefined);
+    expect(t.row()).toMatchObject({
+      ipv4_network: "PT Telkom Indonesia",
+      ipv6_network: null,
+    });
+  });
+
+  it("store the interfaces a 0.6.13 agent sends with its call", async () => {
+    const t = await setup();
+    const interfaces = [
+      { name: "eth0", address: "192.168.1.5" },
+      { name: "tailscale0", address: "100.101.102.7" },
+    ];
+    const response = await t.call(
+      "POST",
+      "/api/agent/address",
+      { "cf-connecting-ip": "103.28.54.214" },
+      { interfaces },
+    );
+    expect(await response.json()).toEqual({
+      address: "103.28.54.214",
+      family: 4,
+    });
+    const stored = t.row();
+    expect(stored.ipv4).toBe("103.28.54.214");
+    expect(JSON.parse(stored.interfaces!)).toEqual(interfaces);
+  });
+
+  it("drop interface entries that are not an interface and an address, and keep the rest", async () => {
+    const t = await setup();
+    const many = Array.from({ length: 70 }, (_, index) => ({
+      name: `wg${index}`,
+      address: `10.8.0.${index + 1}`,
+    }));
+    await t.call(
+      "POST",
+      "/api/agent/address",
+      { "cf-connecting-ip": "103.28.54.214" },
+      {
+        interfaces: [
+          { name: "", address: "10.0.0.1" },
+          { name: "a/b", address: "10.0.0.2" },
+          { name: "x".repeat(16), address: "10.0.0.3" },
+          { name: "wg0", address: "999.1.1.1" },
+          "nonsense",
+          { name: "wg0", address: "10.8.0.1" },
+          { name: "wg0", address: "10.8.0.1" },
+          ...many,
+        ],
+      },
+    );
+    const stored = JSON.parse(t.row().interfaces!) as {
+      name: string;
+      address: string;
+    }[];
+    expect(stored).toHaveLength(64);
+    expect(stored[0]).toEqual({ name: "wg0", address: "10.8.0.1" });
+    expect(stored[1]).toEqual({ name: "wg1", address: "10.8.0.2" });
+    expect(
+      new Set(stored.map((entry) => `${entry.name} ${entry.address}`)).size,
+    ).toBe(64);
+  });
+
+  it("leave the interfaces alone when an older agent calls with GET", async () => {
+    const t = await setup();
+    const interfaces = [{ name: "eth0", address: "51.79.0.10" }];
+    await t.call(
+      "POST",
+      "/api/agent/address",
+      { "cf-connecting-ip": "51.79.0.10" },
+      { interfaces },
+    );
+    await t.call("GET", "/api/agent/address", {
+      "cf-connecting-ip": "51.79.0.10",
+    });
+    expect(JSON.parse(t.row().interfaces!)).toEqual(interfaces);
+  });
+
+  it("keep the stored interfaces when a call carries none it can read", async () => {
+    const t = await setup();
+    const interfaces = [{ name: "eth0", address: "51.79.0.10" }];
+    const send = (body: unknown) =>
+      t.call(
+        "POST",
+        "/api/agent/address",
+        { "cf-connecting-ip": "51.79.0.10" },
+        body,
+      );
+    await send({ interfaces });
+    for (const body of [
+      { interfaces: {} },
+      { interfaces: "eth0" },
+      { interfaces: [] },
+      { interfaces: [{ iface: "eth0", ip: "51.79.0.10" }] },
+    ]) {
+      await send(body);
+      expect(JSON.parse(t.row().interfaces!)).toEqual(interfaces);
+    }
   });
 });
 

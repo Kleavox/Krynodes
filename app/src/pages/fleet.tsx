@@ -8,7 +8,8 @@ import { Meter } from "@/components/meter";
 import { DockerMark } from "@/components/docker-mark";
 import { SecurityMark } from "@/components/security-mark";
 import { PageHeader } from "@/components/page-header";
-import { AddressLine, AddressLock } from "@/components/server-addresses";
+import { AddressesButton } from "@/components/server-addresses";
+import { systemLine } from "@/lib/node-facts";
 import { Sparkline } from "@/components/sparkline";
 import { NodeStatus, OperationText } from "@/components/node-status";
 import { StatusDot, nodeTone } from "@/components/status";
@@ -111,10 +112,6 @@ function checksLine(checks: CheckRecord[], state: NodeState): string {
   if (state !== "online") return "Checks not reporting";
   const up = checks.filter((check) => check.status === "UP").length;
   return `${up}/${checks.length} checks up`;
-}
-
-function systemLine(node: NodeRecord): string {
-  return [node.operating_system, node.architecture].filter(Boolean).join(" · ");
 }
 
 function readFilter(value: string | null): FleetFilter {
@@ -356,7 +353,6 @@ export function FleetPage() {
               ]}
             />
             <div className="ml-auto flex items-center gap-3">
-              <AddressLock />
               {desktop && (
                 <>
                   <LatestAgent release={agentRelease} now={now} />
@@ -731,7 +727,7 @@ function NodeCard({
             {systemLine(node)}
           </p>
         )}
-        <AddressLine node={node} className="mt-0.5" />
+        <AddressesButton node={node} className="mt-0.5" />
         {busy && !operation && (
           <p className="mt-1 flex items-center gap-1.5 truncate font-mono text-[11px] text-warning">
             <StatusDot tone="warn" pulse />
@@ -912,7 +908,7 @@ function FleetTable({
                     systemLine(node)
                   )}
                 </p>
-                <AddressLine node={node} className="pl-4" />
+                <AddressesButton node={node} className="mt-0.5 pl-4" />
               </td>
               {nodeUsage(node).map((item) => (
                 <td key={item.label} className="px-3 py-2.5">
@@ -999,7 +995,7 @@ function NodePanel({
               {systemLine(node)}
             </p>
           )}
-          <AddressLine node={node} />
+          <AddressesButton node={node} />
         </div>
         {showClose && (
           <Button

@@ -1,4 +1,3 @@
-import { Fragment } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { errorMessage } from "@/lib/http";
@@ -10,11 +9,7 @@ import { DockerMark } from "@/components/docker-mark";
 import { SecurityMark } from "@/components/security-mark";
 import { PageHeader } from "@/components/page-header";
 import { NodeStatus } from "@/components/node-status";
-import {
-  AddressLock,
-  AddressText,
-  CopyAddress,
-} from "@/components/server-addresses";
+import { AddressRows } from "@/components/server-addresses";
 import { StatusDot, checkTone } from "@/components/status";
 import { HeartbeatStrip, newestLatency } from "@/components/strips";
 import { Button } from "@/components/ui/button";
@@ -33,11 +28,8 @@ import {
 } from "@/lib/api";
 import {
   checkDisplayStatus,
-  clockTime,
-  dayLabel,
   formatBytes,
   formatDuration,
-  formatUptime,
   graceSeconds,
   metricText,
   nodeState,
@@ -47,7 +39,7 @@ import {
   timeAgo,
 } from "@/lib/format";
 import { usageLevel } from "@/lib/health";
-import { serverAddresses } from "@/lib/addresses";
+import { systemFacts } from "@/lib/node-facts";
 import { findGaps, seriesSummary, withGapBreaks } from "@/lib/series";
 import { maintenanceSpans, serverOperation } from "@/lib/operations";
 import { useNow } from "@/lib/use-now";
@@ -177,37 +169,32 @@ export function NodeDetailPage() {
         }
       />
 
+      <p className="-mt-3 mb-5 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[11px] text-muted-foreground">
+        {systemFacts(node, now).map((fact) => (
+          <span key={fact}>{fact}</span>
+        ))}
+      </p>
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <Charts node={node} query={metrics} />
         <aside className="space-y-4">
           <section
-            aria-labelledby="node-details"
+            aria-labelledby="node-network"
             className="rounded-lg border bg-card p-4"
           >
-            <div className="flex items-center justify-between gap-2">
-              <h2 id="node-details" className={sectionTitle}>
-                Details
-              </h2>
-              <AddressLock className="-mt-2" />
-            </div>
+            <h2 id="node-network" className={sectionTitle}>
+              Network
+            </h2>
+            <AddressRows node={node} correct />
+          </section>
+          <section
+            aria-labelledby="node-access"
+            className="rounded-lg border bg-card p-4"
+          >
+            <h2 id="node-access" className={sectionTitle}>
+              Access
+            </h2>
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-              <Fact label="Host" value={node.hostname} />
-              <AddressFacts node={node} />
-              <Fact label="System" value={node.operating_system} />
-              <Fact label="Architecture" value={node.architecture} />
-              <Fact
-                label="Interval"
-                value={`Every ${formatDuration(node.interval_seconds * 1000)}`}
-              />
-              <Fact label="Uptime" value={formatUptime(node.uptime_seconds)} />
-              <Fact
-                label="Reports"
-                value={
-                  node.connected_at
-                    ? `Live since ${liveSince(node.connected_at, now)}`
-                    : "Not connected"
-                }
-              />
               <AccessFact nodeId={node.id} />
               <Fact
                 label="Enrolled"
@@ -219,23 +206,15 @@ export function NodeDetailPage() {
               />
             </dl>
           </section>
-          <AgentPanel
-            node={node}
-            release={overview.data.agentRelease}
-            now={now}
-          />
-          <SecurityPanel node={node} seen={overview.dataUpdatedAt} />
         </aside>
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <div className="contents lg:flex lg:flex-col lg:gap-6">
-          <div className="order-1 empty:hidden lg:order-none">
-            <NodeServices node={node} seen={overview.dataUpdatedAt} />
-          </div>
+        <div className="empty:hidden">
+          <NodeServices node={node} seen={overview.dataUpdatedAt} />
         </div>
-        <div className="contents lg:flex lg:flex-col lg:gap-6">
-          <div className="order-3 empty:hidden lg:order-none">
+        <div className="flex flex-col gap-6">
+          <div>
             <section aria-labelledby="node-checks">
               <h2 id="node-checks" className={sectionTitle}>
                 Checks · {checks.length}
@@ -303,7 +282,7 @@ export function NodeDetailPage() {
               )}
             </section>
           </div>
-          <div className="order-4 empty:hidden lg:order-none">
+          <div>
             <section aria-labelledby="node-incidents">
               <h2 id="node-incidents" className={sectionTitle}>
                 Incidents
@@ -357,7 +336,18 @@ export function NodeDetailPage() {
               )}
             </section>
           </div>
-          <div className="order-5 lg:relative lg:order-none lg:min-h-40 lg:flex-1">
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+        <SecurityPanel node={node} seen={overview.dataUpdatedAt} />
+        <div className="flex flex-col gap-6">
+          <AgentPanel
+            node={node}
+            release={overview.data.agentRelease}
+            now={now}
+          />
+          <div className="lg:relative lg:min-h-40 lg:flex-1">
             <RecentActions node={node} />
           </div>
         </div>
@@ -383,7 +373,7 @@ function AccessFact({ nodeId }: { nodeId: string }) {
         : "No access";
   return (
     <>
-      <dt className="text-muted-foreground">Access</dt>
+      <dt className="text-muted-foreground">Reached by</dt>
       <dd className="min-w-0 truncate text-right font-mono text-xs leading-5">
         <Link
           to="/devices"
@@ -393,39 +383,6 @@ function AccessFact({ nodeId }: { nodeId: string }) {
           {text}
         </Link>
       </dd>
-    </>
-  );
-}
-
-function liveSince(at: string, now: number): string {
-  const time = clockTime(at);
-  return dayLabel(at, now) === "Today" ? time : `${shortDate(at)}, ${time}`;
-}
-
-function AddressFacts({ node }: { node: NodeRecord }) {
-  const addresses = serverAddresses(node);
-  const byFamily = (family: 4 | 6) =>
-    addresses.find((address) => address.family === family);
-  return (
-    <>
-      {([4, 6] as const).map((family) => {
-        const address = byFamily(family);
-        return (
-          <Fragment key={family}>
-            <dt className="text-muted-foreground">IPv{family}</dt>
-            <dd className="flex min-w-0 items-center justify-end gap-1 font-mono text-xs leading-5">
-              {address ? (
-                <>
-                  <AddressText address={address} />
-                  <CopyAddress address={address} nodeName={node.name} />
-                </>
-              ) : (
-                "--"
-              )}
-            </dd>
-          </Fragment>
-        );
-      })}
     </>
   );
 }

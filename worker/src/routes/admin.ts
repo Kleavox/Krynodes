@@ -11,6 +11,8 @@ import {
   CONTAINER_AGENT,
   validateCheckTarget,
 } from "../lib/checks";
+import { listAddresses, type AddressColumns } from "../lib/addresses";
+import { readReport, trusts, viewerPrints } from "../trust/fleet";
 import { confirmed } from "../trust/intent";
 import { manualStatement, unitOf } from "../actions/store";
 import {
@@ -23,14 +25,15 @@ import {
   type KrynodesContext,
   type KrynodesEnv,
 } from "./shared";
+import { readPrivateRanges } from "./settings";
 
 export function registerAdminRoutes(
   app: KrynodesApp,
   requireAdmin: MiddlewareHandler<KrynodesEnv>,
 ): void {
   app.get("/api/overview", requireAdmin, async (context) => {
-    const ownerId = context.get("identity").id;
-    const [nodes, checks, incidents] = await Promise.all([
+    const { id: ownerId, email } = context.get("identity");
+    const [nodes, checks, incidents, prints, ranges] = await Promise.all([
       context.env.DB.prepare(
         `SELECT id, name, hostname, architecture, operating_system, agent_version,
               last_seen_at, enrolled_at, disabled_at, interval_seconds,
@@ -45,11 +48,18 @@ export function registerAdminRoutes(
                 WHEN EXISTS (SELECT 1 FROM actions WHERE batch_id = nodes.deleting_batch
                   AND status IN ('queued', 'sent')) THEN 'running'
               END AS deleting,
-              ipv4, ipv4_at, ipv6, ipv6_at
+              ipv4, ipv4_at, ipv4_network, ipv4_owner,
+              ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report
        FROM nodes WHERE owner_user_id = ? ORDER BY created_at DESC`,
       )
         .bind(ownerId)
-        .all(),
+        .all<
+          AddressColumns & {
+            id: string;
+            interval_seconds: number;
+            trust_report: string | null;
+          }
+        >(),
       context.env.DB.prepare(
         `SELECT c.id, c.node_id, c.name, c.kind, c.target, c.enabled,
               c.status, c.timeout_seconds, c.latency_ms, c.last_checked_at,
@@ -76,9 +86,43 @@ export function registerAdminRoutes(
       )
         .bind(ownerId)
         .all(),
+      viewerPrints(context.env.DB, ownerId, email),
+      readPrivateRanges(context.env.DB),
     ]);
 
-    const rows = nodes.results as { id: string; interval_seconds: number }[];
+    const rows = nodes.results.map(
+      ({
+        ipv4,
+        ipv4_at,
+        ipv4_network,
+        ipv4_owner,
+        ipv6,
+        ipv6_at,
+        ipv6_network,
+        ipv6_owner,
+        interfaces,
+        trust_report,
+        ...rest
+      }) => ({
+        ...rest,
+        addresses: trusts(readReport(trust_report), prints)
+          ? listAddresses(
+              {
+                ipv4,
+                ipv4_at,
+                ipv4_network,
+                ipv4_owner,
+                ipv6,
+                ipv6_at,
+                ipv6_network,
+                ipv6_owner,
+                interfaces,
+              },
+              ranges,
+            )
+          : null,
+      }),
+    );
     const live =
       rows.length > 0
         ? await fleetLive(context.env, ownerId)
@@ -102,25 +146,58 @@ export function registerAdminRoutes(
       .object({
         name: z.string().trim().min(1).max(100).optional(),
         autoUpdate: z.boolean().optional(),
+        addressOwner: z
+          .object({
+            family: z.union([z.literal(4), z.literal(6)]),
+            owner: z.enum(["own", "router"]).nullable(),
+          })
+          .optional(),
       })
       .refine((change) => Object.keys(change).length > 0)
       .safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
 
-    const { name, autoUpdate } = body.data;
-    await context.env.DB.prepare(
-      `UPDATE nodes
-     SET name = COALESCE(?, name),
-         auto_update = COALESCE(?, auto_update),
-         updated_at = datetime('now')
-     WHERE id = ?`,
-    )
-      .bind(
-        name ?? null,
-        autoUpdate === undefined ? null : Number(autoUpdate),
-        context.req.param("id"),
+    const { name, autoUpdate, addressOwner } = body.data;
+    if (addressOwner) {
+      const identity = context.get("identity");
+      const [stored, prints] = await Promise.all([
+        context.env.DB.prepare("SELECT trust_report FROM nodes WHERE id = ?")
+          .bind(node.id)
+          .first<{ trust_report: string | null }>(),
+        viewerPrints(context.env.DB, identity.id, identity.email),
+      ]);
+      if (!trusts(readReport(stored?.trust_report ?? null), prints)) {
+        return context.json(
+          {
+            code: "NOT_TRUSTED_HERE",
+            message:
+              "Only accounts trusted on this server can change its addresses.",
+          },
+          403,
+        );
+      }
+      const column = addressOwner.family === 4 ? "ipv4_owner" : "ipv6_owner";
+      await context.env.DB.prepare(
+        `UPDATE nodes SET ${column} = ? WHERE id = ?`,
       )
-      .run();
+        .bind(addressOwner.owner, node.id)
+        .run();
+    }
+    if (name !== undefined || autoUpdate !== undefined) {
+      await context.env.DB.prepare(
+        `UPDATE nodes
+       SET name = COALESCE(?, name),
+           auto_update = COALESCE(?, auto_update),
+           updated_at = datetime('now')
+       WHERE id = ?`,
+      )
+        .bind(
+          name ?? null,
+          autoUpdate === undefined ? null : Number(autoUpdate),
+          context.req.param("id"),
+        )
+        .run();
+    }
     return context.json({ ok: true, ...body.data });
   });
 

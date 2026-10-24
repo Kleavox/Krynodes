@@ -33,7 +33,9 @@ var containerState = func() (containers.State, error) {
 }
 
 func containerResult(check reporter.Check, state containers.State, err error) reporter.CheckResult {
-	return result(check, time.Now(), containers.Verdict(state, err, check.Target, time.Now()))
+	found := result(check, time.Now(), containers.Verdict(state, err, check.Target, time.Now()))
+	found.LatencyMS = nil
+	return found
 }
 
 var (

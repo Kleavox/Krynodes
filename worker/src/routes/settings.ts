@@ -16,10 +16,6 @@ const enrollDefaultsSchema = z.object({
 
 const ENROLL_DEFAULTS = { recommended: true, docker: true, hour: 3 };
 
-const DISPLAY_KEY = "address_display";
-
-const displaySchema = z.object({ display: z.enum(["hidden", "shown"]) });
-
 const readSetting = async (db: D1Database, key: string) =>
   (
     await db
@@ -48,22 +44,6 @@ export function registerSettingRoutes(
   app: KrynodesApp,
   requireOperator: MiddlewareHandler<KrynodesEnv>,
 ): void {
-  app.get("/api/settings/address-display", requireOperator, async (context) => {
-    const parsed = displaySchema.safeParse({
-      display: JSON.parse(
-        (await readSetting(context.env.DB, DISPLAY_KEY)) ?? '"hidden"',
-      ),
-    });
-    return context.json(parsed.success ? parsed.data : { display: "hidden" });
-  });
-
-  app.put("/api/settings/address-display", requireOperator, async (context) => {
-    const body = displaySchema.safeParse(await readJson(context));
-    if (!body.success) return invalidRequest(context);
-    await writeSetting(context.env.DB, DISPLAY_KEY, body.data.display);
-    return context.json(body.data);
-  });
-
   app.get("/api/settings/enroll-defaults", requireOperator, async (context) => {
     const parsed = enrollDefaultsSchema.safeParse(
       JSON.parse((await readSetting(context.env.DB, ENROLL_KEY)) ?? "null"),

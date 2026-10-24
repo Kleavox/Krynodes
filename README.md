@@ -167,7 +167,10 @@ from a searchable list of what the server reports on the Services page, never
 typed, so protected units such as ssh or docker itself are not offered. A
 Docker check reads the state `krynodes-containers.service` keeps (below), so a
 container that stops shows within one check cycle; if that state is more than
-3 minutes old the check is down with "Container status is stale". A failing check is tried twice
+3 minutes old the check is down with "Container status is stale". Reading that
+state times nothing, so a Docker check shows no response time (`--`; agents
+before 0.6.13 reported 0 ms); for one, add an HTTP or TCP check on the
+container's port. A failing check is tried twice
 more, 5 seconds apart, before the agent reports it down, and an incident opens
 only at the second such report in a row. A check's menu on the Checks page or the node
 page has **Edit** (name, server, kind, target, timeout), **Pause** / **Resume**,
@@ -267,18 +270,30 @@ Worker asks Cloudflare at most every 15 minutes while someone looks.
 
 ### Server addresses
 
-Fleet and the server page show each server's public IPv4 and IPv6, for SSH
-and the like. The agent (0.6.10 or newer) calls `GET /api/agent/address` once
-over IPv4 and once over IPv6 when it starts and every 6 hours, and the Worker
-keeps the address Cloudflare saw the call come from. A server behind NAT, as
-on most clouds, so shows its public address rather than its private one. A
-family the newest probe did not reach within an hour is left out, so an
-address the server lost does not linger; older agents show none.
+A server card on Fleet has a button (**2 addresses**) that opens its
+addresses, and the server page lists them in its Network card, for SSH and the
+like. The agent calls `/api/agent/address` once over IPv4 and once over IPv6
+when it starts and every 6 hours, and the Worker keeps the address Cloudflare
+saw the call come from, with the network it belongs to (`PT Telkom
+Indonesia`). A family the newest probe did not reach within an hour is left
+out, so an address the server lost does not linger.
 
-By default an address reads `103.•.•.214` until the lock button (**Show
-addresses**) shows them all in this tab; it is a plain switch, not the
-fingerprint. Copy always copies the whole address. **Settings → Server
-addresses** can show them always, for everyone.
+The agent (0.6.13 or newer) sends the addresses its own interfaces hold with
+that call (`POST`; older Krynodes answer `GET`). A seen address the server
+does not hold is a router's: a home server behind NAT shows its router's
+address marked **Router**, a VPS with its own address shows none. The server
+page's ⋯ beside IPv4 or IPv6 says **Its own address** or **A router's
+address** when the guess is wrong, and **Detect automatically** goes back.
+Agents before 0.6.13 send no interfaces, so their addresses carry no mark.
+
+Interface addresses inside **Private addresses** are listed under their
+interface's name (`tailscale0 100.101.102.7`), so a VPN address shows once its
+range is on that list; nothing is listed by default.
+
+Only an account with a device that reaches that server (the server page's
+**Reached by**) sees its addresses; any other account gets a blurred
+stand-in, and the addresses never leave the Worker. Copy copies the whole
+address.
 
 ### Updating the agent
 
@@ -643,11 +658,12 @@ ranges (IPv4 or IPv6, at most 32) for every server, empty until you fill it.
 Listeners bound to an address inside a range, such as a VPN's, are left out of
 the public-ports finding. The agent (0.6.6 or newer) reports each listener's
 address; the Worker applies the list when it shows the report, so a change
-shows at once, without a new check.
+shows at once, without a new check. A server's interface addresses inside a
+range show among its addresses under the interface's name, such as
+`tailscale0`.
 
 **Settings** (the account menu, under Trusted devices) is its own page for
-what applies to every server: Cloudflare, Private addresses, Server addresses,
-Enroll defaults (what a new install command sets up) and Usage, each at its
+what applies to every server: Cloudflare, Private addresses, Enroll defaults (what a new install command sets up) and Usage, each at its
 own address (`/settings/usage`).
 
 **Protections** on the server page, each with Turn off (Undo):

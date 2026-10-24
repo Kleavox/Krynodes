@@ -12,6 +12,17 @@ export interface SessionResponse {
   identity?: Identity;
 }
 
+export type AddressOwner = "own" | "router";
+
+export interface Address {
+  label: string;
+  family: 4 | 6;
+  address: string;
+  router: boolean;
+  network: string | null;
+  owner: AddressOwner | null;
+}
+
 export interface NodeRecord {
   id: string;
   name: string;
@@ -37,10 +48,7 @@ export interface NodeRecord {
   update_error?: string | null;
   auto_update: number;
   deleting?: "running" | "stopped" | null;
-  ipv4?: string | null;
-  ipv4_at?: string | null;
-  ipv6?: string | null;
-  ipv6_at?: string | null;
+  addresses?: Address[] | null;
   connected_at?: string;
   grace_seconds?: number;
 }

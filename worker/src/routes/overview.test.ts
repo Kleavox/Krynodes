@@ -30,10 +30,7 @@ const NODE_KEYS = [
   "update_error",
   "auto_update",
   "deleting",
-  "ipv4",
-  "ipv4_at",
-  "ipv6",
-  "ipv6_at",
+  "addresses",
 ];
 const CHECK_KEYS = [
   "id",
@@ -106,6 +103,7 @@ describe("GET /api/overview contract", () => {
       [...INCIDENT_KEYS].sort(),
     );
     expect(body.incidents![0]!.node_id).toBe("n1");
+    expect(body.nodes![0]!.addresses).toBeNull();
   });
 });
 

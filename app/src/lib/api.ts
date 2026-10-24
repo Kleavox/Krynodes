@@ -8,6 +8,7 @@ import {
 import { toast } from "sonner";
 
 import type {
+  AddressOwner,
   ActionHistory,
   ActionRecord,
   ActionVerb,
@@ -198,27 +199,6 @@ export function usePrivateRanges(enabled: boolean) {
   });
 }
 
-export type AddressDisplay = "hidden" | "shown";
-
-export function useAddressDisplay() {
-  return useQuery({
-    queryKey: queryKeys.addressDisplay,
-    queryFn: () =>
-      apiFetch<{ display: AddressDisplay }>("/api/settings/address-display"),
-    staleTime: 5 * MINUTE,
-  });
-}
-
-export const useSaveAddressDisplay = () =>
-  useApiMutation(
-    (display: AddressDisplay) =>
-      apiFetch<{ display: AddressDisplay }>(
-        "/api/settings/address-display",
-        send("PUT", { display }),
-      ),
-    [queryKeys.addressDisplay],
-  );
-
 export interface EnrollDefaults {
   recommended: boolean;
   docker: boolean;
@@ -255,8 +235,15 @@ export const useSavePrivateRanges = () =>
 
 export const useUpdateNode = () =>
   useApiMutation(
-    ({ id, ...change }: { id: string; name?: string; autoUpdate?: boolean }) =>
-      apiFetch(`/api/nodes/${id}`, send("PATCH", change)),
+    ({
+      id,
+      ...change
+    }: {
+      id: string;
+      name?: string;
+      autoUpdate?: boolean;
+      addressOwner?: { family: 4 | 6; owner: AddressOwner | null };
+    }) => apiFetch(`/api/nodes/${id}`, send("PATCH", change)),
     [queryKeys.overview, queryKeys.recentMetrics],
   );
 

@@ -439,6 +439,32 @@ describe("migration 0029", () => {
   });
 });
 
+describe("migration 0030", () => {
+  it("adds the interface list, network names and owner corrections, and drops the address display setting", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0030");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+    );
+    sqlite.exec(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('address_display', '"shown"', '2026-10-14T00:00:00.000Z')`,
+    );
+    apply(sqlite, (name) => name.startsWith("0030"));
+    expect(
+      sqlite
+        .prepare("SELECT key FROM settings WHERE key = 'address_display'")
+        .all(),
+    ).toEqual([]);
+    sqlite.exec(
+      "UPDATE nodes SET ipv4_owner = 'own', ipv6_owner = 'router', interfaces = '[]', ipv4_network = 'X', ipv6_network = 'Y' WHERE id = 'n1'",
+    );
+    expect(() =>
+      sqlite.exec("UPDATE nodes SET ipv4_owner = 'mine' WHERE id = 'n1'"),
+    ).toThrow();
+  });
+});
+
 describe("migration 0026", () => {
   it("keeps every action and accepts removing Krynodes from a server", () => {
     const sqlite = new DatabaseSync(":memory:");

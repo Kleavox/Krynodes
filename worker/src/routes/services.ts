@@ -125,9 +125,14 @@ function securityReport(text: string | null, ranges: string[]): unknown {
     findings?: unknown;
     listeners?: Listener[];
   } | null;
-  return report && Array.isArray(report.findings)
-    ? filterListeners(report as { findings: Finding[] }, ranges)
+  if (!report) return report;
+  const { listeners: _, ...shown } = Array.isArray(report.findings)
+    ? filterListeners(
+        report as { findings: Finding[]; listeners?: Listener[] },
+        ranges,
+      )
     : report;
+  return shown;
 }
 
 function parsed(text: string | null): unknown {

@@ -10,7 +10,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CloudflareSettings } from "@/features/settings/cloudflare-settings";
 import { EnrollDefaultsSettings } from "@/features/settings/enroll-defaults-settings";
 import { PrivateAddressesSettings } from "@/features/settings/private-addresses-settings";
-import { ServerAddressesSettings } from "@/features/settings/server-addresses-settings";
 import { UsageSettings } from "@/features/settings/usage-settings";
 import { ChecksPage } from "@/pages/checks";
 import { FleetPage } from "@/pages/fleet";
@@ -54,12 +53,12 @@ createRoot(document.getElementById("root")!).render(
                       path="private-addresses"
                       element={<PrivateAddressesSettings />}
                     />
-                    <Route
-                      path="server-addresses"
-                      element={<ServerAddressesSettings />}
-                    />
                     <Route path="enroll" element={<EnrollDefaultsSettings />} />
                     <Route path="usage" element={<UsageSettings />} />
+                    <Route
+                      path="*"
+                      element={<Navigate to="/settings/cloudflare" replace />}
+                    />
                   </Route>
                   <Route
                     path="incidents/:id"

@@ -56,6 +56,28 @@ export function readReport(text: string | null): TrustReport | null {
 export const agentCurrent = (node: FleetNode) =>
   agentSupported(node.agentVersion);
 
+export async function viewerPrints(
+  db: D1Database,
+  ownerId: string,
+  email: string,
+): Promise<Set<string>> {
+  const devices = await db
+    .prepare(
+      `SELECT public_key FROM devices
+       WHERE owner_user_id = ? AND account = ? AND removed_at IS NULL`,
+    )
+    .bind(ownerId, email)
+    .all<{ public_key: string }>();
+  return new Set(
+    await Promise.all(
+      devices.results.map((row) => fingerprint(row.public_key)),
+    ),
+  );
+}
+
+export const trusts = (report: TrustReport | null, prints: Set<string>) =>
+  report?.access.some((print) => prints.has(print)) ?? false;
+
 export async function loadFleet(
   db: D1Database,
   ownerId: string,

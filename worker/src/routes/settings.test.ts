@@ -49,28 +49,11 @@ const security = {
 };
 
 describe("server addresses", () => {
-  it("are hidden until shown unless set to always shown", async () => {
+  it("no longer serves the address display", async () => {
     const { call } = setup();
-    expect(
-      await (await call("GET", "/api/settings/address-display")).json(),
-    ).toEqual({ display: "hidden" });
-    expect(
-      (
-        await call("PUT", "/api/settings/address-display", {
-          display: "shown",
-        })
-      ).status,
-    ).toBe(200);
-    expect(
-      await (await call("GET", "/api/settings/address-display")).json(),
-    ).toEqual({ display: "shown" });
-    expect(
-      (
-        await call("PUT", "/api/settings/address-display", {
-          display: "blurred",
-        })
-      ).status,
-    ).toBe(400);
+    expect((await call("GET", "/api/settings/address-display")).status).toBe(
+      404,
+    );
   });
 });
 
@@ -165,5 +148,24 @@ describe("addresses that are not public", () => {
     expect(await detail()).toBe(
       "Listening on public addresses outside Krynodes: 41641/udp (tailscaled)",
     );
+  });
+
+  it("never sends the addresses a server's listeners are bound to", async () => {
+    const { call, sqlite } = setup();
+    const services = async () =>
+      (await (await call("GET", "/api/services")).json()) as {
+        nodes: { security: Record<string, unknown> }[];
+      };
+    for (const report of [security, { ...security, findings: "old" }]) {
+      sqlite
+        .prepare("UPDATE nodes SET security = ? WHERE id = ?")
+        .run(JSON.stringify(report), NODE);
+      for (const ranges of [[], ["100.64.0.0/10"]]) {
+        await call("PUT", "/api/settings/private-ranges", { ranges });
+        const body = await services();
+        expect(body.nodes[0]!.security).not.toHaveProperty("listeners");
+        expect(JSON.stringify(body)).not.toContain("100.79.66.29");
+      }
+    }
   });
 });

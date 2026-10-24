@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 
 import type { AgentNode } from "../agent/ingest";
 import { hubFor, streamsOn } from "../fleet/client";
+import { familyOf, readInterfaces, type Interface } from "../lib/addresses";
 import { randomToken, readBearerToken, sha256 } from "../lib/crypto";
 import { hostSchema } from "../schemas";
 import {
@@ -95,20 +96,10 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     });
   });
 
-  app.get("/api/agent/address", async (context) => {
-    const node = await authenticateAgent(context);
-    if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
-    const address = context.req.header("cf-connecting-ip") ?? "";
-    const family = familyOf(address);
-    if (!family) return context.json({ address: null });
-    const column = family === 4 ? "ipv4" : "ipv6";
-    await context.env.DB.prepare(
-      `UPDATE nodes SET ${column} = ?, ${column}_at = ? WHERE id = ?`,
-    )
-      .bind(address, new Date().toISOString(), node.id)
-      .run();
-    return context.json({ address, family });
-  });
+  app.get("/api/agent/address", (context) => seenAddress(context, null));
+  app.post("/api/agent/address", async (context) =>
+    seenAddress(context, readInterfaces(await readJson(context))),
+  );
 
   for (const path of [
     "/api/agent/heartbeat",
@@ -150,13 +141,32 @@ export function registerAgentRoutes(app: KrynodesApp): void {
   });
 }
 
-const IPV4 =
-  /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/u;
-const IPV6 = /^[0-9a-f]{0,4}(:[0-9a-f]{0,4}){2,7}$/iu;
-
-function familyOf(address: string): 4 | 6 | null {
-  if (IPV4.test(address)) return 4;
-  return address.length <= 39 && IPV6.test(address) ? 6 : null;
+async function seenAddress(
+  context: KrynodesContext,
+  interfaces: Interface[] | null,
+) {
+  const node = await authenticateAgent(context);
+  if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
+  const address = context.req.header("cf-connecting-ip") ?? "";
+  const family = familyOf(address);
+  if (!family) return context.json({ address: null });
+  const column = family === 4 ? "ipv4" : "ipv6";
+  const network = (context.req.raw as { cf?: { asOrganization?: unknown } }).cf
+    ?.asOrganization;
+  await context.env.DB.prepare(
+    `UPDATE nodes SET ${column} = ?, ${column}_at = ?, ${column}_network = ?,
+       interfaces = COALESCE(?, interfaces)
+     WHERE id = ?`,
+  )
+    .bind(
+      address,
+      new Date().toISOString(),
+      typeof network === "string" ? network.slice(0, 100) : null,
+      interfaces === null ? null : JSON.stringify(interfaces),
+      node.id,
+    )
+    .run();
+  return context.json({ address, family });
 }
 
 const updateRequired = (context: KrynodesContext, status: 410 | 426) =>

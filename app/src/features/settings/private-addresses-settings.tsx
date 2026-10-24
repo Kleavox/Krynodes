@@ -15,7 +15,7 @@ export function PrivateAddressesSettings() {
   return (
     <SettingsSection
       title="Private addresses"
-      description="Listeners on addresses in these ranges, such as a VPN's, are not counted as public on any server. One range per line, such as 10.8.0.0/24."
+      description="Listeners on addresses in these ranges, such as a VPN's, are not counted as public on any server. A server's addresses in these ranges show on Fleet under their interface name, such as tailscale0. One range per line, such as 10.8.0.0/24."
     >
       {current.data ? (
         <RangesForm initial={current.data.ranges} />

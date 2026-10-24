@@ -85,6 +85,11 @@ function formatAddress({ bits, size }: Address): string {
   return `${hex.slice(0, best.start).join(":")}::${hex.slice(best.start + best.length).join(":")}`;
 }
 
+export function canonicalAddress(text: string): string | null {
+  const address = parseAddress(text);
+  return address ? formatAddress(address) : null;
+}
+
 const mask = (size: number, length: number) =>
   ((1n << BigInt(size)) - 1n) ^ ((1n << BigInt(size - length)) - 1n);
 

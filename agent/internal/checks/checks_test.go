@@ -38,6 +38,9 @@ func TestContainerChecksReadTheWatcherStateOnce(t *testing.T) {
 	}
 	want := []string{"UP", "DOWN unhealthy", "DOWN exited", "DOWN Container not found"}
 	for index, result := range results {
+		if result.LatencyMS != nil {
+			t.Errorf("%s: a container check times nothing, yet says %d ms", result.CheckID, *result.LatencyMS)
+		}
 		got := result.Status
 		if result.Message != nil {
 			got += " " + *result.Message
