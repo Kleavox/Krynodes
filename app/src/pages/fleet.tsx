@@ -248,7 +248,9 @@ export function FleetPage() {
             (action) =>
               action.nodeId === node.id &&
               (action.kind !== "host" || namesServer(action)) &&
-              !["logs", "find", "preview"].includes(action.action) &&
+              !["logs", "find", "preview", "inspect", "probe"].includes(
+                action.action,
+              ) &&
               isPending(action),
           ) ?? null,
         raised: own.reasons,

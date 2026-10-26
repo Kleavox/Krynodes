@@ -33,6 +33,7 @@ const NODE_KEYS = [
   "addresses",
   "updates",
   "tailscale",
+  "network",
 ];
 const CHECK_KEYS = [
   "id",

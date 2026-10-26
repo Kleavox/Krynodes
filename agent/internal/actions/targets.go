@@ -67,6 +67,8 @@ func ValidTarget(kind, name string) bool {
 		return name == "cloudflare"
 	case "apt":
 		return apt.ValidName(name)
+	case "network":
+		return name == "kry0"
 	}
 	if !targetName.MatchString(name) {
 		return false

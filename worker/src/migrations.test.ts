@@ -536,3 +536,67 @@ describe("migration 0032", () => {
     expect(sqlite.prepare("SELECT * FROM packages").all()).toEqual([]);
   });
 });
+
+describe("migration 0033", () => {
+  it("keeps every action, takes the network's verbs, and keeps reads out of the one-pending rule", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0033");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1'), ('n2', 'standalone', 'io', 'h2')",
+    );
+    sqlite.exec(action("a1", "apt", "system", "upgrade", "sent", "{}"));
+    sqlite.exec(
+      `UPDATE actions SET progress = '{"done":1}', hidden_by = 'owner' WHERE id = 'a1'`,
+    );
+    expect(() =>
+      sqlite.exec(action("a2", "network", "kry0", "prepare", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0033"));
+    expect(
+      sqlite.prepare("SELECT id, progress, hidden_by FROM actions").all(),
+    ).toEqual([{ id: "a1", progress: '{"done":1}', hidden_by: "owner" }]);
+    sqlite.exec(action("a2", "network", "kry0", "prepare", "queued", "{}"));
+    for (const verb of ["inspect", "probe", "test", "test"]) {
+      sqlite.exec(
+        action(`r-${crypto.randomUUID()}`, "network", "kry0", verb, "queued"),
+      );
+    }
+    expect(() =>
+      sqlite.exec(action("a3", "network", "kry0", "rekey", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(action("a4", "network", "kry0", "unprepare", "done", "{}"));
+    expect(() =>
+      sqlite.exec(action("a5", "network", "kry0", "explode", "done", "{}")),
+    ).toThrow();
+    sqlite.exec(
+      `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+       VALUES ('standalone', '10.88.0.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
+    );
+    sqlite.exec(
+      `INSERT INTO network_members (node_id, state, address, port, key, signer, since)
+       VALUES ('n1', 'in', '10.88.0.1', 51820, 'k1', 's1', 'now'), ('n2', 'waiting', NULL, 51821, 'k2', 's2', 'now')`,
+    );
+    expect(() =>
+      sqlite.exec(
+        "UPDATE network_members SET state = 'gone' WHERE node_id = 'n1'",
+      ),
+    ).toThrow(/CHECK/u);
+    sqlite.exec(
+      "INSERT INTO network_links (a, b, answering, since) VALUES ('n1', 'n2', 1, 'now')",
+    );
+    sqlite.exec(
+      `INSERT INTO network_addresses (owner_user_id, address, state, node_id, node_name)
+       VALUES ('standalone', '10.88.0.1', 'used', 'n1', 'pivox')`,
+    );
+    sqlite.exec("UPDATE nodes SET links = '[]' WHERE id = 'n1'");
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(sqlite.prepare("SELECT node_id FROM network_members").all()).toEqual(
+      [{ node_id: "n2" }],
+    );
+    expect(sqlite.prepare("SELECT * FROM network_links").all()).toEqual([]);
+    expect(
+      sqlite.prepare("SELECT node_name FROM network_addresses").all(),
+    ).toEqual([{ node_name: "pivox" }]);
+  });
+});

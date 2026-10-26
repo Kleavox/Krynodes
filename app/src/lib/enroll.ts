@@ -5,6 +5,7 @@ export interface EnrollSetup {
   recommended: boolean;
   docker: boolean;
   rebootHour: number | null;
+  network?: true;
 }
 
 export const enrollSetup = (
@@ -16,4 +17,5 @@ export const enrollSetup = (
   rebootHour: choice.recommended
     ? Math.floor(toUtcHour(choice.hour, offset))
     : null,
+  ...(choice.network ? { network: true as const } : {}),
 });

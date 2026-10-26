@@ -14,7 +14,14 @@ const LONG_ABANDON_MS = 60 * 60_000;
 const PLANNED_MS = 30 * 60_000;
 
 export type ActionKind =
-  "systemd" | "docker" | "compose" | "trust" | "host" | "vault" | "apt";
+  | "systemd"
+  | "docker"
+  | "compose"
+  | "trust"
+  | "host"
+  | "vault"
+  | "apt"
+  | "network";
 export type ActionVerb =
   | "start"
   | "stop"
@@ -56,7 +63,13 @@ export type ActionVerb =
   | "hold"
   | "unhold"
   | "addrepo"
-  | "droprepo";
+  | "droprepo"
+  | "inspect"
+  | "probe"
+  | "test"
+  | "prepare"
+  | "unprepare"
+  | "rekey";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -74,7 +87,13 @@ interface ActionTarget {
 }
 
 export const SEALED_VERBS: readonly string[] = ["export", "release", "reshare"];
-export const QUESTIONS: readonly string[] = ["find", "preview"];
+export const QUESTIONS: readonly string[] = [
+  "find",
+  "preview",
+  "inspect",
+  "probe",
+  "test",
+];
 
 export interface ActionRow {
   id: string;
@@ -124,7 +143,7 @@ const ABANDON_SQL = `UPDATE actions
     attachment = NULL
   WHERE status = 'sent'
     AND COALESCE(json_extract(progress, '$.at'), sent_at)
-      < CASE WHEN kind IN ('compose', 'host', 'apt') THEN ?3 ELSE ?2 END`;
+      < CASE WHEN kind IN ('compose', 'host', 'apt', 'network') THEN ?3 ELSE ?2 END`;
 
 const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
     attachment = NULL

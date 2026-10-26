@@ -115,6 +115,28 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Removing the repository…",
       done: "Removed",
     },
+    inspect: { verb: "Check", doing: "Checking…", done: "Checked" },
+    probe: {
+      verb: "Test Port",
+      doing: "Testing the port…",
+      done: "Tested the port",
+    },
+    test: { verb: "Test Link", doing: "Testing…", done: "Tested" },
+    prepare: {
+      verb: "Get Ready",
+      doing: "Getting ready for…",
+      done: "Ready",
+    },
+    unprepare: {
+      verb: "Undo Preparation",
+      doing: "Undoing the preparation for…",
+      done: "Undone",
+    },
+    rekey: {
+      verb: "Make New Key",
+      doing: "Making a new key for…",
+      done: "New key made",
+    },
   };
 
 export const RECIPE_TITLES: Record<string, string> = {
@@ -156,6 +178,7 @@ export interface ServerGroup {
 export function displayName(kind: ActionKind, name: string): string {
   if (kind === "trust") return "Trusted Devices";
   if (kind === "vault") return "the Cloudflare token";
+  if (kind === "network") return "the private network";
   if (kind === "host" && name === "docker") return "Docker";
   if (kind === "host") return RECIPE_TITLES[name]?.toLowerCase() ?? "server";
   return kind === "systemd" ? name.replace(/\.service$/u, "") : name;

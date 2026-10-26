@@ -18,7 +18,13 @@ import { displayName, isPending, verb } from "./services";
 const REBOOT_WINDOW_MS = 10 * 60_000;
 const SETTLE_MS = 2 * 60_000;
 const STAYED_UP_MS = 90_000;
-const QUIET = new Set<ActionVerb>(["logs", "find", "preview"]);
+const QUIET = new Set<ActionVerb>([
+  "logs",
+  "find",
+  "preview",
+  "inspect",
+  "probe",
+]);
 
 export type ServerOperation =
   | { kind: "deleting"; stopped: boolean }

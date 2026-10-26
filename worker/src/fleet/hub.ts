@@ -46,6 +46,7 @@ import {
   type StoredWindow,
   type StreamState,
 } from "./stream";
+import { HubNetwork } from "./network";
 
 const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_requested_at,
          update_attempts, update_error, inventory_hash, refresh_requested_at, security
@@ -97,10 +98,12 @@ export class FleetHub {
     WebSocket,
     { since: number; count: number }
   >();
+  private readonly network: HubNetwork;
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
     this.env = env;
+    this.network = new HubNetwork(env.DB, ctx.storage);
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair("ping", "pong"),
     );
@@ -144,6 +147,9 @@ export class FleetHub {
         ),
         mail: (await this.ctx.storage.get(MAIL_STATE)) ?? null,
       });
+    }
+    if (url.pathname === "/network") {
+      return Response.json(Object.fromEntries(this.network.latest));
     }
     if (url.pathname === "/poke" && request.method === "POST") {
       const body = (await request.json().catch(() => null)) as {
@@ -639,20 +645,37 @@ export class FleetHub {
     const mails = marked.length > 0 ? await this.notify(marked, now) : [];
     await disk.store?.();
     try {
+      const network = beat.network
+        ? await this.network.beat(
+            node.id,
+            current.ownerId,
+            current.networkStamp,
+            beat.network,
+            now,
+          )
+        : null;
       const actions = await heartbeatActions(db, node.id, now);
-      ws.serializeAttachment({ ...folded.state, away: false });
+      ws.serializeAttachment({
+        ...folded.state,
+        away: false,
+        networkStamp: network?.stamp ?? current.networkStamp,
+      });
       if (current.lastSeen === null || notices.length > 0) {
         await this.schedule(now);
       }
       reply({
         type: "heartbeat",
-        response: heartbeatResponse(
-          node,
-          agent.configVersion,
-          beat.agentVersion,
-          actions,
-        ),
+        response: {
+          ...heartbeatResponse(
+            node,
+            agent.configVersion,
+            beat.agentVersion,
+            actions,
+          ),
+          ...(network?.reply ? { network: network.reply } : {}),
+        },
       });
+      if (network) this.poke(network.poke);
       const topics = [
         ...(current.lastSeen === null ? ["nodes"] : []),
         ...(ingestion.statements.length > 0 || ingestion.transitions.length > 0

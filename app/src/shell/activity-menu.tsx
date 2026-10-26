@@ -45,7 +45,13 @@ function Running({
   return (
     <li>
       <Link
-        to={job ? `/nodes/${item.nodeId}/packages` : `/nodes/${item.nodeId}`}
+        to={
+          job
+            ? `/nodes/${item.nodeId}/packages`
+            : item.action.kind === "network"
+              ? "/network"
+              : `/nodes/${item.nodeId}`
+        }
         onClick={onPick}
         className={ROW}
       >

@@ -62,7 +62,7 @@ describe("enroll defaults", () => {
     const { call } = setup();
     expect(
       await (await call("GET", "/api/settings/enroll-defaults")).json(),
-    ).toEqual({ recommended: true, docker: true, hour: 3 });
+    ).toEqual({ recommended: true, docker: true, hour: 3, network: false });
     const saved = await call("PUT", "/api/settings/enroll-defaults", {
       recommended: true,
       docker: false,
@@ -71,7 +71,7 @@ describe("enroll defaults", () => {
     expect(saved.status).toBe(200);
     expect(
       await (await call("GET", "/api/settings/enroll-defaults")).json(),
-    ).toEqual({ recommended: true, docker: false, hour: 22 });
+    ).toEqual({ recommended: true, docker: false, hour: 22, network: false });
   });
 
   it("refuses an hour outside the day", async () => {
@@ -95,7 +95,7 @@ describe("addresses that are not public", () => {
     const { call } = setup();
     expect(
       await (await call("GET", "/api/settings/private-ranges")).json(),
-    ).toEqual({ ranges: [] });
+    ).toEqual({ ranges: [], network: null });
     const saved = await call("PUT", "/api/settings/private-ranges", {
       ranges: ["100.64.0.0/10", " fd7a:115c:a1e0::/48 ", "100.64.0.1/10"],
     });
@@ -105,7 +105,10 @@ describe("addresses that are not public", () => {
     });
     expect(
       await (await call("GET", "/api/settings/private-ranges")).json(),
-    ).toEqual({ ranges: ["100.64.0.0/10", "fd7a:115c:a1e0::/48"] });
+    ).toEqual({
+      ranges: ["100.64.0.0/10", "fd7a:115c:a1e0::/48"],
+      network: null,
+    });
   });
 
   it("names the entry it cannot read", async () => {
@@ -148,6 +151,47 @@ describe("addresses that are not public", () => {
     expect(await detail()).toBe(
       "Listening on public addresses outside Krynodes: 41641/udp (tailscaled)",
     );
+  });
+
+  it("counts the private network's range as private while it exists", async () => {
+    const { call, sqlite } = setup();
+    sqlite.prepare("UPDATE nodes SET security = ? WHERE id = ?").run(
+      JSON.stringify({
+        ...security,
+        findings: [
+          {
+            ...security.findings[0],
+            detail:
+              "Listening on public addresses outside Krynodes: 5432/tcp (postgres), 41641/udp (tailscaled)",
+          },
+        ],
+        listeners: [
+          {
+            address: "10.88.4.1",
+            port: 5432,
+            protocol: "tcp",
+            process: "postgres",
+          },
+          security.listeners[1],
+        ],
+      }),
+      NODE,
+    );
+    sqlite.exec(
+      `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+       VALUES ('standalone', '10.88.4.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
+    );
+    const detail = async () =>
+      (
+        (await (await call("GET", "/api/services")).json()) as {
+          nodes: { security: { findings: { detail: string }[] } }[];
+        }
+      ).nodes[0]!.security.findings[0]?.detail;
+    expect(await detail()).toBe(
+      "Listening on public addresses outside Krynodes: 41641/udp (tailscaled)",
+    );
+    sqlite.exec("UPDATE network SET deleted = 1");
+    expect(await detail()).toContain("5432/tcp");
   });
 
   it("never sends the addresses a server's listeners are bound to", async () => {

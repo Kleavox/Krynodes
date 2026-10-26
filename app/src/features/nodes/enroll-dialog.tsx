@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { CircleCheck } from "lucide-react";
+import { dnsName } from "@krynodes/protocol";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { StatusDot } from "@/components/status";
@@ -19,6 +20,8 @@ import {
   useDevices,
   useEnrollDefaults,
   useEnrollmentStatus,
+  useNetwork,
+  useNetworkNext,
   useUpdateEnrollment,
   type EnrollDefaults,
 } from "@/lib/api";
@@ -30,7 +33,12 @@ import { queryKeys } from "@/lib/query-client";
 import { EnrollmentCommand } from "./enrollment-command";
 import { SetupOptions } from "./setup-options";
 
-const FALLBACK: EnrollDefaults = { recommended: true, docker: true, hour: 3 };
+const FALLBACK: EnrollDefaults = {
+  recommended: true,
+  docker: true,
+  hour: 3,
+  network: false,
+};
 
 export function EnrollDialog({
   open,
@@ -49,6 +57,10 @@ export function EnrollDialog({
   const status = useEnrollmentStatus(open ? create.data?.id : undefined);
   const step = enrollmentStep(Boolean(create.data), status.data);
   const node = status.data?.status === "used" ? status.data.node : null;
+  const network = useNetwork().data;
+  const waiting = network?.waiting.find((entry) => entry.nodeId === node?.id);
+  const next = useNetworkNext(waiting ? [waiting.nodeId] : []);
+  const gets = next.data?.addresses[0]?.address ?? null;
 
   useEffect(() => {
     if (step === "connected") {
@@ -155,6 +167,28 @@ export function EnrollDialog({
                 install command no longer works.
               </DialogDescription>
             </DialogHeader>
+            {setup.network && node && network?.network && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm">
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">Private Network</span>{" "}
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {waiting
+                      ? `Ready · gets ${gets ?? "--"} · ${dnsName(node.name)}.kry`
+                      : "Getting ready…"}
+                  </span>
+                </span>
+                {waiting && (
+                  <Button asChild size="sm" className="h-9 md:h-8">
+                    <Link
+                      to={`/network?join=${encodeURIComponent(node.id)}`}
+                      onClick={() => close(false)}
+                    >
+                      Join
+                    </Link>
+                  </Button>
+                )}
+              </div>
+            )}
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)}>
                 Done

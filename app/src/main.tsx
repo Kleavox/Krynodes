@@ -16,6 +16,7 @@ import { FleetPage } from "@/pages/fleet";
 import { IncidentDetailPage } from "@/pages/incident-detail";
 import { HistoryPage } from "@/pages/history";
 import { createQueryClient } from "@/lib/query-client";
+import { NetworkPage } from "@/pages/network";
 import { NodeDetailPage } from "@/pages/node-detail";
 import { NotFoundPage } from "@/pages/not-found";
 import { PackagesPage } from "@/pages/packages";
@@ -40,6 +41,7 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="nodes/:id" element={<NodeDetailPage />} />
                   <Route path="nodes/:id/packages" element={<PackagesPage />} />
                   <Route path="services" element={<ServicesPage />} />
+                  <Route path="network" element={<NetworkPage />} />
                   <Route path="devices" element={<DevicesPage />} />
                   <Route path="checks" element={<ChecksPage />} />
                   <Route path="incidents" element={<IncidentsRedirect />} />

@@ -51,6 +51,7 @@ type Relay struct {
 	retryAt   time.Time
 	problem   string
 	steps     map[string]sentStep
+	queued    map[string]time.Time
 }
 
 func backoff(failures int) time.Duration {
@@ -147,6 +148,7 @@ func (r *Relay) Poll(ctx context.Context) error {
 				report.Inventory.Stacks = &stacks
 				report.Inventory.Trust = &trust
 				report.Inventory.Tailscale = inventory.Tailscale
+				report.Inventory.Network = inventory.Network
 				if inventory.Packages != nil && inventory.PackagesHash != sentList {
 					report.Inventory.Packages = inventory.Packages
 					listing = inventory.PackagesHash

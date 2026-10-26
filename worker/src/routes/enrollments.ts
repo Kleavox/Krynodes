@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { randomToken, sha256 } from "../lib/crypto";
+import { liveRange, readNetwork } from "../network/document";
 import { loadFleet, type Fleet } from "../trust/fleet";
 import { confirmed, confirmingDevice } from "../trust/intent";
 import { agentRateLimit } from "./agent";
@@ -20,6 +21,7 @@ const setupSchema = z.object({
   recommended: z.boolean().default(false),
   docker: z.boolean().default(false),
   rebootHour: z.number().int().min(0).max(23).nullable().default(null),
+  network: z.boolean().default(false),
 });
 
 type Setup = z.infer<typeof setupSchema>;
@@ -48,6 +50,7 @@ function installArgs(
   fleet: Fleet,
   setup: Setup,
   device: string | null,
+  range: string | null,
 ): string[] {
   const args = [agentOrigin(env), token];
   const core = fleet.devices.filter((item) => fleet.core.includes(item.id));
@@ -72,6 +75,7 @@ function installArgs(
       args.push("--reboot-hour", String(setup.rebootHour));
     }
   }
+  if (setup.network && range) args.push("--network", range);
   return args;
 }
 
@@ -178,6 +182,7 @@ export function registerEnrollmentRoutes(
       await loadFleet(db, row.owner_user_id),
       readSetup(row.setup),
       row.device_id,
+      liveRange(await readNetwork(db, row.owner_user_id)),
     );
     const installer = await context.env.ASSETS.fetch(
       new Request(new URL("/install.sh", context.req.url)),

@@ -223,7 +223,8 @@ export function heartbeatStatements(
              update_requested_version = CASE WHEN ?
                THEN NULL ELSE update_requested_version END,
              update_attempts = CASE WHEN ? THEN 0 ELSE update_attempts END,
-             update_error = CASE WHEN ? THEN NULL ELSE update_error END
+             update_error = CASE WHEN ? THEN NULL ELSE update_error END,
+             links = COALESCE(?, links)
          WHERE id = ?`,
       )
       .bind(
@@ -244,6 +245,9 @@ export function heartbeatStatements(
         updated ? 1 : 0,
         updated ? 1 : 0,
         updated ? 1 : 0,
+        heartbeat.network
+          ? JSON.stringify({ at: now, links: heartbeat.network.links })
+          : null,
         node.id,
       ),
   ];

@@ -14,6 +14,7 @@ import {
   shortDate,
   stampTime,
 } from "./format";
+import { networkActionText } from "./network";
 import { actorOf } from "./operations";
 import { namesServer, outcomeOf, packageText } from "./packages";
 import {
@@ -52,8 +53,10 @@ function dayCounts(entries: HistoryEntry[]): string {
     ),
   ).size;
   const broken = actions.filter(failed).length;
+  const changes =
+    actions.length + entries.filter((entry) => entry.type === "network").length;
   return [
-    actions.length > 0 ? plural(actions.length, "action") : null,
+    changes > 0 ? plural(changes, "action") : null,
     broken > 0 ? `${broken} failed` : null,
     incidents > 0 ? plural(incidents, "incident") : null,
   ]
@@ -202,7 +205,7 @@ export function historyText(
   stacks: Stacks = [],
   nodeName?: string,
 ): string {
-  const packages = packageText(action, nodeName);
+  const packages = packageText(action, nodeName) ?? networkActionText(action);
   if (packages) return packages;
   const stack =
     action.kind === "docker" ? stackOf(stacks, action.name) : undefined;

@@ -50,6 +50,7 @@ export function isValidTarget(kind: string, name: string): boolean {
   }
   if (kind === "vault") return name === "cloudflare";
   if (kind === "apt") return APT_NAME.test(name);
+  if (kind === "network") return name === "kry0";
   if (!TARGET_NAME.test(name)) return false;
   if (kind === "systemd") return name.endsWith(".service");
   return kind === "docker";

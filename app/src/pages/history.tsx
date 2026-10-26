@@ -68,10 +68,12 @@ export function HistoryPage() {
   );
   const entries = (history.data?.pages ?? [])
     .flatMap((page) => page.entries)
-    .filter((entry) =>
-      names.has(
-        entry.type === "action" ? entry.action.nodeId : entry.incident.nodeId,
-      ),
+    .filter(
+      (entry) =>
+        entry.type === "network" ||
+        names.has(
+          entry.type === "action" ? entry.action.nodeId : entry.incident.nodeId,
+        ),
     );
   const groups = dayGroups(entries, Date.now());
   const where = node === ALL ? "" : ` on ${names.get(node) ?? "this server"}`;

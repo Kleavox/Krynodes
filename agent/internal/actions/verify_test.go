@@ -125,7 +125,7 @@ func newDeployCase(t *testing.T, alg int) *deployCase {
 	}
 }
 
-func (c *deployCase) request(t *testing.T) Request {
+func (c *deployCase) approval(t *testing.T) map[string]any {
 	t.Helper()
 	grantBytes, err := json.Marshal(c.grant)
 	if err != nil {
@@ -135,21 +135,40 @@ func (c *deployCase) request(t *testing.T) Request {
 	if options.challenge == nil {
 		options.challenge = digest(grantBytes)
 	}
+	assertion := sign(t, c.passkey, c.credentialID, options)
+	return map[string]any{
+		"grant":             b64.EncodeToString(grantBytes),
+		"credentialId":      assertion.CredentialID,
+		"authenticatorData": assertion.AuthenticatorData,
+		"clientDataJSON":    assertion.ClientDataJSON,
+		"signature":         assertion.Signature,
+	}
+}
+
+func (c *deployCase) document(t *testing.T, body []byte) []byte {
+	t.Helper()
+	signed := map[string]any{"grant": c.approval(t), "document": b64.EncodeToString(body), "signature": p1363(t, c.signer, body)}
+	if c.extra {
+		signed["extra"] = true
+	}
+	raw, err := json.Marshal(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func (c *deployCase) request(t *testing.T) Request {
+	t.Helper()
 	commandBytes, err := json.Marshal(c.command)
 	if err != nil {
 		t.Fatal(err)
 	}
 	signed := map[string]any{
-		"grant":     map[string]any{"grant": b64.EncodeToString(grantBytes)},
+		"grant":     c.approval(t),
 		"command":   b64.EncodeToString(commandBytes),
 		"signature": p1363(t, c.signer, commandBytes),
 	}
-	assertion := sign(t, c.passkey, c.credentialID, options)
-	grant := signed["grant"].(map[string]any)
-	grant["credentialId"] = assertion.CredentialID
-	grant["authenticatorData"] = assertion.AuthenticatorData
-	grant["clientDataJSON"] = assertion.ClientDataJSON
-	grant["signature"] = assertion.Signature
 	if c.extra {
 		signed["extra"] = true
 	}
@@ -317,4 +336,37 @@ func TestAPasskeyWithoutAccessToThisServerIsRefused(t *testing.T) {
 	c := newDeployCase(t, algES256)
 	c.trust.Access = nil
 	refused(t, c.verify(t, testNow), "no access to this server")
+}
+
+func TestANetworkDocumentStillVerifiesDaysAfterItsSession(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	body := []byte(`{"v":1,"version":4}`)
+	document, err := VerifyDocument(c.trust, c.document(t, body), testNow.Add(72*time.Hour))
+	if err != nil || string(document) != string(body) {
+		t.Fatalf("document %s err %v", document, err)
+	}
+}
+
+func TestANetworkDocumentIsCheckedLikeACommand(t *testing.T) {
+	body := []byte(`{"v":1,"version":4}`)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(*deployCase){
+		"signature is invalid":     func(c *deployCase) { c.signer = other },
+		"no access to this server": func(c *deployCase) { c.trust.Access = nil },
+		"passkey is not trusted":   func(c *deployCase) { c.trust.Core = nil },
+		"did not verify":           func(c *deployCase) { c.assertion.flags = flagPresent },
+		"longer than 15 minutes":   func(c *deployCase) { c.grant["expiresAt"] = testNow.Add(time.Hour).Format(time.RFC3339Nano) },
+		"malformed":                func(c *deployCase) { c.extra = true },
+	}
+	for reason, change := range cases {
+		c := newDeployCase(t, algES256)
+		change(c)
+		_, err := VerifyDocument(c.trust, c.document(t, body), testNow)
+		refused(t, err, reason)
+	}
+	_, err = VerifyDocument(newDeployCase(t, algES256).trust, nil, testNow)
+	refused(t, err, "not signed")
 }

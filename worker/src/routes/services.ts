@@ -10,6 +10,7 @@ import {
   hostVerbFits,
   isProtectedTarget,
   isValidTarget,
+  networkArgsValid,
   signedCommandSchema,
 } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
@@ -28,6 +29,7 @@ import {
 } from "../actions/store";
 import { decodeJson, toB64url } from "../lib/b64url";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
+import { networkMember } from "./admin";
 import { readPrivateRanges } from "./settings";
 import { ownersRefusal } from "../trust/approval";
 import { loadFleet, readReport } from "../trust/fleet";
@@ -74,6 +76,12 @@ const actionRequestSchema = z.object({
     "unhold",
     "addrepo",
     "droprepo",
+    "inspect",
+    "probe",
+    "test",
+    "prepare",
+    "unprepare",
+    "rekey",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -81,7 +89,14 @@ const actionRequestSchema = z.object({
       z.object({
         id: z.string().uuid().optional(),
         nodeId: z.string().uuid(),
-        kind: z.enum(["systemd", "docker", "compose", "host", "apt"]),
+        kind: z.enum([
+          "systemd",
+          "docker",
+          "compose",
+          "host",
+          "apt",
+          "network",
+        ]),
         name: z.string().min(1).max(128),
         signed: signedCommandSchema.optional(),
         args: z.record(z.string().max(64), z.string()).optional(),
@@ -101,6 +116,9 @@ export const READ_ONLY = new Set([
   "refresh",
   "find",
   "preview",
+  "inspect",
+  "probe",
+  "test",
 ]);
 
 const MAX_ASKED_BYTES = 4096;
@@ -113,7 +131,16 @@ const askedAttachment = (args: Record<string, string> | undefined) => {
 
 const needsFeatures = (target: { kind: string; name: string }) =>
   target.kind === "apt" ||
+  target.kind === "network" ||
   (target.kind === "host" && target.name === "tailscale");
+
+const askedFits = (
+  kind: string,
+  action: string,
+  args: Record<string, string>,
+) =>
+  askedAttachment(args) !== null &&
+  (kind === "apt" || (kind === "network" && networkArgsValid(action, args)));
 
 const commandSchema = z.object({
   v: z.literal(1),
@@ -188,7 +215,7 @@ export function registerServiceRoutes(
     const owner = context.get("identity").id;
     const now = Date.now();
     await db.batch(sweepStatements(db, now));
-    const ranges = await readPrivateRanges(db);
+    const ranges = await readPrivateRanges(db, owner);
     const [nodes, services, actions] = await Promise.all([
       db
         .prepare(
@@ -377,15 +404,45 @@ export function registerServiceRoutes(
       .first<{ id: string }>();
     if (!node) return context.json({ code: "NOT_FOUND" }, 404);
     await db.batch(sweepStatements(db, Date.now()));
-    const rows = await db
-      .prepare(
-        `SELECT * FROM actions WHERE node_id = ?1
-           AND action <> 'logs' AND action NOT IN (SELECT value FROM json_each(?2))
-         ORDER BY requested_at DESC, position DESC LIMIT 10`,
-      )
-      .bind(node.id, JSON.stringify(QUESTIONS))
-      .all<ActionRow>();
-    return context.json({ actions: rows.results.map(toActionRecord) });
+    const [rows, network] = await Promise.all([
+      db
+        .prepare(
+          `SELECT * FROM actions WHERE node_id = ?1
+             AND action <> 'logs' AND action NOT IN (SELECT value FROM json_each(?2))
+           ORDER BY requested_at DESC, position DESC LIMIT 10`,
+        )
+        .bind(node.id, JSON.stringify(QUESTIONS))
+        .all<ActionRow>(),
+      db
+        .prepare(
+          `SELECT id, at, requested_by, device_id,
+                  CASE WHEN EXISTS (SELECT 1 FROM json_each(joins) WHERE value = ?1)
+                    THEN 'Joined Private Network' ELSE 'Left Private Network' END AS change
+           FROM network_changes
+           WHERE owner_user_id = ?2
+             AND (EXISTS (SELECT 1 FROM json_each(joins) WHERE value = ?1)
+               OR EXISTS (SELECT 1 FROM json_each(leaves) WHERE value = ?1))
+           ORDER BY at DESC, id DESC LIMIT 10`,
+        )
+        .bind(node.id, context.get("identity").id)
+        .all<{
+          id: string;
+          at: string;
+          requested_by: string;
+          device_id: string | null;
+          change: string;
+        }>(),
+    ]);
+    return context.json({
+      actions: rows.results.map(toActionRecord),
+      network: network.results.map((row) => ({
+        id: row.id,
+        at: row.at,
+        change: row.change,
+        requestedBy: row.requested_by,
+        deviceId: row.device_id,
+      })),
+    });
   });
 
   app.post("/api/actions", requireOperator, async (context) => {
@@ -404,9 +461,10 @@ export function registerServiceRoutes(
           !(KIND_VERBS[target.kind] as readonly string[]).includes(action) ||
           (target.kind === "host" && !hostVerbFits(target.name, action)) ||
           (target.args !== undefined &&
-            (!unsigned ||
-              target.kind !== "apt" ||
-              askedAttachment(target.args) === null)) ||
+            (!unsigned || !askedFits(target.kind, action, target.args))) ||
+          (target.kind === "network" &&
+            unsigned &&
+            !networkArgsValid(action, target.args ?? {})) ||
           (unsigned
             ? target.signed !== undefined
             : target.signed === undefined || target.id === undefined),
@@ -550,6 +608,10 @@ export function registerServiceRoutes(
         422,
       );
     }
+    if (then) {
+      const member = await networkMember(db, targets[0]!.nodeId);
+      if (member) return member(context);
+    }
     const aptless = targets.find(
       (target) => target.kind === "apt" && byId.get(target.nodeId)!.apt === 0,
     );
@@ -686,7 +748,10 @@ export function registerServiceRoutes(
       ]);
       if (
         targets.some(
-          (target) => target.kind !== "apt" && !present.has(targetKey(target)),
+          (target) =>
+            target.kind !== "apt" &&
+            target.kind !== "network" &&
+            !present.has(targetKey(target)),
         )
       ) {
         return context.json(

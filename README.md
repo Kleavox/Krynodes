@@ -796,6 +796,52 @@ An expired key shows in Fleet's issues.
 
 Agents before 0.7.0 have no Packages; the page offers Update agent.
 
+### Private network
+
+**Network** (top menu) joins servers into one WireGuard mesh, `kry0`, so a stack
+on one server reaches a database on another without opening it to the
+internet. Every member is a peer of every other; one server going down breaks
+only its own links. From agent 0.7.0.
+
+- **Create Network** reads every candidate first (kernel WireGuard, tools,
+  free range, NAT, the UDP port tested from the other servers, firewall, MTU,
+  clock) and shows what is already fine, what Krynodes does and what is yours to
+  fix. The range is a free `/24` in `10.88.0.0/16` that no interface, Docker
+  network, Tailscale or **Private addresses** range uses; the port is
+  `51820/udp`, or the next free one on a server where it is taken. Both are
+  fixed after creation. A hand-made `wg0` is left alone and avoided.
+- **Each server makes its own key**; only the public half leaves it. The
+  preshared key of each pair is made in the browser and sealed to both servers.
+  The member list is a **network document signed with a trusted device's
+  passkey**; an agent applies only a version newer than its last, so the Worker
+  can neither add a peer nor replay an old list. Without a signature the Worker
+  can only take a member away. A peer's `AllowedIPs` is its own `/32`, never a
+  wider range, so a bad change cannot cut Krynodes off a server.
+- Each server keeps its address for good and gets the name `<server>.kry` in a
+  Krynodes block of `/etc/hosts` on every member. ufw or firewalld get
+  `allow <port>/udp` and `allow in on kry0`; Docker waits for `kry0` at boot.
+  A server behind NAT dials out to the others; two servers both behind NAT
+  cannot link, and their pair says so.
+- **Add Server** shows the address each server gets. **Join Private Network**
+  in Enroll a server (and Enroll defaults) gets a new server ready while it
+  enrolls; the others learn its key only when you press **Join** (or **Not now**
+  undoes it), so a leaked install command cannot bring anyone in.
+- The page lists links with no answer first (a link to an offline server is
+  not a problem), waiting servers, every server with **Links n of m**, Recent
+  changes and This network. The menu item counts the links with no answer.
+  `--` means not measured, never 0 ms.
+- **Test Link** (a problem row, a server's links, **Test links** for all its
+  pairs, **Test all links**) reads both servers and changes nothing: agents,
+  `kry0` and keys, clocks, public addresses, firewall rules, handshakes, small
+  and large packets, then the most likely cause. Its fixes take a fingerprint:
+  **Send again**, **Put rule back** and **Use 1380** (a smaller MTU for that
+  server). Every test is kept in History.
+- **Remove from network**, **Make new keys** and **Delete network** say before
+  you sign what stops working; an address a stack still points to is held, and
+  freed addresses are given out last. Delete network offers to turn off the
+  checks that go through it. Delete node takes the server out of the network
+  first, and renaming a member tells the others its new name.
+
 ## Data retention
 
 A daily cron (03:17 UTC) keeps the database small enough for the Free plan's

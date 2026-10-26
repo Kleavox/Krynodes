@@ -66,9 +66,10 @@ type Inventory struct {
 	Security *reporter.SecurityReport `json:"security,omitempty"`
 	Vault    *reporter.VaultReport    `json:"vault,omitempty"`
 
-	Packages     *reporter.PackagesReport  `json:"packages,omitempty"`
-	PackagesHash string                    `json:"packagesHash,omitempty"`
-	Tailscale    *reporter.TailscaleReport `json:"tailscale,omitempty"`
+	Packages     *reporter.PackagesReport   `json:"packages,omitempty"`
+	PackagesHash string                     `json:"packagesHash,omitempty"`
+	Tailscale    *reporter.TailscaleReport  `json:"tailscale,omitempty"`
+	Network      *reporter.NetworkInventory `json:"network,omitempty"`
 }
 
 type Parts struct {
@@ -82,6 +83,7 @@ type Parts struct {
 	Vault     *reporter.VaultReport
 	Packages  *reporter.PackagesReport
 	Tailscale *reporter.TailscaleReport
+	Network   *reporter.NetworkInventory
 }
 
 var unitStates = map[string]string{
@@ -302,22 +304,23 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 		packagesHash = hex.EncodeToString(sum[:])
 	}
 	encoded, err := json.Marshal(struct {
-		Services  []Service                 `json:"services"`
-		Stacks    []reporter.StackEntry     `json:"stacks"`
-		Trust     reporter.TrustReport      `json:"trust"`
-		Docker    string                    `json:"docker"`
-		Removed   []reporter.RemovedStack   `json:"removed"`
-		SealKey   string                    `json:"sealKey"`
-		Security  *reporter.SecurityReport  `json:"security"`
-		Vault     *reporter.VaultReport     `json:"vault"`
-		Packages  string                    `json:"packages"`
-		Tailscale *reporter.TailscaleReport `json:"tailscale"`
-	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale})
+		Services  []Service                  `json:"services"`
+		Stacks    []reporter.StackEntry      `json:"stacks"`
+		Trust     reporter.TrustReport       `json:"trust"`
+		Docker    string                     `json:"docker"`
+		Removed   []reporter.RemovedStack    `json:"removed"`
+		SealKey   string                     `json:"sealKey"`
+		Security  *reporter.SecurityReport   `json:"security"`
+		Vault     *reporter.VaultReport      `json:"vault"`
+		Packages  string                     `json:"packages"`
+		Tailscale *reporter.TailscaleReport  `json:"tailscale"`
+		Network   *reporter.NetworkInventory `json:"network"`
+	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale, parts.Network})
 	if err != nil {
 		return Inventory{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale}, nil
+	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale, Network: parts.Network}, nil
 }
 
 func rank(service Service) int {

@@ -1243,7 +1243,9 @@ export function packageMenu(entry: AptReport["packages"][number]): {
       note:
         entry.feature === "docker"
           ? "Krynodes installed it for Docker"
-          : `Turn off ${RECIPE_TITLES[entry.feature] ?? entry.feature} to remove it`,
+          : entry.feature === "network"
+            ? "Krynodes installed it for the private network; it goes when the server leaves"
+            : `Turn off ${RECIPE_TITLES[entry.feature] ?? entry.feature} to remove it`,
       items: [hold],
     };
   }

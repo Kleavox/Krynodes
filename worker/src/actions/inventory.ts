@@ -1,5 +1,6 @@
 import { staleAfterMs } from "../agent/windows";
 import { sha256 } from "../lib/crypto";
+import { applyNetworkInventory } from "../network/document";
 import {
   isProtectedTarget,
   type AgentActionsRequest,
@@ -291,6 +292,7 @@ export async function applyInventory(
         inventory.tailscale ? JSON.stringify(inventory.tailscale) : null,
       ),
   ]);
+  await applyNetworkInventory(db, node.id, inventory.network ?? null, at);
   return inventory.hash;
 }
 

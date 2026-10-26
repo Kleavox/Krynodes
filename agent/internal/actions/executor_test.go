@@ -685,7 +685,7 @@ func TestTheExecutorReportsAStableSealKey(t *testing.T) {
 func TestARequestCarriesAnAttachmentAndSignedOptions(t *testing.T) {
 	executor, run := newTrustedExecutor(t)
 	restart := signedRequest(t, Command{ID: idA, Kind: "docker", Name: "adguard", Action: "restart", Access: "full", Secrets: "c2VhbGVk", Piece: "cGllY2U", Args: map[string]string{"op": "x"}})
-	restart.Attachment = strings.Repeat("A", 200<<10)
+	restart.Attachment = strings.Repeat("A", 700<<10)
 	writeRequest(t, executor.RequestDir, idA+".json", restart)
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
@@ -695,10 +695,10 @@ func TestARequestCarriesAnAttachmentAndSignedOptions(t *testing.T) {
 	}
 }
 
-func TestRequestsLargerThan256KBAreRefused(t *testing.T) {
+func TestRequestsLargerThan1MBAreRefused(t *testing.T) {
 	executor, run := newTrustedExecutor(t)
 	restart := request(t, idA, "docker", "adguard", "restart", executorNow.Add(time.Minute))
-	restart.Attachment = strings.Repeat("A", 257<<10)
+	restart.Attachment = strings.Repeat("A", 1<<20)
 	writeRequest(t, executor.RequestDir, idA+".json", restart)
 	refusedWithoutRunning(t, executor, run, "too large")
 }

@@ -99,6 +99,28 @@ describe("history", () => {
     ]);
   });
 
+  it("counts a private network change with the day's actions", () => {
+    const groups = dayGroups(
+      [
+        {
+          type: "network",
+          at: at(24, 9, 0),
+          change: {
+            id: "c1",
+            at: at(24, 9, 0),
+            change: "Add vps-3 to the private network",
+            detail: null,
+            requestedBy: "owner@example.test",
+            deviceId: null,
+          },
+        },
+        done("1", at(24, 8, 0)),
+      ],
+      new Date(2026, 9, 24, 15, 0).getTime(),
+    );
+    expect(groups.map((group) => group.counts)).toEqual(["2 actions"]);
+  });
+
   it("says an incident went down or recovered after how long", () => {
     expect(incidentText(incident("opened", "Pi-hole", at(24, 9, 52)))).toBe(
       "Pi-hole went down",

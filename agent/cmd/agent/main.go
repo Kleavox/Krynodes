@@ -310,6 +310,8 @@ const tickOffset = 2 * time.Second
 
 const addressEvery = 6 * time.Hour
 
+const linksEvery = 30 * time.Second
+
 func untilNextTick(now time.Time, interval time.Duration) time.Duration {
 	since := time.Duration(now.UnixNano()) - tickOffset
 	return interval - since%interval
@@ -581,6 +583,7 @@ func watchContainers() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}.WatchLinks(ctx, linksEvery)
 	actions.NewWatcher().Watch(ctx)
 	return nil
 }

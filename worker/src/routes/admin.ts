@@ -46,7 +46,9 @@ export function registerAdminRoutes(
               END AS deleting,
               ipv4, ipv4_at, ipv4_network, ipv4_owner,
               ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report,
-              updates, tailscale
+              updates, tailscale,
+              (SELECT json_object('state', state, 'address', address, 'port', port)
+               FROM network_members WHERE node_id = nodes.id) AS network
        FROM nodes WHERE owner_user_id = ? ORDER BY created_at DESC`,
       )
         .bind(ownerId)
@@ -57,6 +59,7 @@ export function registerAdminRoutes(
             trust_report: string | null;
             updates: string | null;
             tailscale: string | null;
+            network: string | null;
           }
         >(),
       context.env.DB.prepare(
@@ -92,7 +95,7 @@ export function registerAdminRoutes(
         .bind(ownerId)
         .all(),
       viewerPrints(context.env.DB, ownerId, email),
-      readPrivateRanges(context.env.DB),
+      readPrivateRanges(context.env.DB, ownerId),
     ]);
 
     const rows = nodes.results.map(
@@ -109,9 +112,11 @@ export function registerAdminRoutes(
         trust_report,
         updates,
         tailscale,
+        network,
         ...rest
       }) => ({
         ...rest,
+        network: network === null ? null : (JSON.parse(network) as unknown),
         updates: updates === null ? null : (JSON.parse(updates) as unknown),
         tailscale:
           tailscale === null ? null : (JSON.parse(tailscale) as unknown),
@@ -214,6 +219,8 @@ export function registerAdminRoutes(
   app.delete("/api/nodes/:id", requireAdmin, async (context) => {
     const node = await ownedNode(context);
     if (!node) return context.json({ code: "NOT_FOUND" }, 404);
+    const member = await networkMember(context.env.DB, node.id);
+    if (member) return member(context);
     const refused = await confirmed(context, "node.delete", node.id);
     if (refused) return refused;
     await context.env.DB.prepare("DELETE FROM nodes WHERE id = ?")
@@ -447,6 +454,26 @@ export function registerAdminRoutes(
     }
     return context.body(null, 204);
   });
+}
+
+export async function networkMember(db: D1Database, nodeId: string) {
+  const row = await db
+    .prepare(
+      `SELECT n.name FROM network_members m JOIN nodes n ON n.id = m.node_id
+       WHERE m.node_id = ? AND m.state = 'in'`,
+    )
+    .bind(nodeId)
+    .first<{ name: string }>();
+  return row
+    ? (context: KrynodesContext) =>
+        context.json(
+          {
+            code: "NETWORK_MEMBER",
+            message: `Remove ${row.name} from the private network first.`,
+          },
+          409,
+        )
+    : null;
 }
 
 async function agentTooOld(context: KrynodesContext, nodeId: string) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/metrics"
+	"github.com/Kleavox/krynodes/agent/internal/network"
 )
 
 type Host struct {
@@ -33,6 +34,36 @@ type Heartbeat struct {
 	Metrics metrics.Snapshot `json:"metrics"`
 	Results []CheckResult    `json:"results,omitempty"`
 	Update  *UpdateFailure   `json:"update,omitempty"`
+	Network *NetworkBeat     `json:"network,omitempty"`
+}
+
+type NetworkBeat struct {
+	Version  int              `json:"version"`
+	Key      *string          `json:"key"`
+	Links    []network.Link   `json:"links"`
+	Announce *NetworkAnnounce `json:"announce,omitempty"`
+}
+
+type NetworkAnnounce struct {
+	Key       string `json:"key"`
+	Signature string `json:"signature"`
+}
+
+type NetworkReply struct {
+	Document  json.RawMessage    `json:"document,omitempty"`
+	Endpoints []NetworkEndpoint  `json:"endpoints,omitempty"`
+	Announced []NetworkAnnounced `json:"announced,omitempty"`
+}
+
+type NetworkEndpoint struct {
+	Key      string `json:"key"`
+	Endpoint string `json:"endpoint"`
+}
+
+type NetworkAnnounced struct {
+	Node      string `json:"node"`
+	Key       string `json:"key"`
+	Signature string `json:"signature"`
 }
 
 type UpdateFailure struct {
@@ -47,6 +78,7 @@ type HeartbeatResponse struct {
 	Update          *UpdateInstruction `json:"update,omitempty"`
 	Actions         []ActionRequest    `json:"actions,omitempty"`
 	Refresh         bool               `json:"refresh,omitempty"`
+	Network         *NetworkReply      `json:"network,omitempty"`
 }
 
 type UpdateInstruction struct {
@@ -236,17 +268,35 @@ type TailscaleReport struct {
 }
 
 type InventoryReport struct {
-	Hash      string           `json:"hash"`
-	Docker    string           `json:"docker,omitempty"`
-	SealKey   string           `json:"sealKey,omitempty"`
-	Security  *SecurityReport  `json:"security,omitempty"`
-	Vault     *VaultSlot       `json:"vault,omitempty"`
-	Removed   *[]RemovedStack  `json:"removed,omitempty"`
-	Services  *[]ServiceEntry  `json:"services,omitempty"`
-	Stacks    *[]StackEntry    `json:"stacks,omitempty"`
-	Trust     *TrustReport     `json:"trust,omitempty"`
-	Packages  *PackagesReport  `json:"packages,omitempty"`
-	Tailscale *TailscaleReport `json:"tailscale,omitempty"`
+	Hash      string            `json:"hash"`
+	Docker    string            `json:"docker,omitempty"`
+	SealKey   string            `json:"sealKey,omitempty"`
+	Security  *SecurityReport   `json:"security,omitempty"`
+	Vault     *VaultSlot        `json:"vault,omitempty"`
+	Removed   *[]RemovedStack   `json:"removed,omitempty"`
+	Services  *[]ServiceEntry   `json:"services,omitempty"`
+	Stacks    *[]StackEntry     `json:"stacks,omitempty"`
+	Trust     *TrustReport      `json:"trust,omitempty"`
+	Packages  *PackagesReport   `json:"packages,omitempty"`
+	Tailscale *TailscaleReport  `json:"tailscale,omitempty"`
+	Network   *NetworkInventory `json:"network,omitempty"`
+}
+
+type NetworkInventory struct {
+	Prepared *NetworkPrepared `json:"prepared,omitempty"`
+	Points   []NetworkPoint   `json:"points"`
+}
+
+type NetworkPrepared struct {
+	Key    string `json:"key"`
+	Signer string `json:"signer"`
+	Port   int    `json:"port"`
+	MTU    *int   `json:"mtu"`
+}
+
+type NetworkPoint struct {
+	Stack  string `json:"stack"`
+	Target string `json:"target"`
 }
 
 type Progress struct {

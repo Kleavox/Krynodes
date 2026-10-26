@@ -18,15 +18,21 @@ import {
   useSignedAction,
   useSignedOperation,
 } from "@/features/deploy/use-signed-action";
+import {
+  useNetworkKeys,
+  useSignChange,
+} from "@/features/network/use-network-sign";
 import { removalReady } from "@/lib/agent";
 import {
   useCloudflare,
   useDeleteNode,
   useDevices,
+  useNetwork,
   useOverview,
   useServices,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
+import { leaveParagraph, networkText } from "@/lib/network";
 import {
   pieceOf,
   planRemoval,
@@ -48,6 +54,12 @@ export function DeleteNodeDialog({
   onDeleted?: () => void;
 }) {
   const remove = useDeleteNode();
+  const network = useNetwork().data;
+  const member = network?.members.find(
+    (entry) => entry.nodeId === node.id && entry.state === "in",
+  );
+  const leave = useSignChange();
+  const keys = useNetworkKeys(network?.members ?? []);
   const operate = useSignedOperation(false);
   const run = useSignedAction(false);
   const devices = useDevices();
@@ -85,6 +97,7 @@ export function DeleteNodeDialog({
   const close = (next: boolean) => {
     if (!next) {
       remove.reset();
+      leave.reset();
       operate.reset();
       run.reset();
       setKeepAgent(false);
@@ -97,6 +110,17 @@ export function DeleteNodeDialog({
     );
     close(false);
   };
+  const first = (then: () => void) =>
+    member
+      ? leave.mutate(
+          {
+            change: { kind: "remove", nodeId: node.id },
+            text: networkText.remove(node.name),
+            signers: keys.signers,
+          },
+          { onSuccess: then },
+        )
+      : then();
   const deleteNow = () =>
     remove.mutate(node.id, {
       onSuccess: () => {
@@ -159,8 +183,9 @@ export function DeleteNodeDialog({
       { onSuccess: started },
     );
 
-  const busy = operate.isPending || run.isPending || remove.isPending;
-  const error = remove.error ?? operate.error ?? run.error;
+  const busy =
+    leave.isPending || operate.isPending || run.isPending || remove.isPending;
+  const error = leave.error ?? remove.error ?? operate.error ?? run.error;
 
   return (
     <AlertDialog open={open} onOpenChange={close}>
@@ -184,6 +209,9 @@ export function DeleteNodeDialog({
                   </>
                 )}
               </p>
+              {member && network && (
+                <p>{leaveParagraph(member, network, !leaving)}</p>
+              )}
               {holds && plan.ok && (
                 <p>
                   {piece
@@ -253,21 +281,29 @@ export function DeleteNodeDialog({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           {stopped && background && (
-            <Button variant="ghost" disabled={busy} onClick={deleteNow}>
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => first(deleteNow)}
+            >
               Delete Anyway
             </Button>
           )}
           {running ? (
             <Button
               variant="destructive"
-              disabled={remove.isPending}
-              onClick={deleteNow}
+              disabled={busy}
+              onClick={() => first(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
               {remove.isPending ? "Working…" : "Delete Anyway"}
             </Button>
           ) : holds && plan.ok ? (
-            <Button variant="destructive" disabled={busy} onClick={spread}>
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => first(spread)}
+            >
               {!operate.isPending && <Fingerprint aria-hidden="true" />}
               {operate.isPending
                 ? "Waiting for the Fingerprint…"
@@ -279,7 +315,7 @@ export function DeleteNodeDialog({
             <Button
               variant="destructive"
               disabled={busy}
-              onClick={removeAndDelete}
+              onClick={() => first(removeAndDelete)}
             >
               {!run.isPending && <Fingerprint aria-hidden="true" />}
               {run.isPending
@@ -289,8 +325,8 @@ export function DeleteNodeDialog({
           ) : (
             <Button
               variant="destructive"
-              disabled={remove.isPending}
-              onClick={deleteNow}
+              disabled={busy}
+              onClick={() => first(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
               {remove.isPending

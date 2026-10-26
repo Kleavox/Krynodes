@@ -57,14 +57,14 @@ func runScript(t *testing.T, script string, failSetup bool, args ...string) (str
 }
 
 func TestTheInstallerPassesSetupAfterTheTrustKeys(t *testing.T) {
-	log, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--trust", "https://kry.example", "key1", "key2", "--setup", "recommended,docker", "--reboot-hour", "20")
+	log, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--trust", "https://kry.example", "key1", "key2", "--setup", "recommended,docker", "--reboot-hour", "20", "--network", "10.88.0.0/24")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, output)
 	}
 	want := "kry enroll --endpoint https://kry.example --token token-1\n" +
 		"kry install-service\n" +
 		"kry trust --initial --origin https://kry.example key1 key2\n" +
-		"kry setup --recommended --docker --reboot-hour 20\n" +
+		"kry setup --recommended --docker --reboot-hour 20 --network 10.88.0.0/24\n" +
 		"systemctl restart krynodes.service\n" +
 		"systemctl start --no-block krynodes-exec.service\n" +
 		"kry version\n"
@@ -143,6 +143,8 @@ func TestTheInstallerRefusesBadSetupFlags(t *testing.T) {
 		{"https://kry.example", "token-1", "--setup", "docker", "--reboot-hour", "24"},
 		{"https://kry.example", "token-1", "--setup"},
 		{"https://kry.example", "token-1", "--trust", "https://kry.example", "--setup", "docker"},
+		{"https://kry.example", "token-1", "--network", "10.88.0.0/24 --docker"},
+		{"https://kry.example", "token-1", "--network", "10.0.0.0/24"},
 	} {
 		log, output, err := runInstaller(t, false, args...)
 		if err == nil || strings.Contains(log, "kry enroll") {

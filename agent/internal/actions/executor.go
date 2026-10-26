@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	maxRequestBytes = 256 << 10
+	maxRequestBytes = 1 << 20
 	maxOutputBytes  = 2 << 10
 	commandTimeout  = 2 * time.Minute
 	runBudget       = 20 * time.Minute
@@ -117,6 +117,8 @@ run:
 					result = e.vault(ctx, item.request)
 				case item.request.Kind == "apt":
 					result, forwarded = e.apt(ctx, item.request)
+				case item.request.Kind == "network":
+					result, forwarded = e.network(ctx, item.request)
 				case item.request.Kind == "host":
 					result, forwarded = e.host(ctx, item.request)
 					reboot = reboot || (result.OK && item.request.Action == "reboot")
@@ -167,7 +169,7 @@ run:
 		packages = e.packages(ctx)
 		tailnet = e.tailnet(ctx)
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport(), Packages: packages, Tailscale: tailnet}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport(), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot)}, e.Now())
 	if err != nil {
 		return err
 	}

@@ -14,10 +14,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useDevices, useOverview, useProposals, useServices } from "@/lib/api";
+import {
+  useDevices,
+  useNetwork,
+  useOverview,
+  useProposals,
+  useServices,
+} from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { accountLinks } from "@/lib/account";
 import { useLiveUpdates } from "@/lib/live";
+import { navNetworkCount, presenceOf } from "@/lib/network";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
 import type { Identity, SessionVia } from "@/types";
@@ -41,6 +48,8 @@ export function AppShell({
   useLiveUpdates();
   const overview = useOverview();
   const services = useServices();
+  const network = useNetwork();
+  const now = useNow(30_000);
   const runAction = useSignedAction();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -64,7 +73,13 @@ export function AppShell({
     );
   }
 
-  const counts = navCounts(overview.data, services.data);
+  const counts = navCounts(
+    overview.data,
+    services.data,
+    network.data && overview.data
+      ? navNetworkCount(network.data, presenceOf(overview.data.nodes, now), now)
+      : 0,
+  );
   const { pathname } = useLocation();
 
   return (
@@ -95,7 +110,10 @@ export function AppShell({
               }
             >
               {section.label}
-              <Count value={counts[section.to]} />
+              <Count
+                value={counts[section.to]}
+                warn={section.to === "/network"}
+              />
             </NavLink>
           ))}
         </nav>
@@ -143,6 +161,7 @@ export function AppShell({
             {section.label}
             <Count
               value={counts[section.to]}
+              warn={section.to === "/network"}
               className="absolute top-1.5 right-[calc(50%-22px)] ml-0"
             />
           </NavLink>
@@ -163,22 +182,27 @@ export function AppShell({
 
 function Count({
   value,
+  warn = false,
   className,
 }: {
   value: number | undefined;
+  warn?: boolean;
   className?: string;
 }) {
   if (!value) return null;
   return (
     <span
       className={cn(
-        "ml-1.5 rounded bg-destructive/15 px-1.5 font-mono text-[10px] text-destructive",
+        "ml-1.5 rounded px-1.5 font-mono text-[10px]",
+        warn
+          ? "bg-warning/15 text-warning"
+          : "bg-destructive/15 text-destructive",
         className,
       )}
     >
       <span className="sr-only">, </span>
       {value}
-      <span className="sr-only"> open</span>
+      <span className="sr-only">{warn ? " not answering" : " open"}</span>
     </span>
   );
 }

@@ -30,6 +30,13 @@ export const queryKeys = {
   usage: ["usage"],
   packages: (id: string) => ["packages", "node", id],
   packageNames: ["packages", "names"],
+  network: ["network"],
+  networkNext: (nodes: string[], range?: string) => [
+    "network",
+    "next",
+    nodes.join(","),
+    range ?? null,
+  ],
 } as const;
 
 export function createQueryClient(): QueryClient {

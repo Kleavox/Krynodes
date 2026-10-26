@@ -1068,6 +1068,10 @@ describe("the installed list's menu", () => {
       note: "Krynodes installed it for Docker",
       items: ["hold"],
     });
+    expect(packageMenu({ ...entry, feature: "network" })).toEqual({
+      note: "Krynodes installed it for the private network; it goes when the server leaves",
+      items: ["hold"],
+    });
     expect(packageMenu({ ...entry, feature: "fail2ban" })).toEqual({
       note: "Turn off Block Repeated Login Failures to remove it",
       items: ["hold"],

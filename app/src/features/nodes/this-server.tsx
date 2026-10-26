@@ -1,14 +1,16 @@
 import { Ellipsis } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
+import { dnsName } from "@krynodes/protocol";
 
 import { AddressRows } from "@/components/server-addresses";
 import { Button } from "@/components/ui/button";
 import { AgentDialog } from "@/features/agent/agent-panel";
 import { SignInDialog } from "@/features/packages/sign-in-dialog";
-import { useDevices, useServices } from "@/lib/api";
+import { useDevices, useNetwork, useOverview, useServices } from "@/lib/api";
 import { agentLine } from "@/lib/agent";
 import { parseTimestamp, shortDate } from "@/lib/format";
+import { presenceOf, serverRow } from "@/lib/network";
 import { packagesBlocker, tailscaleLine, updatesLine } from "@/lib/packages";
 import { cn } from "@/lib/utils";
 import type { AgentRelease, NodeRecord } from "@/types";
@@ -36,6 +38,8 @@ export function ThisServer({
   const [agent, setAgent] = useState(false);
   const services = useServices();
   const devices = useDevices();
+  const network = useNetwork();
+  const overview = useOverview();
   const [signIn, setSignIn] = useState<{ again: boolean } | null>(null);
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
@@ -44,6 +48,18 @@ export function ThisServer({
     ? tailscaleLine(node.tailscale, node.name, now)
     : null;
   const blocker = packagesBlocker(node, (trust?.core.length ?? 0) > 0, now);
+  const member = network.data?.members.find(
+    (entry) => entry.nodeId === node.id,
+  );
+  const links =
+    member && network.data && overview.data
+      ? serverRow(
+          member,
+          network.data,
+          presenceOf(overview.data.nodes, now),
+          now,
+        )
+      : null;
   return (
     <section aria-labelledby="this-server">
       <h2
@@ -55,6 +71,30 @@ export function ThisServer({
       <div className="space-y-3 rounded-lg border bg-card p-3">
         <AddressRows node={node} correct />
         <dl className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 border-t pt-3 font-mono text-xs">
+          {node.network?.state === "in" && (
+            <>
+              <dt className="self-start leading-8 text-muted-foreground">
+                Private
+              </dt>
+              <dd className="min-w-0 py-2 leading-4">
+                <span className="block truncate">
+                  {node.network.address ?? "--"} · {dnsName(node.name)}.kry
+                </span>
+                <Link
+                  to="/network"
+                  className="underline-offset-4 hover:underline"
+                >
+                  <span className={cn(links?.short && "text-warning")}>
+                    {links?.links ?? "--"}
+                  </span>{" "}
+                  <span className="font-sans text-muted-foreground">
+                    · Network ›
+                  </span>
+                </Link>
+              </dd>
+              <dd />
+            </>
+          )}
           <dt className="leading-8 text-muted-foreground">Reached by</dt>
           <dd className="min-w-0 truncate">
             {services.data && devices.data ? (

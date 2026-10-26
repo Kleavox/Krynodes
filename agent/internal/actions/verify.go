@@ -257,6 +257,85 @@ func verifyAssertion(trust Trust, allowed []string, assertion Assertion, challen
 	return authData[32]&flagVerified != 0, nil
 }
 
+func verifySession(trust Trust, approval SignedGrant, payload, signed, name string, now time.Time) ([]byte, time.Time, error) {
+	grantBytes, err := decode("grant", approval.Grant)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	uv, err := verifyAssertion(trust, trust.Access, approval.Assertion, digest(grantBytes))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if err := verified(uv); err != nil {
+		return nil, time.Time{}, err
+	}
+	var session grant
+	if err := strict(grantBytes, &session); err != nil || session.V != 1 {
+		return nil, time.Time{}, errors.New("the grant is malformed")
+	}
+	if session.RPID != trust.RPID {
+		return nil, time.Time{}, errors.New("the grant is for another rp id")
+	}
+	issued, err := stamp("grant issuedAt", session.IssuedAt)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	expires, err := stamp("grant expiresAt", session.ExpiresAt)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if !expires.After(issued) || expires.Sub(issued) > sessionLimit {
+		return nil, time.Time{}, errors.New("the session is longer than 15 minutes")
+	}
+	if issued.After(now.Add(clockSkew)) {
+		return nil, time.Time{}, fmt.Errorf("the grant is from the future: signed %s", clockSays(issued, now))
+	}
+	keyBytes, err := decode("session key", session.SessionKey)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	parsed, err := x509.ParsePKIXPublicKey(keyBytes)
+	sessionKey, ok := parsed.(*ecdsa.PublicKey)
+	if err != nil || !ok || sessionKey.Curve != elliptic.P256() {
+		return nil, time.Time{}, errors.New("the session key is not P-256")
+	}
+	payloadBytes, err := decode(name, payload)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	signature, err := decode(name+" signature", signed)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if len(signature) != 64 {
+		return nil, time.Time{}, fmt.Errorf("the %s signature is not P1363", name)
+	}
+	r := new(big.Int).SetBytes(signature[:32])
+	s := new(big.Int).SetBytes(signature[32:])
+	if !ecdsa.Verify(sessionKey, digest(payloadBytes), r, s) {
+		return nil, time.Time{}, fmt.Errorf("the %s signature is invalid", name)
+	}
+	return payloadBytes, expires, nil
+}
+
+type SignedDocument struct {
+	Grant     SignedGrant `json:"grant"`
+	Document  string      `json:"document"`
+	Signature string      `json:"signature"`
+}
+
+func VerifyDocument(trust Trust, raw []byte, now time.Time) ([]byte, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("the network document is not signed")
+	}
+	var signed SignedDocument
+	if err := strict(raw, &signed); err != nil {
+		return nil, fmt.Errorf("the signature is malformed: %w", err)
+	}
+	document, _, err := verifySession(trust, signed.Grant, signed.Document, signed.Signature, "document", now)
+	return document, err
+}
+
 func VerifyCommand(trust Trust, request Request, now time.Time) (Command, error) {
 	if len(request.Signed) == 0 {
 		return Command{}, errors.New("the request is not signed")
@@ -265,62 +344,9 @@ func VerifyCommand(trust Trust, request Request, now time.Time) (Command, error)
 	if err := strict(request.Signed, &signed); err != nil {
 		return Command{}, fmt.Errorf("the signature is malformed: %w", err)
 	}
-	grantBytes, err := decode("grant", signed.Grant.Grant)
+	commandBytes, expires, err := verifySession(trust, signed.Grant, signed.Command, signed.Signature, "command", now)
 	if err != nil {
 		return Command{}, err
-	}
-	uv, err := verifyAssertion(trust, trust.Access, signed.Grant.Assertion, digest(grantBytes))
-	if err != nil {
-		return Command{}, err
-	}
-	if err := verified(uv); err != nil {
-		return Command{}, err
-	}
-	var session grant
-	if err := strict(grantBytes, &session); err != nil || session.V != 1 {
-		return Command{}, errors.New("the grant is malformed")
-	}
-	if session.RPID != trust.RPID {
-		return Command{}, errors.New("the grant is for another rp id")
-	}
-	issued, err := stamp("grant issuedAt", session.IssuedAt)
-	if err != nil {
-		return Command{}, err
-	}
-	expires, err := stamp("grant expiresAt", session.ExpiresAt)
-	if err != nil {
-		return Command{}, err
-	}
-	if !expires.After(issued) || expires.Sub(issued) > sessionLimit {
-		return Command{}, errors.New("the session is longer than 15 minutes")
-	}
-	if issued.After(now.Add(clockSkew)) {
-		return Command{}, fmt.Errorf("the grant is from the future: signed %s", clockSays(issued, now))
-	}
-	keyBytes, err := decode("session key", session.SessionKey)
-	if err != nil {
-		return Command{}, err
-	}
-	parsed, err := x509.ParsePKIXPublicKey(keyBytes)
-	sessionKey, ok := parsed.(*ecdsa.PublicKey)
-	if err != nil || !ok || sessionKey.Curve != elliptic.P256() {
-		return Command{}, errors.New("the session key is not P-256")
-	}
-	commandBytes, err := decode("command", signed.Command)
-	if err != nil {
-		return Command{}, err
-	}
-	signature, err := decode("command signature", signed.Signature)
-	if err != nil {
-		return Command{}, err
-	}
-	if len(signature) != 64 {
-		return Command{}, errors.New("the command signature is not P1363")
-	}
-	r := new(big.Int).SetBytes(signature[:32])
-	s := new(big.Int).SetBytes(signature[32:])
-	if !ecdsa.Verify(sessionKey, digest(commandBytes), r, s) {
-		return Command{}, errors.New("the command signature is invalid")
 	}
 	var command Command
 	if err := strict(commandBytes, &command); err != nil || command.V != 1 {

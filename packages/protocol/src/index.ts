@@ -1,8 +1,30 @@
 import { z } from "zod";
 
+import { networkBeatSchema, networkInventorySchema } from "./network";
 import { isValidTarget, RECIPES } from "./targets";
 
 export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
+export {
+  dnsName,
+  NETWORK,
+  networkArgsValid,
+  networkBeatSchema,
+  networkDocumentSchema,
+  networkInspectSchema,
+  networkInventorySchema,
+  networkLinkSchema,
+  networkPreparedSchema,
+  networkProbeSchema,
+  networkRekeySchema,
+  networkTestSchema,
+  type NetworkBeat,
+  type NetworkDocument,
+  type NetworkInspect,
+  type NetworkInventory,
+  type NetworkLink,
+  type NetworkMember,
+  type NetworkTest,
+} from "./network";
 export {
   passphraseKeySchema,
   trustChangeSchema,
@@ -70,6 +92,7 @@ export const agentHeartbeatSchema = agentHostSchema.extend({
       message: z.string().min(1).max(300),
     })
     .optional(),
+  network: networkBeatSchema.optional(),
 });
 
 export const enrollmentResponseSchema = z.object({
@@ -109,6 +132,39 @@ export const signedCommandSchema = z.strictObject({
   signature: b64url,
 });
 
+export const signedDocumentSchema = z.strictObject({
+  grant: approvalSchema.extend({ grant: b64url }),
+  document: z
+    .string()
+    .min(1)
+    .max(600000)
+    .regex(/^[A-Za-z0-9_-]+$/u),
+  signature: b64url,
+});
+
+export const networkReplySchema = z.strictObject({
+  document: signedDocumentSchema.optional(),
+  endpoints: z
+    .array(
+      z.strictObject({
+        key: z.string().max(44),
+        endpoint: z.string().max(64),
+      }),
+    )
+    .max(32)
+    .optional(),
+  announced: z
+    .array(
+      z.strictObject({
+        node: z.string().uuid(),
+        key: z.string().max(44),
+        signature: b64url,
+      }),
+    )
+    .max(32)
+    .optional(),
+});
+
 export const UNSIGNED_VERBS = [
   "manual",
   "heal",
@@ -116,6 +172,9 @@ export const UNSIGNED_VERBS = [
   "refresh",
   "find",
   "preview",
+  "inspect",
+  "probe",
+  "test",
 ] as const;
 
 export const KIND_VERBS = {
@@ -173,6 +232,7 @@ export const KIND_VERBS = {
     "addrepo",
     "droprepo",
   ],
+  network: ["inspect", "probe", "test", "prepare", "unprepare", "rekey"],
 } as const;
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
@@ -207,6 +267,7 @@ export const agentActionSchema = z
       "host",
       "vault",
       "apt",
+      "network",
     ]),
     name: z.string(),
     action: z.enum([
@@ -251,6 +312,12 @@ export const agentActionSchema = z
       "unhold",
       "addrepo",
       "droprepo",
+      "inspect",
+      "probe",
+      "test",
+      "prepare",
+      "unprepare",
+      "rekey",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -291,6 +358,7 @@ export const heartbeatResponseSchema = z.object({
     .optional(),
   actions: z.array(agentActionSchema).max(10).optional(),
   refresh: z.literal(true).optional(),
+  network: networkReplySchema.optional(),
 });
 
 export const serviceEntrySchema = z
@@ -498,6 +566,7 @@ export const agentActionsRequestSchema = z
         trust: trustReportSchema.optional(),
         packages: packagesReportSchema.optional(),
         tailscale: tailscaleReportSchema.optional(),
+        network: networkInventorySchema.optional(),
       })
       .optional(),
     progress: z.array(progressSchema).max(10).optional(),
@@ -543,6 +612,8 @@ export type AgentActionsRequest = z.infer<typeof agentActionsRequestSchema>;
 export type Assertion = z.infer<typeof assertionSchema>;
 export type SignedCommand = z.infer<typeof signedCommandSchema>;
 export type SignedTrust = z.infer<typeof signedTrustSchema>;
+export type SignedDocument = z.infer<typeof signedDocumentSchema>;
+export type NetworkReply = z.infer<typeof networkReplySchema>;
 export type StackEntry = z.infer<typeof stackEntrySchema>;
 export type TrustReport = z.infer<typeof trustReportSchema>;
 export type PackagesReport = z.infer<typeof packagesReportSchema>;

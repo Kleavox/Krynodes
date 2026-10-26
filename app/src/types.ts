@@ -1,4 +1,9 @@
-import type { PackagesReport, TailscaleReport } from "@krynodes/protocol";
+import type {
+  NetworkDocument,
+  NetworkLink,
+  PackagesReport,
+  TailscaleReport,
+} from "@krynodes/protocol";
 
 export interface Identity {
   id: string;
@@ -55,6 +60,80 @@ export interface NodeRecord {
   grace_seconds?: number;
   updates?: UpdatesSummary | null;
   tailscale?: TailscaleReport | null;
+  network?: {
+    state: "waiting" | "in" | "leaving";
+    address: string | null;
+    port: number;
+  } | null;
+}
+
+interface NetworkPoint {
+  nodeId: string;
+  stack: string;
+  target: string;
+}
+
+export interface NetworkServer {
+  nodeId: string;
+  name: string;
+  state: "in" | "leaving";
+  address: string | null;
+  port: number;
+  mtu: number | null;
+  key: string;
+  signer: string;
+  endpoint: string | null;
+  nat: boolean;
+  announced: { key: string; signature: string } | null;
+  since: string;
+  joinedAt: string | null;
+  points: { stack: string; target: string }[];
+}
+
+export interface NetworkChange {
+  id: string;
+  at: string;
+  change: string;
+  detail: string | null;
+  requestedBy: string;
+  deviceId: string | null;
+}
+
+export interface NetworkView {
+  network: {
+    range: string;
+    port: number;
+    mtu: number;
+    version: number;
+    createdAt: string;
+    createdBy: string;
+  } | null;
+  version: number;
+  document: NetworkDocument | null;
+  members: NetworkServer[];
+  waiting: {
+    nodeId: string;
+    name: string;
+    key: string;
+    signer: string;
+    port: number;
+    mtu: number | null;
+    since: string;
+  }[];
+  links: { a: string; b: string; answering: boolean; since: string }[];
+  live: Record<string, { at: number; links: NetworkLink[] }>;
+  held: {
+    address: string;
+    nodeId: string | null;
+    nodeName: string | null;
+    points: NetworkPoint[];
+  }[];
+  changes: NetworkChange[];
+}
+
+export interface NetworkNext {
+  addresses: { nodeId: string; address: string; name: string }[];
+  held: NetworkView["held"];
 }
 
 export type AptReport = Extract<PackagesReport, { apt: true }>;
@@ -244,7 +323,7 @@ export type ServiceKind = "systemd" | "docker";
 export type ServiceState = "running" | "stopped" | "failed" | "starting";
 export type ServiceAction = "start" | "stop" | "restart";
 export type ActionKind =
-  ServiceKind | "compose" | "trust" | "host" | "vault" | "apt";
+  ServiceKind | "compose" | "trust" | "host" | "vault" | "apt" | "network";
 export type ActionVerb =
   | ServiceAction
   | "deploy"
@@ -284,7 +363,13 @@ export type ActionVerb =
   | "hold"
   | "unhold"
   | "addrepo"
-  | "droprepo";
+  | "droprepo"
+  | "inspect"
+  | "probe"
+  | "test"
+  | "prepare"
+  | "unprepare"
+  | "rekey";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
@@ -442,6 +527,7 @@ interface HistoryIncident {
 
 export type HistoryEntry =
   | { type: "action"; at: string; action: ActionRecord }
+  | { type: "network"; at: string; change: NetworkChange }
   | {
       type: "incident";
       at: string;

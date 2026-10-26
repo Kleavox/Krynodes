@@ -2,6 +2,7 @@ import {
   Activity,
   Boxes,
   History,
+  Network,
   Server,
   type LucideIcon,
 } from "lucide-react";
@@ -19,6 +20,7 @@ interface Section {
 export const SECTIONS: readonly Section[] = [
   { to: "/", label: "Fleet", icon: Server, end: true },
   { to: "/services", label: "Services", icon: Boxes },
+  { to: "/network", label: "Network", icon: Network },
   { to: "/checks", label: "Checks", icon: Activity },
 ];
 
@@ -33,11 +35,13 @@ export const alsoActive = (to: string, pathname: string) =>
 export function navCounts(
   overview: Overview | undefined,
   services: ServicesResponse | undefined,
+  networkProblems = 0,
 ): Record<string, number> {
   return {
     "/checks":
       overview?.incidents.filter((incident) => incident.status === "OPEN")
         .length ?? 0,
     "/services": services?.actions.filter(isPending).length ?? 0,
+    "/network": networkProblems,
   };
 }

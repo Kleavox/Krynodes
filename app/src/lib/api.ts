@@ -27,6 +27,8 @@ import type {
   IncidentUpdate,
   IncidentUpdateStatus,
   MetricRange,
+  NetworkNext,
+  NetworkView,
   NodeMetrics,
   Overview,
   PackagesResponse,
@@ -199,7 +201,9 @@ export function usePrivateRanges(enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.privateRanges,
     queryFn: () =>
-      apiFetch<{ ranges: string[] }>("/api/settings/private-ranges"),
+      apiFetch<{ ranges: string[]; network: string | null }>(
+        "/api/settings/private-ranges",
+      ),
     enabled,
   });
 }
@@ -208,6 +212,7 @@ export interface EnrollDefaults {
   recommended: boolean;
   docker: boolean;
   hour: number;
+  network: boolean;
 }
 
 export function useEnrollDefaults(enabled: boolean) {
@@ -349,7 +354,7 @@ export const postActions = (body: {
     | SignedTarget
     | {
         nodeId: string;
-        kind: "systemd" | "host" | "apt";
+        kind: "systemd" | "host" | "apt" | "network";
         name: string;
         args?: Record<string, string>;
       }
@@ -382,6 +387,41 @@ export const postOperation = (body: {
     "/api/operations",
     send("POST", body),
   );
+
+export function useNetwork(refetchInterval: number | false = false) {
+  return useQuery({
+    queryKey: queryKeys.network,
+    queryFn: () => apiFetch<NetworkView>("/api/network"),
+    refetchInterval,
+  });
+}
+
+export function useNetworkNext(nodes: string[], range?: string) {
+  return useQuery({
+    queryKey: queryKeys.networkNext(nodes, range),
+    queryFn: () =>
+      apiFetch<NetworkNext>(
+        `/api/network/next?${new URLSearchParams({
+          nodes: nodes.join(","),
+          ...(range ? { range } : {}),
+        })}`,
+      ),
+    enabled: nodes.length > 0,
+  });
+}
+
+export const postNetworkDocument = (body: {
+  signed: unknown;
+  change: string;
+  detail: string | null;
+}) =>
+  apiFetch<{ version: number }>("/api/network/document", send("POST", body));
+
+export const postNetworkTest = (body: {
+  change: string;
+  detail: string | null;
+  nodes: string[];
+}) => apiFetch("/api/network/tests", send("POST", body));
 
 export function useCloudflare() {
   return useQuery({

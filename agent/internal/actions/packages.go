@@ -43,6 +43,9 @@ func (e Executor) krynodesPackages() ([]apt.Group, []string) {
 			groups = append(groups, apt.Group{Feature: name, Packages: installed})
 		}
 	}
+	if e.readNetwork().Tools {
+		groups = append(groups, apt.Group{Feature: "network", Packages: []string{networkTools}})
+	}
 	state, _ := readState[aptState](e.StateDir, "apt.json")
 	for _, name := range state.Installed {
 		groups = append(groups, apt.Group{Packages: []string{name}})

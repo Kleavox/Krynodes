@@ -218,6 +218,9 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 	if request.Kind == "apt" {
 		return e.applyApt(ctx, request)
 	}
+	if request.Kind == "network" {
+		return e.applyNetwork(ctx, request)
+	}
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
 	}
