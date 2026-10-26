@@ -22,17 +22,30 @@ type DockerResult struct {
 
 const (
 	dockerKey    = "/etc/apt/keyrings/docker.asc"
-	dockerList   = "/etc/apt/sources.list.d/docker.list"
+	DockerList   = "/etc/apt/sources.list.d/docker.list"
 	dockerRepo   = "/etc/yum.repos.d/docker-ce.repo"
 	DockerDaemon = "/etc/docker/daemon.json"
 	DockerLogs   = "{\"log-driver\": \"local\"}\n"
 )
 
-var dockerPackages = []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"}
+var DockerPackages = []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"}
 
 var fetchClient = &http.Client{
 	Timeout:   2 * time.Minute,
 	Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13}},
+	CheckRedirect: func(next *http.Request, via []*http.Request) error {
+		if next.URL.Scheme != "https" {
+			return errors.New("the download was redirected away from HTTPS")
+		}
+		if len(via) >= 10 {
+			return errors.New("the download was redirected too many times")
+		}
+		return nil
+	},
+}
+
+func (e Env) Get(ctx context.Context, url string) ([]byte, error) {
+	return e.fetch(ctx, url)
 }
 
 func (e Env) fetch(ctx context.Context, url string) ([]byte, error) {
@@ -81,7 +94,7 @@ func InstallDocker(ctx context.Context, env Env, args map[string]string) (Docker
 	if err := dockerRepository(ctx, env, platform); err != nil {
 		return DockerResult{}, err
 	}
-	packages := dockerPackages
+	packages := DockerPackages
 	if missing == nil {
 		packages = []string{"docker-compose-plugin"}
 	} else if _, err := os.Stat(env.path(DockerDaemon)); errors.Is(err, os.ErrNotExist) {
@@ -131,5 +144,5 @@ func dockerRepository(ctx context.Context, env Env, platform Platform) error {
 		return errors.New("dpkg does not say this server's architecture")
 	}
 	line := fmt.Sprintf("deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\n", strings.TrimSpace(arch), dockerKey, platform.Base, platform.Codename)
-	return env.write(dockerList, line, 0o644)
+	return env.write(DockerList, line, 0o644)
 }

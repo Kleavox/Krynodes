@@ -106,6 +106,7 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		return e.rebootSetting(request), false
 	case (server && (request.Action == "lockdown" || request.Action == "unlock")) ||
 		(request.Name == "docker" && request.Action == "install") ||
+		(request.Name == "tailscale" && request.Action == "signin") ||
 		(!server && slices.Contains(Recipes, request.Name) && (request.Action == "apply" || request.Action == "undo")):
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
@@ -204,6 +205,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 		if err := writeJSON(filepath.Join(e.StateDir, "results"), id+".json", result, 0o640); err != nil {
 			return err
 		}
+		os.Remove(filepath.Join(e.StateDir, "progress", id+".json"))
 		processed = true
 	}
 	if processed {
@@ -213,6 +215,9 @@ func (e Executor) HostApply(ctx context.Context) error {
 }
 
 func (e Executor) applyHost(ctx context.Context, request Request) Result {
+	if request.Kind == "apt" {
+		return e.applyApt(ctx, request)
+	}
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -269,6 +274,8 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		return e.lockdown(ctx, request, env)
 	case "unlock":
 		return e.unlock(ctx, request, env)
+	case "signin":
+		return e.signIn(ctx, request, command)
 	}
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }

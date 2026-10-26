@@ -45,6 +45,7 @@ type Executor struct {
 	StateDir   string
 	Now        func() time.Time
 	Run        Runner
+	Stream     func(ctx context.Context, each func(string), name string, args ...string) error
 	Collect    func(context.Context, []string) (Snapshot, error)
 	Exists     func(string) bool
 	Free       func(string) (uint64, error)
@@ -114,6 +115,8 @@ run:
 					result = e.compose(ctx, item.request, snapshot)
 				case item.request.Kind == "vault":
 					result = e.vault(ctx, item.request)
+				case item.request.Kind == "apt":
+					result, forwarded = e.apt(ctx, item.request)
 				case item.request.Kind == "host":
 					result, forwarded = e.host(ctx, item.request)
 					reboot = reboot || (result.OK && item.request.Action == "reboot")
@@ -157,10 +160,14 @@ run:
 		sealKey = seal.Public(key)
 	}
 	var security *reporter.SecurityReport
+	var packages *reporter.PackagesReport
+	var tailnet *reporter.TailscaleReport
 	if e.Audit {
 		security = e.security(ctx, scanned)
+		packages = e.packages(ctx)
+		tailnet = e.tailnet(ctx)
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport()}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport(), Packages: packages, Tailscale: tailnet}, e.Now())
 	if err != nil {
 		return err
 	}

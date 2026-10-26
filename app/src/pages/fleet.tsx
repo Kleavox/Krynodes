@@ -64,6 +64,7 @@ import {
   workSpans,
   type ServerOperation,
 } from "@/lib/operations";
+import { busyText, namesServer, packageAttention } from "@/lib/packages";
 import { isPending, runningText } from "@/lib/services";
 import { layoutReportSlots, overlaps, type WorkSpan } from "@/lib/series";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -150,6 +151,8 @@ interface Row {
   operation: ServerOperation | null;
   busy: ActionRecord | null;
   work: WorkSpan[];
+  raised: string[];
+  notes: string[];
 }
 
 export function FleetPage() {
@@ -220,7 +223,12 @@ export function FleetPage() {
     checks.filter((check) => check.node_id === id);
   const rows: Row[] = nodes
     .map((node) => {
-      const health = nodeHealth(node, checksFor(node.id), seen);
+      const own = packageAttention(
+        node,
+        services.data?.nodes.find((entry) => entry.id === node.id)?.security,
+        now,
+      );
+      const health = nodeHealth(node, checksFor(node.id), seen, own.reasons);
       return {
         node,
         name: node.name,
@@ -239,10 +247,12 @@ export function FleetPage() {
           services.data?.actions.find(
             (action) =>
               action.nodeId === node.id &&
-              action.kind !== "host" &&
-              action.action !== "logs" &&
+              (action.kind !== "host" || namesServer(action)) &&
+              !["logs", "find", "preview"].includes(action.action) &&
               isPending(action),
           ) ?? null,
+        raised: own.reasons,
+        notes: own.notes,
         ...health,
       };
     })
@@ -258,6 +268,7 @@ export function FleetPage() {
         rows.find((row) => row.node.id === selected.id)?.operation ?? null
       }
       work={rows.find((row) => row.node.id === selected.id)?.work ?? []}
+      raised={rows.find((row) => row.node.id === selected.id)?.raised ?? []}
       checks={checksFor(selected.id)}
       recent={recent.data?.nodes[selected.id]}
       release={agentRelease}
@@ -701,7 +712,7 @@ function NodeCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const { node, state, severity, reasons, operation, busy, work } = row;
+  const { node, state, severity, reasons, notes, operation, busy, work } = row;
   const devices = useDevices().data?.devices;
   const laid = laidSlots(node, recent, now, asOf, work);
   const live = state === "online" || state === "offline";
@@ -746,13 +757,18 @@ function NodeCard({
           <p className="mt-1 flex items-center gap-1.5 truncate font-mono text-[11px] text-warning">
             <StatusDot tone="warn" pulse />
             <span className="truncate">
-              {runningText(busy)} · {actorOf(busy, devices)}
+              {busyText(busy) ?? runningText(busy)} · {actorOf(busy, devices)}
             </span>
           </p>
         )}
       </div>
       {state !== "offline" && (
         <Attention severity={severity} reasons={reasons} />
+      )}
+      {state !== "offline" && notes.length > 0 && (
+        <p className="-mt-1.5 truncate text-xs text-muted-foreground">
+          {notes.join(" · ")}
+        </p>
       )}
       {live ? (
         <>
@@ -965,6 +981,7 @@ function NodePanel({
   node,
   operation,
   work,
+  raised,
   checks,
   recent,
   release,
@@ -977,6 +994,7 @@ function NodePanel({
   node: NodeRecord;
   operation: ServerOperation | null;
   work: WorkSpan[];
+  raised: string[];
   checks: CheckRecord[];
   recent: RecentNode | undefined;
   release: AgentRelease;
@@ -988,7 +1006,7 @@ function NodePanel({
 }) {
   const state = nodeState(node, seen);
   const laid = laidSlots(node, recent, now, asOf, work);
-  const { severity, reasons } = nodeHealth(node, checks, seen);
+  const { severity, reasons } = nodeHealth(node, checks, seen, raised);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-2">

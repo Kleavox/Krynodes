@@ -106,6 +106,19 @@ describe("nodeHealth", () => {
     ).toEqual({ severity: "warning", reasons: ["CPU 85%"] });
   });
 
+  it("adds what Packages raises as a warning, after checks and usage", () => {
+    expect(nodeHealth(node(), [check("UP")], NOW, ["Restart Needed"])).toEqual({
+      severity: "warning",
+      reasons: ["Restart Needed"],
+    });
+    expect(
+      nodeHealth(node(), [check("DOWN")], NOW, ["Tailscale key expired"]),
+    ).toEqual({
+      severity: "critical",
+      reasons: ["1 check down", "Tailscale key expired"],
+    });
+  });
+
   it("keeps pending and disabled nodes out of the alarm", () => {
     expect(nodeHealth(node({ enrolled_at: null }), [], NOW).severity).toBe(
       "idle",

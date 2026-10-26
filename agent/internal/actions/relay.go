@@ -23,7 +23,14 @@ const (
 	maxReported   = 10
 	maxResultText = 65536
 	reportBudget  = 512 << 10
+	maxProgress   = 10
+	progressGap   = 5 * time.Second
 )
+
+type sentStep struct {
+	step reporter.Progress
+	at   time.Time
+}
 
 type Poster interface {
 	PostActions(context.Context, reporter.ActionsReport) (reporter.ActionsResponse, error)
@@ -38,10 +45,12 @@ type Relay struct {
 
 	mu        sync.Mutex
 	acked     string
+	sentList  string
 	refreshAt time.Time
 	failures  int
 	retryAt   time.Time
 	problem   string
+	steps     map[string]sentStep
 }
 
 func backoff(failures int) time.Duration {
@@ -105,6 +114,7 @@ func (r *Relay) Poll(ctx context.Context) error {
 		return nil
 	}
 	results := r.readResults()
+	steps := r.readProgress()
 	var inventory *Inventory
 	var current Inventory
 	if err := readJSON(filepath.Join(r.StateDir, "inventory.json"), &current); err == nil {
@@ -113,11 +123,12 @@ func (r *Relay) Poll(ctx context.Context) error {
 		r.note(err)
 	}
 	r.mu.Lock()
-	acked, refreshAt := r.acked, r.refreshAt
+	acked, refreshAt, sentList := r.acked, r.refreshAt, r.sentList
 	r.mu.Unlock()
 
-	report := reporter.ActionsReport{NodeID: r.NodeID, Results: results}
+	report := reporter.ActionsReport{NodeID: r.NodeID, Results: results, Progress: steps}
 	refreshed := false
+	listing := ""
 	if inventory != nil {
 		changed := inventory.Hash != acked
 		taken, err := time.Parse(time.RFC3339Nano, inventory.TakenAt)
@@ -135,10 +146,15 @@ func (r *Relay) Poll(ctx context.Context) error {
 				report.Inventory.Services = &services
 				report.Inventory.Stacks = &stacks
 				report.Inventory.Trust = &trust
+				report.Inventory.Tailscale = inventory.Tailscale
+				if inventory.Packages != nil && inventory.PackagesHash != sentList {
+					report.Inventory.Packages = inventory.Packages
+					listing = inventory.PackagesHash
+				}
 			}
 		}
 	}
-	if len(report.Results) == 0 && report.Inventory == nil {
+	if len(report.Results) == 0 && report.Inventory == nil && len(report.Progress) == 0 {
 		return nil
 	}
 	response, err := r.Server.PostActions(ctx, report)
@@ -155,6 +171,12 @@ func (r *Relay) Poll(ctx context.Context) error {
 	if response.InventoryHash != nil {
 		r.acked = *response.InventoryHash
 	}
+	if listing != "" {
+		r.sentList = listing
+	}
+	for _, step := range steps {
+		r.steps[step.ID] = sentStep{step: step, at: r.Now()}
+	}
 	if refreshed && r.refreshAt.Equal(refreshAt) {
 		r.refreshAt = time.Time{}
 	}
@@ -165,6 +187,39 @@ func (r *Relay) Poll(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (r *Relay) readProgress() []reporter.Progress {
+	entries, _ := os.ReadDir(filepath.Join(r.StateDir, "progress"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.steps == nil {
+		r.steps = map[string]sentStep{}
+	}
+	live := map[string]bool{}
+	var steps []reporter.Progress
+	for _, entry := range entries {
+		if !requestName.MatchString(entry.Name()) {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		live[id] = true
+		var step reporter.Progress
+		if err := readJSON(filepath.Join(r.StateDir, "progress", entry.Name()), &step); err != nil || step.ID != id {
+			continue
+		}
+		sent, before := r.steps[id]
+		same := before && sent.step.Done == step.Done && sent.step.Total == step.Total && sent.step.Line == step.Line
+		if !same && (!before || r.Now().Sub(sent.at) >= progressGap) && len(steps) < maxProgress {
+			steps = append(steps, step)
+		}
+	}
+	for id := range r.steps {
+		if !live[id] {
+			delete(r.steps, id)
+		}
+	}
+	return steps
 }
 
 func (r *Relay) readResults() []Result {

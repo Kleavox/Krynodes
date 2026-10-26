@@ -155,22 +155,113 @@ func (s VaultSlot) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.Report)
 }
 
+type PackageEntry struct {
+	Name    string  `json:"name"`
+	Version string  `json:"version"`
+	From    *string `json:"from"`
+	By      *string `json:"by"`
+	Feature *string `json:"feature"`
+	More    int     `json:"more"`
+	Held    bool    `json:"held"`
+}
+
+type HeldBack struct {
+	Adds    []string `json:"adds"`
+	Removes []string `json:"removes"`
+}
+
+type UpdateEntry struct {
+	Name     string    `json:"name"`
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	Source   *string   `json:"source"`
+	Security bool      `json:"security"`
+	Held     bool      `json:"held"`
+	Back     *HeldBack `json:"back"`
+}
+
+type SourceEntry struct {
+	Name     string   `json:"name"`
+	Host     string   `json:"host"`
+	Suites   []string `json:"suites"`
+	Key      *string  `json:"key"`
+	Krynodes bool     `json:"krynodes"`
+	File     string   `json:"file"`
+	System   bool     `json:"system"`
+}
+
+type SecurityUpdates struct {
+	On      bool    `json:"on"`
+	LastRan *string `json:"lastRan"`
+}
+
+type RestartReport struct {
+	Since    string   `json:"since"`
+	Running  *string  `json:"running"`
+	Newest   *string  `json:"newest"`
+	File     bool     `json:"file"`
+	Services []string `json:"services"`
+}
+
+type PackagesReport struct {
+	Apt       bool            `json:"apt"`
+	System    string          `json:"system"`
+	Codename  string          `json:"codename"`
+	ReadAt    string          `json:"readAt"`
+	CheckedAt *string         `json:"checkedAt"`
+	Installed int             `json:"installed"`
+	Packages  []PackageEntry  `json:"packages"`
+	Updates   []UpdateEntry   `json:"updates"`
+	Sources   []SourceEntry   `json:"sources"`
+	Security  SecurityUpdates `json:"security"`
+	Restart   *RestartReport  `json:"restart"`
+}
+
+func (r PackagesReport) MarshalJSON() ([]byte, error) {
+	if !r.Apt {
+		return json.Marshal(struct {
+			Apt    bool   `json:"apt"`
+			System string `json:"system"`
+		}{false, r.System})
+	}
+	type plain PackagesReport
+	return json.Marshal(plain(r))
+}
+
+type TailscaleReport struct {
+	State     string   `json:"state"`
+	Addresses []string `json:"addresses"`
+	Name      *string  `json:"name"`
+	KeyExpiry *string  `json:"keyExpiry"`
+}
+
 type InventoryReport struct {
-	Hash     string          `json:"hash"`
-	Docker   string          `json:"docker,omitempty"`
-	SealKey  string          `json:"sealKey,omitempty"`
-	Security *SecurityReport `json:"security,omitempty"`
-	Vault    *VaultSlot      `json:"vault,omitempty"`
-	Removed  *[]RemovedStack `json:"removed,omitempty"`
-	Services *[]ServiceEntry `json:"services,omitempty"`
-	Stacks   *[]StackEntry   `json:"stacks,omitempty"`
-	Trust    *TrustReport    `json:"trust,omitempty"`
+	Hash      string           `json:"hash"`
+	Docker    string           `json:"docker,omitempty"`
+	SealKey   string           `json:"sealKey,omitempty"`
+	Security  *SecurityReport  `json:"security,omitempty"`
+	Vault     *VaultSlot       `json:"vault,omitempty"`
+	Removed   *[]RemovedStack  `json:"removed,omitempty"`
+	Services  *[]ServiceEntry  `json:"services,omitempty"`
+	Stacks    *[]StackEntry    `json:"stacks,omitempty"`
+	Trust     *TrustReport     `json:"trust,omitempty"`
+	Packages  *PackagesReport  `json:"packages,omitempty"`
+	Tailscale *TailscaleReport `json:"tailscale,omitempty"`
+}
+
+type Progress struct {
+	ID    string `json:"id"`
+	At    string `json:"at"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
+	Line  string `json:"line"`
 }
 
 type ActionsReport struct {
 	NodeID    string           `json:"nodeId"`
 	Results   []ActionResult   `json:"results,omitempty"`
 	Inventory *InventoryReport `json:"inventory,omitempty"`
+	Progress  []Progress       `json:"progress,omitempty"`
 }
 
 type ActionsResponse struct {

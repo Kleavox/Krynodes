@@ -306,7 +306,13 @@ export class FleetHub {
         );
         reply({ type: "actions", response });
         this.poke(next);
-        this.announce(deleted ? ["all"] : ["actions", "services"]);
+        this.announce(
+          deleted
+            ? ["all"]
+            : parsed.data.results || parsed.data.inventory
+              ? ["actions", "services"]
+              : ["actions"],
+        );
         if (alerts.length > 0) await this.securityMail(node.id, alerts);
       } else {
         invalid();

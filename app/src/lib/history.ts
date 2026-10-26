@@ -15,6 +15,7 @@ import {
   stampTime,
 } from "./format";
 import { actorOf } from "./operations";
+import { namesServer, outcomeOf, packageText } from "./packages";
 import {
   displayName,
   durationText,
@@ -147,7 +148,7 @@ export function logTargets(
 }
 
 export type Retry =
-  | { via: "deploy" | "rollback" }
+  | { via: "deploy" | "rollback" | "packages" }
   | { via: "run"; action: "start" | "restart" }
   | { via: "confirm"; action: "stop" | "remove" };
 
@@ -155,6 +156,12 @@ export function retryOf(
   action: Pick<ActionRecord, "kind" | "action">,
 ): Retry | null {
   const service = action.kind === "docker" || action.kind === "systemd";
+  if (
+    action.kind === "apt" &&
+    ["upgrade", "install", "remove", "purge"].includes(action.action)
+  ) {
+    return { via: "packages" };
+  }
   if (action.kind === "compose" && action.action === "deploy") {
     return { via: "deploy" };
   }
@@ -190,7 +197,13 @@ export function lastLines(
   };
 }
 
-export function historyText(action: ActionRecord, stacks: Stacks = []): string {
+export function historyText(
+  action: ActionRecord,
+  stacks: Stacks = [],
+  nodeName?: string,
+): string {
+  const packages = packageText(action, nodeName);
+  if (packages) return packages;
   const stack =
     action.kind === "docker" ? stackOf(stacks, action.name) : undefined;
   const name = stack ?? displayName(action.kind, action.name);
@@ -232,7 +245,10 @@ export function actionLine(
   const failure = failed(action)
     ? [
         action.exitCode === null ? null : `Exit ${action.exitCode}`,
-        errorLine(action.output),
+        errorLine(
+          (action.kind === "apt" ? outcomeOf(action)?.failed : undefined) ??
+            action.output,
+        ),
       ]
         .filter(Boolean)
         .join(" · ") || (action.status === "expired" ? "Expired" : "Failed")
@@ -243,8 +259,11 @@ export function actionLine(
         ? clockTime(action.requestedAt)
         : stampTime(action.requestedAt, options.now),
     mark: action.status === "done" ? "✓" : failed(action) ? "✕" : null,
-    text: historyText(action, options.stacks),
-    server: options.showServer ? (options.nodeName ?? null) : null,
+    text: historyText(action, options.stacks, options.nodeName),
+    server:
+      options.showServer && !namesServer(action)
+        ? (options.nodeName ?? null)
+        : null,
     device: actorOf(action, options.devices),
     duration: durationText(action),
     failure,

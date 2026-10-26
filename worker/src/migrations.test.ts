@@ -491,3 +491,48 @@ describe("migration 0026", () => {
     ).toThrow();
   });
 });
+
+describe("migration 0032", () => {
+  it("keeps every action, takes apt and Sign In, and leaves dry runs out of the one-pending rule", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0032");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "docker", "install", "done", "{}"));
+    sqlite.exec(
+      "UPDATE actions SET hidden_at = '2026-10-20T00:00:00.000Z', hidden_by = 'owner' WHERE id = 'a1'",
+    );
+    expect(() =>
+      sqlite.exec(action("a2", "apt", "nginx", "install", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0032"));
+    expect(
+      sqlite.prepare("SELECT id, hidden_by, progress FROM actions").all(),
+    ).toEqual([{ id: "a1", hidden_by: "owner", progress: null }]);
+    sqlite.exec(action("a2", "apt", "nginx", "install", "queued", "{}"));
+    sqlite.exec(action("a3", "apt", "nginx", "preview", "queued"));
+    sqlite.exec(action("a4", "apt", "nginx", "find", "queued"));
+    sqlite.exec(action("a5", "apt", "system", "refresh", "queued"));
+    sqlite.exec(action("a6", "apt", "system", "refresh", "queued"));
+    sqlite.exec(action("a7", "host", "tailscale", "signin", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a8", "apt", "nginx", "remove", "queued", "{}")),
+    ).toThrow();
+    for (const verb of ["upgrade", "hold", "unhold", "addrepo", "droprepo"]) {
+      sqlite.exec(action(`v-${verb}`, "apt", `x-${verb}`, verb, "done", "{}"));
+    }
+    expect(() =>
+      sqlite.exec(action("a9", "apt", "nginx", "explode", "queued", "{}")),
+    ).toThrow();
+    sqlite.exec(
+      "INSERT INTO packages (node_id, hash, report, updated_at) VALUES ('n1', 'h', '{}', '2026-10-26T00:00:00.000Z')",
+    );
+    sqlite.exec(
+      `UPDATE nodes SET updates = '{"waiting":3}', tailscale = '{"state":"running"}' WHERE id = 'n1'`,
+    );
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(sqlite.prepare("SELECT * FROM packages").all()).toEqual([]);
+  });
+});

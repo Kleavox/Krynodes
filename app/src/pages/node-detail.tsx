@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/empty-state";
 import { NodeStatus } from "@/components/node-status";
 import { PageHeader } from "@/components/page-header";
 import { SecurityMark } from "@/components/security-mark";
+import { StatusChip } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MachineTiles, readRange } from "@/features/nodes/machine-tiles";
@@ -17,6 +18,7 @@ import { useDevices, useOverview, useServices } from "@/lib/api";
 import { nodeState, timeAgo } from "@/lib/format";
 import { systemFacts } from "@/lib/node-facts";
 import { serverOperation } from "@/lib/operations";
+import { restartLine } from "@/lib/packages";
 import { useNow } from "@/lib/use-now";
 
 export function NodeDetailPage() {
@@ -90,6 +92,9 @@ export function NodeDetailPage() {
               )}
               offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
             />
+            {node.updates?.restart && (
+              <StatusChip tone="warn" label="restart needed" />
+            )}
             <DockerMark nodeId={node.id} />
             <SecurityMark nodeId={node.id} />
           </span>
@@ -106,6 +111,14 @@ export function NodeDetailPage() {
 
       <p className="-mt-3 mb-5 font-mono text-[11px] text-muted-foreground">
         {systemFacts(node)}
+        {node.updates?.restart && (
+          <span className="block">
+            {restartLine(
+              services.data?.nodes.find((item) => item.id === node.id)
+                ?.security,
+            )}
+          </span>
+        )}
       </p>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">

@@ -5,9 +5,12 @@ import { Link } from "react-router";
 import { AddressRows } from "@/components/server-addresses";
 import { Button } from "@/components/ui/button";
 import { AgentDialog } from "@/features/agent/agent-panel";
+import { SignInDialog } from "@/features/packages/sign-in-dialog";
 import { useDevices, useServices } from "@/lib/api";
 import { agentLine } from "@/lib/agent";
 import { parseTimestamp, shortDate } from "@/lib/format";
+import { packagesBlocker, tailscaleLine, updatesLine } from "@/lib/packages";
+import { cn } from "@/lib/utils";
 import type { AgentRelease, NodeRecord } from "@/types";
 
 function reachedBy(
@@ -33,8 +36,14 @@ export function ThisServer({
   const [agent, setAgent] = useState(false);
   const services = useServices();
   const devices = useDevices();
+  const [signIn, setSignIn] = useState<{ again: boolean } | null>(null);
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
+  const updates = updatesLine(node.updates, now);
+  const tailnet = node.tailscale
+    ? tailscaleLine(node.tailscale, node.name, now)
+    : null;
+  const blocker = packagesBlocker(node, (trust?.core.length ?? 0) > 0, now);
   return (
     <section aria-labelledby="this-server">
       <h2
@@ -68,6 +77,61 @@ export function ThisServer({
               : "--"}
           </dd>
           <dd />
+          {updates && (
+            <>
+              <dt className="leading-8 text-muted-foreground">Updates</dt>
+              <dd className="min-w-0 py-1.5 break-words">
+                {updates.text}
+                {updates.restart && (
+                  <span className="block text-warning">{updates.restart}</span>
+                )}
+              </dd>
+              <dd>
+                <Link
+                  to={`/nodes/${node.id}/packages`}
+                  className="inline-flex min-h-9 items-center px-1 whitespace-nowrap text-primary underline-offset-4 hover:underline md:min-h-8"
+                >
+                  Packages ›
+                </Link>
+              </dd>
+            </>
+          )}
+          {tailnet && (
+            <>
+              <dt className="leading-8 text-muted-foreground">Tailscale</dt>
+              <dd
+                className={cn(
+                  "min-w-0 py-1.5 break-words",
+                  tailnet.warn && "text-warning",
+                )}
+              >
+                {tailnet.lines.map((line) => (
+                  <span key={line} className="block">
+                    {line}
+                  </span>
+                ))}
+                {tailnet.action && (
+                  <span className="block">
+                    <button
+                      type="button"
+                      disabled={blocker !== null}
+                      title={blocker ?? undefined}
+                      onClick={() =>
+                        setSignIn({
+                          again: tailnet.action === "Sign In Again",
+                        })
+                      }
+                      className="text-primary underline-offset-4 hover:underline disabled:text-muted-foreground disabled:no-underline"
+                    >
+                      {tailnet.action} ›
+                    </button>
+                    {tailnet.after}
+                  </span>
+                )}
+              </dd>
+              <dd />
+            </>
+          )}
           <dt className="leading-8 text-muted-foreground">Agent</dt>
           <dd className="min-w-0 break-words">
             {agentLine(node, release.version, now)}
@@ -92,6 +156,14 @@ export function ThisServer({
         open={agent}
         onOpenChange={setAgent}
       />
+      {signIn !== null && (
+        <SignInDialog
+          node={node}
+          again={signIn.again}
+          open
+          onOpenChange={(open) => !open && setSignIn(null)}
+        />
+      )}
     </section>
   );
 }

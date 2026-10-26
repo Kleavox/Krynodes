@@ -14,7 +14,7 @@ const LONG_ABANDON_MS = 60 * 60_000;
 const PLANNED_MS = 30 * 60_000;
 
 export type ActionKind =
-  "systemd" | "docker" | "compose" | "trust" | "host" | "vault";
+  "systemd" | "docker" | "compose" | "trust" | "host" | "vault" | "apt";
 export type ActionVerb =
   | "start"
   | "stop"
@@ -47,7 +47,16 @@ export type ActionVerb =
   | "reshare"
   | "forget"
   | "install"
-  | "uninstall";
+  | "uninstall"
+  | "signin"
+  | "refresh"
+  | "find"
+  | "preview"
+  | "upgrade"
+  | "hold"
+  | "unhold"
+  | "addrepo"
+  | "droprepo";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -61,9 +70,11 @@ interface ActionTarget {
   action?: ActionVerb;
   attachFrom?: number;
   attachKey?: string;
+  attachment?: string;
 }
 
 export const SEALED_VERBS: readonly string[] = ["export", "release", "reshare"];
+export const QUESTIONS: readonly string[] = ["find", "preview"];
 
 export interface ActionRow {
   id: string;
@@ -89,6 +100,7 @@ export interface ActionRow {
   attachment?: string | null;
   attach_from?: number | null;
   attach_key?: string | null;
+  progress?: string | null;
 }
 
 export const DELIVER_SQL = `UPDATE actions SET status = 'sent', sent_at = ?1
@@ -111,7 +123,8 @@ const ABANDON_SQL = `UPDATE actions
   SET status = 'failed', finished_at = ?1, output = 'No result from the server',
     attachment = NULL
   WHERE status = 'sent'
-    AND sent_at < CASE WHEN kind IN ('compose', 'host') THEN ?3 ELSE ?2 END`;
+    AND COALESCE(json_extract(progress, '$.at'), sent_at)
+      < CASE WHEN kind IN ('compose', 'host', 'apt') THEN ?3 ELSE ?2 END`;
 
 const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
     attachment = NULL
@@ -239,7 +252,13 @@ export function createBatch(
   const batchId = crypto.randomUUID();
   const at = iso(input.now);
   const actions = input.targets.map(
-    ({ signed: _, attachFrom: __, attachKey: ___, ...target }) => ({
+    ({
+      signed: _,
+      attachFrom: __,
+      attachKey: ___,
+      attachment: ____,
+      ...target
+    }) => ({
       ...target,
       id: target.id ?? crypto.randomUUID(),
       status: "queued" as const,
@@ -255,20 +274,22 @@ export function createBatch(
       signed: input.targets[index]?.signed ?? null,
       attachFrom: input.targets[index]?.attachFrom ?? null,
       attachKey: input.targets[index]?.attachKey ?? null,
+      attachment: input.targets[index]?.attachment ?? null,
     })),
   );
   const statement = db
     .prepare(
       `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name,
          action, status, requested_by, requested_at, deliverable_at, signed, device_id,
-         attach_from, attach_key)
+         attach_from, attach_key, attachment)
        SELECT json_extract(value, '$.id'), ?1, key, ?2,
               json_extract(value, '$.nodeId'), json_extract(value, '$.kind'),
               json_extract(value, '$.name'), COALESCE(json_extract(value, '$.action'), ?3),
               'queued', ?4, ?5,
               CASE WHEN ?2 = 'parallel' OR key = 0 THEN ?5 END,
               json_extract(value, '$.signed'), ?7,
-              json_extract(value, '$.attachFrom'), json_extract(value, '$.attachKey')
+              json_extract(value, '$.attachFrom'), json_extract(value, '$.attachKey'),
+              json_extract(value, '$.attachment')
        FROM json_each(?6)
        WHERE ?8 IS NULL
          OR EXISTS (SELECT 1 FROM proposals WHERE id = ?8 AND status = 'open')`,

@@ -28,6 +28,7 @@ export function nodeHealth(
   node: NodeRecord,
   checks: CheckRecord[],
   now: number,
+  raised: string[] = [],
 ): { severity: Severity; reasons: string[] } {
   const state = nodeState(node, now);
   if (state === "pending" || state === "disabled") {
@@ -47,6 +48,7 @@ export function nodeHealth(
   const reasons = [
     ...(down > 0 ? [`${down} ${down === 1 ? "check" : "checks"} down`] : []),
     ...usage.map((item) => `${item.label} ${Math.round(item.value ?? 0)}%`),
+    ...raised,
   ];
   const critical = down > 0 || usage.some((item) => item.level === "critical");
   if (critical) return { severity: "critical", reasons };

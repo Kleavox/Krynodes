@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router";
 
 import {
@@ -16,7 +17,9 @@ import {
   verb,
   type ActionTarget,
 } from "@/lib/services";
+import { usePackageNames } from "@/lib/api";
 import { canRestartServer } from "@/lib/devices";
+import { packageCommands } from "@/lib/packages";
 import { deployBlocker, groupStacks } from "@/lib/stacks";
 import type { NodeRecord, ServiceAction, ServicesResponse } from "@/types";
 
@@ -36,10 +39,17 @@ export function CommandPalette({
   onRun: (target: ActionTarget, action: ServiceAction) => void;
 }) {
   const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const names = usePackageNames(open);
+  const close = (next: boolean) => {
+    if (!next) setSearch("");
+    onOpenChange(next);
+  };
   const go = (to: string) => {
-    onOpenChange(false);
+    close(false);
     void navigate(to);
   };
+  const packages = packageCommands(nodes, names.data?.servers ?? [], search);
   const groups = services
     ? groupByServer(services, nodes, {
         showSystem: false,
@@ -58,11 +68,15 @@ export function CommandPalette({
   return (
     <CommandDialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={close}
       title="Search and Commands"
       description="Jump to a page or a server, or run an action."
     >
-      <CommandInput placeholder="Search pages, nodes and actions" />
+      <CommandInput
+        placeholder="Search pages, nodes, packages and actions"
+        value={search}
+        onValueChange={setSearch}
+      />
       <CommandList>
         <CommandEmpty>No results.</CommandEmpty>
         <CommandGroup heading="Actions">
@@ -111,6 +125,19 @@ export function CommandPalette({
                     {node.hostname}
                   </span>
                 )}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+        {packages.length > 0 && (
+          <CommandGroup heading="Packages">
+            {packages.map((entry) => (
+              <CommandItem
+                key={entry.key}
+                value={entry.value}
+                onSelect={() => go(entry.to)}
+              >
+                {entry.label}
               </CommandItem>
             ))}
           </CommandGroup>

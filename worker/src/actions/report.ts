@@ -81,6 +81,29 @@ export async function receiveReport(
       .all<{ node_id: string }>();
     next = waiting.results.map((row) => row.node_id);
   }
+  if (report.progress && report.progress.length > 0) {
+    await db.batch(
+      report.progress.map((step) => {
+        const reported = Date.parse(step.at);
+        const at = new Date(Math.min(reported, now)).toISOString();
+        return db
+          .prepare(
+            `UPDATE actions SET progress = ?1
+             WHERE id = ?2 AND node_id = ?3 AND status = 'sent' AND progress IS NOT ?1`,
+          )
+          .bind(
+            JSON.stringify({
+              at,
+              done: step.done,
+              total: step.total,
+              line: step.line,
+            }),
+            step.id,
+            node.id,
+          );
+      }),
+    );
+  }
   const inventoryHash = report.inventory
     ? await applyInventory(
         db,

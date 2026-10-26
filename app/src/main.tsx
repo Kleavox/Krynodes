@@ -18,6 +18,7 @@ import { HistoryPage } from "@/pages/history";
 import { createQueryClient } from "@/lib/query-client";
 import { NodeDetailPage } from "@/pages/node-detail";
 import { NotFoundPage } from "@/pages/not-found";
+import { PackagesPage } from "@/pages/packages";
 import { ServicesPage } from "@/pages/services";
 import { SettingsPage } from "@/pages/settings";
 import { DevicesPage } from "./pages/devices";
@@ -37,6 +38,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route element={<AppShell identity={identity} via={via} />}>
                   <Route index element={<FleetPage />} />
                   <Route path="nodes/:id" element={<NodeDetailPage />} />
+                  <Route path="nodes/:id/packages" element={<PackagesPage />} />
                   <Route path="services" element={<ServicesPage />} />
                   <Route path="devices" element={<DevicesPage />} />
                   <Route path="checks" element={<ChecksPage />} />

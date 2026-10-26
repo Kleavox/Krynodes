@@ -50,7 +50,14 @@
     ["host", "firewall"],
     ["host", "free-port-53"],
     ["host", "docker"],
-    ["vault", "cloudflare"]
+    ["vault", "cloudflare"],
+    ["host", "tailscale"],
+    ["apt", "system"],
+    ["apt", "nginx"],
+    ["apt", "libc6"],
+    ["apt", "g++"],
+    ["apt", "linux-image-6.1.0-27-amd64"],
+    ["apt", "tailscale"]
   ],
   "invalid": [
     ["systemd", "nginx"],
@@ -71,6 +78,12 @@
     ["host", "Server"],
     ["host", "rm-rf"],
     ["vault", "other"],
-    ["vault", "Cloudflare"]
+    ["vault", "Cloudflare"],
+    ["apt", "Nginx"],
+    ["apt", "a b"],
+    ["apt", "../x"],
+    ["apt", "-y"],
+    ["apt", "nginx:amd64"],
+    ["apt", ""]
   ]
 }

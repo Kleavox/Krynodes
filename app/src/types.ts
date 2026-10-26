@@ -1,3 +1,5 @@
+import type { PackagesReport, TailscaleReport } from "@krynodes/protocol";
+
 export interface Identity {
   id: string;
   email: string;
@@ -51,6 +53,31 @@ export interface NodeRecord {
   addresses?: Address[] | null;
   connected_at?: string;
   grace_seconds?: number;
+  updates?: UpdatesSummary | null;
+  tailscale?: TailscaleReport | null;
+}
+
+export type AptReport = Extract<PackagesReport, { apt: true }>;
+export type RestartFacts = NonNullable<AptReport["restart"]>;
+
+export interface UpdatesSummary {
+  waiting: number;
+  security: number;
+  held: number;
+  checkedAt: string | null;
+  restart: RestartFacts | null;
+}
+
+export interface PackagesResponse {
+  report: PackagesReport | null;
+  readAt: string | null;
+}
+
+interface ActionStep {
+  at: string;
+  done: number;
+  total: number;
+  line: string;
 }
 
 export type CheckKind = "HTTP" | "TCP" | "SERVICE" | "CONTAINER";
@@ -216,7 +243,8 @@ export interface CheckResults {
 export type ServiceKind = "systemd" | "docker";
 export type ServiceState = "running" | "stopped" | "failed" | "starting";
 export type ServiceAction = "start" | "stop" | "restart";
-export type ActionKind = ServiceKind | "compose" | "trust" | "host" | "vault";
+export type ActionKind =
+  ServiceKind | "compose" | "trust" | "host" | "vault" | "apt";
 export type ActionVerb =
   | ServiceAction
   | "deploy"
@@ -247,7 +275,16 @@ export type ActionVerb =
   | "reshare"
   | "forget"
   | "install"
-  | "uninstall";
+  | "uninstall"
+  | "signin"
+  | "refresh"
+  | "find"
+  | "preview"
+  | "upgrade"
+  | "hold"
+  | "unhold"
+  | "addrepo"
+  | "droprepo";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
@@ -450,6 +487,7 @@ export interface ActionRecord {
   exitCode: number | null;
   output: string | null;
   deviceId: string | null;
+  progress?: ActionStep | null;
 }
 
 export interface ServicesResponse {

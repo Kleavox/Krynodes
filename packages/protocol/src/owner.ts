@@ -92,6 +92,9 @@ export const NOT_WORK: readonly string[] = [
   "release",
   "reshare",
   "forget",
+  "refresh",
+  "find",
+  "preview",
 ];
 
 export const isWork = (action: { action: string }) =>

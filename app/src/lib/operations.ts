@@ -18,6 +18,7 @@ import { displayName, isPending, verb } from "./services";
 const REBOOT_WINDOW_MS = 10 * 60_000;
 const SETTLE_MS = 2 * 60_000;
 const STAYED_UP_MS = 90_000;
+const QUIET = new Set<ActionVerb>(["logs", "find", "preview"]);
 
 export type ServerOperation =
   | { kind: "deleting"; stopped: boolean }
@@ -143,7 +144,7 @@ export function activity(
 ): ActivityItem[] {
   const names = new Map(nodes.map((node) => [node.id, node.name]));
   const visible = actions.filter(
-    (action) => action.action !== "logs" && names.has(action.nodeId),
+    (action) => !QUIET.has(action.action) && names.has(action.nodeId),
   );
   const running = visible
     .filter(isPending)

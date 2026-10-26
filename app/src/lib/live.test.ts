@@ -10,6 +10,11 @@ describe("live updates", () => {
       ["checks", "results"],
       ["metrics", "recent"],
     ]);
+    expect(keysFor(["services"])).toEqual([
+      ["services"],
+      ["packages"],
+      ["overview"],
+    ]);
     expect(keysFor(["all"])).toBeNull();
     expect(keysFor(["unknown"])).toEqual([]);
   });

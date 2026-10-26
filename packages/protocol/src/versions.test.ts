@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import * as versions from "./versions";
 import {
+  agentHasFeatures,
   agentSupported,
+  FEATURE_AGENT,
   agentUpdatable,
   compareVersions,
   MIN_AGENT_VERSION,
@@ -38,10 +40,21 @@ describe("agent versions", () => {
     expect(agentUpdatable(undefined)).toBe(false);
   });
 
-  it("keeps no feature gates below the minimum", () => {
+  it("gates the new features on agent 0.7.0", () => {
+    expect(FEATURE_AGENT).toBe("0.7.0");
+    expect(agentHasFeatures("0.7.0")).toBe(true);
+    expect(agentHasFeatures("0.7.1")).toBe(true);
+    expect(agentHasFeatures("0.6.14")).toBe(false);
+    expect(agentHasFeatures("dev")).toBe(true);
+    expect(agentHasFeatures(null)).toBe(false);
+  });
+
+  it("keeps one feature gate above the minimum and none below it", () => {
     expect(Object.keys(versions).sort()).toEqual([
+      "FEATURE_AGENT",
       "MIN_AGENT_VERSION",
       "UPDATABLE_FROM",
+      "agentHasFeatures",
       "agentSupported",
       "agentUpdatable",
       "compareVersions",

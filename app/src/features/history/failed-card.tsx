@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 
 import { RowMenu } from "@/components/row-menu";
 import { Button } from "@/components/ui/button";
 import type { DeployRequest } from "@/features/deploy/deploy-dialog";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
+import { Lines as PackageLines } from "@/features/packages/lines";
 import type { ActionRequest } from "@/features/services/action-dialog";
 import { useLogsRead, type LogsTarget } from "@/features/services/logs-dialog";
 import { useDevices, useHideAction, useServices } from "@/lib/api";
@@ -16,6 +17,7 @@ import {
   logTargets,
   retryOf,
 } from "@/lib/history";
+import { aptOutput, historyLines, retryDialog } from "@/lib/packages";
 import { displayName } from "@/lib/services";
 import { deployBlocker, groupStacks } from "@/lib/stacks";
 import { cn } from "@/lib/utils";
@@ -98,6 +100,7 @@ export function FailedCard({
   const devices = useDevices().data?.devices;
   const hide = useHideAction();
   const run = useSignedAction();
+  const navigate = useNavigate();
   const [tab, setTab] = useState("output");
   const [opened, setOpened] = useState<string[]>([]);
   const node = nodes.find((entry) => entry.id === action.nodeId);
@@ -152,6 +155,13 @@ export function FailedCard({
   } else if (retry?.via === "confirm" && trusted && target) {
     const verb = retry.action;
     tryAgain = () => onRequest({ action: verb, target });
+  } else if (
+    retry?.via === "packages" &&
+    (inventory?.trust?.core.length ?? 0) > 0
+  ) {
+    const dialog = retryDialog(action);
+    tryAgain = () =>
+      void navigate(`/nodes/${action.nodeId}/packages`, { state: { dialog } });
   }
   const rollBack =
     action.action === "deploy" && ready?.stack.rollback
@@ -164,9 +174,16 @@ export function FailedCard({
       : undefined;
   const open = (key: string) => {
     setTab(key);
-    if (key !== "output" && !opened.includes(key)) setOpened([...opened, key]);
+    if (key !== "output" && key !== "changed" && !opened.includes(key)) {
+      setOpened([...opened, key]);
+    }
   };
-  const tabs = [{ key: "output", label: "Output" }, ...logs];
+  const changed = historyLines(action, node?.name ?? "");
+  const tabs = [
+    { key: "output", label: "Output" },
+    ...(changed ? [{ key: "changed", label: "What Changed" }] : []),
+    ...logs,
+  ];
 
   return (
     <article className="space-y-2 rounded-lg border border-destructive/40 bg-card p-3">
@@ -236,7 +253,7 @@ export function FailedCard({
       </div>
       <div role="tabpanel" hidden={tab !== "output"}>
         <Lines
-          text={action.output}
+          text={aptOutput(action)}
           empty={
             action.status === "expired"
               ? "It expired before the server took it. Nothing ran."
@@ -244,6 +261,11 @@ export function FailedCard({
           }
         />
       </div>
+      {changed && (
+        <div role="tabpanel" hidden={tab !== "changed"}>
+          <PackageLines lines={changed} className="space-y-1 text-xs" />
+        </div>
+      )}
       {logs
         .filter((entry) => opened.includes(entry.key))
         .map((entry) => (

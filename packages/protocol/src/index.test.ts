@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import fixture from "./fixtures/agent-config.json";
 import targets from "./fixtures/targets.json";
+import shared from "./fixtures/packages-report.json";
 import {
   actionResultSchema,
   agentActionSchema,
@@ -997,5 +998,147 @@ describe("orchestration messages of agent 0.5.0", () => {
     expect(accepts(undefined)).toBe(true);
     expect(accepts(["bad;name"])).toBe(false);
     expect(accepts(Array(501).fill("listmonk_app"))).toBe(false);
+  });
+});
+
+describe("package messages of agent 0.7.0", () => {
+  const base = {
+    id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a70",
+    kind: "apt",
+    name: "nginx",
+    expiresAt: "2026-10-26T10:10:00.000Z",
+  };
+  const nodeId = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a71";
+  const hash = "a".repeat(64);
+  const { packages: report, tailscale } = shared;
+  const accepts = (inventory: Record<string, unknown>) =>
+    agentActionsRequestSchema.safeParse({
+      nodeId,
+      inventory: { hash, ...inventory },
+    }).success;
+
+  it("changes packages only with a signed command", () => {
+    for (const action of [
+      "install",
+      "upgrade",
+      "hold",
+      "unhold",
+      "remove",
+      "purge",
+      "addrepo",
+      "droprepo",
+    ]) {
+      expect(
+        agentActionSchema.safeParse({ ...base, action, signed: signedCommand })
+          .success,
+        action,
+      ).toBe(true);
+      expect(agentActionSchema.safeParse({ ...base, action }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("asks and dry-runs without a signature, its arguments in the attachment", () => {
+    for (const action of ["refresh", "find", "preview"]) {
+      expect(
+        agentActionSchema.safeParse({
+          ...base,
+          name: "system",
+          action,
+          attachment: "eyJxIjoibmdpbngifQ",
+        }).success,
+        action,
+      ).toBe(true);
+      expect(
+        agentActionSchema.safeParse({ ...base, action, signed: signedCommand })
+          .success,
+      ).toBe(false);
+    }
+    expect(
+      agentActionSchema.safeParse({ ...base, action: "restart" }).success,
+    ).toBe(false);
+  });
+
+  it("signs a server in to Tailscale and nothing else for it", () => {
+    const signin = {
+      ...base,
+      kind: "host",
+      name: "tailscale",
+      action: "signin",
+      signed: signedCommand,
+    };
+    expect(agentActionSchema.safeParse(signin).success).toBe(true);
+    expect(
+      agentActionSchema.safeParse({ ...signin, action: "install" }).success,
+    ).toBe(false);
+    expect(
+      agentActionSchema.safeParse({ ...signin, name: "server" }).success,
+    ).toBe(false);
+    expect(
+      agentActionSchema.safeParse({ ...signin, kind: "apt", name: "system" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("reports the package list and tailscaled", () => {
+    expect(accepts({ packages: report, tailscale })).toBe(true);
+    expect(
+      accepts({ packages: { apt: false, system: "Fedora Linux 41" } }),
+    ).toBe(true);
+    expect(accepts({ packages: { ...report, restart: null } })).toBe(true);
+    expect(
+      accepts({
+        tailscale: {
+          state: "needs-login",
+          addresses: [],
+          name: null,
+          keyExpiry: null,
+        },
+      }),
+    ).toBe(true);
+    expect(accepts({ tailscale: { ...tailscale, state: "lost" } })).toBe(false);
+    expect(
+      accepts({
+        packages: {
+          ...report,
+          updates: [{ ...report.updates[1], back: "Needs a new package." }],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      accepts({
+        packages: { ...report, updates: Array(501).fill(report.updates[0]) },
+      }),
+    ).toBe(false);
+    expect(
+      accepts({
+        packages: {
+          ...report,
+          packages: [{ ...report.packages[0], name: "Bad Name" }],
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("carries the step of a long job", () => {
+    const progress = [
+      {
+        id: base.id,
+        at: "2026-10-26T09:00:41.000Z",
+        done: 6,
+        total: 14,
+        line: "Unpacking docker-ce",
+      },
+    ];
+    expect(
+      agentActionsRequestSchema.safeParse({ nodeId, progress }).success,
+    ).toBe(true);
+    expect(
+      agentActionsRequestSchema.safeParse({
+        nodeId,
+        progress: [{ ...progress[0], done: -1 }],
+      }).success,
+    ).toBe(false);
   });
 });

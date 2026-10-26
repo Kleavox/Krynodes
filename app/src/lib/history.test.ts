@@ -227,6 +227,12 @@ describe("a failed, not fixed card", () => {
     });
     expect(retryOf(action({ kind: "compose", action: "stop" }))).toBeNull();
     expect(retryOf(action({ kind: "host", action: "apply" }))).toBeNull();
+    for (const verb of ["upgrade", "install", "remove", "purge"] as const) {
+      expect(retryOf(action({ kind: "apt", action: verb }))).toEqual({
+        via: "packages",
+      });
+    }
+    expect(retryOf(action({ kind: "apt", action: "hold" }))).toBeNull();
   });
 
   it("shows the last lines of an output first", () => {

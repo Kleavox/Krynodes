@@ -31,6 +31,8 @@ const NODE_KEYS = [
   "auto_update",
   "deleting",
   "addresses",
+  "updates",
+  "tailscale",
 ];
 const CHECK_KEYS = [
   "id",

@@ -1,5 +1,7 @@
+import { Lines } from "@/features/packages/lines";
 import { useDevices, useServices } from "@/lib/api";
 import { actionLine } from "@/lib/history";
+import { aptOutput, historyLines } from "@/lib/packages";
 import { isPending } from "@/lib/services";
 import { cn } from "@/lib/utils";
 import type { ActionRecord } from "@/types";
@@ -28,6 +30,8 @@ export function ActionLine({
     stacks,
     now,
   });
+  const changed = historyLines(action, nodeName);
+  const output = aptOutput(action);
   return (
     <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-3 py-2.5 text-sm sm:grid-cols-[auto_minmax(0,1fr)_auto]">
       <span className="font-mono text-xs leading-5 text-muted-foreground">
@@ -58,14 +62,22 @@ export function ActionLine({
         )}
         {line.duration && <span>· {line.duration}</span>}
       </span>
+      {changed && !line.failure && (
+        <details className="col-start-2 min-w-0 sm:col-span-2">
+          <summary className="cursor-pointer font-mono text-xs text-muted-foreground">
+            What Changed
+          </summary>
+          <Lines lines={changed} className="mt-1.5 space-y-1 text-xs" />
+        </details>
+      )}
       {line.failure &&
-        (action.output ? (
+        (output ? (
           <details className="col-start-2 min-w-0 sm:col-span-2">
             <summary className="cursor-pointer truncate font-mono text-xs text-destructive">
               {line.failure}
             </summary>
             <pre className="mt-1 max-h-40 overflow-auto rounded border bg-background p-2 text-[11px] whitespace-pre-wrap">
-              {action.output}
+              {output}
             </pre>
           </details>
         ) : (

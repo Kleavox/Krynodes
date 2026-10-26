@@ -28,6 +28,8 @@ export const queryKeys = {
   proposals: ["proposals"],
   changeHistory: ["proposals", "history"],
   usage: ["usage"],
+  packages: (id: string) => ["packages", "node", id],
+  packageNames: ["packages", "names"],
 } as const;
 
 export function createQueryClient(): QueryClient {

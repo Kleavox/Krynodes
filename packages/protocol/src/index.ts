@@ -13,9 +13,11 @@ export {
 } from "./change";
 export { summarizeChange, type ChangeSummary } from "./summary";
 export {
+  agentHasFeatures,
   agentSupported,
   agentUpdatable,
   compareVersions,
+  FEATURE_AGENT,
   MIN_AGENT_VERSION,
   UPDATABLE_FROM,
 } from "./versions";
@@ -107,7 +109,14 @@ export const signedCommandSchema = z.strictObject({
   signature: b64url,
 });
 
-export const UNSIGNED_VERBS = ["manual", "heal", "scan"] as const;
+export const UNSIGNED_VERBS = [
+  "manual",
+  "heal",
+  "scan",
+  "refresh",
+  "find",
+  "preview",
+] as const;
 
 export const KIND_VERBS = {
   systemd: [
@@ -147,14 +156,31 @@ export const KIND_VERBS = {
     "scan",
     "install",
     "uninstall",
+    "signin",
   ],
   trust: ["trust"],
   vault: ["store", "release", "reshare", "forget"],
+  apt: [
+    "refresh",
+    "find",
+    "preview",
+    "install",
+    "upgrade",
+    "hold",
+    "unhold",
+    "remove",
+    "purge",
+    "addrepo",
+    "droprepo",
+  ],
 } as const;
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
 
 export function hostVerbFits(name: string, action: string): boolean {
+  if (name === "tailscale" || action === "signin") {
+    return name === "tailscale" && action === "signin";
+  }
   if (action === "uninstall") return name === "server";
   if (name === "docker") return action === "install";
   const recipe = (RECIPES as readonly string[]).includes(name);
@@ -173,7 +199,15 @@ export const signedTrustSchema = z.strictObject({
 export const agentActionSchema = z
   .strictObject({
     id: z.string().uuid(),
-    kind: z.enum(["systemd", "docker", "compose", "trust", "host", "vault"]),
+    kind: z.enum([
+      "systemd",
+      "docker",
+      "compose",
+      "trust",
+      "host",
+      "vault",
+      "apt",
+    ]),
     name: z.string(),
     action: z.enum([
       "start",
@@ -208,6 +242,15 @@ export const agentActionSchema = z
       "forget",
       "install",
       "uninstall",
+      "signin",
+      "refresh",
+      "find",
+      "preview",
+      "upgrade",
+      "hold",
+      "unhold",
+      "addrepo",
+      "droprepo",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -342,6 +385,91 @@ export const removedStackSchema = z
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 
+const stamp = z.string().datetime();
+const aptName = z.string().refine((name) => isValidTarget("apt", name));
+const aptVersion = z.string().min(1).max(128);
+
+export const packagesReportSchema = z.union([
+  z.strictObject({ apt: z.literal(false), system: z.string().max(120) }),
+  z.strictObject({
+    apt: z.literal(true),
+    system: z.string().max(120),
+    codename: z.string().max(40),
+    readAt: stamp,
+    checkedAt: stamp.nullable(),
+    installed: z.number().int().nonnegative(),
+    packages: z
+      .array(
+        z.strictObject({
+          name: aptName,
+          version: aptVersion,
+          from: z.string().max(80).nullable(),
+          by: z.string().max(64).nullable(),
+          feature: z.string().max(60).nullable(),
+          more: z.number().int().nonnegative(),
+          held: z.boolean(),
+        }),
+      )
+      .max(5000),
+    updates: z
+      .array(
+        z.strictObject({
+          name: aptName,
+          from: aptVersion,
+          to: aptVersion,
+          source: z.string().max(80).nullable(),
+          security: z.boolean(),
+          held: z.boolean(),
+          back: z
+            .strictObject({
+              adds: z.array(aptName).max(50),
+              removes: z.array(aptName).max(50),
+            })
+            .nullable(),
+        }),
+      )
+      .max(500),
+    sources: z
+      .array(
+        z.strictObject({
+          name: z.string().min(1).max(80),
+          host: z.string().max(253),
+          suites: z.array(z.string().max(80)).max(20),
+          key: z.string().max(60).nullable(),
+          krynodes: z.boolean(),
+          file: z.string().min(1).max(4096).startsWith("/"),
+          system: z.boolean(),
+        }),
+      )
+      .max(50),
+    security: z.strictObject({ on: z.boolean(), lastRan: stamp.nullable() }),
+    restart: z
+      .strictObject({
+        since: stamp,
+        running: z.string().max(80).nullable(),
+        newest: z.string().max(80).nullable(),
+        file: z.boolean(),
+        services: z.array(z.string().max(128)).max(50),
+      })
+      .nullable(),
+  }),
+]);
+
+export const tailscaleReportSchema = z.strictObject({
+  state: z.enum(["running", "needs-login", "stopped"]),
+  addresses: z.array(z.string().max(64)).max(8),
+  name: z.string().max(253).nullable(),
+  keyExpiry: stamp.nullable(),
+});
+
+export const progressSchema = z.strictObject({
+  id: z.string().uuid(),
+  at: stamp,
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  line: z.string().max(200),
+});
+
 export const actionResultSchema = z.strictObject({
   id: z.string().uuid(),
   ok: z.boolean(),
@@ -368,12 +496,17 @@ export const agentActionsRequestSchema = z
         services: z.array(serviceEntrySchema).max(500).optional(),
         stacks: z.array(stackEntrySchema).max(50).optional(),
         trust: trustReportSchema.optional(),
+        packages: packagesReportSchema.optional(),
+        tailscale: tailscaleReportSchema.optional(),
       })
       .optional(),
+    progress: z.array(progressSchema).max(10).optional(),
   })
   .refine(
     (request) =>
-      request.results !== undefined || request.inventory !== undefined,
+      request.results !== undefined ||
+      request.inventory !== undefined ||
+      request.progress !== undefined,
   );
 
 export const agentActionsResponseSchema = z.object({
@@ -412,3 +545,6 @@ export type SignedCommand = z.infer<typeof signedCommandSchema>;
 export type SignedTrust = z.infer<typeof signedTrustSchema>;
 export type StackEntry = z.infer<typeof stackEntrySchema>;
 export type TrustReport = z.infer<typeof trustReportSchema>;
+export type PackagesReport = z.infer<typeof packagesReportSchema>;
+export type TailscaleReport = z.infer<typeof tailscaleReportSchema>;
+export type ActionProgress = z.infer<typeof progressSchema>;

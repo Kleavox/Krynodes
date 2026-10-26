@@ -354,9 +354,10 @@ func TestUpdatesNeedTLS13(t *testing.T) {
 
 func TestResultsInheritTheAgentGroupWhoeverWritesThem(t *testing.T) {
 	modes := stateDirectoryModes()
-	results := modes[filepath.Join(actions.StateDir, "results")]
-	if results&os.ModeSetgid == 0 || results.Perm() != 0o750 {
-		t.Fatalf("results is %v; the root host unit writes there and the agent must read it", results)
+	for _, name := range []string{"results", "progress"} {
+		if mode := modes[filepath.Join(actions.StateDir, name)]; mode&os.ModeSetgid == 0 || mode.Perm() != 0o750 {
+			t.Fatalf("%s is %v; the root host unit writes there and the agent must read it", name, mode)
+		}
 	}
 	if state := modes[actions.StateDir]; state&os.ModeSetgid != 0 || state.Perm() != 0o750 {
 		t.Fatalf("state directory is %v", state)

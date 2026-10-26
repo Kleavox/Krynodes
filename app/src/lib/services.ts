@@ -90,6 +90,31 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Removing Krynodes…",
       done: "Krynodes removed",
     },
+    signin: { verb: "Sign In", doing: "Signing in…", done: "Signed in" },
+    refresh: {
+      verb: "Check for Updates",
+      doing: "Checking for updates…",
+      done: "Checked",
+    },
+    find: { verb: "Search", doing: "Searching…", done: "Found" },
+    preview: { verb: "Try", doing: "Trying…", done: "Tried" },
+    upgrade: { verb: "Upgrade", doing: "Upgrading…", done: "Upgraded" },
+    hold: { verb: "Hold", doing: "Holding…", done: "Held" },
+    unhold: {
+      verb: "Release Hold",
+      doing: "Releasing the hold…",
+      done: "Released",
+    },
+    addrepo: {
+      verb: "Add Repository",
+      doing: "Adding the repository…",
+      done: "Added",
+    },
+    droprepo: {
+      verb: "Remove Repository",
+      doing: "Removing the repository…",
+      done: "Removed",
+    },
   };
 
 export const RECIPE_TITLES: Record<string, string> = {

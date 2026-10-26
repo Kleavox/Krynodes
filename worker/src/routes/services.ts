@@ -1,9 +1,11 @@
 import { pokeSoon } from "../fleet/client";
 import {
+  FEATURE_AGENT,
   KIND_VERBS,
   MIN_AGENT_VERSION,
   RECIPES,
   UNSIGNED_VERBS,
+  agentHasFeatures,
   agentSupported,
   hostVerbFits,
   isProtectedTarget,
@@ -18,12 +20,13 @@ import { assertionUv } from "../lib/webauthn";
 import {
   cancelStatement,
   createBatch,
+  QUESTIONS,
   SEALED_VERBS,
   sweepStatements,
   UNIT_SQL,
   type ActionRow,
 } from "../actions/store";
-import { decodeJson } from "../lib/b64url";
+import { decodeJson, toB64url } from "../lib/b64url";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
 import { readPrivateRanges } from "./settings";
 import { ownersRefusal } from "../trust/approval";
@@ -62,6 +65,15 @@ const actionRequestSchema = z.object({
     "scan",
     "install",
     "uninstall",
+    "signin",
+    "refresh",
+    "find",
+    "preview",
+    "upgrade",
+    "hold",
+    "unhold",
+    "addrepo",
+    "droprepo",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -69,9 +81,10 @@ const actionRequestSchema = z.object({
       z.object({
         id: z.string().uuid().optional(),
         nodeId: z.string().uuid(),
-        kind: z.enum(["systemd", "docker", "compose", "host"]),
+        kind: z.enum(["systemd", "docker", "compose", "host", "apt"]),
         name: z.string().min(1).max(128),
         signed: signedCommandSchema.optional(),
+        args: z.record(z.string().max(64), z.string()).optional(),
       }),
     )
     .min(1)
@@ -81,7 +94,26 @@ const actionRequestSchema = z.object({
 
 const OWN_STACK = /^\/var\/lib\/kry-exec\/compose\/[^/]+$/u;
 
-export const READ_ONLY = new Set(["logs", "read", "scan"]);
+export const READ_ONLY = new Set([
+  "logs",
+  "read",
+  "scan",
+  "refresh",
+  "find",
+  "preview",
+]);
+
+const MAX_ASKED_BYTES = 4096;
+
+const askedAttachment = (args: Record<string, string> | undefined) => {
+  if (args === undefined) return undefined;
+  const bytes = new TextEncoder().encode(JSON.stringify(args));
+  return bytes.length > MAX_ASKED_BYTES ? null : toB64url(bytes);
+};
+
+const needsFeatures = (target: { kind: string; name: string }) =>
+  target.kind === "apt" ||
+  (target.kind === "host" && target.name === "tailscale");
 
 const commandSchema = z.object({
   v: z.literal(1),
@@ -116,6 +148,7 @@ export function toActionRecord(row: ActionRow) {
     exitCode: row.exit_code,
     output: row.output,
     deviceId: row.device_id,
+    progress: parsed(row.progress ?? null),
   };
 }
 
@@ -346,10 +379,11 @@ export function registerServiceRoutes(
     await db.batch(sweepStatements(db, Date.now()));
     const rows = await db
       .prepare(
-        `SELECT * FROM actions WHERE node_id = ? AND action <> 'logs'
+        `SELECT * FROM actions WHERE node_id = ?1
+           AND action <> 'logs' AND action NOT IN (SELECT value FROM json_each(?2))
          ORDER BY requested_at DESC, position DESC LIMIT 10`,
       )
-      .bind(node.id)
+      .bind(node.id, JSON.stringify(QUESTIONS))
       .all<ActionRow>();
     return context.json({ actions: rows.results.map(toActionRecord) });
   });
@@ -369,6 +403,10 @@ export function registerServiceRoutes(
           !isValidTarget(target.kind, target.name) ||
           !(KIND_VERBS[target.kind] as readonly string[]).includes(action) ||
           (target.kind === "host" && !hostVerbFits(target.name, action)) ||
+          (target.args !== undefined &&
+            (!unsigned ||
+              target.kind !== "apt" ||
+              askedAttachment(target.args) === null)) ||
           (unsigned
             ? target.signed !== undefined
             : target.signed === undefined || target.id === undefined),
@@ -427,6 +465,20 @@ export function registerServiceRoutes(
         422,
       );
     }
+    if (
+      (action === "remove" || action === "purge") &&
+      targets.some(
+        (target) => target.kind === "apt" && target.name === "openssh-server",
+      )
+    ) {
+      return context.json(
+        {
+          code: "PROTECTED_TARGET",
+          message: "Krynodes never removes openssh-server.",
+        },
+        422,
+      );
+    }
 
     const db = context.env.DB;
     const identity = context.get("identity");
@@ -449,7 +501,10 @@ export function registerServiceRoutes(
     const nodeIds = JSON.stringify([...wanted]);
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker FROM nodes
+        `SELECT id, name, agent_version, docker, tailscale,
+                (SELECT json_extract(report, '$.apt') FROM packages
+                 WHERE node_id = nodes.id) AS apt
+         FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
@@ -459,6 +514,8 @@ export function registerServiceRoutes(
         name: string;
         agent_version: string | null;
         docker: string | null;
+        tailscale: string | null;
+        apt: number | null;
       }>();
     if (nodes.results.length !== wanted.size) {
       return context.json(
@@ -475,6 +532,32 @@ export function registerServiceRoutes(
         {
           code: "AGENT_TOO_OLD",
           message: `Update the agent on ${old.name} to ${MIN_AGENT_VERSION} or newer.`,
+        },
+        422,
+      );
+    }
+    const behind = targets.find(
+      (target) =>
+        needsFeatures(target) &&
+        !agentHasFeatures(byId.get(target.nodeId)!.agent_version),
+    );
+    if (behind) {
+      return context.json(
+        {
+          code: "AGENT_TOO_OLD",
+          message: `Update the agent on ${byId.get(behind.nodeId)!.name} to ${FEATURE_AGENT} or newer.`,
+        },
+        422,
+      );
+    }
+    const aptless = targets.find(
+      (target) => target.kind === "apt" && byId.get(target.nodeId)!.apt === 0,
+    );
+    if (aptless) {
+      return context.json(
+        {
+          code: "NO_APT",
+          message: `${byId.get(aptless.nodeId)!.name} does not use apt.`,
         },
         422,
       );
@@ -526,10 +609,11 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT node_id AS nodeId, kind, name FROM actions
-           WHERE status IN ('queued', 'sent') AND action NOT IN ('logs', 'read', 'scan')
-             AND node_id IN (SELECT value FROM json_each(?))`,
+           WHERE status IN ('queued', 'sent')
+             AND action NOT IN (SELECT value FROM json_each(?2))
+             AND node_id IN (SELECT value FROM json_each(?1))`,
         )
-        .bind(nodeIds)
+        .bind(nodeIds, JSON.stringify([...READ_ONLY]))
         .all<{ nodeId: string; kind: string; name: string }>(),
     ]);
 
@@ -596,10 +680,15 @@ export function registerServiceRoutes(
             ...(node.docker === "missing" || node.docker === "no-compose"
               ? ["docker"]
               : []),
+            ...(node.tailscale === null ? [] : ["tailscale"]),
           ].map((name) => targetKey({ nodeId: node.id, kind: "host", name })),
         ),
       ]);
-      if (targets.some((target) => !present.has(targetKey(target)))) {
+      if (
+        targets.some(
+          (target) => target.kind !== "apt" && !present.has(targetKey(target)),
+        )
+      ) {
         return context.json(
           {
             code: "UNKNOWN_TARGET",
@@ -641,7 +730,10 @@ export function registerServiceRoutes(
     const batch = createBatch(db, {
       action,
       mode,
-      targets,
+      targets: targets.map(({ args, ...target }) => ({
+        ...target,
+        attachment: askedAttachment(args) ?? undefined,
+      })),
       requestedBy: identity.email,
       now,
       deviceId: targets[0]?.signed?.grant.credentialId,

@@ -29,6 +29,7 @@ import type {
   MetricRange,
   NodeMetrics,
   Overview,
+  PackagesResponse,
   ProposalRecord,
   RecentMetrics,
   ServicesResponse,
@@ -345,7 +346,13 @@ export const postActions = (body: {
   action: Exclude<ActionVerb, "trust" | "heal">;
   mode: BatchMode;
   targets: (
-    SignedTarget | { nodeId: string; kind: "systemd" | "host"; name: string }
+    | SignedTarget
+    | {
+        nodeId: string;
+        kind: "systemd" | "host" | "apt";
+        name: string;
+        args?: Record<string, string>;
+      }
   )[];
   then?: "delete";
 }) =>
@@ -393,6 +400,51 @@ export const useScan = () =>
       }),
     [...ACTION_QUERIES, queryKeys.overview],
     true,
+  );
+
+export function usePackages(id: string) {
+  return useQuery({
+    queryKey: queryKeys.packages(id),
+    queryFn: () =>
+      apiFetch<PackagesResponse>(
+        `/api/nodes/${encodeURIComponent(id)}/packages`,
+      ),
+    refetchInterval: () => untilWindowSettles(Date.now()),
+  });
+}
+
+export function usePackageNames(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.packageNames,
+    queryFn: () =>
+      apiFetch<{ servers: { nodeId: string; names: string[] }[] }>(
+        "/api/packages",
+      ),
+    enabled,
+  });
+}
+
+export const useAskApt = () =>
+  useApiMutation(
+    (ask: {
+      nodeId: string;
+      action: "refresh" | "find" | "preview";
+      name: string;
+      args?: Record<string, string>;
+    }) =>
+      postActions({
+        action: ask.action,
+        mode: "parallel",
+        targets: [
+          {
+            nodeId: ask.nodeId,
+            kind: "apt",
+            name: ask.name,
+            ...(ask.args ? { args: ask.args } : {}),
+          },
+        ],
+      }),
+    ACTION_QUERIES,
   );
 
 export function useManualRestart() {

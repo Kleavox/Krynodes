@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, Ellipsis } from "lucide-react";
+import { Link } from "react-router";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -100,6 +101,9 @@ export function NodeActions({
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => refresh.mutate([node.id])}>
             Refresh Services
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link to={`/nodes/${node.id}/packages`}>Packages</Link>
           </DropdownMenuItem>
           {updatable && (
             <DropdownMenuItem onSelect={() => update.mutate(node.id)}>

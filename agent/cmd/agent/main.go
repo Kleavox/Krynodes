@@ -642,7 +642,7 @@ func hostApply() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("host-apply must run as root on Linux")
 	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand}
 	return executor.HostApply(context.Background())
 }
 
@@ -651,7 +651,7 @@ func prepareActionDirectories(uid, gid int) error {
 		return fmt.Errorf("prepare action request directory: %w", err)
 	}
 	modes := stateDirectoryModes()
-	for _, directory := range []string{actions.StateDir, filepath.Join(actions.StateDir, "results")} {
+	for _, directory := range []string{actions.StateDir, filepath.Join(actions.StateDir, "results"), filepath.Join(actions.StateDir, "progress")} {
 		if err := claimDirectory(directory, 0, gid, modes[directory]); err != nil {
 			return fmt.Errorf("prepare %s: %w", directory, err)
 		}
@@ -662,7 +662,8 @@ func prepareActionDirectories(uid, gid int) error {
 func stateDirectoryModes() map[string]os.FileMode {
 	return map[string]os.FileMode{
 		actions.StateDir: 0o750,
-		filepath.Join(actions.StateDir, "results"): 0o750 | os.ModeSetgid,
+		filepath.Join(actions.StateDir, "results"):  0o750 | os.ModeSetgid,
+		filepath.Join(actions.StateDir, "progress"): 0o750 | os.ModeSetgid,
 	}
 }
 

@@ -45,7 +45,8 @@ export function registerAdminRoutes(
                   AND status IN ('queued', 'sent')) THEN 'running'
               END AS deleting,
               ipv4, ipv4_at, ipv4_network, ipv4_owner,
-              ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report
+              ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report,
+              updates, tailscale
        FROM nodes WHERE owner_user_id = ? ORDER BY created_at DESC`,
       )
         .bind(ownerId)
@@ -54,6 +55,8 @@ export function registerAdminRoutes(
             id: string;
             interval_seconds: number;
             trust_report: string | null;
+            updates: string | null;
+            tailscale: string | null;
           }
         >(),
       context.env.DB.prepare(
@@ -104,9 +107,14 @@ export function registerAdminRoutes(
         ipv6_owner,
         interfaces,
         trust_report,
+        updates,
+        tailscale,
         ...rest
       }) => ({
         ...rest,
+        updates: updates === null ? null : (JSON.parse(updates) as unknown),
+        tailscale:
+          tailscale === null ? null : (JSON.parse(tailscale) as unknown),
         addresses: trusts(readReport(trust_report), prints)
           ? listAddresses(
               {

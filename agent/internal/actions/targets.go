@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/Kleavox/krynodes/agent/internal/apt"
 )
 
 var targetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$`)
@@ -60,9 +62,11 @@ func ValidTarget(kind, name string) bool {
 	case "trust":
 		return name == "devices"
 	case "host":
-		return name == "server" || name == "docker" || slices.Contains(Recipes, name)
+		return name == "server" || name == "docker" || name == "tailscale" || slices.Contains(Recipes, name)
 	case "vault":
 		return name == "cloudflare"
+	case "apt":
+		return apt.ValidName(name)
 	}
 	if !targetName.MatchString(name) {
 		return false

@@ -1,4 +1,5 @@
 import { staleAfterMs } from "../agent/windows";
+import { sha256 } from "../lib/crypto";
 import {
   isProtectedTarget,
   type AgentActionsRequest,
@@ -130,6 +131,41 @@ async function stackStatements(
 const keyOf = (service: { kind: string; name: string }) =>
   `${service.kind}:${service.name}`;
 
+type Packages = NonNullable<Inventory["packages"]>;
+
+const summaryOf = (packages: Packages) =>
+  packages.apt
+    ? JSON.stringify({
+        waiting: packages.updates.length,
+        security: packages.updates.filter((update) => update.security).length,
+        held: packages.updates.filter((update) => update.held).length,
+        checkedAt: packages.checkedAt,
+        restart: packages.restart,
+      })
+    : null;
+
+async function packagesStatement(
+  db: D1Database,
+  nodeId: string,
+  packages: Packages,
+  at: string,
+): Promise<D1PreparedStatement> {
+  const { readAt: _, ...listed } = packages as Packages & { readAt?: string };
+  return db
+    .prepare(
+      `INSERT INTO packages (node_id, hash, report, updated_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (node_id) DO UPDATE SET
+         hash = excluded.hash, report = excluded.report, updated_at = excluded.updated_at
+       WHERE packages.hash IS NOT excluded.hash`,
+    )
+    .bind(
+      nodeId,
+      await sha256(JSON.stringify(listed)),
+      JSON.stringify(packages),
+      at,
+    );
+}
+
 function changed(row: ServiceRow | undefined, entry: ServiceEntry): boolean {
   return (
     !row ||
@@ -228,12 +264,17 @@ export async function applyInventory(
             .bind(JSON.stringify(inventory.trust), node.id),
         ]
       : []),
+    ...(inventory.packages
+      ? [await packagesStatement(db, node.id, inventory.packages, at)]
+      : []),
     db
       .prepare(
         `UPDATE nodes SET inventory_hash = ?1, inventory_at = ?2, refresh_requested_at = NULL,
            docker = COALESCE(?3, docker), seal_key = COALESCE(?4, seal_key),
            security = COALESCE(?5, security),
-           vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END
+           vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END,
+           updates = CASE WHEN ?9 = 1 THEN ?10 ELSE updates END,
+           tailscale = ?11
          WHERE id = ?8`,
       )
       .bind(
@@ -245,6 +286,9 @@ export async function applyInventory(
         inventory.vault === undefined ? 0 : 1,
         inventory.vault ? JSON.stringify(inventory.vault) : null,
         node.id,
+        inventory.packages === undefined ? 0 : 1,
+        inventory.packages ? summaryOf(inventory.packages) : null,
+        inventory.tailscale ? JSON.stringify(inventory.tailscale) : null,
       ),
   ]);
   return inventory.hash;

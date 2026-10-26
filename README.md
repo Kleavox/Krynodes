@@ -767,6 +767,35 @@ plugin when Docker is there. It refuses next to Podman. A repository the owner
 added already is used as it is. A Docker it installs keeps container logs small
 (Docker's `local` log driver, unless `/etc/docker/daemon.json` already exists).
 
+### Packages
+
+**Packages** (server menu, after Refresh services, or the Updates row of This
+server) shows a Debian or Ubuntu server's apt packages, from agent 0.7.0: the
+updates waiting, security ones first; what was installed here (by whom, from
+apt's history, plus what Krynodes installed for a protection or Docker) or
+every package; the sources, each key with its fingerprint; and what runs on its
+own. **Check for updates** runs `apt-get update`. **Install package** searches
+by name and shows what the install adds, removes and opens before you sign;
+**Upgrade all**, **Remove** (with or without its settings), **Hold**, **Release
+hold**, **Add repository** (paste the vendor's instructions; Krynodes reads the
+key and shows its fingerprint) and **Remove repository** each take one
+fingerprint, and the agent refuses a key that is not the one shown. A package
+Krynodes installed for a protection or Docker goes when that is turned off.
+
+A running job shows its step in the hourglass and on Fleet; a finished one says
+what changed, what restarted and whether a restart is needed. Restart needed
+shows on the server, and in Fleet's issues when Restart when needed is off, as
+do security updates waiting when Automatic security updates is off. History
+records every change and opens an upgrade to each package's old and new
+version; a failed one keeps apt's last lines and what did change. Search finds
+package names. The search and the try-outs before a change are not kept.
+
+**Tailscale** on This server: once `tailscale` is installed, **Sign in** asks
+tailscaled for a login link, sealed to this browser, so no terminal is needed.
+An expired key shows in Fleet's issues.
+
+Agents before 0.7.0 have no Packages; the page offers Update agent.
+
 ## Data retention
 
 A daily cron (03:17 UTC) keeps the database small enough for the Free plan's
