@@ -60,7 +60,7 @@ function Running({
           <span className="block truncate">
             {job
               ? jobTitle(item.action, item.nodeName)
-              : runningText(item.action, item.nodeName)}
+              : (item.text ?? runningText(item.action, item.nodeName))}
           </span>
           <span className="block font-mono text-[11px] text-muted-foreground">
             {item.by} · <Elapsed since={item.at} />

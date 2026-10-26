@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/http";
+import { privateIpProblem } from "@/lib/network";
 import { seal } from "@/lib/seal";
 import { parseHostPorts } from "@/lib/stacks";
 
@@ -21,9 +22,11 @@ import {
   AccessChoice,
   FullAccessSummary,
   HeldSecrets,
+  NetworkSection,
   ReachField,
   SecretsEditor,
   heldProblem,
+  useStackNetwork,
   sealSecrets,
   secretChange,
   type Access,
@@ -124,10 +127,21 @@ function ComposeForm({
   const hostPorts = parseHostPorts(
     reaching ? (reach ?? (read?.hostPorts ?? []).join(", ")) : "",
   );
+  const network = useStackNetwork(target.nodeId, current, read ?? undefined);
+  const serving = network.member !== null && chosen === "contained";
+  const privateWrong = privateIpProblem(
+    current,
+    target.nodeName,
+    network.member !== null,
+  );
   const before = read?.secrets;
   const held = kept ?? (before ?? []).map((name) => ({ name, value: null }));
   const secretsWrong = heldProblem(held, secrets);
-  const problem = secretsWrong ?? hostPorts.problem;
+  const problem =
+    secretsWrong ??
+    hostPorts.problem ??
+    privateWrong ??
+    (serving ? (network.placesProblem ?? network.servesProblem) : null);
 
   const sealed = async (sealKey: string) => {
     if (!before) return sealSecrets(sealKey, secrets);
@@ -158,8 +172,15 @@ function ComposeForm({
             compose: current,
             access: chosen,
             ...(locked ? { secrets: locked } : {}),
-            ...(reaching
-              ? { args: { hostPorts: hostPorts.ports.join(",") } }
+            ...(reaching || serving
+              ? {
+                  args: {
+                    ...(reaching
+                      ? { hostPorts: hostPorts.ports.join(",") }
+                      : {}),
+                    ...(serving ? network.args : {}),
+                  },
+                }
               : {}),
           },
         ],
@@ -199,13 +220,22 @@ function ComposeForm({
             onChange={(event) => setText(event.target.value)}
             className={AREA}
           />
+          {editable && privateWrong && (
+            <p className="text-xs text-destructive">{privateWrong}</p>
+          )}
           {editable && (
             <>
               <div className="space-y-1.5">
                 <Label>Access</Label>
                 <AccessChoice value={chosen} onChange={setAccess} />
               </div>
-              {chosen === "full" && <FullAccessSummary text={current} />}
+              {chosen === "full" && (
+                <FullAccessSummary
+                  text={current}
+                  member={network.member}
+                  onText={setText}
+                />
+              )}
               {reaching && (
                 <ReachField
                   value={reach ?? (read.hostPorts ?? []).join(", ")}
@@ -213,6 +243,7 @@ function ComposeForm({
                   problem={hostPorts.problem}
                 />
               )}
+              {serving && <NetworkSection network={network} />}
               <div className="space-y-1.5">
                 <Label>Secrets</Label>
                 {before && <HeldSecrets rows={held} onChange={setKept} />}

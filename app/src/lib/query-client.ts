@@ -14,6 +14,7 @@ export const queryKeys = {
     range,
   ],
   checkResults: ["checks", "results"],
+  checkDismissals: ["checks", "dismissals"],
   services: ["services"],
   privateRanges: ["settings", "private-ranges"],
   enrollDefaults: ["settings", "enroll-defaults"],

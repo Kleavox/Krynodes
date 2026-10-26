@@ -44,6 +44,7 @@ type Stack struct {
 	Running    int
 	Total      int
 	Public     []string
+	Bindings   []reporter.Listener
 	Containers []string
 }
 
@@ -243,6 +244,11 @@ func parseContainers(output string) ([]Service, []Stack) {
 		for _, port := range publicPorts(fieldAt(fields, 6)) {
 			if !slices.Contains(stack.Public, port) {
 				stack.Public = append(stack.Public, port)
+			}
+		}
+		for _, bound := range publicBindings(fieldAt(fields, 6)) {
+			if !slices.Contains(stack.Bindings, bound) {
+				stack.Bindings = append(stack.Bindings, bound)
 			}
 		}
 	}

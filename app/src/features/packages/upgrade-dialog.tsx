@@ -20,12 +20,14 @@ export function UpgradeDialog({
   node,
   report,
   stacks,
+  reached,
   onClose,
   onStarted,
 }: {
   node: NodeRecord;
   report: AptReport;
   stacks: string[];
+  reached: string[];
   onClose: () => void;
   onStarted: (id: string) => void;
 }) {
@@ -37,7 +39,12 @@ export function UpgradeDialog({
   });
   const run = useSignedAction(false);
   const tried = preview.value
-    ? upgradeLines(preview.value, { nodeName: node.name, report, stacks })
+    ? upgradeLines(preview.value, {
+        nodeName: node.name,
+        report,
+        stacks,
+        reached,
+      })
     : null;
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>

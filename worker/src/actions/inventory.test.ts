@@ -376,6 +376,37 @@ describe("stacks and trust", () => {
     expect(containers()).toEqual({ containers: null });
   });
 
+  it("keeps what a stack serves and reaches, written once", async () => {
+    const { db, sqlite, node } = setup();
+    const row = () =>
+      sqlite
+        .prepare("SELECT network, updated_at FROM stacks WHERE node_id = ?")
+        .get(NODE) as { network: string | null; updated_at: string };
+    const network = {
+      serves: [{ port: "5432/tcp", all: true as const }],
+      reaches: ["10.88.0.1:6379/tcp"],
+      private: ["5432/tcp"],
+    };
+    const apply = (hash: string, at: number, value?: typeof network) =>
+      applyInventory(
+        db,
+        node(),
+        {
+          hash,
+          services: [],
+          stacks: [{ ...stack("listmonk"), network: value }],
+        },
+        at,
+      );
+    await apply(HASH_A, NOW, network);
+    const first = row();
+    expect(JSON.parse(first.network ?? "null")).toEqual(network);
+    await apply(HASH_B, NOW + 60_000, network);
+    expect(row()).toEqual(first);
+    await apply(HASH_A, NOW + 120_000);
+    expect(row().network).toBeNull();
+  });
+
   it("stores the trust report as the agent sends it", async () => {
     const { db, sqlite, node } = setup();
     const stored = () =>

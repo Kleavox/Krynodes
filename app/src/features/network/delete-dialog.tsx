@@ -11,10 +11,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Said, SHEET, SignButton } from "@/features/packages/lines";
-import { useUpdateCheck } from "@/lib/api";
+import { useServices, useUpdateCheck } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import {
   deleteLines,
+  hostingOf,
   listOf,
   networkChecks,
   networkText,
@@ -45,8 +46,15 @@ export function DeleteDialog({
   const update = useUpdateCheck();
   const [off, setOff] = useState(true);
   const [left, setLeft] = useState<string | null>(null);
+  const reports = useServices().data?.nodes ?? [];
   const names = Object.fromEntries(nodes.map((node) => [node.id, node.name]));
-  const rows = deleteLines(view, presence, { keep: [], names }, checks);
+  const rows = deleteLines(
+    view,
+    presence,
+    { keep: [], names },
+    checks,
+    hostingOf(reports, nodes),
+  );
   const turnOff = rows.find((row) => row.mark === "✓");
   const through = view.network ? networkChecks(checks, view.network.range) : [];
 

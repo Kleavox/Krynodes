@@ -43,7 +43,11 @@ export interface ActivityItem {
   status: ActionStatus;
   by: string;
   at: number;
+  text?: string;
 }
+
+const linkTest = (action: ActionRecord) =>
+  action.kind === "network" && action.action === "test";
 
 const handleOf = (email: string) => displayHandle(null, email);
 
@@ -152,16 +156,26 @@ export function activity(
   const visible = actions.filter(
     (action) => !QUIET.has(action.action) && names.has(action.nodeId),
   );
-  const running = visible
-    .filter(isPending)
-    .map((action) =>
-      item(
-        action,
-        names.get(action.nodeId)!,
-        parseTimestamp(action.requestedAt),
-        devices,
-      ),
+  const pending = visible.filter(isPending);
+  const running = pending.flatMap((action): ActivityItem[] => {
+    const entry = item(
+      action,
+      names.get(action.nodeId)!,
+      parseTimestamp(action.requestedAt),
+      devices,
     );
+    if (!linkTest(action)) return [entry];
+    const ends = pending.filter(
+      (other) => linkTest(other) && other.batchId === action.batchId,
+    );
+    if (ends[0] !== action) return [];
+    return [
+      {
+        ...entry,
+        text: `Testing ${ends.map((end) => names.get(end.nodeId)).join(" ↔ ")}`,
+      },
+    ];
+  });
   for (const node of nodes) {
     const reboot = rebootInFlight(node, visible, now);
     if (!reboot || isPending(reboot)) continue;

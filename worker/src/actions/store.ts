@@ -44,6 +44,7 @@ export type ActionVerb =
   | "expose"
   | "unexpose"
   | "adopt"
+  | "reach"
   | "apply"
   | "undo"
   | "lockdown"

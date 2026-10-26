@@ -71,6 +71,11 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Moving…",
       done: "Moved into Krynodes",
     },
+    reach: {
+      verb: "Change Reach",
+      doing: "Changing the reach of…",
+      done: "Reach changed",
+    },
     apply: { verb: "Turn on", doing: "Turning on…", done: "Turned on" },
     undo: { verb: "Turn off", doing: "Turning off…", done: "Turned off" },
     lockdown: {

@@ -49,7 +49,10 @@ export function MarkRows({
       {rows.map((row, index) => (
         <li
           key={`${index}:${row.text}`}
-          className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm"
+          className={cn(
+            "flex items-start gap-2.5 px-3.5 py-2.5 text-sm",
+            row.short === "" && "max-sm:hidden",
+          )}
         >
           <span
             aria-hidden="true"
@@ -58,9 +61,21 @@ export function MarkRows({
             {row.mark}
           </span>
           <span className="min-w-0 flex-1 break-words">
-            {row.text}
+            {row.short ? (
+              <>
+                <span className="max-sm:hidden">{row.text}</span>
+                <span className="sm:hidden">{row.short}</span>
+              </>
+            ) : (
+              row.text
+            )}
             {row.detail && (
-              <span className="mt-0.5 block text-xs text-muted-foreground">
+              <span
+                className={cn(
+                  "mt-0.5 block text-xs text-muted-foreground",
+                  row.short && "max-sm:hidden",
+                )}
+              >
                 {row.detail}
               </span>
             )}

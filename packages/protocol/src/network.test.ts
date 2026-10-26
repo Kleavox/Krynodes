@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import document from "./fixtures/network-document.json";
-import { agentActionSchema, agentHeartbeatSchema } from "./index";
+import {
+  agentActionSchema,
+  agentHeartbeatSchema,
+  stackEntrySchema,
+} from "./index";
 import {
   dnsName,
   NETWORK,
   networkArgsValid,
   networkDocumentSchema,
+  placeSchema,
+  stackNetworkSchema,
   type NetworkDocument,
 } from "./network";
 
@@ -77,6 +83,85 @@ describe("the network document", () => {
   it("makes a name DNS-safe", () => {
     expect(dnsName("VPS_2 (Singapore)")).toBe("vps-2-singapore");
     expect(dnsName("---")).toBe("server");
+  });
+});
+
+describe("stacks on the network", () => {
+  const stack = {
+    project: "umami",
+    directory: "/var/lib/krynodes/compose/umami",
+    running: 1,
+    total: 1,
+    compose: true,
+    rollback: false,
+    access: "contained",
+  };
+  const serve = (value: unknown) =>
+    stackEntrySchema.safeParse({
+      ...stack,
+      network: { serves: [value], reaches: [], private: [] },
+    }).success;
+
+  it("reports what a stack serves and reaches", () => {
+    expect(
+      stackEntrySchema.safeParse({
+        ...stack,
+        network: {
+          serves: [
+            { port: "5432/tcp", all: true },
+            { port: "9090/tcp", to: [A, B] },
+          ],
+          reaches: ["10.88.0.2:5432/tcp"],
+          private: ["5432/tcp"],
+        },
+      }).success,
+    ).toBe(true);
+    expect(NETWORK).toMatchObject({ variable: "KRY_PRIVATE_IP", places: 32 });
+  });
+
+  it("serves a port to all servers or to chosen ones, never both or neither", () => {
+    expect(serve({ port: "5432/tcp", all: true, to: [A] })).toBe(false);
+    expect(serve({ port: "5432/tcp" })).toBe(false);
+    expect(serve({ port: "5432/tcp", to: [] })).toBe(false);
+    expect(serve({ port: "5432", all: true })).toBe(false);
+  });
+
+  it("takes places as addresses, at most 32", () => {
+    expect(placeSchema.safeParse("10.88.0.2:5432/tcp").success).toBe(true);
+    expect(placeSchema.safeParse("vps-2:5432/tcp").success).toBe(false);
+    expect(placeSchema.safeParse("10.88.0.2:5432").success).toBe(false);
+    expect(
+      stackNetworkSchema.safeParse({
+        serves: [],
+        reaches: Array.from({ length: 33 }, (_, i) => `10.88.0.2:${i + 1}/tcp`),
+        private: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("changes a stack's reach only with a signature", () => {
+    const reach = {
+      id: "55555555-5555-4555-8555-555555555555",
+      kind: "compose",
+      name: "shop",
+      action: "reach",
+      expiresAt: "2026-10-26T10:00:00.000Z",
+    };
+    const signed = {
+      grant: {
+        grant: "Z3JhbnQ",
+        credentialId: "Y3JlZA",
+        authenticatorData: "YXV0aA",
+        clientDataJSON: "Y2xpZW50",
+        signature: "c2ln",
+      },
+      command: "Y29tbWFuZA",
+      signature: "c2lnbmF0dXJl",
+    };
+    expect(agentActionSchema.safeParse({ ...reach, signed }).success).toBe(
+      true,
+    );
+    expect(agentActionSchema.safeParse(reach).success).toBe(false);
   });
 });
 

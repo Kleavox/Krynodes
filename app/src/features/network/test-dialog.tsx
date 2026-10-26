@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { NetworkTest } from "@krynodes/protocol";
 
 import { Button } from "@/components/ui/button";
@@ -75,16 +75,29 @@ export function TestDialog({
     null,
   );
   const [fixed, setFixed] = useState<string | null>(null);
+  const [fixing, setFixing] = useState<string | null>(null);
+  const sent = useRef<string | null>(null);
+  const alive = useRef(true);
   const mtu = view.network?.mtu ?? 1420;
   const online = (id: string) => presence[id]?.online === true;
   const pairsKey = pairs.map(keyOf).join(",");
 
   useEffect(() => {
-    let stopped = false;
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const token = `${run}:${pairsKey}`;
+    if (sent.current === token) return;
+    sent.current = token;
+    const stopped = () => !alive.current || sent.current !== token;
     const all = async () => {
       for (const pair of pairs) {
         const [a, b] = pair;
-        if (stopped) return;
+        if (stopped()) return;
         if (!online(a.nodeId) || !online(b.nodeId)) continue;
         const started = Date.now();
         setCurrent({ key: keyOf(pair), at: started });
@@ -101,7 +114,7 @@ export function TestDialog({
         } catch (error) {
           outcome = { results: {}, took: 0, error: errorMessage(error) };
         }
-        if (stopped) return;
+        if (stopped()) return;
         setOutcomes((all) => ({ ...all, [keyOf(pair)]: outcome }));
         if (!outcome.error) {
           const { rows, likely } = judge(pair, outcome);
@@ -112,13 +125,9 @@ export function TestDialog({
           }).catch(() => undefined);
         }
       }
-      if (!stopped) setCurrent(null);
+      if (!stopped()) setCurrent(null);
     };
-    const timer = setTimeout(() => void all(), 0);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
+    void all();
   }, [run, pairsKey]);
 
   const firewallOf = (id: string) => {
@@ -255,8 +264,10 @@ export function TestDialog({
                     ) : (
                       <SignButton
                         label={fixLabel(likely.fix)}
-                        pending={fix.isPending}
-                        onClick={() =>
+                        pending={fix.isPending && fixing === key}
+                        disabled={fix.isPending}
+                        onClick={() => {
+                          setFixing(key);
                           fix.mutate(
                             {
                               ...changeFor(pair, likely.fix!),
@@ -264,8 +275,8 @@ export function TestDialog({
                               signers: keys.signers,
                             },
                             { onSuccess: () => setFixed(key) },
-                          )
-                        }
+                          );
+                        }}
                       />
                     )}
                   </div>

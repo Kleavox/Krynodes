@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   agentHasFeatures,
   dnsName,
@@ -154,18 +154,15 @@ function Picker({
         ? candidates.filter(eligible).map((node) => node.id)
         : [],
   );
-  const [asked, setAsked] = useState(false);
-  const [probed, setProbed] = useState("");
+  const asked = useRef(false);
+  const probed = useRef("");
 
   useEffect(() => {
-    if (asked) return;
-    const timer = setTimeout(() => {
-      setAsked(true);
-      inspect.ask(
-        candidates.filter(eligible).map((node) => ({ nodeId: node.id })),
-      );
-    }, 0);
-    return () => clearTimeout(timer);
+    if (asked.current) return;
+    asked.current = true;
+    inspect.ask(
+      candidates.filter(eligible).map((node) => ({ nodeId: node.id })),
+    );
   });
 
   const seats = new Map(
@@ -214,12 +211,11 @@ function Picker({
   const pickedKey = [...picked].sort().join(",");
 
   useEffect(() => {
-    if (!inspected || pickedKey === probed || plan.length === 0) return;
-    const timer = setTimeout(() => {
-      setProbed(pickedKey);
-      probe.ask(plan);
-    }, 0);
-    return () => clearTimeout(timer);
+    if (!inspected || pickedKey === probed.current || plan.length === 0) {
+      return;
+    }
+    probed.current = pickedKey;
+    probe.ask(plan);
   });
 
   const rowsOf = (id: string) => {

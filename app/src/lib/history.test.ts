@@ -283,6 +283,14 @@ describe("what an action says", () => {
       ),
     ).toBe("Remove Krynodes from the server");
   });
+
+  it("names the stack whose reach a move changed, with its server beside it", () => {
+    const reach = action({ kind: "compose", name: "shop", action: "reach" });
+    expect(historyText(reach)).toBe("Change shop's reach");
+    expect(
+      failedLine({ ...reach, status: "failed" }, { name: "io" }, 0).text,
+    ).toBe("Change shop's reach on io");
+  });
 });
 
 describe("an error line", () => {

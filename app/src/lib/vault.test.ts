@@ -304,6 +304,35 @@ describe("moving a stack", () => {
     expect(create([])?.args).toBeUndefined();
     expect(create()?.args).toBeUndefined();
   });
+
+  it("carries what the stack serves and reaches, then changes the other stacks' reach", () => {
+    const steps = moveSteps({
+      source: A,
+      target: B,
+      targetKey: "KB",
+      project: "cache",
+      compose: "x",
+      access: "contained",
+      original: "later",
+      serves: `6379/tcp=${C}`,
+      reaches: "10.88.0.3:9000/tcp",
+      reach: [{ nodeId: C, project: "shop", reaches: ["10.88.0.2:6379/tcp"] }],
+    });
+    expect(steps[1]?.args).toEqual({
+      serves: `6379/tcp=${C}`,
+      reaches: "10.88.0.3:9000/tcp",
+    });
+    expect(steps.slice(2)).toEqual([
+      { nodeId: A, kind: "compose", name: "cache", action: "remove" },
+      {
+        nodeId: C,
+        kind: "compose",
+        name: "shop",
+        action: "reach",
+        args: { reaches: "10.88.0.2:6379/tcp" },
+      },
+    ]);
+  });
 });
 
 const node = (

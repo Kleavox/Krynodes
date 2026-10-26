@@ -15,14 +15,18 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
 )
 
-const maxSideBytes = 32 << 10
+const (
+	maxSideBytes = 32 << 10
+	hostsFile    = "compose.krynodes-hosts.json"
+)
 
 var (
 	envName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
-	ownFiles  = []string{"compose.krynodes.json", "compose.krynodes.previous.json", "compose.previous.yaml", "krynodes.json", ".env", ".env.previous"}
+	ownFiles  = []string{"compose.krynodes.json", "compose.krynodes.previous.json", hostsFile, "compose.previous.yaml", "krynodes.json", ".env", ".env.previous"}
 	keptNames = append(slices.Clone(ownFiles), standardComposeFiles...)
 )
 
@@ -40,6 +44,8 @@ type composeRead struct {
 	Compose   string            `json:"compose"`
 	Access    string            `json:"access"`
 	HostPorts []string          `json:"hostPorts,omitempty"`
+	Serves    []network.Serve   `json:"serves,omitempty"`
+	Reaches   []string          `json:"reaches,omitempty"`
 	Secrets   []string          `json:"secrets"`
 	Files     []composeFile     `json:"files"`
 	Images    map[string]string `json:"images"`
@@ -201,7 +207,8 @@ func (e Executor) read(ctx context.Context, request Request, stack Stack) Result
 	if err != nil {
 		return e.failed(request, err, "")
 	}
-	output, err := json.Marshal(composeRead{Compose: string(text), Access: e.accessOf(stack.Directory), HostPorts: e.hostPortsOf(stack.Directory), Secrets: sortedKeys(anyMap(env)), Files: files, Images: e.pinned(ctx, stack)})
+	meta := e.metaOf(stack.Directory)
+	output, err := json.Marshal(composeRead{Compose: string(text), Access: e.accessOf(stack.Directory), HostPorts: meta.HostPorts, Serves: meta.Serves, Reaches: meta.Reaches, Secrets: sortedKeys(anyMap(env)), Files: files, Images: e.pinned(ctx, stack)})
 	if err != nil {
 		return e.failed(request, err, "")
 	}
@@ -281,7 +288,7 @@ func (e Executor) prepare(request Request, command Command, directory string) er
 	return writeEnv(directory, env)
 }
 
-func (e Executor) launch(ctx context.Context, request Request, name, directory, access string, hostPorts []string, done string) Result {
+func (e Executor) launch(ctx context.Context, request Request, name, directory string, meta stackMeta, done string) Result {
 	stack := Stack{Project: name, Directory: directory, Files: []string{filepath.Join(directory, "compose.yaml")}}
 	output, err := e.docker(ctx, collectTimeout, "read", composeArgs(stack, "config", "--format", "json")...)
 	if err != nil {
@@ -292,7 +299,8 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory, 
 	if start < 0 || json.Unmarshal(output[start:], &config) != nil {
 		return e.refuse(request.ID, errors.New("compose did not return a readable file"))
 	}
-	if access == "contained" {
+	document, own := e.ownAddress()
+	if meta.Access == "contained" {
 		if err := vet(config, directory); err != nil {
 			return e.refuse(request.ID, err)
 		}
@@ -302,14 +310,31 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory, 
 		if err := contain(config, name); err != nil {
 			return e.refuse(request.ID, err)
 		}
-		localPorts(config)
+		localPorts(config, own, meta.Serves)
+		if own != "" {
+			addHosts(config, document.Members)
+		}
 		if err := writeJSON(directory, "compose.krynodes.json", config, 0o640); err != nil {
 			return e.failed(request, err, "")
 		}
 		stack.Files = []string{filepath.Join(directory, "compose.krynodes.json")}
-		e.openReach(ctx, config, hostPorts)
+		e.openReach(ctx, config, meta.HostPorts)
 	} else if err := os.Remove(filepath.Join(directory, "compose.krynodes.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return e.failed(request, err, "")
+	}
+	hosts := filepath.Join(directory, hostsFile)
+	if meta.Access == "full" && own != "" {
+		if err := writeJSON(directory, hostsFile, hostsOverride(config, document.Members), 0o640); err != nil {
+			return e.failed(request, err, "")
+		}
+		stack.Files = append(stack.Files, hosts)
+	} else if err := os.Remove(hosts); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return e.failed(request, err, "")
+	}
+	if own != "" {
+		if err := e.syncRules(ctx, rulesFor(name, directory, config, meta)); err != nil {
+			return e.failed(request, err, "")
+		}
 	}
 	if err := e.fits(ctx, config); err != nil {
 		return e.refuse(request.ID, err)
@@ -323,7 +348,7 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory, 
 	if states, err := e.healthy(ctx, stack); err != nil {
 		return e.failed(request, err, states)
 	}
-	if err := writeJSON(directory, "krynodes.json", stackMeta{Access: access, HostPorts: hostPorts}, 0o640); err != nil {
+	if err := writeJSON(directory, "krynodes.json", meta, 0o640); err != nil {
 		return e.failed(request, err, "")
 	}
 	return Result{ID: request.ID, OK: true, Output: done, FinishedAt: e.stamp()}
@@ -402,7 +427,7 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	hostPorts, err := hostPortsFrom(command, access, e.hostPortsOf(stack.Directory))
+	meta, err := e.choicesFrom(command, access, e.metaOf(stack.Directory))
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -423,7 +448,10 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 		old := Stack{Project: stack.Project, Directory: directory, Files: []string{filepath.Join(directory, "compose.yaml")}}
 		if current == "contained" {
 			old.Files = []string{filepath.Join(directory, "compose.krynodes.json")}
+		} else if regularFile(filepath.Join(directory, hostsFile)) {
+			old.Files = append(old.Files, filepath.Join(directory, hostsFile))
 		}
+		e.syncRules(ctx)
 		e.docker(ctx, upTimeout, "up", composeArgs(old, "up", "-d")...)
 		return result
 	}
@@ -435,7 +463,7 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 			return revert(e.refuse(request.ID, err))
 		}
 	}
-	result := e.launch(ctx, request, stack.Project, directory, access, hostPorts, "updated")
+	result := e.launch(ctx, request, stack.Project, directory, meta, "updated")
 	if !result.OK {
 		return revert(result)
 	}

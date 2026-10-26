@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Said, SHEET, SignButton } from "@/features/packages/lines";
 import { useServices } from "@/lib/api";
-import { networkText, removeLines, seatOf } from "@/lib/network";
+import { hostingOf, networkText, removeLines, seatOf } from "@/lib/network";
 import { cn } from "@/lib/utils";
 import type { NetworkServer, NetworkView, NodeRecord } from "@/types";
 
@@ -38,11 +38,16 @@ export function RemoveDialog({
         reports.find((entry) => entry.id === server.nodeId),
       )
     : null;
-  const rows = removeLines(server, view, {
-    firewall: seat?.firewall ?? null,
-    docker: seat?.docker ?? false,
-    tools: false,
-  });
+  const rows = removeLines(
+    server,
+    view,
+    {
+      firewall: seat?.firewall ?? null,
+      docker: seat?.docker ?? false,
+      tools: false,
+    },
+    hostingOf(reports, nodes),
+  );
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className={cn(SHEET, "sm:max-w-[560px]")}>

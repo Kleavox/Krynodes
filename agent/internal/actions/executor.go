@@ -21,6 +21,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
 )
@@ -355,13 +356,24 @@ func (e Executor) execute(ctx context.Context, request Request, services []Servi
 
 func (e Executor) stackEntries(snapshot Snapshot) []reporter.StackEntry {
 	entries := make([]reporter.StackEntry, 0, len(snapshot.Stacks))
+	_, own := e.ownAddress()
 	for _, stack := range snapshot.Stacks {
 		record, _ := readState[stackRecord](filepath.Join(e.StateDir, "stacks"), stack.Project+".json")
-		entries = append(entries, reporter.StackEntry{
+		entry := reporter.StackEntry{
 			Project: stack.Project, Directory: stack.Directory, Running: stack.Running, Total: stack.Total,
 			Compose: snapshot.Compose, Rollback: len(record.Previous) > 0,
 			Access: e.accessOf(stack.Directory), Public: stack.Public, Containers: stack.Containers,
-		})
+		}
+		if own != "" {
+			var meta stackMeta
+			if entry.Access == "contained" {
+				meta = e.metaOf(stack.Directory)
+			}
+			public, private := splitBindings(stack.Bindings, own)
+			entry.Public = public
+			entry.Network = &reporter.StackNetwork{Serves: append([]network.Serve{}, meta.Serves...), Reaches: append([]string{}, meta.Reaches...), Private: private}
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }

@@ -79,7 +79,10 @@ export function pointsAt(
   const targets = new Set([address, `${dnsName(name)}.kry`]);
   return members.flatMap((row) =>
     pointsOf(row.points)
-      .filter((point) => targets.has(point.target))
+      .filter(
+        (point) =>
+          targets.has(point.target) || point.target.startsWith(`${address}:`),
+      )
       .map((point) => ({
         nodeId: row.node_id,
         stack: point.stack,

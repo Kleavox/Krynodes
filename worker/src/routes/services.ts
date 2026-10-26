@@ -29,6 +29,7 @@ import {
 } from "../actions/store";
 import { decodeJson, toB64url } from "../lib/b64url";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
+import { liveRange, readNetwork } from "../network/document";
 import { networkMember } from "./admin";
 import { readPrivateRanges } from "./settings";
 import { ownersRefusal } from "../trust/approval";
@@ -179,7 +180,11 @@ export function toActionRecord(row: ActionRow) {
   };
 }
 
-function securityReport(text: string | null, ranges: string[]): unknown {
+function securityReport(
+  text: string | null,
+  ranges: string[],
+  network: string | null,
+): unknown {
   const report = parsed(text) as {
     findings?: unknown;
     listeners?: Listener[];
@@ -189,6 +194,7 @@ function securityReport(text: string | null, ranges: string[]): unknown {
     ? filterListeners(
         report as { findings: Finding[]; listeners?: Listener[] },
         ranges,
+        network ?? undefined,
       )
     : report;
   return shown;
@@ -215,7 +221,10 @@ export function registerServiceRoutes(
     const owner = context.get("identity").id;
     const now = Date.now();
     await db.batch(sweepStatements(db, now));
-    const ranges = await readPrivateRanges(db, owner);
+    const [ranges, network] = await Promise.all([
+      readPrivateRanges(db, owner),
+      readNetwork(db, owner).then(liveRange),
+    ]);
     const [nodes, services, actions] = await Promise.all([
       db
         .prepare(
@@ -262,7 +271,7 @@ export function registerServiceRoutes(
     const [stacks, removed, addresses] = await Promise.all([
       db
         .prepare(
-          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers FROM stacks
+          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network FROM stacks
            WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
            ORDER BY node_id, project`,
         )
@@ -278,6 +287,7 @@ export function registerServiceRoutes(
           access: string | null;
           public: string | null;
           containers: string | null;
+          network: string | null;
         }>(),
       db
         .prepare(
@@ -317,7 +327,7 @@ export function registerServiceRoutes(
         trust: readReport(node.trust_report),
         docker: node.docker,
         sealKey: node.seal_key,
-        security: securityReport(node.security, ranges),
+        security: securityReport(node.security, ranges, network),
         vault: parsed(node.vault),
         webAddresses: addresses.results
           .filter((address) => address.node_id === node.id)
@@ -334,6 +344,7 @@ export function registerServiceRoutes(
             access: stack.access,
             public: (parsed(stack.public) as string[] | null) ?? [],
             containers: (parsed(stack.containers) as string[] | null) ?? [],
+            network: parsed(stack.network),
           })),
         removed: removed.results
           .filter((stack) => stack.node_id === node.id)

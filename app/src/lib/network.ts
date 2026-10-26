@@ -10,16 +10,20 @@ import {
   type NetworkLink,
   type NetworkMember,
   type NetworkTest,
+  type StackNetwork,
 } from "@krynodes/protocol";
 
 import type {
   ActionRecord,
+  CheckKind,
   CheckRecord,
   NetworkServer,
   NetworkView,
   NodeRecord,
   ServicesResponse,
+  StackEntry,
 } from "../types";
+import { summarize, usePrivateAddress, usesPrivateIp } from "./compose";
 import {
   capitalize,
   clockTime,
@@ -39,8 +43,17 @@ export interface Row {
   mark: Mark;
   text: string;
   detail?: string;
+  short?: string;
   action?: "again" | "edit";
   nodeId?: string;
+}
+
+export type Serve = StackNetwork["serves"][number];
+
+export interface Hosting {
+  id: string;
+  name: string;
+  stacks?: Pick<StackEntry, "project" | "access" | "network">[];
 }
 
 export type Presence = Record<
@@ -462,7 +475,7 @@ export function progressLinks(
   return `Links ${up.length} of ${total} up${fastest ? ` · ${fastest.a} ↔ ${fastest.b} answered in ${fastest.ms} ms` : ""}`;
 }
 
-const inside = (view: NetworkView) =>
+export const inside = (view: NetworkView) =>
   view.members.filter(
     (member) => member.state === "in" && member.address !== null,
   );
@@ -703,8 +716,439 @@ function pointersAt(view: NetworkView, server: NetworkServer) {
   const targets = new Set([server.address, kryName(server.name)]);
   return view.members.flatMap((member) =>
     member.points
-      .filter((point) => targets.has(point.target))
+      .filter(
+        (point) =>
+          targets.has(point.target) ||
+          (server.address !== null &&
+            point.target.startsWith(`${server.address}:`)),
+      )
       .map((point) => ({ nodeId: member.nodeId, ...point })),
+  );
+}
+
+export function placeText(view: NetworkView, place: string): string {
+  const at = place.indexOf(":");
+  if (at < 0) return place;
+  const member = view.members.find(
+    (entry) => entry.address === place.slice(0, at),
+  );
+  return member ? `${member.name}${place.slice(at)}` : place;
+}
+
+const portWord = (port: string) => port.replace(/\/tcp$/u, "");
+
+const PLACE = /^([^\s:/]+):(\d{1,5})\/(tcp|udp)$/u;
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/u;
+
+export function parsePlaces(
+  text: string,
+  view: NetworkView,
+  self: string,
+): { places: string[]; problem: string | null } {
+  const places: string[] = [];
+  const members = inside(view);
+  const own = members.find((member) => member.nodeId === self);
+  const refuse = (problem: string) => ({ places, problem });
+  for (const item of text
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)) {
+    const found = PLACE.exec(item);
+    const [, host = "", port = "", protocol = ""] = found ?? [];
+    if (!found || Number(port) < 1 || Number(port) > 65535) {
+      const [name = item, number = ""] = item.split(/[:/]/u);
+      return refuse(
+        `${item} is not a place such as ${name}:${/^\d{1,5}$/u.test(number) ? number : "5432"}/tcp.`,
+      );
+    }
+    const numeric = IPV4.test(host);
+    const member = numeric
+      ? members.find((entry) => entry.address === host)
+      : members.find(
+          (entry) =>
+            dnsName(entry.name) === dnsName(host.replace(/\.kry$/u, "")),
+        );
+    const address = numeric ? host : (member?.address ?? null);
+    if (
+      address === null ||
+      (!member && !(view.network && overlaps(address, view.network.range)))
+    ) {
+      return refuse(`${host} is not in the private network.`);
+    }
+    if (member?.nodeId === self || address === own?.address) {
+      return refuse(
+        `That is ${own?.name ?? host} itself; use Reach This Server On.`,
+      );
+    }
+    const place = `${address}:${Number(port)}/${protocol}`;
+    if (!places.includes(place)) places.push(place);
+  }
+  return places.length > NETWORK.places
+    ? refuse(`A stack may reach at most ${NETWORK.places} places.`)
+    : { places, problem: null };
+}
+
+export type ServeChoice = "self" | "all" | "chosen";
+
+export interface ServeRow {
+  port: string;
+  choice: ServeChoice;
+  to: string[];
+}
+
+export const readServes = (
+  serves: Serve[] | undefined,
+  ports: string[],
+): ServeRow[] =>
+  ports.map((port) => {
+    const serve = serves?.find((entry) => entry.port === port);
+    return {
+      port,
+      choice: !serve ? "self" : serve.all ? "all" : "chosen",
+      to: serve?.to ?? [],
+    };
+  });
+
+export const servesArg = (rows: ServeRow[]) =>
+  rows
+    .filter((row) => row.choice !== "self")
+    .map(
+      (row) => `${row.port}=${row.choice === "all" ? "all" : row.to.join(" ")}`,
+    )
+    .join(",");
+
+export const servesProblem = (rows: ServeRow[]) =>
+  rows.some((row) => row.choice === "chosen" && row.to.length === 0)
+    ? "Tick at least one server, or choose This Server Only."
+    : null;
+
+export function opensBox(
+  text: string,
+  member: { name: string; address: string | null } | null,
+): {
+  lines: string[];
+  notes: string[];
+  offer: string | null;
+  warn: boolean;
+} | null {
+  const summary = summarize(text);
+  if (summary.error) return null;
+  const list = (items: string[]) => items.join(", ");
+  const risks = [
+    summary.folders.length > 0 &&
+      `Uses server folders: ${list(summary.folders)}`,
+    summary.hostNetwork.length > 0 &&
+      `Uses the server's network: ${list(summary.hostNetwork)}`,
+    summary.devices.length > 0 && `Uses devices: ${list(summary.devices)}`,
+    summary.privileged.length > 0 &&
+      `Runs privileged: ${list(summary.privileged)}`,
+    summary.builds.length > 0 &&
+      `Builds on the server: ${list(summary.builds)}`,
+    summary.docker.length > 0 &&
+      `Controls Docker, which is root on the server: ${list(summary.docker)}`,
+  ].filter((line): line is string => Boolean(line));
+  const opened = summary.internet.length > 0;
+  const shared = member !== null && summary.private.length > 0;
+  const moved = member
+    ? summarize(usePrivateAddress(text)).private.filter(
+        (port) => !summary.private.includes(port),
+      )
+    : [];
+  return {
+    lines: [
+      ...(opened
+        ? [
+            `Opens to the internet${member ? " and every server" : ""}: ${list(summary.internet)}`,
+          ]
+        : []),
+      ...(shared
+        ? [
+            `Opens to every server on the private network: ${list(summary.private)}`,
+          ]
+        : []),
+      ...(member ? ["Reaches every server on the private network"] : []),
+      ...risks,
+    ],
+    notes: [
+      ...(opened
+        ? [
+            "Docker opens these ports past ufw, so a firewall does not close them.",
+          ]
+        : []),
+      ...(summary.internet.some((port) => port.startsWith("53/"))
+        ? [
+            "Port 53 open to everyone makes an open resolver that others can abuse. Limit it with AdGuard’s Allowed clients, or use DNS-over-TLS.",
+          ]
+        : []),
+      ...(shared
+        ? [
+            `Krynodes fills in KRY_PRIVATE_IP with the server's own private address, ${member.address ?? "--"} here.`,
+          ]
+        : []),
+    ],
+    offer:
+      moved.length > 0
+        ? `Only your servers need ${list(moved)}? Open ${moved.length === 1 ? "it" : "them"} on the private address instead.`
+        : null,
+    warn: opened || risks.length > 0,
+  };
+}
+
+export const privateIpProblem = (
+  text: string,
+  nodeName: string,
+  member: boolean,
+) =>
+  !member && usesPrivateIp(text)
+    ? `${nodeName} is not in the private network, so KRY_PRIVATE_IP has no value.`
+    : null;
+
+export function networkHint(
+  stacks: Pick<StackEntry, "project" | "access" | "public">[],
+  member: boolean,
+): string | null {
+  const names = stacks
+    .filter((stack) => stack.access === "full" && (stack.public ?? []).length)
+    .map((stack) => stack.project);
+  if (!member || names.length === 0) return null;
+  const one = names.length === 1;
+  return `${listOf(names)} ${one ? "is" : "are"} on the private network too. If only your servers need ${one ? "it" : "them"}, use the private address in Edit Compose.`;
+}
+
+export const firewallRow = (member: Pick<NetworkServer, "name" | "port">) => ({
+  port: `${member.port}/udp`,
+  detail: `the private network, while ${member.name} is in it`,
+});
+
+function stackLines(
+  view: NetworkView,
+  servers: Hosting[],
+  only?: string,
+): Row[] {
+  return servers
+    .filter((server) => only === undefined || server.id === only)
+    .flatMap((server) =>
+      (server.stacks ?? []).flatMap((stack): Row[] => {
+        const network = stack.network;
+        if (!network) return [];
+        if (stack.access === "full") {
+          return network.private.length > 0
+            ? [
+                {
+                  mark: "✕",
+                  text: `${stack.project} on ${server.name} opens ${listOf(network.private.map(portWord))} on KRY_PRIVATE_IP`,
+                  detail:
+                    "Nobody can reach it, and it fails on its next start until you change it.",
+                  short: `${stack.project} on ${server.name} uses KRY_PRIVATE_IP`,
+                },
+              ]
+            : [];
+        }
+        if (stack.access !== "contained" || network.serves.length === 0) {
+          return [];
+        }
+        const chosen = [
+          ...new Set(network.serves.flatMap((serve) => serve.to ?? [])),
+        ];
+        const who = network.serves.every((serve) => serve.all)
+          ? "All Servers"
+          : network.serves.every((serve) => !serve.all)
+            ? listOf(chosen.map((id) => nameIn(view, id)))
+            : "other servers";
+        return [
+          {
+            mark: "✕",
+            text: `${stack.project} on ${server.name} serves ${listOf(network.serves.map((serve) => portWord(serve.port)))} to ${who}`,
+            detail: "It goes back to This Server Only.",
+            short: `${stack.project} goes back to This Server Only`,
+          },
+        ];
+      }),
+    );
+}
+
+export interface MoveBlock {
+  red: string | null;
+  lines: string[];
+  changes: {
+    nodeId: string;
+    project: string;
+    text: string;
+    reaches: string[];
+  }[];
+  note: string | null;
+  serves: Serve[];
+  reaches: string[];
+}
+
+export function moveBlock(
+  stack: { project: string; network?: StackNetwork | null },
+  source: { nodeId: string; name: string },
+  target: { nodeId: string; name: string },
+  view: NetworkView,
+  servers: Hosting[],
+): MoveBlock | null {
+  const members = inside(view);
+  const addressOf = (id: string) =>
+    members.find((member) => member.nodeId === id)?.address ?? null;
+  const from = addressOf(source.nodeId);
+  const to = addressOf(target.nodeId);
+  const serves = stack.network?.serves ?? [];
+  const reaches = stack.network?.reaches ?? [];
+  const served = stack.network?.private ?? [];
+  const reachers = servers
+    .filter(
+      (server) => server.id !== source.nodeId && server.id !== target.nodeId,
+    )
+    .flatMap((server) =>
+      (server.stacks ?? []).flatMap((other) => {
+        const all = other.network?.reaches ?? [];
+        const old = all.filter((place) =>
+          served.some((port) => place === `${from}:${port}`),
+        );
+        return from !== null && old.length > 0
+          ? [{ server, project: other.project, all, old }]
+          : [];
+      }),
+    );
+  if (serves.length === 0 && reaches.length === 0 && reachers.length === 0) {
+    return null;
+  }
+  if (to === null) {
+    const chosen = serves.flatMap((serve) =>
+      serve.all
+        ? members
+            .filter((member) => member.nodeId !== source.nodeId)
+            .map((member) => member.nodeId)
+        : (serve.to ?? []),
+    );
+    const who = [
+      ...new Set([
+        ...reachers.map((reacher) => reacher.server.name),
+        ...chosen.map((id) => nameIn(view, id)),
+      ]),
+    ];
+    return {
+      red:
+        who.length > 0
+          ? `${target.name} is not in the private network, so ${listOf(who)} cannot reach ${stack.project} there.`
+          : `${target.name} is not in the private network, so ${stack.project} cannot reach ${listOf(reaches.map((place) => placeText(view, place)))} there.`,
+      lines: [],
+      changes: [],
+      note: null,
+      serves: [],
+      reaches: [],
+    };
+  }
+  const swap = (place: string) =>
+    from !== null && place.startsWith(`${from}:`)
+      ? `${to}${place.slice(from.length)}`
+      : place;
+  const changes = reachers.map((reacher) => ({
+    nodeId: reacher.server.id,
+    project: reacher.project,
+    text: `Change ${reacher.project}'s reach on ${reacher.server.name} from ${listOf(reacher.old.map((place) => placeText(view, place)))} to ${listOf(reacher.old.map((place) => placeText(view, swap(place))))}`,
+    reaches: reacher.all.map((place) =>
+      reacher.old.includes(place) ? swap(place) : place,
+    ),
+  }));
+  const named = kryName(source.name);
+  return {
+    red: null,
+    lines: serves.map(
+      (serve) =>
+        `On ${target.name}, ${stack.project} serves ${serve.port} to ${serve.all ? "All Servers" : `${listOf((serve.to ?? []).map((id) => nameIn(view, id)))} only`}, as it does now.`,
+    ),
+    changes,
+    note:
+      changes.length === 0
+        ? null
+        : `${changes.length === 1 ? `${changes[0]!.project}'s` : "Their"} own settings may still name ${named}, such as a secret. Change them after the move.`,
+    serves,
+    reaches: reaches.filter((place) => !place.startsWith(`${to}:`)),
+  };
+}
+
+export const hostingOf = (
+  reports: { id: string; stacks?: Hosting["stacks"] }[],
+  nodes: { id: string; name: string }[],
+): Hosting[] =>
+  reports.flatMap((report) => {
+    const name = nodes.find((node) => node.id === report.id)?.name;
+    return name ? [{ id: report.id, name, stacks: report.stacks }] : [];
+  });
+
+export const reachedStacks = (server: Hosting | undefined) =>
+  (server?.stacks ?? [])
+    .filter((stack) => (stack.network?.private ?? []).length > 0)
+    .map((stack) => stack.project);
+
+export interface CheckSuggestion {
+  nodeId: string;
+  project: string;
+  reaches: string[];
+  text: string;
+  check: {
+    nodeId: string;
+    name: string;
+    kind: CheckKind;
+    target: string;
+    timeoutSeconds: number;
+  };
+}
+
+export function checkSuggestions(
+  servers: Hosting[],
+  view: NetworkView,
+  checks: Pick<CheckRecord, "node_id" | "target">[],
+  dismissals: { nodeId: string; project: string; reaches: string[] }[],
+): CheckSuggestion[] {
+  const same = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((item) => b.includes(item));
+  return servers.flatMap((server) =>
+    (server.stacks ?? []).flatMap((stack) => {
+      const reaches =
+        stack.access === "contained" ? (stack.network?.reaches ?? []) : [];
+      const aside = dismissals.some(
+        (dismissal) =>
+          dismissal.nodeId === server.id &&
+          dismissal.project === stack.project &&
+          same(dismissal.reaches, reaches),
+      );
+      return (aside ? [] : reaches).flatMap((place): CheckSuggestion[] => {
+        const [address = "", rest = ""] = place.split(":");
+        const [port = "", protocol = ""] = rest.split("/");
+        const member = inside(view).find((entry) => entry.address === address);
+        if (!member || protocol !== "tcp") return [];
+        const target = `${kryName(member.name)}:${port}`;
+        const watched = checks.some(
+          (check) =>
+            check.node_id === server.id &&
+            [target, `${address}:${port}`].includes(check.target),
+        );
+        if (watched) return [];
+        const serving = servers
+          .find((entry) => entry.id === member.nodeId)
+          ?.stacks?.find((other) =>
+            other.network?.private.includes(`${port}/tcp`),
+          )?.project;
+        return [
+          {
+            nodeId: server.id,
+            project: stack.project,
+            reaches,
+            text: `${stack.project} reaches ${placeText(view, place)} over the private network. Watch that path from ${server.name}?`,
+            check: {
+              nodeId: server.id,
+              name: `${stack.project} to ${member.name}${serving ? ` ${serving}` : `:${port}`}`,
+              kind: "TCP",
+              target,
+              timeoutSeconds: 10,
+            },
+          },
+        ];
+      });
+    }),
   );
 }
 
@@ -742,18 +1186,24 @@ export function heldNote(view: NetworkView): string | null {
 const reachLine = (
   view: NetworkView,
   pointer: { nodeId: string; stack: string; target: string },
-): Row => ({
-  mark: "✕",
-  text: `${pointer.stack} on ${nameIn(view, pointer.nodeId)} reaches ${pointer.target}`,
-  detail: "It fails until you change it.",
-  action: "edit",
-  nodeId: pointer.nodeId,
-});
+): Row => {
+  const who = `${pointer.stack} on ${nameIn(view, pointer.nodeId)}`;
+  const place = placeText(view, pointer.target);
+  return {
+    mark: "✕",
+    text: `${who} reaches ${place}`,
+    detail: "It fails until you change it.",
+    short: `${who} stops reaching ${portWord(place)}`,
+    action: "edit",
+    nodeId: pointer.nodeId,
+  };
+};
 
 export function removeLines(
   server: NetworkServer,
   view: NetworkView,
   facts: { firewall: Firewall; docker: boolean; tools: boolean },
+  servers: Hosting[] = [],
 ): Row[] {
   const others = inside(view)
     .filter((member) => member.nodeId !== server.nodeId)
@@ -763,11 +1213,15 @@ export function removeLines(
     lines.push({
       mark: "−",
       text: `${listOf(others)} drop ${server.name} and stop accepting its key`,
+      short: `${listOf(others)} drop it`,
     });
   }
   lines.push({
     mark: "−",
     text: `On ${server.name}, kry0 goes down and its key is deleted`,
+    short: facts.firewall
+      ? `kry0, its key and its ${facts.firewall} rules come off`
+      : "kry0 and its key come off",
   });
   const parts = [
     facts.firewall ? `the two ${facts.firewall} rules` : null,
@@ -780,12 +1234,14 @@ export function removeLines(
       ...(facts.firewall
         ? { detail: `allow ${server.port}/udp · allow in on kry0` }
         : {}),
+      short: "",
     });
   }
   if (facts.tools) {
     lines.push({
       mark: "−",
       text: "WireGuard tools come off · Krynodes installed them for this, and nothing else uses them",
+      short: "WireGuard tools come off",
     });
   }
   const pointers = pointersAt(view, server);
@@ -801,12 +1257,15 @@ export function removeLines(
       ? {
           mark: "·",
           text: `${server.address} is held while a stack still points to it · ${listOf(who)}`,
+          short: `${server.address} is held while in use`,
         }
       : {
           mark: "·",
           text: `${server.address} is let go and given out again last`,
+          short: `${server.address} is let go`,
         },
     ...pointers.map((pointer) => reachLine(view, pointer)),
+    ...stackLines(view, servers, server.nodeId),
   );
   return lines;
 }
@@ -846,6 +1305,7 @@ export function deleteLines(
   presence: Presence,
   facts: { keep: string[]; names?: Record<string, string> },
   checks: CheckLike[],
+  servers: Hosting[] = [],
 ): Row[] {
   const members = inside(view);
   const offline = members
@@ -855,6 +1315,7 @@ export function deleteLines(
     {
       mark: "−",
       text: "kry0 comes off every server, with its key, its two firewall rules and the boot wait",
+      short: "kry0, keys and firewall rules come off",
     },
     {
       mark: "−",
@@ -864,10 +1325,12 @@ export function deleteLines(
             detail: `${listOf(facts.keep)} ${facts.keep.length === 1 ? "keeps" : "keep"} them; Krynodes did not install them there.`,
           }
         : {}),
+      short: "",
     },
     {
       mark: "−",
       text: "The range leaves Settings, Private Addresses, and held addresses are let go",
+      short: "The range leaves Private Addresses",
     },
   ];
   if (offline.length > 0) {
@@ -880,6 +1343,12 @@ export function deleteLines(
     });
   }
   lines.push(
+    ...stackLines(
+      view,
+      servers.filter((server) =>
+        members.some((member) => member.nodeId === server.id),
+      ),
+    ),
     ...members.flatMap((member) =>
       pointersAt(view, member).map((pointer) => reachLine(view, pointer)),
     ),
@@ -890,6 +1359,7 @@ export function deleteLines(
       mark: "✓",
       text: `Turn off ${plural(through.length, "check")} that ${through.length === 1 ? "goes" : "go"} through the network`,
       detail: `${through.map((check) => `${check.name}, on ${nameIn(view, check.node_id, facts.names)}`).join("; ")}. Turn ${through.length === 1 ? "it" : "them"} on again from Checks.`,
+      short: `Turn off ${plural(through.length, "check")} through the network`,
     });
   }
   return lines;
@@ -919,7 +1389,7 @@ export function leaveParagraph(
       : `${server.address} is let go.`;
   const reach =
     pointers.length > 0
-      ? ` ${listOf(pointers.map((pointer) => `${pointer.stack} on ${nameIn(view, pointer.nodeId)} reaches ${pointer.target}`))} and ${pointers.length === 1 ? "stops" : "stop"} working.`
+      ? ` ${listOf(pointers.map((pointer) => `${pointer.stack} on ${nameIn(view, pointer.nodeId)} reaches ${placeText(view, pointer.target)}`))} and ${pointers.length === 1 ? "stops" : "stop"} working.`
       : "";
   return `${server.name} is in the private network. Krynodes takes it out first: ${drop}${address}${reach}`;
 }
@@ -1061,7 +1531,11 @@ export function testRows(
   const ago = (end: TestEnd) =>
     `${end.name} ${end.age === null ? "--" : `${formatDuration(end.age * 1000)} ago`}`;
   const rows: Row[] = [
-    { mark: "✓", text: `Both agents answer · ${ago(a)} · ${ago(b)}` },
+    {
+      mark: "✓",
+      text: `Both agents answer · ${ago(a)} · ${ago(b)}`,
+      short: "Both agents answer",
+    },
   ];
   const down = ends.filter((end) => !end.result.up).map((end) => end.name);
   const behind = ends.filter((end) => stale(end, network.version));
@@ -1078,6 +1552,7 @@ export function testRows(
     rows.push({
       mark: "✓",
       text: "kry0 is up on both, each with the other's key",
+      short: "kry0 up, keys match",
     });
   }
   const apart = Math.abs(a.result.clock - b.result.clock);
@@ -1092,9 +1567,12 @@ export function testRows(
       : {
           mark: "✓",
           text: `Clocks agree · ${apart < 1 ? "under 1s" : `${apart}s`} apart`,
+          short: "Clocks agree",
         },
   );
   const listening = ends.filter((end) => end.address !== null);
+  const whose = (end: TestEnd, text: string) =>
+    listening.length > 1 ? `${end.name}: ${text}` : capitalize(text);
   for (const end of listening) {
     rows.push(
       moved(end)
@@ -1103,18 +1581,27 @@ export function testRows(
             text: `${end.name} now has ${end.result.publicAddress}`,
             detail: "Krynodes updates it on the others by itself.",
           }
-        : { mark: "✓", text: `${end.name} still has ${end.address}` },
+        : {
+            mark: "✓",
+            text: `${end.name} still has ${end.address}`,
+            short: whose(end, "address unchanged"),
+          },
     );
   }
   for (const end of listening) {
     const wall = end.result.firewall;
     const on = `${end.firewall} on ${end.name}`;
     if (end.firewall === null || wall.rule === null) {
-      rows.push({ mark: "✓", text: `${end.name} has no firewall in the way` });
+      rows.push({
+        mark: "✓",
+        text: `${end.name} has no firewall in the way`,
+        short: whose(end, "no firewall in the way"),
+      });
     } else if (!wall.rule) {
       rows.push({
         mark: "✕",
         text: `${on} does not let in ${end.port}/udp · the rule from Krynodes is gone`,
+        short: `${on} drops ${end.port}/udp`,
       });
     } else if (!wall.lets) {
       rows.push({
@@ -1126,6 +1613,7 @@ export function testRows(
       rows.push({
         mark: "✓",
         text: `${on} lets in ${end.port}/udp · the rule from Krynodes is there`,
+        short: whose(end, `${end.firewall} lets in ${end.port}/udp`),
       });
     }
   }
@@ -1174,10 +1662,15 @@ export function testRows(
     rows.push({
       mark: "✕",
       text: `Packets of ${Math.min(...ends.flatMap((end) => end.result.large.tried), network.mtu)} bytes and larger do not get through`,
+      short: "Large packets lost",
     });
   } else if (passed < network.mtu) {
     rows.push(
-      { mark: "✕", text: `Packets of ${network.mtu} bytes do not get through` },
+      {
+        mark: "✕",
+        text: `Packets of ${network.mtu} bytes do not get through`,
+        short: "Large packets lost",
+      },
       { mark: "✓", text: `Packets of ${passed} bytes get through` },
     );
   } else {
@@ -1198,8 +1691,10 @@ export const fixLabel = (fix: TestFix) =>
       ? "Put Rule Back"
       : `Use ${fix.size}`;
 
-export const testSummary = (rows: Row[], fix: TestFix | null) =>
-  `${rows.find((row) => row.mark === "✕")?.text ?? "The link answers"}${fix ? ` · ${fixLabel(fix)} was offered` : ""}`;
+export const testSummary = (rows: Row[], fix: TestFix | null) => {
+  const failed = rows.find((row) => row.mark === "✕");
+  return `${failed ? failed.short || failed.text : "The link answers"}${fix ? ` · ${fixLabel(fix)} was offered` : ""}`;
+};
 
 export function testPairs(
   view: NetworkView,

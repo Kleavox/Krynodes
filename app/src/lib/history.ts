@@ -211,6 +211,7 @@ export function historyText(
     action.kind === "docker" ? stackOf(stacks, action.name) : undefined;
   const name = stack ?? displayName(action.kind, action.name);
   if (action.action === "uninstall") return "Remove Krynodes from the server";
+  if (action.action === "reach") return `Change ${action.name}'s reach`;
   if (action.action === "logs") return `Read logs of ${name}`;
   return `${verb(action.action)} ${stack ?? objectOf(action)}`;
 }

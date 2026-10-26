@@ -136,6 +136,28 @@ export function useCheckResults() {
   });
 }
 
+export interface CheckDismissal {
+  nodeId: string;
+  project: string;
+  reaches: string[];
+}
+
+export function useCheckDismissals() {
+  return useQuery({
+    queryKey: queryKeys.checkDismissals,
+    queryFn: () =>
+      apiFetch<{ dismissals: CheckDismissal[] }>("/api/checks/dismissals"),
+  });
+}
+
+export const useDismissCheck = () =>
+  useApiMutation(
+    (dismissal: CheckDismissal) =>
+      apiFetch("/api/checks/dismissals", send("PUT", dismissal)),
+    [queryKeys.checkDismissals],
+    true,
+  );
+
 export function useApiMutation<TVariables, TData = unknown>(
   request: (variables: TVariables) => Promise<TData>,
   invalidate: readonly QueryKey[],

@@ -16,10 +16,12 @@ export interface ComposeSummary {
   privileged: string[];
   builds: string[];
   docker: string[];
+  private: string[];
   error: string | null;
 }
 
 const LOOPBACK = /^(127\.|::1$|localhost$|\[::1\]$)/u;
+const PRIVATE_IP = /^\$\{?KRY_PRIVATE_IP\}?$/u;
 
 function load(text: string): Loaded {
   const doc = parseDocument(text);
@@ -67,11 +69,16 @@ export function summarize(text: string): ComposeSummary {
     privileged: [],
     builds: [],
     docker: [],
+    private: [],
     error: loaded.error,
   };
   if (!loaded.services) return summary;
   const add = (items: string[], item: string) => {
     if (!items.includes(item)) items.push(item);
+  };
+  const opens = (ip: string, port: string) => {
+    if (PRIVATE_IP.test(ip)) add(summary.private, port);
+    else if (!LOOPBACK.test(ip)) add(summary.internet, port);
   };
   for (const [name, service] of Object.entries(loaded.services)) {
     summary.services.push(name);
@@ -79,18 +86,15 @@ export function summarize(text: string): ComposeSummary {
     for (const port of list(service.ports)) {
       if (typeof port === "string" || typeof port === "number") {
         const parsed = shortPort(String(port));
-        if (!parsed.ip || !LOOPBACK.test(parsed.ip)) {
-          add(
-            summary.internet,
-            `${parsed.host ?? parsed.container}/${parsed.protocol}`,
-          );
-        }
+        opens(
+          parsed.ip ?? "",
+          `${parsed.host ?? parsed.container}/${parsed.protocol}`,
+        );
       } else if (port && typeof port === "object") {
         const long = port as Record<string, unknown>;
-        const ip = typeof long.host_ip === "string" ? long.host_ip : "";
-        if (long.published !== undefined && !LOOPBACK.test(ip)) {
-          add(
-            summary.internet,
+        if (long.published !== undefined) {
+          opens(
+            typeof long.host_ip === "string" ? long.host_ip : "",
             `${String(long.published)}/${typeof long.protocol === "string" ? long.protocol : "tcp"}`,
           );
         }
@@ -118,6 +122,58 @@ export function summarize(text: string): ComposeSummary {
     if (service.build !== undefined) summary.builds.push(name);
   }
   return summary;
+}
+
+export function publishedPorts(
+  text: string,
+): { port: string; service: string }[] {
+  const found: { port: string; service: string }[] = [];
+  for (const [service, value] of Object.entries(load(text).services ?? {})) {
+    if (!value || typeof value !== "object") continue;
+    for (const port of list(value.ports)) {
+      let host: unknown;
+      let protocol: unknown = "tcp";
+      if (typeof port === "string" || typeof port === "number") {
+        ({ host, protocol } = shortPort(String(port)));
+      } else if (port && typeof port === "object") {
+        const long = port as Record<string, unknown>;
+        host = long.published;
+        protocol = long.protocol ?? "tcp";
+      }
+      const name = `${String(host)}/${String(protocol)}`;
+      if (
+        /^\d{1,5}\/(tcp|udp)$/u.test(name) &&
+        !found.some((entry) => entry.port === name)
+      ) {
+        found.push({ port: name, service });
+      }
+    }
+  }
+  return found;
+}
+
+export const usesPrivateIp = (text: string) =>
+  /\$\{?KRY_PRIVATE_IP\b/u.test(text);
+
+export function usePrivateAddress(text: string): string {
+  const doc = parseDocument(text);
+  const services = doc.get("services");
+  if (doc.errors.length > 0 || !isMap(services)) return text;
+  let changed = false;
+  for (const item of services.items) {
+    const ports = isMap(item.value) ? item.value.get("ports") : null;
+    if (!isSeq(ports)) continue;
+    for (const port of ports.items) {
+      if (!isScalar(port)) continue;
+      const value = String(port.value);
+      const parsed = shortPort(value);
+      if (parsed.host !== undefined && parsed.ip === undefined) {
+        port.value = `\${KRY_PRIVATE_IP}:${value}`;
+        changed = true;
+      }
+    }
+  }
+  return changed ? doc.toString() : text;
 }
 
 export function servicesOf(text: string): string[] {

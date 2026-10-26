@@ -33,6 +33,7 @@ import {
   targetOptions,
 } from "@/lib/checks";
 import { errorMessage } from "@/lib/http";
+import type { CheckSuggestion } from "@/lib/network";
 import { cn } from "@/lib/utils";
 import type { CheckKind, CheckRecord, NodeRecord } from "@/types";
 
@@ -62,12 +63,14 @@ export function CheckDialog({
   check,
   nodeId,
   nodes = [],
+  prefill,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   check?: CheckRecord;
   nodeId?: string;
   nodes?: NodeRecord[];
+  prefill?: CheckSuggestion["check"];
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -76,6 +79,7 @@ export function CheckDialog({
           check={check}
           nodeId={nodeId}
           nodes={nodes}
+          prefill={prefill}
           onDone={() => onOpenChange(false)}
         />
       )}
@@ -87,21 +91,29 @@ function CheckForm({
   check,
   nodeId,
   nodes,
+  prefill,
   onDone,
 }: {
   check?: CheckRecord;
   nodeId?: string;
   nodes: NodeRecord[];
+  prefill?: CheckSuggestion["check"];
   onDone: () => void;
 }) {
   const create = useCreateCheck();
   const update = useUpdateCheck();
   const mutation = check ? update : create;
-  const [node, setNode] = useState(check?.node_id ?? nodeId ?? "");
-  const [name, setName] = useState(check?.name ?? "");
-  const [kind, setKind] = useState<CheckKind>(check?.kind ?? "HTTP");
-  const [target, setTarget] = useState(check?.target ?? "");
-  const [seconds, setSeconds] = useState(check?.timeout_seconds ?? 10);
+  const [node, setNode] = useState(
+    check?.node_id ?? prefill?.nodeId ?? nodeId ?? "",
+  );
+  const [name, setName] = useState(check?.name ?? prefill?.name ?? "");
+  const [kind, setKind] = useState<CheckKind>(
+    check?.kind ?? prefill?.kind ?? "HTTP",
+  );
+  const [target, setTarget] = useState(check?.target ?? prefill?.target ?? "");
+  const [seconds, setSeconds] = useState(
+    check?.timeout_seconds ?? prefill?.timeoutSeconds ?? 10,
+  );
   const [touched, setTouched] = useState(false);
   const overview = useOverview();
   const services = useServices();

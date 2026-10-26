@@ -147,6 +147,46 @@ export function registerCheckResultRoutes(
     });
   });
 
+  app.get("/api/checks/dismissals", requireAdmin, async (context) => {
+    const rows = await context.env.DB.prepare(
+      `SELECT d.node_id AS nodeId, d.project, d.reaches FROM check_dismissals d
+       JOIN nodes n ON n.id = d.node_id WHERE n.owner_user_id = ?
+       ORDER BY d.node_id, d.project`,
+    )
+      .bind(context.get("identity").id)
+      .all<{ nodeId: string; project: string; reaches: string }>();
+    return context.json({
+      dismissals: rows.results.map((row) => ({
+        ...row,
+        reaches: JSON.parse(row.reaches) as string[],
+      })),
+    });
+  });
+
+  app.put("/api/checks/dismissals", requireAdmin, async (context) => {
+    const body = dismissalSchema.safeParse(await readJson(context));
+    if (!body.success) return invalidRequest(context);
+    const { nodeId, project, reaches } = body.data;
+    const stored = await context.env.DB.prepare(
+      `INSERT INTO check_dismissals (node_id, project, reaches, at)
+       SELECT id, ?2, ?3, ?4 FROM nodes WHERE id = ?1 AND owner_user_id = ?5
+       ON CONFLICT (node_id, project) DO UPDATE SET
+         reaches = excluded.reaches, at = excluded.at`,
+    )
+      .bind(
+        nodeId,
+        project,
+        JSON.stringify(reaches),
+        new Date().toISOString(),
+        context.get("identity").id,
+      )
+      .run();
+    if (stored.meta.changes === 0) {
+      return context.json({ code: "NOT_FOUND" }, 404);
+    }
+    return context.body(null, 204);
+  });
+
   app.get("/api/incidents/board", requireAdmin, async (context) => {
     const db = context.env.DB;
     const owner = context.get("identity").id;
@@ -430,6 +470,12 @@ export function registerCheckResultRoutes(
     },
   );
 }
+
+const dismissalSchema = z.object({
+  nodeId: z.string().uuid(),
+  project: z.string().min(1).max(128),
+  reaches: z.array(z.string().min(1).max(64)).max(64),
+});
 
 const updateSchema = z.object({
   status: z.enum(["investigating", "identified", "monitoring", "update"]),

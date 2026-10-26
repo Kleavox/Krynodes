@@ -1,8 +1,29 @@
 import { Plus, X } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { summarize } from "@/lib/compose";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useNetwork } from "@/lib/api";
+import { publishedPorts, usePrivateAddress } from "@/lib/compose";
+import {
+  inside,
+  opensBox,
+  parsePlaces,
+  placeText,
+  readServes,
+  servesArg,
+  servesProblem,
+  type Serve,
+  type ServeChoice,
+  type ServeRow,
+} from "@/lib/network";
 import { seal } from "@/lib/seal";
 import { cn } from "@/lib/utils";
 
@@ -286,50 +307,228 @@ export function ReachField({
   );
 }
 
-export function FullAccessSummary({ text }: { text: string }) {
-  const summary = summarize(text);
-  if (summary.error) return null;
-  const lines = [
-    summary.internet.length > 0 &&
-      `Opens to the internet: ${summary.internet.join(", ")}`,
-    summary.folders.length > 0 &&
-      `Uses server folders: ${summary.folders.join(", ")}`,
-    summary.hostNetwork.length > 0 &&
-      `Uses the server's network: ${summary.hostNetwork.join(", ")}`,
-    summary.devices.length > 0 && `Uses devices: ${summary.devices.join(", ")}`,
-    summary.privileged.length > 0 &&
-      `Runs privileged: ${summary.privileged.join(", ")}`,
-    summary.builds.length > 0 &&
-      `Builds on the server: ${summary.builds.join(", ")}`,
-    summary.docker.length > 0 &&
-      `Controls Docker, which is root on the server: ${summary.docker.join(", ")}`,
-  ].filter(Boolean) as string[];
-  const dns = summary.internet.some((port) => port.startsWith("53/"));
+export function FullAccessSummary({
+  text,
+  member,
+  onText,
+}: {
+  text: string;
+  member: Member | null;
+  onText: (text: string) => void;
+}) {
+  const box = opensBox(text, member);
+  if (!box) return null;
   return (
-    <div className="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+    <div
+      className={cn(
+        "space-y-2 rounded-md border p-3 text-xs",
+        box.warn && "border-warning/40 bg-warning/5",
+      )}
+    >
       <p className="font-medium">What This Stack Opens</p>
-      {lines.length === 0 ? (
+      {box.lines.length === 0 ? (
         <p className="text-muted-foreground">
           Nothing beyond its own containers.
         </p>
       ) : (
         <ul className="list-disc space-y-1 pl-4 font-mono">
-          {lines.map((line) => (
+          {box.lines.map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ul>
       )}
-      {summary.internet.length > 0 && (
-        <p className="text-muted-foreground">
-          Docker opens these ports past ufw, so a firewall does not close them.
+      {box.notes.map((note) => (
+        <p key={note} className="text-muted-foreground">
+          {note}
         </p>
+      ))}
+      {box.offer && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="min-w-0 flex-1">{box.offer}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onText(usePrivateAddress(text))}
+          >
+            Use Private Address
+          </Button>
+        </div>
       )}
-      {dns && (
-        <p className="text-muted-foreground">
-          Port 53 open to everyone makes an open resolver that others can abuse.
-          Limit it with AdGuard&rsquo;s Allowed clients, or use DNS-over-TLS.
+    </div>
+  );
+}
+
+type Member = { nodeId: string; name: string; address: string | null };
+
+const CHOICES: { value: ServeChoice; label: string }[] = [
+  { value: "self", label: "This Server Only" },
+  { value: "all", label: "All Servers" },
+  { value: "chosen", label: "Chosen Servers" },
+];
+
+export function useStackNetwork(
+  nodeId: string,
+  text: string,
+  start?: { serves?: Serve[]; reaches?: string[] },
+) {
+  const view = useNetwork().data;
+  const members = view ? inside(view) : [];
+  const member = members.find((entry) => entry.nodeId === nodeId) ?? null;
+  const [serving, setServing] = useState<ServeRow[] | null>(null);
+  const [typed, setTyped] = useState<string | null>(null);
+  const ports = publishedPorts(text);
+  const rows = ports.map(
+    ({ port }) =>
+      serving?.find((row) => row.port === port) ??
+      readServes(start?.serves, [port])[0]!,
+  );
+  const places =
+    typed ??
+    (start?.reaches ?? [])
+      .map((place) => (view ? placeText(view, place) : place))
+      .join(", ");
+  const parsed =
+    view && member
+      ? parsePlaces(places, view, nodeId)
+      : { places: [], problem: null };
+  return {
+    member,
+    others: members.filter((entry) => entry.nodeId !== nodeId),
+    ports,
+    rows,
+    onRows: setServing,
+    places,
+    onPlaces: setTyped,
+    placesProblem: parsed.problem,
+    servesProblem: servesProblem(rows),
+    args: { serves: servesArg(rows), reaches: parsed.places.join(",") },
+  };
+}
+
+export function NetworkSection({
+  network,
+}: {
+  network: ReturnType<typeof useStackNetwork>;
+}) {
+  const { member, others, ports, rows, onRows, places, onPlaces } = network;
+  if (!member) return null;
+  const update = (index: number, change: Partial<ServeRow>) =>
+    onRows(rows.map((row, at) => (at === index ? { ...row, ...change } : row)));
+  const problem = network.placesProblem;
+  return (
+    <div className="space-y-3 rounded-md border p-3">
+      <div className="space-y-0.5">
+        <p className="text-sm font-medium">Private Network</p>
+        <p className="text-xs text-muted-foreground">
+          {member.name} is {member.address ?? "--"} on the private network.
         </p>
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          No ports in the compose file
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {rows.map((row, index) => (
+            <li key={row.port} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs">{row.port}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {ports[index]?.service}
+                </span>
+                <Select
+                  value={row.choice}
+                  onValueChange={(value) =>
+                    update(index, { choice: value as ServeChoice })
+                  }
+                >
+                  <SelectTrigger
+                    aria-label={`Who may reach ${row.port}`}
+                    className="w-44"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CHOICES.map((choice) => (
+                      <SelectItem key={choice.value} value={choice.value}>
+                        {choice.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {row.choice === "chosen" && (
+                <fieldset className="space-y-1.5 rounded-md bg-muted/40 px-3 py-2">
+                  <legend className="sr-only">Who may reach {row.port}</legend>
+                  <p className="text-xs text-muted-foreground">
+                    Who may reach it
+                  </p>
+                  {others.map((other) => (
+                    <label
+                      key={other.nodeId}
+                      className="flex items-center gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-primary"
+                        checked={row.to.includes(other.nodeId)}
+                        onChange={() =>
+                          update(index, {
+                            to: row.to.includes(other.nodeId)
+                              ? row.to.filter((id) => id !== other.nodeId)
+                              : [...row.to, other.nodeId],
+                          })
+                        }
+                      />
+                      {other.name}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
+      {network.servesProblem && (
+        <p className="text-xs text-destructive">{network.servesProblem}</p>
+      )}
+      <div className="space-y-1.5">
+        <label htmlFor="stack-places" className="text-sm font-medium">
+          Reach Other Servers On
+        </label>
+        <Input
+          id="stack-places"
+          value={places}
+          placeholder={`${others[0]?.name ?? "vps-1"}:5432/tcp`}
+          autoComplete="off"
+          spellCheck={false}
+          className="font-mono"
+          aria-invalid={problem !== null}
+          aria-describedby="stack-places-hint"
+          onChange={(event) => onPlaces(event.target.value)}
+        />
+        <p
+          id="stack-places-hint"
+          className={cn(
+            "text-xs",
+            problem ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {problem ?? (
+            <>
+              <span className="max-sm:hidden">
+                Places on other servers its containers may connect to, separated
+                by commas.{" "}
+              </span>
+              Leave it empty and it reaches none.
+              <span className="max-sm:hidden">
+                {" "}
+                Replies to connections that came in always pass.
+              </span>
+            </>
+          )}
+        </p>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -241,9 +242,23 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		if _, on := state.Applied[request.Name]; on {
 			return e.refuse(request.ID, errors.New("already on; turn it off first"))
 		}
-		saved, err := recipes.Apply(ctx, env, request.Name, command.Args)
+		args := map[string]string{}
+		maps.Copy(args, command.Args)
+		delete(args, recipes.NetworkPort)
+		record := e.readNetwork()
+		opens := request.Name == "firewall" && record.Joined && record.Firewall == "" && record.Port != 0 && recipes.Detect(env).Family != recipes.RHEL
+		if opens {
+			args[recipes.NetworkPort] = strconv.Itoa(record.Port)
+		}
+		saved, err := recipes.Apply(ctx, env, request.Name, args)
 		if err != nil {
 			return e.refuse(request.ID, err)
+		}
+		if opens {
+			record.Firewall = "ufw"
+			if err := e.saveNetwork(record); err != nil {
+				log.Printf("remember the network's ufw rules: %v", err)
+			}
 		}
 		state.Applied[request.Name] = appliedRecipe{At: e.Now(), Saved: saved}
 		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {

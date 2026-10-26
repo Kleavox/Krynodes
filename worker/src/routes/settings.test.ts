@@ -194,6 +194,53 @@ describe("addresses that are not public", () => {
     expect(await detail()).toContain("5432/tcp");
   });
 
+  it("puts what only the network reaches on its own line, and sends each stack's network", async () => {
+    const { call, sqlite } = setup();
+    sqlite.prepare("UPDATE nodes SET security = ? WHERE id = ?").run(
+      JSON.stringify({
+        ...security,
+        listeners: [
+          ...security.listeners,
+          {
+            address: "10.88.4.2",
+            port: 5432,
+            protocol: "tcp",
+            process: "db-db-1",
+          },
+        ],
+      }),
+      NODE,
+    );
+    sqlite.exec(
+      `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+       VALUES ('standalone', '10.88.4.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
+    );
+    const network = {
+      serves: [{ port: "5432/tcp", all: true }],
+      reaches: [],
+      private: ["5432/tcp"],
+    };
+    sqlite
+      .prepare(
+        `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, network)
+         VALUES (?, 'db', '/srv/db', 1, 1, 1, 0, 'now', 'contained', ?)`,
+      )
+      .run(NODE, JSON.stringify(network));
+    const node = (
+      (await (await call("GET", "/api/services")).json()) as {
+        nodes: {
+          security: { findings: { id: string; detail: string }[] };
+          stacks: { project: string; network: unknown }[];
+        }[];
+      }
+    ).nodes[0]!;
+    expect(
+      node.security.findings.find((finding) => finding.id === "private-ports")
+        ?.detail,
+    ).toBe("On the private network only: 5432/tcp (db-db-1)");
+    expect(node.stacks).toMatchObject([{ project: "db", network }]);
+  });
+
   it("never sends the addresses a server's listeners are bound to", async () => {
     const { call, sqlite } = setup();
     const services = async () =>

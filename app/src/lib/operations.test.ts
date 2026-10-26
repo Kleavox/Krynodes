@@ -166,6 +166,26 @@ describe("activity", () => {
       label: "redis",
     });
   });
+
+  it("lists a link test once, named after both of its servers", () => {
+    const test = (id: string, nodeId: string) =>
+      action({
+        id,
+        batchId: "t1",
+        nodeId,
+        kind: "network",
+        name: "kry0",
+        action: "test",
+      });
+    const list = activity(
+      [test("t-a", "n1"), test("t-b", "n2")],
+      [node(), node({ id: "n2", name: "vps-3" })],
+      NOW,
+    );
+    expect(list.map((item) => [item.id, item.text])).toEqual([
+      ["t-a", "Testing pivox ↔ vps-3"],
+    ]);
+  });
 });
 
 describe("elapsed time", () => {

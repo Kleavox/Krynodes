@@ -225,6 +225,43 @@ describe("operations in steps", () => {
     expect((await t.operate("move", [unsigned, created!])).status).toBe(400);
   });
 
+  it("ends a move with what other servers' stacks reach, never on its own two servers", async () => {
+    const t = routes();
+    t.sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.7.0' WHERE id = ?")
+      .run(C);
+    t.sqlite
+      .prepare(
+        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access) VALUES (?, 'shop', '/var/lib/kry-exec/compose/shop', 1, 1, 1, 0, datetime('now'), 'contained')",
+      )
+      .run(C);
+    const reach = (nodeId: string, args = { reaches: "10.88.0.2:9000/tcp" }) =>
+      step({ nodeId, kind: "compose", name: "shop", action: "reach", args });
+    const accepted = await t.operate("move", [...moveSteps(), reach(C)]);
+    expect(accepted.status).toBe(201);
+    expect(t.rows().map((row) => [row.nodeId, row.action])).toEqual([
+      [A, "export"],
+      [B, "create"],
+      [A, "remove"],
+      [C, "reach"],
+    ]);
+    for (const steps of [
+      [...moveSteps(), reach(A)],
+      [...moveSteps(), reach(B)],
+      [...moveSteps(), reach(C, { reaches: "", hostPorts: "" } as never)],
+      [...moveSteps(), ...Array.from({ length: 9 }, () => reach(C))],
+    ]) {
+      expect((await t.operate("move", steps)).status).toBe(400);
+    }
+    t.sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.6.14' WHERE id = ?")
+      .run(C);
+    t.sqlite.prepare("DELETE FROM actions").run();
+    expect(
+      await code(await t.operate("move", [...moveSteps(), reach(C)])),
+    ).toBe("AGENT_TOO_OLD");
+  });
+
   it("needs agent 0.6.14 on every server in the operation", async () => {
     const t = routes();
     t.sqlite

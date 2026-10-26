@@ -2,6 +2,7 @@ import type {
   NetworkDocument,
   NetworkLink,
   PackagesReport,
+  StackNetwork,
   TailscaleReport,
 } from "@krynodes/protocol";
 
@@ -344,6 +345,7 @@ export type ActionVerb =
   | "expose"
   | "unexpose"
   | "adopt"
+  | "reach"
   | "apply"
   | "undo"
   | "lockdown"
@@ -393,6 +395,7 @@ export interface StackEntry {
   access?: "contained" | "full" | null;
   public?: string[];
   containers?: string[];
+  network?: StackNetwork | null;
 }
 
 export interface Finding {

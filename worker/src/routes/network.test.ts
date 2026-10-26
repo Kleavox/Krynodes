@@ -294,7 +294,13 @@ describe("the network document", () => {
       ]),
     );
     await inventory(A, {
-      network: { points: [{ stack: "backup", target: "vps-3.kry" }] },
+      network: {
+        points: [
+          { stack: "backup", target: "vps-3.kry" },
+          { stack: "backup", target: "10.88.0.3:9000/tcp" },
+          { stack: "other", target: "10.88.0.30:9000/tcp" },
+        ],
+      },
     });
     await post(
       documentOf(2, [member(A, "10.88.0.1"), member(B, "10.88.0.2")], {
@@ -311,11 +317,18 @@ describe("the network document", () => {
         address: "10.88.0.3",
         nodeId: C,
         nodeName: "vps-3",
-        points: [{ nodeId: A, stack: "backup", target: "vps-3.kry" }],
+        points: [
+          { nodeId: A, stack: "backup", target: "vps-3.kry" },
+          { nodeId: A, stack: "backup", target: "10.88.0.3:9000/tcp" },
+        ],
       },
     ]);
     expect(read.members[0]).toMatchObject({
-      points: [{ stack: "backup", target: "vps-3.kry" }],
+      points: [
+        { stack: "backup", target: "vps-3.kry" },
+        { stack: "backup", target: "10.88.0.3:9000/tcp" },
+        { stack: "other", target: "10.88.0.30:9000/tcp" },
+      ],
     });
     expect(read.members.map((entry) => [entry.nodeId, entry.state])).toEqual([
       [A, "in"],
@@ -328,7 +341,10 @@ describe("the network document", () => {
         {
           address: "10.88.0.3",
           nodeName: "vps-3",
-          points: [{ nodeId: A, stack: "backup", target: "vps-3.kry" }],
+          points: [
+            { nodeId: A, stack: "backup", target: "vps-3.kry" },
+            { nodeId: A, stack: "backup", target: "10.88.0.3:9000/tcp" },
+          ],
         },
       ],
     });

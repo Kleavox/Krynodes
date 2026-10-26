@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { networkBeatSchema, networkInventorySchema } from "./network";
+import {
+  networkBeatSchema,
+  networkInventorySchema,
+  stackNetworkSchema,
+} from "./network";
 import { isValidTarget, RECIPES } from "./targets";
 
 export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
@@ -17,6 +21,8 @@ export {
   networkProbeSchema,
   networkRekeySchema,
   networkTestSchema,
+  placeSchema,
+  stackNetworkSchema,
   type NetworkBeat,
   type NetworkDocument,
   type NetworkInspect,
@@ -24,6 +30,7 @@ export {
   type NetworkLink,
   type NetworkMember,
   type NetworkTest,
+  type StackNetwork,
 } from "./network";
 export {
   passphraseKeySchema,
@@ -205,6 +212,7 @@ export const KIND_VERBS = {
     "expose",
     "unexpose",
     "adopt",
+    "reach",
   ],
   host: [
     "reboot",
@@ -292,6 +300,7 @@ export const agentActionSchema = z
       "expose",
       "unexpose",
       "adopt",
+      "reach",
       "apply",
       "undo",
       "lockdown",
@@ -388,6 +397,7 @@ export const stackEntrySchema = z
       .array(z.string().refine((name) => isValidTarget("docker", name)))
       .max(500)
       .optional(),
+    network: stackNetworkSchema.optional(),
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 

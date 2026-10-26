@@ -9,6 +9,8 @@ export const NETWORK = {
   keepalive: 25,
   answerSeconds: 180,
   mtuMargin: 80,
+  variable: "KRY_PRIVATE_IP",
+  places: 32,
 } as const;
 
 const OCTET = "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
@@ -241,7 +243,28 @@ export const networkInventorySchema = z.strictObject({
     .max(200),
 });
 
+const portName = z.string().regex(/^\d{1,5}\/(tcp|udp)$/u);
+
+export const placeSchema = z
+  .string()
+  .regex(new RegExp(`^${OCTET}(\\.${OCTET}){3}:\\d{1,5}\\/(tcp|udp)$`, "u"));
+
+const serveSchema = z
+  .strictObject({
+    port: portName,
+    all: z.literal(true).optional(),
+    to: z.array(z.string().uuid()).min(1).max(32).optional(),
+  })
+  .refine((serve) => (serve.all === true) !== (serve.to !== undefined));
+
+export const stackNetworkSchema = z.strictObject({
+  serves: z.array(serveSchema).max(16),
+  reaches: z.array(placeSchema).max(NETWORK.places),
+  private: z.array(portName).max(64),
+});
+
 export type NetworkDocument = z.infer<typeof networkDocumentSchema>;
+export type StackNetwork = z.infer<typeof stackNetworkSchema>;
 export type NetworkMember = NetworkDocument["members"][number];
 export type NetworkBeat = z.infer<typeof networkBeatSchema>;
 export type NetworkLink = z.infer<typeof networkLinkSchema>;

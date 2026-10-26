@@ -30,11 +30,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useOverview, useServices } from "@/lib/api";
+import { useNetwork, useOverview, useServices } from "@/lib/api";
 import { moveCompose, servicesOf } from "@/lib/compose";
 import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
+import {
+  hostingOf,
+  inside,
+  moveBlock,
+  privateIpProblem,
+  readServes,
+  servesArg,
+} from "@/lib/network";
 import { moveBlocker, moveConfirmed } from "@/lib/stacks";
+import { cn } from "@/lib/utils";
 import { moveSteps } from "@/lib/vault";
 import type { WebAddress } from "@/types";
 
@@ -144,10 +153,46 @@ function MoveForm({
   const [original, setOriginal] = useState<Original>("later");
   const [typed, setTyped] = useState("");
   const [sealing, setSealing] = useState(false);
-  const problem = secretsProblem(secrets);
+  const [skipped, setSkipped] = useState<string[]>([]);
+  const view = useNetwork().data;
+  const there =
+    (view && inside(view).find((member) => member.nodeId === chosen)) ?? null;
+  const targetName =
+    servers.find((node) => node.id === chosen)?.name ?? "the server";
+  const stack = entries
+    .get(source.nodeId)
+    ?.stacks.find((entry) => entry.project === source.project);
+  const block =
+    view && chosen
+      ? moveBlock(
+          {
+            project: source.project,
+            network:
+              stack?.network && chosenAccess === "full"
+                ? { ...stack.network, serves: [], reaches: [] }
+                : stack?.network,
+          },
+          { nodeId: source.nodeId, name: source.nodeName },
+          { nodeId: chosen, name: targetName },
+          view,
+          hostingOf(services.data?.nodes ?? [], overview.data?.nodes ?? []),
+        )
+      : null;
+  const changes = (block?.changes ?? []).filter(
+    (change) => !skipped.includes(`${change.nodeId}:${change.project}`),
+  );
+  const secretsWrong = secretsProblem(secrets);
+  const privateWrong = privateIpProblem(text, targetName, there !== null);
+  const problem = secretsWrong ?? privateWrong;
   const carried = chosenAccess === "contained" ? (read?.hostPorts ?? []) : [];
   const blocked = moveBlocker(addresses, original);
   const targetKey = entries.get(chosen)?.sealKey ?? "";
+  const skip = (key: string) =>
+    setSkipped(
+      skipped.includes(key)
+        ? skipped.filter((item) => item !== key)
+        : [...skipped, key],
+    );
 
   const toggle = (name: string) => {
     setEdited(null);
@@ -173,7 +218,11 @@ function MoveForm({
     operate.mutate(
       {
         kind: "move",
-        reach: [source.nodeId, chosen],
+        reach: [
+          source.nodeId,
+          chosen,
+          ...changes.map((change) => change.nodeId),
+        ],
         build: () =>
           moveSteps({
             source: source.nodeId,
@@ -184,6 +233,18 @@ function MoveForm({
             access: chosenAccess,
             ...(sealed ? { secrets: sealed } : {}),
             hostPorts: carried,
+            ...(block && !block.red
+              ? {
+                  serves: servesArg(
+                    readServes(
+                      block.serves,
+                      block.serves.map((serve) => serve.port),
+                    ),
+                  ),
+                  reaches: block.reaches.join(","),
+                  reach: changes,
+                }
+              : {}),
             original,
           }),
       },
@@ -271,11 +332,56 @@ function MoveForm({
               className={AREA}
             />
           </div>
-          {chosenAccess === "full" && <FullAccessSummary text={text} />}
+          {privateWrong && (
+            <p className="text-xs text-destructive">{privateWrong}</p>
+          )}
+          {chosenAccess === "full" && (
+            <FullAccessSummary text={text} member={there} onText={setEdited} />
+          )}
+          {block && (
+            <div
+              className={cn(
+                "space-y-2 rounded-md border p-3 text-xs",
+                block.red && "border-destructive/40 bg-destructive/5",
+              )}
+            >
+              <p className="text-sm font-medium">Private Network</p>
+              {block.red ? (
+                <p className="text-destructive">{block.red}</p>
+              ) : (
+                <>
+                  {block.lines.map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
+                  {block.changes.map((change) => {
+                    const key = `${change.nodeId}:${change.project}`;
+                    return (
+                      <label key={key} className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 size-4 shrink-0 accent-primary"
+                          checked={!skipped.includes(key)}
+                          onChange={() => skip(key)}
+                        />
+                        <span className="min-w-0 break-words">
+                          {change.text}
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {block.note && (
+                    <p className="text-muted-foreground">{block.note}</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>More Secrets</Label>
             <SecretsEditor rows={secrets} onChange={setSecrets} />
-            {problem && <p className="text-xs text-destructive">{problem}</p>}
+            {secretsWrong && (
+              <p className="text-xs text-destructive">{secretsWrong}</p>
+            )}
           </div>
           <div
             role="radiogroup"

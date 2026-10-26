@@ -842,6 +842,31 @@ only its own links. From agent 0.7.0.
   checks that go through it. Delete node takes the server out of the network
   first, and renaming a member tells the others its new name.
 
+Stacks on the network:
+
+- **A Contained stack is closed to the network until you say otherwise.** On a
+  member, Edit compose and New stack have a **Private Network** section: each
+  published port is **This Server Only**, **All Servers** or **Chosen Servers**,
+  and **Reach Other Servers On** lists the places on other servers (such as
+  `vps-2:5432/tcp`) its containers may connect to. Replies to connections that
+  came in always pass. The agent keeps the lists beside the stack and turns
+  them into iptables rules for `kry0` in `DOCKER-USER`; a server leaving takes
+  its rules with it.
+- **A Full access stack reaches every server**, and What this stack opens says
+  so. **Use Private Address** rewrites `"3000:3000"` to
+  `"${KRY_PRIVATE_IP}:3000:3000"` in the editor only; Krynodes fills in
+  `KRY_PRIVATE_IP` with the server's own private address at deploy, and refuses
+  a file that uses it on a server outside the network.
+- Inside containers every member is `<server>.kry` (`extra_hosts`, added at
+  deploy without changing the compose file).
+- Listeners only on the private network are not public: Security lists them on
+  a grey line, and on a member points a public Full access stack to the private
+  address. Turn on firewall keeps the network's port as a locked row.
+- **Move** carries the lists, offers to change the other stacks that reach this
+  one (the same fingerprint signs them) and turns red when the new server is
+  outside the network. Checks suggests a TCP check for each place a Contained
+  stack reaches; **Not now** hides it until that list changes.
+
 ## Data retention
 
 A daily cron (03:17 UTC) keeps the database small enough for the Free plan's

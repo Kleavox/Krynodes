@@ -2,6 +2,7 @@ import type {
   NetworkDocument,
   NetworkInspect,
   NetworkTest,
+  StackNetwork,
 } from "@krynodes/protocol";
 import { describe, expect, it } from "vitest";
 
@@ -11,15 +12,29 @@ import type {
   NetworkView,
   NodeRecord,
 } from "../types";
+import { usePrivateAddress } from "./compose";
 import { historyText } from "./history";
 import {
   buildDocument,
   candidateState,
   checkRows,
+  checkSuggestions,
   deleteLines,
+  firewallRow,
   fixLabel,
+  moveBlock,
+  networkHint,
+  opensBox,
+  parsePlaces,
+  placeText,
+  privateIpProblem,
+  reachedStacks,
+  readServes,
+  servesArg,
+  servesProblem,
   heldNote,
   heldRows,
+  hostingOf,
   joinerOf,
   leaveParagraph,
   linkProgress,
@@ -746,25 +761,34 @@ describe("changing and ending", () => {
       {
         mark: "−",
         text: "vps-1, vps-2 and pivox drop vps-3 and stop accepting its key",
+        short: "vps-1, vps-2 and pivox drop it",
       },
-      { mark: "−", text: "On vps-3, kry0 goes down and its key is deleted" },
+      {
+        mark: "−",
+        text: "On vps-3, kry0 goes down and its key is deleted",
+        short: "kry0, its key and its ufw rules come off",
+      },
       {
         mark: "−",
         text: "The two ufw rules and the boot wait come off",
         detail: "allow 51820/udp · allow in on kry0",
+        short: "",
       },
       {
         mark: "−",
         text: "WireGuard tools come off · Krynodes installed them for this, and nothing else uses them",
+        short: "WireGuard tools come off",
       },
       {
         mark: "·",
         text: "10.88.0.3 is held while a stack still points to it · backup on vps-1",
+        short: "10.88.0.3 is held while in use",
       },
       {
         mark: "✕",
         text: "backup on vps-1 reaches vps-3.kry",
         detail: "It fails until you change it.",
+        short: "backup on vps-1 stops reaching vps-3.kry",
         action: "edit",
         nodeId: A,
       },
@@ -779,9 +803,18 @@ describe("changing and ending", () => {
       {
         mark: "−",
         text: "vps-1, vps-3 and pivox drop vps-2 and stop accepting its key",
+        short: "vps-1, vps-3 and pivox drop it",
       },
-      { mark: "−", text: "On vps-2, kry0 goes down and its key is deleted" },
-      { mark: "·", text: "10.88.0.2 is let go and given out again last" },
+      {
+        mark: "−",
+        text: "On vps-2, kry0 goes down and its key is deleted",
+        short: "kry0 and its key come off",
+      },
+      {
+        mark: "·",
+        text: "10.88.0.2 is let go and given out again last",
+        short: "10.88.0.2 is let go",
+      },
     ]);
   });
 
@@ -837,15 +870,18 @@ describe("changing and ending", () => {
       {
         mark: "−",
         text: "kry0 comes off every server, with its key, its two firewall rules and the boot wait",
+        short: "kry0, keys and firewall rules come off",
       },
       {
         mark: "−",
         text: "WireGuard tools come off where Krynodes installed them",
         detail: "vps-2 keeps them; Krynodes did not install them there.",
+        short: "",
       },
       {
         mark: "−",
         text: "The range leaves Settings, Private Addresses, and held addresses are let go",
+        short: "The range leaves Private Addresses",
       },
       {
         mark: "·",
@@ -855,6 +891,7 @@ describe("changing and ending", () => {
         mark: "✕",
         text: "backup on vps-1 reaches vps-3.kry",
         detail: "It fails until you change it.",
+        short: "backup on vps-1 stops reaching vps-3.kry",
         action: "edit",
         nodeId: A,
       },
@@ -862,6 +899,7 @@ describe("changing and ending", () => {
         mark: "✓",
         text: "Turn off 1 check that goes through the network",
         detail: "umami to vps-2 db, on vps-1. Turn it on again from Checks.",
+        short: "Turn off 1 check through the network",
       },
     ]);
   });
@@ -946,18 +984,40 @@ describe("Test Link", () => {
     });
     const b = end(vps3, 20, blocked);
     expect(testRows(a, b, network)).toEqual([
-      { mark: "✓", text: "Both agents answer · vps-2 12s ago · vps-3 20s ago" },
-      { mark: "✓", text: "kry0 is up on both, each with the other's key" },
-      { mark: "✓", text: "Clocks agree · under 1s apart" },
-      { mark: "✓", text: "vps-2 still has 51.79.0.11" },
-      { mark: "✓", text: "vps-3 still has 203.0.113.7" },
+      {
+        mark: "✓",
+        text: "Both agents answer · vps-2 12s ago · vps-3 20s ago",
+        short: "Both agents answer",
+      },
+      {
+        mark: "✓",
+        text: "kry0 is up on both, each with the other's key",
+        short: "kry0 up, keys match",
+      },
+      {
+        mark: "✓",
+        text: "Clocks agree · under 1s apart",
+        short: "Clocks agree",
+      },
+      {
+        mark: "✓",
+        text: "vps-2 still has 51.79.0.11",
+        short: "vps-2: address unchanged",
+      },
+      {
+        mark: "✓",
+        text: "vps-3 still has 203.0.113.7",
+        short: "vps-3: address unchanged",
+      },
       {
         mark: "✓",
         text: "ufw on vps-2 lets in 51821/udp · the rule from Krynodes is there",
+        short: "vps-2: ufw lets in 51821/udp",
       },
       {
         mark: "✓",
         text: "ufw on vps-3 lets in 51820/udp · the rule from Krynodes is there",
+        short: "vps-3: ufw lets in 51820/udp",
       },
       {
         mark: "✕",
@@ -986,9 +1046,14 @@ describe("Test Link", () => {
     expect(rows.slice(-4)).toEqual([
       { mark: "✓", text: "Handshakes get through" },
       { mark: "✓", text: "Small packets · 38 ms, none lost" },
-      { mark: "✕", text: "Packets of 1420 bytes do not get through" },
+      {
+        mark: "✕",
+        text: "Packets of 1420 bytes do not get through",
+        short: "Large packets lost",
+      },
       { mark: "✓", text: "Packets of 1380 bytes get through" },
     ]);
+    expect(rows.map((row) => row.short)).toContain("Address unchanged");
     expect(rows.map((row) => row.text)).not.toContain("pivox still has --");
     expect(mostLikely(a, b, network, [])).toEqual({
       text: "The way to pivox carries at most 1380 bytes, likely because of its home connection. Small requests work, but a large reply stalls.",
@@ -997,7 +1062,7 @@ describe("Test Link", () => {
       fix: { kind: "mtu", nodeId: D, size: 1380 },
     });
     expect(testSummary(rows, { kind: "mtu", nodeId: D, size: 1380 })).toBe(
-      "Packets of 1420 bytes do not get through · Use 1380 was offered",
+      "Large packets lost · Use 1380 was offered",
     );
     expect(testSummary(testRows(a, end(vps2, 3), network), null)).toBe(
       "The link answers",
@@ -1055,6 +1120,7 @@ describe("Test Link", () => {
     expect(testRows(a, gone, network)).toContainEqual({
       mark: "✕",
       text: "ufw on vps-3 does not let in 51820/udp · the rule from Krynodes is gone",
+      short: "ufw on vps-3 drops 51820/udp",
     });
     expect(mostLikely(a, gone, network, []).fix).toEqual({
       kind: "rule",
@@ -1308,5 +1374,462 @@ describe("the ends of a member", () => {
         null,
       ).state,
     ).toBe("Ready · gets --");
+  });
+});
+
+const onIt = (
+  project: string,
+  access: "contained" | "full",
+  network: StackNetwork,
+  extra: { public?: string[] } = {},
+) => ({ project, access, network, ...extra });
+
+const servers = [
+  {
+    id: A,
+    name: "vps-1",
+    stacks: [
+      onIt("backup", "contained", {
+        serves: [],
+        reaches: ["10.88.0.3:9000/tcp"],
+        private: [],
+      }),
+      onIt("umami", "contained", {
+        serves: [],
+        reaches: ["10.88.0.2:5432/tcp"],
+        private: [],
+      }),
+    ],
+  },
+  {
+    id: B,
+    name: "vps-2",
+    stacks: [
+      onIt(
+        "grafana",
+        "full",
+        { serves: [], reaches: [], private: ["3000/tcp"] },
+        { public: [] },
+      ),
+      onIt("db", "contained", {
+        serves: [{ port: "5432/tcp", to: [A] }],
+        reaches: [],
+        private: ["5432/tcp"],
+      }),
+    ],
+  },
+  {
+    id: C,
+    name: "vps-3",
+    stacks: [
+      onIt("minio", "contained", {
+        serves: [{ port: "9000/tcp", all: true }],
+        reaches: [],
+        private: ["9000/tcp"],
+      }),
+    ],
+  },
+];
+
+const placed = () =>
+  view({
+    members: [
+      {
+        ...vps1,
+        points: [
+          { stack: "backup", target: "10.88.0.3:9000/tcp" },
+          { stack: "umami", target: "10.88.0.2:5432/tcp" },
+        ],
+      },
+      vps2,
+      vps3,
+      pivox,
+    ],
+  });
+
+const grafanaOpen = `services:
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports:
+      - "3000:3000"
+`;
+
+describe("stacks on the private network", () => {
+  it("reads places by name, by .kry name or by address, and says what is wrong", () => {
+    expect(
+      parsePlaces(
+        "vps-2:5432/tcp, vps-3.kry:9000/tcp,10.88.0.9:22/tcp, vps-2:5432/tcp",
+        view(),
+        A,
+      ),
+    ).toEqual({
+      places: ["10.88.0.2:5432/tcp", "10.88.0.3:9000/tcp", "10.88.0.9:22/tcp"],
+      problem: null,
+    });
+    expect(parsePlaces(" ", view(), A)).toEqual({ places: [], problem: null });
+    const problem = (text: string) => parsePlaces(text, view(), A).problem;
+    expect(problem("vps-9:5432/tcp")).toBe(
+      "vps-9 is not in the private network.",
+    );
+    expect(problem("10.99.0.2:5432/tcp")).toBe(
+      "10.99.0.2 is not in the private network.",
+    );
+    expect(problem("vps-1:5432/tcp")).toBe(
+      "That is vps-1 itself; use Reach This Server On.",
+    );
+    expect(problem("10.88.0.1:5432/tcp")).toBe(
+      "That is vps-1 itself; use Reach This Server On.",
+    );
+    expect(problem("vps-2:5432")).toBe(
+      "vps-2:5432 is not a place such as vps-2:5432/tcp.",
+    );
+    expect(problem("vps-2")).toBe(
+      "vps-2 is not a place such as vps-2:5432/tcp.",
+    );
+    expect(
+      problem(
+        Array.from({ length: 33 }, (_, port) => `vps-2:${port + 1}/tcp`).join(
+          ",",
+        ),
+      ),
+    ).toBe("A stack may reach at most 32 places.");
+  });
+
+  it("shows a place by its server's name, and a held address as it is", () => {
+    expect(placeText(view(), "10.88.0.2:5432/tcp")).toBe("vps-2:5432/tcp");
+    expect(placeText(view(), "10.88.0.9:5432/tcp")).toBe("10.88.0.9:5432/tcp");
+  });
+
+  it("reads and writes who may reach each port", () => {
+    const rows = readServes(
+      [
+        { port: "5432/tcp", to: [B, C] },
+        { port: "9090/tcp", all: true },
+        { port: "7000/tcp", all: true },
+      ],
+      ["5432/tcp", "9090/tcp", "3000/tcp"],
+    );
+    expect(rows).toEqual([
+      { port: "5432/tcp", choice: "chosen", to: [B, C] },
+      { port: "9090/tcp", choice: "all", to: [] },
+      { port: "3000/tcp", choice: "self", to: [] },
+    ]);
+    expect(servesArg(rows)).toBe(`5432/tcp=${B} ${C},9090/tcp=all`);
+    expect(servesProblem(rows)).toBeNull();
+    expect(
+      servesProblem([{ port: "5432/tcp", choice: "chosen", to: [] }]),
+    ).toBe("Tick at least one server, or choose This Server Only.");
+    expect(readServes(undefined, ["80/tcp"])).toEqual([
+      { port: "80/tcp", choice: "self", to: [] },
+    ]);
+  });
+
+  it("tells the Full access box about the network", () => {
+    const member = { name: "vps-2", address: "10.88.0.2" };
+    expect(opensBox(grafanaOpen, member)).toEqual({
+      lines: [
+        "Opens to the internet and every server: 3000/tcp",
+        "Reaches every server on the private network",
+      ],
+      notes: [
+        "Docker opens these ports past ufw, so a firewall does not close them.",
+      ],
+      offer:
+        "Only your servers need 3000/tcp? Open it on the private address instead.",
+      warn: true,
+    });
+    expect(opensBox(usePrivateAddress(grafanaOpen), member)).toEqual({
+      lines: [
+        "Opens to every server on the private network: 3000/tcp",
+        "Reaches every server on the private network",
+      ],
+      notes: [
+        "Krynodes fills in KRY_PRIVATE_IP with the server's own private address, 10.88.0.2 here.",
+      ],
+      offer: null,
+      warn: false,
+    });
+    expect(opensBox(grafanaOpen, null)).toEqual({
+      lines: ["Opens to the internet: 3000/tcp"],
+      notes: [
+        "Docker opens these ports past ufw, so a firewall does not close them.",
+      ],
+      offer: null,
+      warn: true,
+    });
+    expect(opensBox("services:\n  web:\n    image: nginx\n", null)).toEqual({
+      lines: [],
+      notes: [],
+      offer: null,
+      warn: false,
+    });
+    expect(
+      privateIpProblem(usePrivateAddress(grafanaOpen), "vps-4", false),
+    ).toBe(
+      "vps-4 is not in the private network, so KRY_PRIVATE_IP has no value.",
+    );
+    expect(
+      privateIpProblem(usePrivateAddress(grafanaOpen), "vps-2", true),
+    ).toBeNull();
+    expect(privateIpProblem(grafanaOpen, "vps-4", false)).toBeNull();
+  });
+
+  it("points Security's public line at the private address, and keeps the firewall's network row", () => {
+    const stacks = [
+      { project: "grafana", access: "full" as const, public: ["3000/tcp"] },
+      { project: "prometheus", access: "full" as const, public: [] },
+      { project: "db", access: "contained" as const, public: ["5432/tcp"] },
+    ];
+    expect(networkHint(stacks, true)).toBe(
+      "grafana is on the private network too. If only your servers need it, use the private address in Edit Compose.",
+    );
+    expect(
+      networkHint(
+        [...stacks, { project: "web", access: "full", public: ["80/tcp"] }],
+        true,
+      ),
+    ).toBe(
+      "grafana and web are on the private network too. If only your servers need them, use the private address in Edit Compose.",
+    );
+    expect(networkHint(stacks, false)).toBeNull();
+    expect(firewallRow(vps2)).toEqual({
+      port: "51821/udp",
+      detail: "the private network, while vps-2 is in it",
+    });
+  });
+
+  it("says what Remove does to the stacks that serve or reach the server", () => {
+    expect(
+      removeLines(
+        vps3,
+        placed(),
+        { firewall: "ufw", docker: true, tools: true },
+        servers,
+      ).slice(4),
+    ).toEqual([
+      {
+        mark: "·",
+        text: "10.88.0.3 is held while a stack still points to it · backup on vps-1",
+        short: "10.88.0.3 is held while in use",
+      },
+      {
+        mark: "✕",
+        text: "backup on vps-1 reaches vps-3:9000/tcp",
+        detail: "It fails until you change it.",
+        short: "backup on vps-1 stops reaching vps-3:9000",
+        action: "edit",
+        nodeId: A,
+      },
+      {
+        mark: "✕",
+        text: "minio on vps-3 serves 9000 to All Servers",
+        detail: "It goes back to This Server Only.",
+        short: "minio goes back to This Server Only",
+      },
+    ]);
+  });
+
+  it("says what Delete Network does to every stack on it", () => {
+    expect(
+      deleteLines(placed(), presence, { keep: [] }, [], servers).slice(4),
+    ).toEqual([
+      {
+        mark: "✕",
+        text: "grafana on vps-2 opens 3000 on KRY_PRIVATE_IP",
+        detail:
+          "Nobody can reach it, and it fails on its next start until you change it.",
+        short: "grafana on vps-2 uses KRY_PRIVATE_IP",
+      },
+      {
+        mark: "✕",
+        text: "db on vps-2 serves 5432 to vps-1",
+        detail: "It goes back to This Server Only.",
+        short: "db goes back to This Server Only",
+      },
+      {
+        mark: "✕",
+        text: "minio on vps-3 serves 9000 to All Servers",
+        detail: "It goes back to This Server Only.",
+        short: "minio goes back to This Server Only",
+      },
+      {
+        mark: "✕",
+        text: "umami on vps-1 reaches vps-2:5432/tcp",
+        detail: "It fails until you change it.",
+        short: "umami on vps-1 stops reaching vps-2:5432",
+        action: "edit",
+        nodeId: A,
+      },
+      {
+        mark: "✕",
+        text: "backup on vps-1 reaches vps-3:9000/tcp",
+        detail: "It fails until you change it.",
+        short: "backup on vps-1 stops reaching vps-3:9000",
+        action: "edit",
+        nodeId: A,
+      },
+    ]);
+  });
+
+  it("carries what a moved stack serves and changes the places that reach it", () => {
+    const shop = {
+      id: C,
+      name: "vps-3",
+      stacks: [
+        onIt("shop", "contained", {
+          serves: [],
+          reaches: ["10.88.0.2:6379/tcp", "10.88.0.4:22/tcp"],
+          private: [],
+        }),
+      ],
+    };
+    const cache = {
+      project: "cache",
+      network: {
+        serves: [{ port: "6379/tcp", to: [C] }],
+        reaches: [],
+        private: ["6379/tcp"],
+      },
+    };
+    const from = { nodeId: B, name: "vps-2" };
+    expect(
+      moveBlock(cache, from, { nodeId: A, name: "vps-1" }, view(), [shop]),
+    ).toEqual({
+      red: null,
+      lines: ["On vps-1, cache serves 6379/tcp to vps-3 only, as it does now."],
+      changes: [
+        {
+          nodeId: C,
+          project: "shop",
+          text: "Change shop's reach on vps-3 from vps-2:6379/tcp to vps-1:6379/tcp",
+          reaches: ["10.88.0.1:6379/tcp", "10.88.0.4:22/tcp"],
+        },
+      ],
+      note: "shop's own settings may still name vps-2.kry, such as a secret. Change them after the move.",
+      serves: [{ port: "6379/tcp", to: [C] }],
+      reaches: [],
+    });
+    expect(
+      moveBlock(cache, from, { nodeId: E, name: "vps-4" }, view(), [shop]),
+    ).toEqual({
+      red: "vps-4 is not in the private network, so vps-3 cannot reach cache there.",
+      lines: [],
+      changes: [],
+      note: null,
+      serves: [],
+      reaches: [],
+    });
+    const everyone = {
+      project: "cache",
+      network: {
+        serves: [{ port: "6379/tcp", all: true as const }],
+        reaches: ["10.88.0.3:9000/tcp", "10.88.0.1:8080/tcp"],
+        private: ["6379/tcp"],
+      },
+    };
+    expect(
+      moveBlock(everyone, from, { nodeId: A, name: "vps-1" }, view(), []),
+    ).toMatchObject({
+      lines: [
+        "On vps-1, cache serves 6379/tcp to All Servers, as it does now.",
+      ],
+      changes: [],
+      note: null,
+      reaches: ["10.88.0.3:9000/tcp"],
+    });
+    expect(
+      moveBlock(
+        {
+          project: "app",
+          network: {
+            serves: [],
+            reaches: ["10.88.0.3:9000/tcp"],
+            private: [],
+          },
+        },
+        from,
+        { nodeId: E, name: "vps-4" },
+        view(),
+        [],
+      )?.red,
+    ).toBe(
+      "vps-4 is not in the private network, so app cannot reach vps-3:9000/tcp there.",
+    );
+    expect(
+      moveBlock(
+        { project: "web", network: null },
+        from,
+        { nodeId: A, name: "vps-1" },
+        view(),
+        [shop],
+      ),
+    ).toBeNull();
+  });
+
+  it("names each server's stacks from the server list", () => {
+    expect(
+      hostingOf(
+        [
+          { id: A, stacks: servers[0]!.stacks },
+          { id: E, stacks: [] },
+        ],
+        [{ id: A, name: "vps-1" }],
+      ),
+    ).toEqual([{ id: A, name: "vps-1", stacks: servers[0]!.stacks }]);
+  });
+
+  it("names the stacks other servers reach on a server", () => {
+    expect(reachedStacks(servers[1]!)).toEqual(["grafana", "db"]);
+    expect(reachedStacks(servers[0]!)).toEqual([]);
+    expect(reachedStacks(undefined)).toEqual([]);
+  });
+
+  it("suggests a check for each place a Contained stack reaches, until it is put aside", () => {
+    expect(checkSuggestions(servers, view(), [], [])).toEqual([
+      {
+        nodeId: A,
+        project: "backup",
+        reaches: ["10.88.0.3:9000/tcp"],
+        text: "backup reaches vps-3:9000/tcp over the private network. Watch that path from vps-1?",
+        check: {
+          nodeId: A,
+          name: "backup to vps-3 minio",
+          kind: "TCP",
+          target: "vps-3.kry:9000",
+          timeoutSeconds: 10,
+        },
+      },
+      {
+        nodeId: A,
+        project: "umami",
+        reaches: ["10.88.0.2:5432/tcp"],
+        text: "umami reaches vps-2:5432/tcp over the private network. Watch that path from vps-1?",
+        check: {
+          nodeId: A,
+          name: "umami to vps-2 db",
+          kind: "TCP",
+          target: "vps-2.kry:5432",
+          timeoutSeconds: 10,
+        },
+      },
+    ]);
+    const watched = [
+      {
+        id: "1",
+        name: "db",
+        node_id: A,
+        target: "10.88.0.2:5432",
+        enabled: 1,
+      },
+    ];
+    const aside = [
+      { nodeId: A, project: "backup", reaches: ["10.88.0.3:9000/tcp"] },
+    ];
+    expect(checkSuggestions(servers, view(), watched, aside)).toEqual([]);
+    expect(
+      checkSuggestions(servers, view(), watched, [
+        { ...aside[0]!, reaches: ["10.88.0.3:8000/tcp"] },
+      ]).map((suggestion) => suggestion.project),
+    ).toEqual(["backup"]);
   });
 });

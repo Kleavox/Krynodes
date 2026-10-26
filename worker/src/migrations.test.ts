@@ -600,3 +600,46 @@ describe("migration 0033", () => {
     ).toEqual([{ node_name: "pivox" }]);
   });
 });
+
+describe("migration 0034", () => {
+  it("keeps every action and stack, takes compose reach, and adds the stack's network and check dismissals", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0034");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'io', 'h1')",
+    );
+    sqlite.exec(action("a1", "network", "kry0", "prepare", "done", "{}"));
+    sqlite.exec(
+      "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access) VALUES ('n1', 'shop', '/srv/shop', 1, 1, 1, 0, 'now', 'contained')",
+    );
+    expect(() =>
+      sqlite.exec(action("a2", "compose", "shop", "reach", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0034"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(action("a2", "compose", "shop", "reach", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a3", "compose", "shop", "edit", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(
+      `UPDATE stacks SET network = '{"serves":[],"reaches":[],"private":[]}' WHERE project = 'shop'`,
+    );
+    expect(
+      sqlite.prepare("SELECT project, access, network FROM stacks").all(),
+    ).toEqual([
+      {
+        project: "shop",
+        access: "contained",
+        network: '{"serves":[],"reaches":[],"private":[]}',
+      },
+    ]);
+    sqlite.exec(
+      `INSERT INTO check_dismissals (node_id, project, reaches, at) VALUES ('n1', 'shop', '["10.88.0.2:5432/tcp"]', 'now')`,
+    );
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(sqlite.prepare("SELECT * FROM check_dismissals").all()).toEqual([]);
+  });
+});

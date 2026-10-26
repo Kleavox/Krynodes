@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAction, useServices } from "@/lib/api";
 import { canRestartServer } from "@/lib/devices";
+import { reachedStacks } from "@/lib/network";
 import { jobLines, outcomeOf, packageText, runningJob } from "@/lib/packages";
 import { isPending } from "@/lib/services";
 import { useNow } from "@/lib/use-now";
@@ -115,9 +116,9 @@ export function PackageDialogs({
   actions: ActionRecord[];
 }) {
   const services = useServices();
-  const stacks = (
-    services.data?.nodes.find((item) => item.id === node.id)?.stacks ?? []
-  ).map((stack) => stack.project);
+  const entry = services.data?.nodes.find((item) => item.id === node.id);
+  const stacks = (entry?.stacks ?? []).map((stack) => stack.project);
+  const reached = reachedStacks(entry && { ...entry, name: node.name });
   const close = () => onDialog(null);
   const started = (id: string) => onDialog({ kind: "job", id });
   switch (dialog?.kind) {
@@ -145,6 +146,7 @@ export function PackageDialogs({
           node={node}
           report={report}
           stacks={stacks}
+          reached={reached}
           onClose={close}
           onStarted={started}
         />

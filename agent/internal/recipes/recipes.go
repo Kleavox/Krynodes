@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/network"
 )
 
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, int, error)
@@ -379,14 +381,16 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		}
 		return installed(fresh), nil
 	case "firewall":
-		return firewall(ctx, env, args["ports"])
+		return firewall(ctx, env, args["ports"], args[NetworkPort])
 	case "free-port-53":
 		return freePort53(ctx, env)
 	}
 	return nil, fmt.Errorf("unknown recipe %q", id)
 }
 
-func firewall(ctx context.Context, env Env, chosen string) (map[string]string, error) {
+const NetworkPort = "networkPort"
+
+func firewall(ctx context.Context, env Env, chosen, networkPort string) (map[string]string, error) {
 	var extra []string
 	for port := range strings.SplitSeq(chosen, ",") {
 		if port = strings.TrimSpace(port); port == "" {
@@ -421,6 +425,13 @@ func firewall(ctx context.Context, env Env, chosen string) (map[string]string, e
 	for _, rule := range rules {
 		if err := env.run(ctx, "ufw", "allow", rule, "comment", "krynodes"); err != nil {
 			return nil, err
+		}
+	}
+	if port, err := strconv.Atoi(networkPort); err == nil {
+		for _, command := range network.Open("ufw", port) {
+			if err := env.run(ctx, command[0], command[1:]...); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if !active {

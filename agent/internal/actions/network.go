@@ -236,6 +236,7 @@ func (e Executor) takeDown(ctx context.Context, record networkRecord) []string {
 		for _, command := range network.Close(record.Firewall, record.Port, numbered) {
 			step("firewall", e.networkCommand(ctx, command[0], command[1:]...))
 		}
+		e.dropRules(ctx)
 		step("remove the Docker drop-in", os.Remove(e.path(network.DropInPath)))
 		step("reload systemd", e.networkCommand(ctx, "systemctl", "daemon-reload"))
 		step("hosts", e.writeHosts(nil))
@@ -376,6 +377,7 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 	if err := e.saveNetwork(record); err != nil {
 		return e.failed(request, err, "")
 	}
+	e.syncRules(ctx)
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("applied version %d", document.Version), FinishedAt: e.stamp()}
 }
 
@@ -443,10 +445,12 @@ func (e Executor) leaveNetwork(ctx context.Context, request Request, document ne
 		}
 		return Result{ID: request.ID, OK: true, Output: "not in the private network", FinishedAt: e.stamp()}
 	}
+	_, own := e.ownAddress()
 	problems := e.takeDown(ctx, record)
 	if err := e.saveNetwork(networkRecord{Applied: record.Applied.After(document)}); err != nil {
 		problems = append(problems, err.Error())
 	}
+	problems = append(problems, e.unserve(ctx, own)...)
 	if len(problems) > 0 {
 		return Result{ID: request.ID, OK: false, Output: clean([]byte("left the private network, but: " + strings.Join(problems, "; "))), FinishedAt: e.stamp()}
 	}
@@ -759,6 +763,7 @@ func (e Executor) WatchLinks(ctx context.Context, every time.Duration) {
 	defer ticker.Stop()
 	for {
 		e.WriteLinks(ctx)
+		e.syncRules(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -776,6 +781,12 @@ func (e Executor) networkInventory(snapshot Snapshot) *reporter.NetworkInventory
 		for _, stack := range snapshot.Stacks {
 			files, _ := e.composeFiles(stack)
 			seen := map[string]bool{}
+			if e.ownStack(stack.Directory) {
+				files = []string{filepath.Join(stack.Directory, "compose.yaml")}
+				for _, place := range e.metaOf(stack.Directory).Reaches {
+					seen[place] = true
+				}
+			}
 			for _, file := range append(files, filepath.Join(stack.Directory, ".env")) {
 				body, _ := os.ReadFile(file)
 				for _, target := range pointed.FindAllString(string(body), -1) {

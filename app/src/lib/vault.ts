@@ -225,8 +225,18 @@ export function moveSteps(input: {
   access: "contained" | "full";
   secrets?: string;
   hostPorts?: string[];
+  serves?: string;
+  reaches?: string;
+  reach?: { nodeId: string; project: string; reaches: string[] }[];
   original: "now" | "later" | "keep";
 }): OperationTarget[] {
+  const args = Object.fromEntries(
+    [
+      ["hostPorts", input.hostPorts?.join(",") ?? ""],
+      ["serves", input.serves ?? ""],
+      ["reaches", input.reaches ?? ""],
+    ].filter(([, value]) => value !== ""),
+  );
   return [
     {
       nodeId: input.source,
@@ -243,9 +253,7 @@ export function moveSteps(input: {
       compose: input.compose,
       access: input.access,
       ...(input.secrets ? { secrets: input.secrets } : {}),
-      ...(input.hostPorts?.length
-        ? { args: { hostPorts: input.hostPorts.join(",") } }
-        : {}),
+      ...(Object.keys(args).length > 0 ? { args } : {}),
       attachFrom: 0,
     },
     ...(input.original === "keep"
@@ -261,6 +269,13 @@ export function moveSteps(input: {
                 : ("remove" as const),
           },
         ]),
+    ...(input.reach ?? []).map((change) => ({
+      nodeId: change.nodeId,
+      kind: "compose" as const,
+      name: change.project,
+      action: "reach" as const,
+      args: { reaches: change.reaches.join(",") },
+    })),
   ];
 }
 

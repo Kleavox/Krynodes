@@ -243,6 +243,7 @@ describe("compose actions", () => {
         access: null,
         public: [],
         containers: [],
+        network: null,
       },
     ]);
     expect(a.trust).toEqual({

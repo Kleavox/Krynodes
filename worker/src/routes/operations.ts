@@ -1,5 +1,7 @@
 import {
+  FEATURE_AGENT,
   MIN_AGENT_VERSION,
+  agentHasFeatures,
   agentSupported,
   isValidTarget,
   signedCommandSchema,
@@ -41,6 +43,7 @@ const stepSchema = z.object({
     "reshare",
     "forget",
     "uninstall",
+    "reach",
   ]),
   signed: signedCommandSchema,
   attachFrom: z.number().int().min(0).max(19).optional(),
@@ -111,19 +114,28 @@ function shaped(kind: string, steps: Step[]): boolean {
   );
   if (!plain) return false;
   switch (kind) {
-    case "move":
+    case "move": {
+      const removed = is(third, "compose", "remove", "purge");
+      const reaches = steps.slice(removed ? 3 : 2);
       return (
-        steps.length <= 3 &&
         is(first, "compose", "export") &&
         is(second, "compose", "create") &&
         second!.attachFrom === 0 &&
         first!.nodeId !== second!.nodeId &&
         first!.args.to === second!.nodeId &&
-        (third === undefined ||
-          (is(third, "compose", "remove", "purge") &&
-            third.nodeId === first!.nodeId &&
-            third.name === first!.name))
+        (!removed ||
+          (third!.nodeId === first!.nodeId && third!.name === first!.name)) &&
+        reaches.length <= 8 &&
+        reaches.every(
+          (step) =>
+            is(step, "compose", "reach") &&
+            step.attachFrom === undefined &&
+            step.nodeId !== first!.nodeId &&
+            step.nodeId !== second!.nodeId &&
+            Object.keys(step.args).join() === "reaches",
+        )
       );
+    }
     case "expose":
     case "unexpose": {
       const verb = kind;
@@ -311,6 +323,20 @@ export function registerOperationRoutes(
         {
           code: "AGENT_TOO_OLD",
           message: `Update the agent on ${old.name} to ${MIN_AGENT_VERSION} or newer.`,
+        },
+        422,
+      );
+    }
+    const behind = steps.find(
+      (step) =>
+        step.action === "reach" &&
+        !agentHasFeatures(byId.get(step.nodeId)!.agent_version),
+    );
+    if (behind) {
+      return context.json(
+        {
+          code: "AGENT_TOO_OLD",
+          message: `Update the agent on ${byId.get(behind.nodeId)!.name} to ${FEATURE_AGENT} or newer.`,
         },
         422,
       );
