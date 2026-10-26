@@ -1,13 +1,23 @@
 import { describe, expect, it } from "vitest";
 
-import type { ActionRecord, CheckResult, IncidentDetail } from "../types";
+import type {
+  ActionRecord,
+  CheckResult,
+  Incident,
+  IncidentDetail,
+} from "../types";
 import {
+  downLatest,
   foldResults,
+  incidentRowLine,
+  incidentsRedirect,
   incidentState,
   incidentStrip,
-  last30Text,
+  last30Parts,
+  lastIncidentLine,
   latestLine,
   ownerLink,
+  recentIncidents,
   runText,
   timeline,
 } from "./incidents";
@@ -283,16 +293,155 @@ describe("the incident list", () => {
       }),
     ).toBe("Deploy umami: done");
   });
+});
+
+describe("incidents on the Checks page", () => {
+  const MINUTE = 60_000;
+  const on = (day: number, hour: number, minute: number) =>
+    new Date(2026, 9, day, hour, minute).getTime();
+  const now = on(26, 16, 6);
+  const incident = (
+    id: string,
+    checkId: string,
+    started: number,
+    lasted: number | null,
+    summary: string | null,
+  ): Incident => ({
+    id,
+    check_id: checkId,
+    node_id: "io",
+    status: lasted === null ? "OPEN" : "RESOLVED",
+    started_at: new Date(started).toISOString(),
+    resolved_at:
+      lasted === null ? null : new Date(started + lasted).toISOString(),
+    summary,
+    check_name: checkId,
+    node_name: "io",
+  });
+
+  it("gives each row its start, open or how long it lasted, and why", () => {
+    expect(
+      incidentRowLine(
+        incident("p", "pihole", on(26, 15, 30), null, "down"),
+        now,
+      ),
+    ).toBe("Today 15:30 · open · 36m");
+    expect(
+      incidentRowLine(
+        incident(
+          "b",
+          "blog",
+          on(21, 12, 46),
+          12 * MINUTE,
+          "timed out after 10s",
+        ),
+        now,
+      ),
+    ).toBe("21 Oct 12:46 · 12m · timed out after 10s");
+    expect(
+      incidentRowLine(
+        incident("b", "blog", on(21, 12, 46), 12 * MINUTE, null),
+        now,
+      ),
+    ).toBe("21 Oct 12:46 · 12m");
+  });
+
+  it("names a check's last resolved incident only while none is open", () => {
+    const resolved = incident(
+      "b",
+      "blog",
+      on(21, 12, 46),
+      12 * MINUTE,
+      "timed out",
+    );
+    expect(lastIncidentLine("blog", [resolved])).toBe(
+      "Last incident 21 Oct · 12m · timed out",
+    );
+    expect(lastIncidentLine("blog", [{ ...resolved, summary: null }])).toBe(
+      "Last incident 21 Oct · 12m",
+    );
+    expect(
+      lastIncidentLine("blog", [
+        incident("o", "blog", on(26, 15, 30), null, "down"),
+        resolved,
+      ]),
+    ).toBeNull();
+    expect(lastIncidentLine("blog", [])).toBeNull();
+    expect(
+      lastIncidentLine("blog", [
+        incident("old", "blog", on(10, 9, 0), MINUTE, "older"),
+        resolved,
+        incident("x", "umami", on(25, 9, 0), MINUTE, "other"),
+      ]),
+    ).toBe("Last incident 21 Oct · 12m · timed out");
+  });
+
+  it("keeps the last 30 days, newest first", () => {
+    const old = incident("old", "blog", now - 40 * 86_400_000, MINUTE, null);
+    const b = incident("b", "blog", on(20, 9, 0), MINUTE, null);
+    const a = incident("a", "blog", on(25, 9, 0), MINUTE, null);
+    expect(recentIncidents([old, b, a], now).map((entry) => entry.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
 
   it("sums up the last 30 days", () => {
-    expect(last30Text({ count: 3, downMs: 47 * 60_000 })).toBe(
-      "Last 30 Days · 3 incidents · 47m down in total",
-    );
-    expect(last30Text({ count: 1, downMs: 4 * 60_000 })).toBe(
-      "Last 30 Days · 1 incident · 4m down in total",
-    );
-    expect(last30Text({ count: 0, downMs: 0 })).toBe(
-      "Last 30 Days · No Incidents",
-    );
+    expect(last30Parts({ count: 5, downMs: 145 * MINUTE })).toEqual({
+      count: "5",
+      noun: "incidents",
+      down: "2h 25m",
+    });
+    expect(last30Parts({ count: 1, downMs: 4 * MINUTE })).toEqual({
+      count: "1",
+      noun: "incident",
+      down: "4m",
+    });
+    expect(last30Parts({ count: 0, downMs: 0 })).toBeNull();
+  });
+
+  it("puts the newest of an update or an action on a Down card, else the auto-restart line", () => {
+    const update = {
+      at: new Date(2026, 9, 26, 15, 26).toISOString(),
+      updates: 1,
+      update: {
+        status: "investigating" as const,
+        message: "The database container exits on start.",
+      },
+      action: null,
+    };
+    expect(downLatest(update, "Auto-restart failed")).toEqual({
+      time: "15:26",
+      text: "Investigating: The database container exits on start.",
+      failed: false,
+    });
+    const restart = {
+      at: new Date(2026, 9, 26, 15, 36).toISOString(),
+      updates: 0,
+      update: null,
+      action: action({
+        kind: "docker",
+        name: "pihole-pihole-1",
+        action: "restart",
+        output: "port 53 is already allocated",
+      }),
+    };
+    expect(downLatest(restart, null)).toEqual({
+      time: "15:36",
+      text: "Restart failed: port 53 is already allocated",
+      failed: true,
+    });
+    expect(downLatest(undefined, "Auto-restart failed 2m ago")).toEqual({
+      time: null,
+      text: "Auto-restart failed 2m ago",
+      failed: true,
+    });
+    expect(downLatest(undefined, null)).toBeNull();
+  });
+
+  it("sends an old /incidents link to Checks", () => {
+    expect(incidentsRedirect("?status=open")).toBe("/checks?status=down");
+    expect(incidentsRedirect("?status=resolved")).toBe("/checks");
+    expect(incidentsRedirect("")).toBe("/checks");
   });
 });

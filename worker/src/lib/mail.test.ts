@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../env";
-import { sendServerEmail } from "./mail";
+import { sendServerEmail, sendTokenEmail } from "./mail";
 
 function mailEnv(extra: Partial<Env> = {}) {
   const send = vi.fn(async () => ({ messageId: "m-1" }));
@@ -47,10 +47,15 @@ describe("incident email", () => {
     expect(message.html).toContain("API &lt;health&gt;");
     expect(message.html).not.toContain("<health>");
     expect(message.html).toContain("2026-09-28 08:05 UTC");
-    expect(message.html).toContain('href="https://kry.example.test/incidents"');
+    expect(message.html).toContain(
+      'href="https://kry.example.test/checks?status=down"',
+    );
+    expect(message.html).toContain("Open Checks");
     expect(message.html).not.toMatch(/Pulse|Kleavox/u);
     expect(message.text).toContain("timeout");
-    expect(message.text).toContain("https://kry.example.test/incidents");
+    expect(message.text).toContain(
+      "https://kry.example.test/checks?status=down",
+    );
   });
 
   it("says plainly when a server stops reporting", async () => {
@@ -63,6 +68,14 @@ describe("incident email", () => {
     expect(sent().subject).toBe("[Krynodes] pivox: offline");
     expect(sent().text).toContain("Last report: 2026-09-28 08:05 UTC");
     expect(sent().text).toContain("https://kry.example.test/nodes/n1");
+  });
+
+  it("writes row labels as they are, without uppercase", async () => {
+    const { env, sent } = mailEnv();
+    await sendTokenEmail(env, { expiresAt: "2026-11-20T00:00:00.000Z" });
+    expect(sent().html).toContain(">Expires</td>");
+    expect(sent().html).not.toContain("text-transform:uppercase");
+    expect(sent().html).not.toContain("letter-spacing:0.06em");
   });
 
   it("sends nothing when no operator address or binding is configured", async () => {

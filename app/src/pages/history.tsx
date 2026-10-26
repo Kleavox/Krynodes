@@ -24,7 +24,7 @@ import {
   type ActionRequest,
 } from "@/features/services/action-dialog";
 import { useHistory, useHistoryAttention, useOverview } from "@/lib/api";
-import { dayGroups } from "@/lib/history";
+import { dayGroups, readShow } from "@/lib/history";
 import type { HistoryShow } from "@/types";
 
 const ALL = "all";
@@ -41,7 +41,9 @@ export function HistoryPage() {
   const attention = useHistoryAttention();
   const [params] = useSearchParams();
   const [node, setNode] = useState(() => params.get("server") ?? ALL);
-  const [show, setShow] = useState<HistoryShow>("everything");
+  const [show, setShow] = useState<HistoryShow>(() =>
+    readShow(params.get("show")),
+  );
   const [typed, setTyped] = useState("");
   const [q, setQ] = useState("");
   const [request, setRequest] = useState<ActionRequest | null>(null);

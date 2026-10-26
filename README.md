@@ -255,8 +255,9 @@ up to a minute.
   a connection that stays silent for 75 seconds and reconnects after 1 second,
   doubling to 1 minute (with jitter). Cloudflare closes every connection on a
   deploy or restart; agents are back within seconds and report at once.
-- Agents before 0.6.0 are not supported. A 0.5.x agent still connects and
-  is told to update at once to the published release; older agents are
+- Agents before 0.6.14 are not supported. An agent from 0.5.0 to 0.6.13
+  still connects and is told to update at once to the published release;
+  older agents are
   refused (426), the Worker refuses every action for them, and the server
   page's agent dialog shows the command to update such a server by hand.
 - At a 60-second interval a server costs about 870 D1 writes a day.
@@ -351,17 +352,19 @@ min ago: port 53 is already allocated`), Logs and the button that fits (Roll
   a kind picker replace the old tabs, system units fold into `+ 3 system
 services` until **System services** is on, and **Removed n** lists removed
   stacks.
-- **Checks**: **Down** first, each with its reason, how long, failures in a
-  row, its incident and its updates, a failed auto-restart, and Logs and
-  Restart (containers and units) or Open incident; then search, `All · Down ·
-Up`, and one box per server with the 4-hour strip, uptime and the last
-  column above.
-- **Incidents**: open incidents with their latest line, the newest of the
+- **Checks** (incidents included): **Down** first, each with its reason, how
+  long, failures in a row, its incident and its latest line, the newest of the
   last update and the last action on what the check watches (`09:58
-Auto-restart failed: port 53 is already allocated`); then `Last 30 days · 3
-incidents · 47m down in total` and one row per resolved incident with its
-  cause and length.
-- **History**: **Failed, not fixed** cards, each with its output (last lines
+Auto-restart failed: port 53 is already allocated`), and Logs and Restart
+  (containers and units) or Open incident; then a search over checks and
+  incidents, `All · Down · Up`, and one box per server with the 4-hour strip,
+  uptime, the last column above and `Last incident 21 Oct · 12m · timed out`.
+  Beside them, **Incidents · last 30 days**: `5 incidents · 2h 25m down`, the
+  open ones counted up to now, and one row per incident (`Today 15:30 · open ·
+36m`). `/incidents` opens Checks; `/incidents/:id` is still the incident page.
+- **History** (the account menu, above Trusted devices; the hourglass in the
+  header shows `2 failed` and lists them under **Failed, not fixed**):
+  **Failed, not fixed** cards, each with its output (last lines
   first) and one tab per container of the stack it touched, read from the
   server only when opened, the incident it caused, Try again, Roll back and ⋯
   **Hide**; then **Everything** in one box with days as separators, actions

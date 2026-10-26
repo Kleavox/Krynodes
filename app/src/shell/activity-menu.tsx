@@ -10,14 +10,23 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { useDevices, useOverview, useServices } from "@/lib/api";
-import { activity, type ActivityItem } from "@/lib/operations";
+import {
+  useDevices,
+  useHistoryAttention,
+  useOverview,
+  useServices,
+} from "@/lib/api";
+import { failedLine } from "@/lib/history";
+import { activity, hourglassLabel, type ActivityItem } from "@/lib/operations";
 import { runningText } from "@/lib/services";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
+import type { AttentionItem, NodeRecord, ServicesResponse } from "@/types";
 
 const ROW =
   "grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2.5 rounded-md px-2 py-1.5 text-sm hover:bg-accent";
+
+const HEADING = "px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground";
 
 function Running({ item, onPick }: { item: ActivityItem; onPick: () => void }) {
   return (
@@ -38,19 +47,69 @@ function Running({ item, onPick }: { item: ActivityItem; onPick: () => void }) {
   );
 }
 
+function Failed({
+  item,
+  nodes,
+  services,
+  devices,
+  now,
+  onPick,
+}: {
+  item: AttentionItem;
+  nodes: NodeRecord[];
+  services: ServicesResponse | undefined;
+  devices: { id: string; name: string }[] | undefined;
+  now: number;
+  onPick: () => void;
+}) {
+  const { nodeId } = item.action;
+  const line = failedLine(
+    item.action,
+    {
+      name: nodes.find((node) => node.id === nodeId)?.name,
+      stacks: services?.nodes.find((entry) => entry.id === nodeId)?.stacks,
+    },
+    now,
+    devices,
+  );
+  return (
+    <li>
+      <Link to="/history" onClick={onPick} className={ROW}>
+        <span aria-hidden="true" className="text-destructive">
+          ✕
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate">{line.text}</span>
+          <span className="block font-mono text-[11px] text-muted-foreground">
+            {line.time}
+            {line.failure && (
+              <span className="text-destructive"> · {line.failure}</span>
+            )}
+          </span>
+        </span>
+      </Link>
+    </li>
+  );
+}
+
 export function ActivityMenu() {
   const services = useServices();
   const overview = useOverview();
   const devices = useDevices();
+  const attention = useHistoryAttention();
   const [open, setOpen] = useState(false);
   const now = useNow(open ? 5_000 : 30_000);
+  const nodes = overview.data?.nodes ?? [];
   const list = activity(
     services.data?.actions ?? [],
-    overview.data?.nodes ?? [],
+    nodes,
     now,
     devices.data?.devices,
   );
+  const failures = attention.data?.items ?? [];
   const running = list.length;
+  const label = hourglassLabel(running, failures.length);
+  const first = label.parts[0]?.tone;
   const close = () => setOpen(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -58,19 +117,26 @@ export function ActivityMenu() {
         <Button
           variant="outline"
           size="sm"
-          aria-label={
-            running > 0 ? `${running} in progress` : "Nothing in Progress"
-          }
-          className={cn(running > 0 && "border-warning/40")}
+          aria-label={label.aria}
+          className={cn(
+            first === "warn" && "border-warning/40",
+            first === "bad" && "border-destructive/40",
+          )}
         >
-          {running > 0 ? (
-            <>
-              <StatusDot tone="warn" pulse />
-              <span className="font-mono text-xs">
-                {running}
-                <span className="hidden md:inline"> in progress</span>
+          {label.parts.length > 0 ? (
+            label.parts.map((part) => (
+              <span
+                key={part.tone}
+                className={cn(
+                  "inline-flex items-center gap-1.5 font-mono text-xs",
+                  part.tone === "bad" && "text-destructive",
+                )}
+              >
+                <StatusDot tone={part.tone} pulse={part.tone === "warn"} />
+                {part.count}
+                <span className="hidden md:inline"> {part.word}</span>
               </span>
-            </>
+            ))
           ) : (
             <Hourglass aria-hidden="true" />
           )}
@@ -80,9 +146,7 @@ export function ActivityMenu() {
         align="end"
         className="max-h-[70dvh] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto p-2"
       >
-        <h2 className="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">
-          In Progress
-        </h2>
+        <h2 className={HEADING}>In Progress</h2>
         {running === 0 ? (
           <p className="px-2 pb-2 text-sm text-muted-foreground">
             Nothing is running.
@@ -93,6 +157,24 @@ export function ActivityMenu() {
               <Running key={item.id} item={item} onPick={close} />
             ))}
           </ul>
+        )}
+        {failures.length > 0 && (
+          <>
+            <h2 className={cn(HEADING, "mt-1.5")}>Failed, Not Fixed</h2>
+            <ul>
+              {failures.map((item) => (
+                <Failed
+                  key={item.action.id}
+                  item={item}
+                  nodes={nodes}
+                  services={services.data}
+                  devices={devices.data?.devices}
+                  now={now}
+                  onPick={close}
+                />
+              ))}
+            </ul>
+          </>
         )}
         <Link
           to="/history"

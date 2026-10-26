@@ -3,9 +3,11 @@ import {
   Boxes,
   History,
   Server,
-  Siren,
   type LucideIcon,
 } from "lucide-react";
+
+import { isPending } from "@/lib/services";
+import type { Overview, ServicesResponse } from "@/types";
 
 interface Section {
   to: string;
@@ -14,10 +16,28 @@ interface Section {
   end?: boolean;
 }
 
-export const SECTIONS: Section[] = [
+export const SECTIONS: readonly Section[] = [
   { to: "/", label: "Fleet", icon: Server, end: true },
   { to: "/services", label: "Services", icon: Boxes },
   { to: "/checks", label: "Checks", icon: Activity },
-  { to: "/incidents", label: "Incidents", icon: Siren },
+];
+
+export const PAGES: readonly Section[] = [
+  ...SECTIONS,
   { to: "/history", label: "History", icon: History },
 ];
+
+export const alsoActive = (to: string, pathname: string) =>
+  to === "/checks" && pathname.startsWith("/incidents/");
+
+export function navCounts(
+  overview: Overview | undefined,
+  services: ServicesResponse | undefined,
+): Record<string, number> {
+  return {
+    "/checks":
+      overview?.incidents.filter((incident) => incident.status === "OPEN")
+        .length ?? 0,
+    "/services": services?.actions.filter(isPending).length ?? 0,
+  };
+}

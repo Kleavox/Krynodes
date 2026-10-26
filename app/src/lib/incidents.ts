@@ -9,7 +9,14 @@ import type {
   IncidentUpdate,
   IncidentUpdateStatus,
 } from "../types";
-import { formatDuration, parseTimestamp, stampTime } from "./format";
+import {
+  clockTime,
+  dayLabel,
+  formatDuration,
+  parseTimestamp,
+  shortDate,
+  stampTime,
+} from "./format";
 import { historyText } from "./history";
 import { errorLine, verb } from "./services";
 
@@ -233,7 +240,74 @@ export function latestLine(
   return `${historyText(action)}: ${STATUS_WORD[action.status] ?? action.status}`;
 }
 
-export function last30Text(last30: IncidentBoard["last30"]): string {
-  if (last30.count === 0) return "Last 30 Days · No Incidents";
-  return `Last 30 Days · ${last30.count} ${last30.count === 1 ? "incident" : "incidents"} · ${formatDuration(last30.downMs)} down in total`;
+export function downLatest(
+  entry: IncidentBoard["latest"][string] | undefined,
+  autoLine: string | null,
+): { time: string | null; text: string; failed: boolean } | null {
+  const text = entry ? latestLine(entry) : null;
+  if (entry && text) {
+    const status = entry.update ? null : entry.action?.status;
+    return {
+      time: clockTime(entry.at),
+      text,
+      failed: status === "failed" || status === "expired",
+    };
+  }
+  return autoLine ? { time: null, text: autoLine, failed: true } : null;
 }
+
+const RECENT_MS = 30 * 86_400_000;
+
+export const recentIncidents = (incidents: Incident[], now: number) =>
+  incidents
+    .filter((incident) => now - parseTimestamp(incident.started_at) < RECENT_MS)
+    .sort(
+      (a, b) => parseTimestamp(b.started_at) - parseTimestamp(a.started_at),
+    );
+
+const lasted = (incident: Incident) =>
+  formatDuration(
+    parseTimestamp(incident.resolved_at!) - parseTimestamp(incident.started_at),
+  );
+
+export function incidentRowLine(incident: Incident, now: number): string {
+  const start = parseTimestamp(incident.started_at);
+  const when = `${dayLabel(incident.started_at, now)} ${clockTime(start)}`;
+  if (!incident.resolved_at) {
+    return `${when} · open · ${formatDuration(now - start)}`;
+  }
+  return [when, lasted(incident), incident.summary].filter(Boolean).join(" · ");
+}
+
+export function lastIncidentLine(
+  checkId: string,
+  incidents: Incident[],
+): string | null {
+  const own = incidents.filter((incident) => incident.check_id === checkId);
+  if (own.some((incident) => !incident.resolved_at)) return null;
+  const last = own.sort(
+    (a, b) => parseTimestamp(b.started_at) - parseTimestamp(a.started_at),
+  )[0];
+  if (!last) return null;
+  return [
+    `Last incident ${shortDate(last.started_at)}`,
+    lasted(last),
+    last.summary,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function last30Parts(last30: IncidentBoard["last30"]) {
+  if (last30.count === 0) return null;
+  return {
+    count: String(last30.count),
+    noun: last30.count === 1 ? "incident" : "incidents",
+    down: formatDuration(last30.downMs),
+  };
+}
+
+export const incidentsRedirect = (search: string) =>
+  new URLSearchParams(search).get("status") === "open"
+    ? "/checks?status=down"
+    : "/checks";

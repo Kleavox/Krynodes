@@ -509,7 +509,7 @@ describe("removing a server that holds a piece", () => {
     ).toEqual({
       ok: false,
       reason:
-        "No other server with agent 0.6.0 that this device reaches can take the token.",
+        "No other server with agent 0.6.14 that this device reaches can take the token.",
     });
   });
 });

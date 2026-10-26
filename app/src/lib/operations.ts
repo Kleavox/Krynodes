@@ -165,6 +165,32 @@ export function activity(
   return running;
 }
 
+export interface HourglassPart {
+  count: number;
+  word: string;
+  tone: "bad" | "warn";
+}
+
+export function hourglassLabel(
+  running: number,
+  failed: number,
+): { parts: HourglassPart[]; aria: string } {
+  const parts: HourglassPart[] = [
+    ...(failed > 0
+      ? [{ count: failed, word: "failed", tone: "bad" as const }]
+      : []),
+    ...(running > 0
+      ? [{ count: running, word: "in progress", tone: "warn" as const }]
+      : []),
+  ];
+  return {
+    parts,
+    aria:
+      parts.map((part) => `${part.count} ${part.word}`).join(", ") ||
+      "Nothing in Progress",
+  };
+}
+
 export function elapsedText(milliseconds: number): string {
   const total = Math.max(0, Math.floor(milliseconds / 1000));
   if (total < 3600) {

@@ -82,7 +82,7 @@ export function hubHarness(env: Partial<Env>) {
   };
   const hub = new FleetHub(
     ctx as unknown as DurableObjectState,
-    env as unknown as Env,
+    { PUBLIC_ORIGIN: "https://kry.example.test", ...env } as unknown as Env,
   );
   let requests = 0;
   const connect = async (

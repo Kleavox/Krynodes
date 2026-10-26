@@ -634,7 +634,7 @@ function FleetSummary({
             : "All Quiet"
         }
         tone={open.length > 0 ? "bad" : "ok"}
-        to={open.length > 0 ? "/incidents?status=open" : "/incidents"}
+        to={open.length > 0 ? "/checks?status=down" : "/checks"}
       />
       <SummaryTile
         label={real ? "Krynodes Quota · Today" : "Krynodes Quota · Est."}

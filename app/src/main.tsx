@@ -11,11 +11,10 @@ import { CloudflareSettings } from "@/features/settings/cloudflare-settings";
 import { EnrollDefaultsSettings } from "@/features/settings/enroll-defaults-settings";
 import { PrivateAddressesSettings } from "@/features/settings/private-addresses-settings";
 import { UsageSettings } from "@/features/settings/usage-settings";
-import { ChecksPage } from "@/pages/checks";
+import { ChecksPage, IncidentsRedirect } from "@/pages/checks";
 import { FleetPage } from "@/pages/fleet";
 import { IncidentDetailPage } from "@/pages/incident-detail";
 import { HistoryPage } from "@/pages/history";
-import { IncidentsPage } from "@/pages/incidents";
 import { createQueryClient } from "@/lib/query-client";
 import { NodeDetailPage } from "@/pages/node-detail";
 import { NotFoundPage } from "@/pages/not-found";
@@ -41,7 +40,7 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="services" element={<ServicesPage />} />
                   <Route path="devices" element={<DevicesPage />} />
                   <Route path="checks" element={<ChecksPage />} />
-                  <Route path="incidents" element={<IncidentsPage />} />
+                  <Route path="incidents" element={<IncidentsRedirect />} />
                   <Route path="history" element={<HistoryPage />} />
                   <Route path="settings" element={<SettingsPage />}>
                     <Route

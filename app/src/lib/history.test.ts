@@ -5,11 +5,13 @@ import {
   actionLine,
   causedText,
   dayGroups,
+  failedLine,
   historyPath,
   historyText,
   incidentText,
   lastLines,
   logTargets,
+  readShow,
   retryOf,
 } from "./history";
 import { errorLine } from "./services";
@@ -139,6 +141,13 @@ describe("history", () => {
     expect(historyPath({ node: "n1", show: "failed", q: "" })).toBe(
       "/api/history?node=n1&show=failed",
     );
+  });
+
+  it("opens on the filter a link names, or on Everything", () => {
+    expect(readShow("incidents")).toBe("incidents");
+    expect(readShow("failed")).toBe("failed");
+    expect(readShow("bogus")).toBe("everything");
+    expect(readShow(null)).toBe("everything");
   });
 });
 
@@ -297,6 +306,15 @@ describe("one action line", () => {
     expect(
       actionLine(failed, { stacks, now: sameDay + 5 * 86_400_000 }).time,
     ).toBe("24 Oct 09:24");
+  });
+
+  it("says a failure in the hourglass with its server, its stack and its date", () => {
+    const later = new Date(2026, 9, 24, 23, 0).getTime() + 5 * 86_400_000;
+    expect(failedLine(failed, { name: "pivox", stacks }, later)).toEqual({
+      text: "Restart pihole on pivox",
+      time: "24 Oct 09:24",
+      failure: "Exit 1 · port 53 is already allocated",
+    });
   });
 
   it("says the exit code alone when the output is empty", () => {

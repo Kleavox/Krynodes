@@ -27,7 +27,6 @@ import { isPending } from "@/lib/services";
 import {
   newStackBlocker,
   parseHostPorts,
-  reachReady,
   stackNameProblem,
 } from "@/lib/stacks";
 import type { NodeRecord } from "@/types";
@@ -99,7 +98,7 @@ function NewStackForm({
   const chosen = choices.find((choice) => choice.node.id === nodeId);
   const sealKey = entries.get(nodeId)?.sealKey ?? null;
   const modern = chosen !== undefined && agentCurrent(chosen.node);
-  const reaching = modern && access === "contained" && reachReady(chosen.node);
+  const reaching = modern && access === "contained";
   const hostPorts = parseHostPorts(reaching ? reach : "");
   const taken = (entries.get(nodeId)?.stacks ?? []).map(
     (stack) => stack.project,

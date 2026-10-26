@@ -15,10 +15,13 @@ describe("agent versions", () => {
     expect(compareVersions("0.3.1", "0.3.1")).toBe(0);
   });
 
-  it("supports only agent 0.6.0 and later, and builds from source", () => {
-    expect(MIN_AGENT_VERSION).toBe("0.6.0");
-    expect(agentSupported("0.6.0")).toBe(true);
+  it("supports only agent 0.6.14 and later, and builds from source", () => {
+    expect(MIN_AGENT_VERSION).toBe("0.6.14");
+    expect(agentSupported("0.6.14")).toBe(true);
+    expect(agentSupported("0.7.0")).toBe(true);
     expect(agentSupported("0.10.0")).toBe(true);
+    expect(agentSupported("0.6.13")).toBe(false);
+    expect(agentSupported("0.6.0")).toBe(false);
     expect(agentSupported("0.5.1")).toBe(false);
     expect(agentSupported("0.4.1")).toBe(false);
     expect(agentSupported("dev")).toBe(true);

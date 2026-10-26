@@ -112,6 +112,39 @@ describe("GET /api/overview contract", () => {
     expect(body.checks![0]!.since).toBe("2026-10-24T09:24:39Z");
     expect(body.nodes![0]!.addresses).toBeNull();
   });
+
+  it("keeps an open incident that 50 newer ones would push out", async () => {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: "n1" });
+    seedCheck(sqlite, { id: "c1", nodeId: "n1" });
+    const start = Date.parse("2026-10-01T00:00:00Z");
+    seedIncident(sqlite, {
+      id: "open",
+      checkId: "c1",
+      status: "OPEN",
+      startedAt: new Date(start).toISOString(),
+    });
+    for (let index = 1; index <= 55; index += 1) {
+      seedIncident(sqlite, {
+        id: `r${index}`,
+        checkId: "c1",
+        status: "RESOLVED",
+        startedAt: new Date(start + index * 60_000).toISOString(),
+      });
+    }
+    const response = await app.request(
+      "https://kry.example.test/api/overview",
+      {},
+      { DB: db } as unknown as Env,
+    );
+    const ids = (
+      (await response.json()) as { incidents: { id: string }[] }
+    ).incidents.map((incident) => incident.id);
+    expect(ids).toHaveLength(51);
+    expect(ids[0]).toBe("r55");
+    expect(ids.at(-1)).toBe("open");
+    expect(ids).not.toContain("r5");
+  });
 });
 
 describe("a node being deleted", () => {

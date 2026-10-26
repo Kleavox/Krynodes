@@ -20,7 +20,7 @@ const SPAN_MS = 4 * 3_600_000;
 const WINDOW_MS = 300_000;
 const INCIDENT_PAD_MS = 10 * 60_000;
 const BEFORE_MS = 3_600_000;
-const RESOLVED_SPAN_MS = 30 * 86_400_000;
+const RECENT_SPAN_MS = 30 * 86_400_000;
 
 const epoch = (value: string) =>
   Date.parse(
@@ -153,7 +153,7 @@ export function registerCheckResultRoutes(
     const now = Date.now();
     const owned = `JOIN checks c ON c.id = i.check_id
        JOIN nodes n ON n.id = c.node_id WHERE n.owner_user_id = ?1`;
-    const [open, updates, resolved, estate] = await Promise.all([
+    const [open, updates, recent, estate] = await Promise.all([
       db
         .prepare(
           `SELECT i.id, i.started_at, i.resolved_at, c.node_id,
@@ -179,10 +179,10 @@ export function registerCheckResultRoutes(
       db
         .prepare(
           `SELECT i.started_at, i.resolved_at FROM incidents i ${owned}
-           AND i.status = 'RESOLVED' AND i.started_at >= ?2`,
+           AND i.started_at >= ?2`,
         )
-        .bind(owner, new Date(now - RESOLVED_SPAN_MS).toISOString())
-        .all<{ started_at: string; resolved_at: string }>(),
+        .bind(owner, new Date(now - RECENT_SPAN_MS).toISOString())
+        .all<{ started_at: string; resolved_at: string | null }>(),
       loadEstate(db, owner),
     ]);
     const earliest = Math.min(
@@ -237,10 +237,12 @@ export function registerCheckResultRoutes(
     return context.json({
       latest,
       last30: {
-        count: resolved.results.length,
-        downMs: resolved.results.reduce(
+        count: recent.results.length,
+        downMs: recent.results.reduce(
           (total, incident) =>
-            total + epoch(incident.resolved_at) - epoch(incident.started_at),
+            total +
+            (incident.resolved_at ? epoch(incident.resolved_at) : now) -
+            epoch(incident.started_at),
           0,
         ),
       },

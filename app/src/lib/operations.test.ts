@@ -5,6 +5,7 @@ import {
   activity,
   actorOf,
   elapsedText,
+  hourglassLabel,
   plannedNow,
   serverOperation,
   workSpans,
@@ -232,5 +233,28 @@ describe("planned work right now", () => {
     expect(plannedNow(spans, NOW)).toBe(true);
     expect(plannedNow(spans, NOW + 60_000)).toBe(false);
     expect(plannedNow([], NOW)).toBe(false);
+  });
+});
+
+describe("the hourglass", () => {
+  it("shows failures first in red, then running work, and says both", () => {
+    const failed = { count: 2, word: "failed", tone: "bad" };
+    const running = { count: 1, word: "in progress", tone: "warn" };
+    expect(hourglassLabel(0, 0)).toEqual({
+      parts: [],
+      aria: "Nothing in Progress",
+    });
+    expect(hourglassLabel(1, 0)).toEqual({
+      parts: [running],
+      aria: "1 in progress",
+    });
+    expect(hourglassLabel(0, 2)).toEqual({
+      parts: [failed],
+      aria: "2 failed",
+    });
+    expect(hourglassLabel(1, 2)).toEqual({
+      parts: [failed, running],
+      aria: "2 failed, 1 in progress",
+    });
   });
 });

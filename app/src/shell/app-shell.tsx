@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink, Outlet } from "react-router";
+import { Link, NavLink, Outlet, useLocation } from "react-router";
 import { ChevronDown, Search, User } from "lucide-react";
 import { displayHandle } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
@@ -20,25 +20,12 @@ import { accountLinks } from "@/lib/account";
 import { useLiveUpdates } from "@/lib/live";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
-import { isPending } from "@/lib/services";
-import type { Identity, Overview, ServicesResponse, SessionVia } from "@/types";
+import type { Identity, SessionVia } from "@/types";
 
 import { ActivityMenu } from "./activity-menu";
 import { CommandPalette } from "./command-palette";
-import { SECTIONS } from "./nav";
+import { alsoActive, navCounts, SECTIONS } from "./nav";
 import { FaultScreen, Mark } from "./screens";
-
-function attention(
-  overview: Overview | undefined,
-  services: ServicesResponse | undefined,
-): Record<string, number> {
-  return {
-    "/incidents":
-      overview?.incidents.filter((incident) => incident.status === "OPEN")
-        .length ?? 0,
-    "/services": services?.actions.filter(isPending).length ?? 0,
-  };
-}
 
 function ageOf(updatedAt: number, now: number): string {
   return timeAgo(new Date(updatedAt).toISOString(), now);
@@ -77,7 +64,8 @@ export function AppShell({
     );
   }
 
-  const counts = attention(overview.data, services.data);
+  const counts = navCounts(overview.data, services.data);
+  const { pathname } = useLocation();
 
   return (
     <div className="min-h-dvh pb-16 md:pb-0">
@@ -101,7 +89,8 @@ export function AppShell({
               className={({ isActive }) =>
                 cn(
                   "rounded-md px-2.5 py-1.5 text-sm text-muted-foreground hover:text-foreground",
-                  isActive && "bg-accent text-foreground",
+                  (isActive || alsoActive(section.to, pathname)) &&
+                    "bg-accent text-foreground",
                 )
               }
             >
@@ -135,7 +124,7 @@ export function AppShell({
       </main>
       <nav
         aria-label="Sections"
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t bg-card md:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid auto-cols-fr grid-flow-col border-t bg-card md:hidden"
       >
         {SECTIONS.map((section) => (
           <NavLink
@@ -145,7 +134,8 @@ export function AppShell({
             className={({ isActive }) =>
               cn(
                 "relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] text-muted-foreground",
-                isActive && "text-foreground",
+                (isActive || alsoActive(section.to, pathname)) &&
+                  "text-foreground",
               )
             }
           >
@@ -245,6 +235,9 @@ function AccountMenu({
           {identity.email}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to="/history">History</Link>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/devices">Trusted Devices</Link>
         </DropdownMenuItem>

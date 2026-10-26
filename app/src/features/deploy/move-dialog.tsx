@@ -34,12 +34,7 @@ import { useOverview, useServices } from "@/lib/api";
 import { moveCompose, servicesOf } from "@/lib/compose";
 import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
-import {
-  moveBlocker,
-  moveConfirmed,
-  REACH_AGENT,
-  reachReady,
-} from "@/lib/stacks";
+import { moveBlocker, moveConfirmed } from "@/lib/stacks";
 import { moveSteps } from "@/lib/vault";
 import type { WebAddress } from "@/types";
 
@@ -151,12 +146,7 @@ function MoveForm({
   const [sealing, setSealing] = useState(false);
   const problem = secretsProblem(secrets);
   const carried = chosenAccess === "contained" ? (read?.hostPorts ?? []) : [];
-  const destination = servers.find((node) => node.id === chosen);
-  const reachLost =
-    carried.length > 0 && destination && !reachReady(destination)
-      ? `${destination.name} needs agent ${REACH_AGENT} or newer to let the stack reach it on ${carried.join(", ")}.`
-      : null;
-  const blocked = moveBlocker(addresses, original) ?? reachLost;
+  const blocked = moveBlocker(addresses, original);
   const targetKey = entries.get(chosen)?.sealKey ?? "";
 
   const toggle = (name: string) => {

@@ -459,29 +459,29 @@ describe("restart automatically", () => {
 
   it("says why it cannot be turned on", () => {
     expect(
-      autoRestartBlocker(check, node("n1", "pivox", "0.6.0"), entry()),
+      autoRestartBlocker(check, node("n1", "pivox", "0.6.14"), entry()),
     ).toBeNull();
     expect(
       autoRestartBlocker(check, node("n1", "pivox", "0.4.1"), entry()),
-    ).toBe("Needs agent 0.6.0");
+    ).toBe("Needs agent 0.6.14");
     expect(
       autoRestartBlocker(
         { ...check, target: "ssh" },
-        node("n1", "pivox", "0.6.0"),
+        node("n1", "pivox", "0.6.14"),
         entry(),
       ),
     ).toBe("Krynodes never restarts this unit");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.6.0"),
+        node("n1", "pivox", "0.6.14"),
         entry({ services: [] }),
       ),
     ).toBe("The unit is not on this server");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.6.0"),
+        node("n1", "pivox", "0.6.14"),
         entry({ trust: null }),
       ),
     ).toBe("Not Trusted Yet");

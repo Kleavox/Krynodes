@@ -76,10 +76,11 @@ export function IncidentDetailPage() {
       <PageHeader
         crumb={
           <>
-            <Link to="/incidents" className="hover:underline">
-              Incidents
+            <Link to="/checks" className="hover:underline">
+              Checks
             </Link>{" "}
-            / {incident.check_name}
+            / {incident.check_name} / Incident{" "}
+            {stampTime(incident.started_at, now)}
           </>
         }
         title={incident.check_name}

@@ -1,4 +1,4 @@
-export const MIN_AGENT_VERSION = "0.6.0";
+export const MIN_AGENT_VERSION = "0.6.14";
 export const UPDATABLE_FROM = "0.5.0";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;

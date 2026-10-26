@@ -371,7 +371,7 @@ describe("GET /api/incidents/board", () => {
     });
   });
 
-  it("adds up the last 30 days of resolved incidents", async () => {
+  it("adds up the last 30 days, the open one up to now", async () => {
     const t = board();
     t.check("blog", "n1", "HTTP", "https://blog.example.test");
     t.incident("a", "blog", 3 * 86_400_000, 3 * 86_400_000 - 10 * MINUTE);
@@ -379,9 +379,9 @@ describe("GET /api/incidents/board", () => {
     t.incident("c", "blog", 86_400_000, 86_400_000 - 17 * MINUTE);
     t.incident("old", "blog", 40 * 86_400_000, 40 * 86_400_000 - MINUTE);
     t.incident("open", "blog", 10 * MINUTE, null);
-    expect((await t.read()).last30).toEqual({
-      count: 3,
-      downMs: 47 * MINUTE,
-    });
+    const { last30 } = await t.read();
+    expect(last30.count).toBe(4);
+    expect(last30.downMs).toBeGreaterThanOrEqual(57 * MINUTE);
+    expect(last30.downMs).toBeLessThan(57 * MINUTE + 5_000);
   });
 });

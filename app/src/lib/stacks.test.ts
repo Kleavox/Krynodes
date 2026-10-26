@@ -21,7 +21,6 @@ import {
   ownFolder,
   removedStacks,
   parseHostPorts,
-  reachReady,
   serverBoxes,
   serverLists,
   servicesAttention,
@@ -56,16 +55,9 @@ describe("ports a Contained stack may reach on its server", () => {
       ).problem,
     ).toBe("A stack may reach at most 16 ports on the server.");
   });
-
-  it("needs agent 0.6.7 or newer", () => {
-    expect(reachReady({ agent_version: "0.6.7" })).toBe(true);
-    expect(reachReady({ agent_version: "0.7.0" })).toBe(true);
-    expect(reachReady({ agent_version: "0.6.6" })).toBe(false);
-    expect(reachReady({ agent_version: null })).toBe(false);
-  });
 });
 
-const node = (id: string, name: string, agent = "0.6.0") =>
+const node = (id: string, name: string, agent = "0.6.14") =>
   ({
     id,
     name,
@@ -214,7 +206,7 @@ describe("stacks", () => {
         ...listmonk!.members[0]!,
         node: node("n1", "Callisto", "0.4.1"),
       }),
-    ).toBe("Needs agent 0.6.0");
+    ).toBe("Needs agent 0.6.14");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
@@ -292,7 +284,7 @@ describe("stacks", () => {
 });
 
 describe("stack commands", () => {
-  const member = (running: number, total: number, agent = "0.6.0") => ({
+  const member = (running: number, total: number, agent = "0.6.14") => ({
     node: node("n1", "pivox", agent),
     stack: stack("kuma", { running, total }),
     trusted: true,
@@ -330,22 +322,22 @@ describe("stack commands", () => {
       docker,
     });
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.0"), entry("ready")),
+      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("ready")),
     ).toBeNull();
     expect(newStackBlocker(node("n1", "pivox", "0.4.1"), entry("ready"))).toBe(
-      "Needs agent 0.6.0",
+      "Needs agent 0.6.14",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.0"), entry("missing")),
+      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("missing")),
     ).toBe("No Docker");
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.0"), entry("no-compose")),
+      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("no-compose")),
     ).toBe("Docker without Compose");
-    expect(newStackBlocker(node("n1", "pivox", "0.6.0"), entry(null))).toBe(
+    expect(newStackBlocker(node("n1", "pivox", "0.6.14"), entry(null))).toBe(
       "Docker Not Reported Yet",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.0"), {
+      newStackBlocker(node("n1", "pivox", "0.6.14"), {
         ...entry("ready"),
         trust: null,
       }),

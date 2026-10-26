@@ -24,10 +24,9 @@ import {
   useServices,
   useUpdateCheck,
 } from "@/lib/api";
+import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import {
   checkTargetProblem,
-  CONTAINER_AGENT,
-  containerChecksReady,
   pickedKind,
   TARGET_HINT,
   TARGET_PLACEHOLDER,
@@ -115,9 +114,7 @@ function CheckForm({
   const known = nodes.length > 0 ? nodes : (overview.data?.nodes ?? []);
   const dockerReady =
     check?.kind === "CONTAINER" ||
-    containerChecksReady(
-      known.find((entry) => entry.id === node)?.agent_version ?? null,
-    );
+    agentSupported(known.find((entry) => entry.id === node)?.agent_version);
   const listed = (nextNode: string) =>
     services.data?.nodes.find((entry) => entry.id === nextNode)?.services;
   const options = targetOptions(listed(node), kind, target);
@@ -219,7 +216,7 @@ function CheckForm({
                 {KINDS.map((entry) =>
                   entry.value === "CONTAINER" && !dockerReady ? (
                     <SelectItem key={entry.value} value={entry.value} disabled>
-                      {entry.label} · Needs agent {CONTAINER_AGENT} or newer
+                      {entry.label} · Needs agent {MIN_AGENT_VERSION} or newer
                     </SelectItem>
                   ) : (
                     <SelectItem key={entry.value} value={entry.value}>

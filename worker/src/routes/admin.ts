@@ -4,13 +4,9 @@ import { z } from "zod";
 import { CHECK_LIMIT } from "../agent/ingest";
 import { readAgentRelease } from "../agent/releases";
 import { fleetLive, mergeLive, pokeSoon } from "../fleet/client";
-import { compareVersions } from "@krynodes/protocol";
+import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol";
 
-import {
-  CHECK_KINDS,
-  CONTAINER_AGENT,
-  validateCheckTarget,
-} from "../lib/checks";
+import { CHECK_KINDS, validateCheckTarget } from "../lib/checks";
 import { listAddresses, type AddressColumns } from "../lib/addresses";
 import { readReport, trusts, viewerPrints } from "../trust/fleet";
 import { confirmed } from "../trust/intent";
@@ -81,8 +77,14 @@ export function registerAdminRoutes(
        FROM incidents i
        JOIN checks c ON c.id = i.check_id
        JOIN nodes n ON n.id = c.node_id
-       WHERE n.owner_user_id = ?
-       ORDER BY i.started_at DESC LIMIT 50`,
+       WHERE n.owner_user_id = ?1
+         AND (i.status = 'OPEN' OR i.id IN (
+           SELECT i2.id FROM incidents i2
+           JOIN checks c2 ON c2.id = i2.check_id
+           JOIN nodes n2 ON n2.id = c2.node_id
+           WHERE n2.owner_user_id = ?1
+           ORDER BY i2.started_at DESC LIMIT 50))
+       ORDER BY i.started_at DESC`,
       )
         .bind(ownerId)
         .all(),
@@ -441,20 +443,15 @@ export function registerAdminRoutes(
 
 async function agentTooOld(context: KrynodesContext, nodeId: string) {
   const row = await context.env.DB.prepare(
-    "SELECT agent_version FROM nodes WHERE id = ?",
+    "SELECT name, agent_version FROM nodes WHERE id = ?",
   )
     .bind(nodeId)
-    .first<{ agent_version: string | null }>();
-  if (
-    row?.agent_version &&
-    compareVersions(row.agent_version, CONTAINER_AGENT) >= 0
-  ) {
-    return null;
-  }
+    .first<{ name: string; agent_version: string | null }>();
+  if (!row || agentSupported(row.agent_version)) return null;
   return context.json(
     {
       code: "AGENT_TOO_OLD",
-      message: `This server needs agent ${CONTAINER_AGENT} or newer for container checks.`,
+      message: `Update the agent on ${row.name} to ${MIN_AGENT_VERSION} or newer.`,
     },
     409,
   );

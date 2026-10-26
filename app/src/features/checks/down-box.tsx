@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { LogsDialog, type LogsTarget } from "@/features/services/logs-dialog";
 import { failuresText, incidentLine, kindLabel } from "@/lib/checks";
 import { publicLabel } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import type { CheckRecord, Incident, NodeRecord } from "@/types";
 
 import { CheckMenu } from "./check-menu";
@@ -16,7 +17,7 @@ export interface DownItem {
   figure: string;
   incident: Incident | undefined;
   updates: number;
-  autoLine: string | null;
+  latest: { time: string | null; text: string; failed: boolean } | null;
   strip: ReactNode;
   restart: (() => void) | undefined;
   logs: LogsTarget | null;
@@ -46,11 +47,15 @@ function DownRow({ item, nodes }: { item: DownItem; nodes: NodeRecord[] }) {
       <div className="min-w-0 space-y-0.5">
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm">
           <span className="font-medium">{check.name}</span>
-          <SmallLabel>{kindLabel(check.kind)}</SmallLabel>
+          <span className="contents max-md:hidden">
+            <SmallLabel>{kindLabel(check.kind)}</SmallLabel>
+          </span>
           <span className="font-mono text-xs text-muted-foreground">
             On {node.name}
           </span>
-          <CheckTags check={check} />
+          <span className="contents max-md:hidden">
+            <CheckTags check={check} />
+          </span>
         </p>
         <p className="font-mono text-xs break-words">
           <span className="text-destructive">
@@ -59,7 +64,7 @@ function DownRow({ item, nodes }: { item: DownItem; nodes: NodeRecord[] }) {
           <span className="text-muted-foreground">
             {" "}
             · {item.figure}
-            {failures && ` · ${failures}`}
+            {failures && <span className="max-md:hidden"> · {failures}</span>}
           </span>
         </p>
         {incident && (
@@ -70,9 +75,21 @@ function DownRow({ item, nodes }: { item: DownItem; nodes: NodeRecord[] }) {
             {incidentLine(item.updates)}
           </Link>
         )}
-        {item.autoLine && (
-          <p className="font-mono text-xs break-words text-warning">
-            {item.autoLine}
+        {item.latest && (
+          <p className="flex gap-2 font-mono text-xs">
+            {item.latest.time && (
+              <span className="shrink-0 text-muted-foreground">
+                {item.latest.time}
+              </span>
+            )}
+            <span
+              className={cn(
+                "min-w-0 break-words max-md:truncate",
+                item.latest.failed && "text-warning",
+              )}
+            >
+              {item.latest.text}
+            </span>
           </p>
         )}
       </div>
@@ -84,7 +101,7 @@ function DownRow({ item, nodes }: { item: DownItem; nodes: NodeRecord[] }) {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-9 md:h-8"
+                className="h-9 max-md:hidden md:h-8"
                 aria-label={`Logs of ${check.name}`}
                 onClick={() => setReading(true)}
               >
@@ -138,21 +155,16 @@ export function DownBox({
     );
   }
   return (
-    <section
-      aria-labelledby="checks-down"
-      className="rounded-lg border border-destructive/40 bg-card"
-    >
+    <section aria-labelledby="checks-down">
       <h2
         id="checks-down"
-        className="flex items-center gap-2 px-3 py-2.5 text-sm font-medium"
+        className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"
       >
         <StatusDot tone="bad" />
-        Down
-        <span className="font-mono text-xs font-normal text-muted-foreground">
-          {items.length}
-        </span>
+        <span className="text-foreground">Down Now</span>
+        <span className="font-mono">{items.length}</span>
       </h2>
-      <ul className="divide-y border-t">
+      <ul className="divide-y rounded-lg border border-destructive/40 bg-card">
         {items.map((item) => (
           <DownRow key={item.check.id} item={item} nodes={nodes} />
         ))}

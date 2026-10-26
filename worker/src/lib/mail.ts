@@ -54,7 +54,7 @@ function render(layout: Layout, origin: string): string {
     .map(
       ([label, value]) => `
                 <tr>
-                  <td width="1%" style="padding:10px 16px 10px 0;border-top:1px solid ${COLOR.border};${MONO};font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:${COLOR.muted};white-space:nowrap;vertical-align:top">${escapeHtml(label)}</td>
+                  <td width="1%" style="padding:10px 16px 10px 0;border-top:1px solid ${COLOR.border};${MONO};font-size:11px;color:${COLOR.muted};white-space:nowrap;vertical-align:top">${escapeHtml(label)}</td>
                   <td style="padding:10px 0;border-top:1px solid ${COLOR.border};${MONO};font-size:13px;line-height:1.5;color:${COLOR.fg};word-break:break-all">${escapeHtml(value)}</td>
                 </tr>`,
     )
@@ -127,9 +127,9 @@ async function deliver(env: Env, layout: Layout): Promise<void> {
   });
 }
 
-const incidentsLink = (env: Env) => ({
-  label: "Open incidents",
-  href: new URL("/incidents", env.PUBLIC_ORIGIN).toString(),
+const checksLink = (env: Env) => ({
+  label: "Open Checks",
+  href: new URL("/checks?status=down", env.PUBLIC_ORIGIN).toString(),
 });
 
 const names = (changes: CheckChange[]) =>
@@ -232,7 +232,7 @@ export async function sendServerEmail(
             label: `Open ${nodeName}`,
             href: new URL(`/nodes/${nodeId}`, env.PUBLIC_ORIGIN).toString(),
           }
-        : incidentsLink(env),
+        : checksLink(env),
   });
 }
 

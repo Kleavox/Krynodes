@@ -20,7 +20,7 @@ import { canRestartServer } from "@/lib/devices";
 import { deployBlocker, groupStacks } from "@/lib/stacks";
 import type { NodeRecord, ServiceAction, ServicesResponse } from "@/types";
 
-import { SECTIONS } from "./nav";
+import { PAGES } from "./nav";
 
 export function CommandPalette({
   open,
@@ -77,7 +77,7 @@ export function CommandPalette({
           </CommandItem>
         </CommandGroup>
         <CommandGroup heading="Pages">
-          {SECTIONS.map((section) => (
+          {PAGES.map((section) => (
             <CommandItem key={section.to} onSelect={() => go(section.to)}>
               <section.icon aria-hidden="true" />
               {section.label}

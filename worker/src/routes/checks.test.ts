@@ -310,8 +310,8 @@ describe("container checks", () => {
     target: "adguard-adguard-1",
   };
 
-  it("creates one on agent 0.6.4 or newer", async () => {
-    const { send, sqlite } = containers("0.6.4");
+  it("creates one on agent 0.6.14 or newer", async () => {
+    const { send, sqlite } = containers("0.6.14");
     expect((await send("POST", "/api/checks", create)).status).toBe(201);
     expect(
       sqlite
@@ -320,23 +320,25 @@ describe("container checks", () => {
     ).toEqual({ kind: "CONTAINER", target: "adguard-adguard-1" });
   });
 
-  it.each(["0.6.3", null])("refuses agent %s", async (version) => {
+  it.each(["0.6.13", null])("refuses agent %s", async (version) => {
     const { send } = containers(version);
+    const refusal = {
+      code: "AGENT_TOO_OLD",
+      message: `Update the agent on ${NODE} to 0.6.14 or newer.`,
+    };
     const response = await send("POST", "/api/checks", create);
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      code: "AGENT_TOO_OLD",
-      message: "This server needs agent 0.6.4 or newer for container checks.",
-    });
+    expect(await response.json()).toEqual(refusal);
     const changed = await send("PATCH", `/api/checks/${CHECK}`, {
       kind: "CONTAINER",
       target: "web",
     });
     expect(changed.status).toBe(409);
+    expect(await changed.json()).toEqual(refusal);
   });
 
   it("refuses a name Docker would not give a container", async () => {
-    const { send } = containers("0.6.4");
+    const { send } = containers("0.6.14");
     for (const target of ["-web", "web/1", "web 1", "x".repeat(129)]) {
       expect(
         (await send("POST", "/api/checks", { ...create, target })).status,

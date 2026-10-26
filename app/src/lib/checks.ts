@@ -1,5 +1,3 @@
-import { compareVersions } from "@krynodes/protocol/versions";
-
 import type {
   AttentionItem,
   CheckKind,
@@ -52,13 +50,7 @@ const PICKED: Partial<Record<CheckKind, ServiceKind>> = {
   CONTAINER: "docker",
 };
 
-export const CONTAINER_AGENT = "0.6.4";
-
 export const pickedKind = (kind: CheckKind) => kind in PICKED;
-
-export const containerChecksReady = (version: string | null) =>
-  /^\d+\.\d+\.\d+$/u.test(version ?? "") &&
-  compareVersions(version!, CONTAINER_AGENT) >= 0;
 
 export function targetOptions(
   services: ServiceEntry[] | undefined,

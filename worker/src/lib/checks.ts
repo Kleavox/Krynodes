@@ -2,8 +2,6 @@ export const CHECK_KINDS = ["HTTP", "TCP", "SERVICE", "CONTAINER"] as const;
 
 export type CheckKind = (typeof CHECK_KINDS)[number];
 
-export const CONTAINER_AGENT = "0.6.4";
-
 export function validateCheckTarget(
   kind: CheckKind,
   target: string,

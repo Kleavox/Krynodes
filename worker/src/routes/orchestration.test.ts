@@ -65,7 +65,7 @@ function routes() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.6.0', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.6.14', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(keyOf(id), JSON.stringify({ set: SET, holders: 3 }), id);
   }
@@ -225,7 +225,7 @@ describe("operations in steps", () => {
     expect((await t.operate("move", [unsigned, created!])).status).toBe(400);
   });
 
-  it("needs agent 0.6.0 on every server in the operation", async () => {
+  it("needs agent 0.6.14 on every server in the operation", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -627,7 +627,7 @@ describe("operations in steps", () => {
   });
 });
 
-describe("single steps of agent 0.6.0", () => {
+describe("single steps of agent 0.6.14", () => {
   const single = (
     t: ReturnType<typeof routes>,
     target: Step,
@@ -857,7 +857,7 @@ describe("single steps of agent 0.6.0", () => {
     ).toBe(201);
   });
 
-  it("needs agent 0.6.0 for a stack with an access level or secrets", async () => {
+  it("needs agent 0.6.14 for a stack with an access level or secrets", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -893,7 +893,7 @@ async function hub() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.6.0', docker = 'ready', seal_key = ? WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.6.14', docker = 'ready', seal_key = ? WHERE id = ?",
       )
       .run(keyOf(id), id);
   }
@@ -924,7 +924,7 @@ async function hub() {
           hostname: "web-01",
           operatingSystem: "Debian 12.10",
           architecture: "amd64",
-          agentVersion: "0.6.0",
+          agentVersion: "0.6.14",
           metrics: {
             cpuPercent: 1,
             memoryUsedBytes: 1,
@@ -1220,7 +1220,7 @@ describe("steps that feed the next", () => {
   });
 });
 
-describe("the inventory of agent 0.6.0", () => {
+describe("the inventory of agent 0.6.14", () => {
   it("keeps the seal key, the security report, the vault and stack access", async () => {
     const t = await hub();
     const security = {

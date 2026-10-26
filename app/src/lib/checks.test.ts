@@ -13,7 +13,6 @@ import {
   checkLive,
   checksByServer,
   checkTargetProblem,
-  containerChecksReady,
   failuresText,
   incidentLine,
   pickedKind,
@@ -72,15 +71,6 @@ describe("picked targets", () => {
     expect(checkTargetProblem("CONTAINER", "")).toBe("Choose a container.");
     expect(checkTargetProblem("SERVICE", "")).toBe("Choose a service.");
     expect(checkTargetProblem("CONTAINER", "adguard-adguard-1")).toBeNull();
-  });
-
-  it("offers container checks from agent 0.6.4", () => {
-    expect(containerChecksReady("0.6.4")).toBe(true);
-    expect(containerChecksReady("0.6.3")).toBe(false);
-    expect(containerChecksReady("0.7.0")).toBe(true);
-    expect(containerChecksReady("0.6.2")).toBe(false);
-    expect(containerChecksReady(null)).toBe(false);
-    expect(containerChecksReady("dev")).toBe(false);
   });
 });
 

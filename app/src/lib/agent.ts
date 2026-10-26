@@ -1,7 +1,7 @@
 import { agentUpdatable, compareVersions } from "@krynodes/protocol/versions";
 
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
-import { signersFor } from "./devices";
+import { agentCurrent, signersFor } from "./devices";
 import { nodeState } from "./format";
 
 const ATTEMPT_MS = 15 * 60_000;
@@ -64,8 +64,6 @@ export function agentLine(
     .join(" · ");
 }
 
-const REMOVES_ITSELF = "0.6.2";
-
 export const removalReady = (
   node: Pick<
     NodeRecord,
@@ -80,6 +78,5 @@ export const removalReady = (
   now: number,
 ) =>
   nodeState(node, now) === "online" &&
-  VERSION.test(node.agent_version ?? "") &&
-  compareVersions(node.agent_version!, REMOVES_ITSELF) >= 0 &&
+  agentCurrent(node) &&
   signersFor(devices, [trust]).length > 0;

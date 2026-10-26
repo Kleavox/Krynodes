@@ -10,10 +10,7 @@ import type {
   StackEntry,
   WebAddress,
 } from "../types";
-import {
-  compareVersions,
-  MIN_AGENT_VERSION,
-} from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
 import { agentCurrent } from "./devices";
 import { capitalize, nodeState, timeAgo } from "./format";
@@ -27,13 +24,7 @@ import {
   type ServiceMember,
 } from "./services";
 
-export const REACH_AGENT = "0.6.7";
-
 const MAX_HOST_PORTS = 16;
-
-export const reachReady = (node: Pick<NodeRecord, "agent_version">) =>
-  /^\d+\.\d+\.\d+$/u.test(node.agent_version ?? "") &&
-  compareVersions(node.agent_version!, REACH_AGENT) >= 0;
 
 export function parseHostPorts(text: string): {
   ports: string[];

@@ -118,6 +118,16 @@ export function historyPath(params: {
   return query.size > 0 ? `/api/history?${query}` : "/api/history";
 }
 
+const SHOWS: readonly HistoryShow[] = [
+  "everything",
+  "actions",
+  "incidents",
+  "failed",
+];
+
+export const readShow = (value: string | null): HistoryShow =>
+  SHOWS.find((show) => show === value) ?? "everything";
+
 export function logTargets(
   action: Pick<ActionRecord, "kind" | "name">,
   inventory: { stacks: Stacks; services: ServiceEntry[] },
@@ -187,6 +197,26 @@ export function historyText(action: ActionRecord, stacks: Stacks = []): string {
   if (action.action === "uninstall") return "Remove Krynodes from the server";
   if (action.action === "logs") return `Read logs of ${name}`;
   return `${verb(action.action)} ${stack ?? objectOf(action)}`;
+}
+
+export function failedLine(
+  action: ActionRecord,
+  server: { name?: string; stacks?: Stacks },
+  now: number,
+  devices?: { id: string; name: string }[],
+): { text: string; time: string; failure: string | null } {
+  const line = actionLine(action, {
+    nodeName: server.name,
+    showServer: true,
+    devices,
+    stacks: server.stacks,
+    now,
+  });
+  return {
+    text: line.server ? `${line.text} on ${line.server}` : line.text,
+    time: line.time,
+    failure: line.failure,
+  };
 }
 
 export function actionLine(
