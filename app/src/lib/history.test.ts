@@ -284,6 +284,29 @@ describe("what an action says", () => {
     ).toBe("Remove Krynodes from the server");
   });
 
+  it("names the Tailscale steps, and the credential they use", () => {
+    expect(
+      historyText(action({ kind: "vault", name: "tailscale", action: "save" })),
+    ).toBe("Save Tailscale rules");
+    expect(
+      historyText(
+        action({ kind: "host", name: "tailscale", action: "join" }),
+        [],
+        "vps-2",
+      ),
+    ).toBe("Sign in vps-2 to Tailscale");
+    expect(
+      historyText(
+        action({ kind: "vault", name: "tailscale", action: "forget" }),
+      ),
+    ).toMatch(/ the Tailscale credential$/u);
+    expect(
+      historyText(
+        action({ kind: "vault", name: "cloudflare", action: "forget" }),
+      ),
+    ).toMatch(/ the Cloudflare token$/u);
+  });
+
   it("names the stack whose reach a move changed, with its server beside it", () => {
     const reach = action({ kind: "compose", name: "shop", action: "reach" });
     expect(historyText(reach)).toBe("Change shop's reach");

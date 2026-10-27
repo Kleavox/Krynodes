@@ -88,6 +88,15 @@
     "state": "running",
     "addresses": ["100.101.7.12", "fd7a:115c:a1e0::1"],
     "name": "vps-2.tail4d2a.ts.net",
-    "keyExpiry": "2027-04-24T00:00:00Z"
+    "keyExpiry": "2027-04-24T00:00:00Z",
+    "id": "nVps2CNTRL",
+    "tailnet": "tail4d2a.ts.net",
+    "tags": [],
+    "peers": 8,
+    "reach": [
+      { "from": ["*"], "ports": ["*"] },
+      { "from": ["100.101.7.11"], "ports": ["53/udp", "8000-8100/tcp"] }
+    ],
+    "names": { "100.101.7.11": "io" }
   }
 }

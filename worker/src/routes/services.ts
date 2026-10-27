@@ -231,7 +231,7 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
-                  seal_key, security, vault
+                  seal_key, security, vault, tailscale_vault
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
@@ -244,6 +244,7 @@ export function registerServiceRoutes(
           seal_key: string | null;
           security: string | null;
           vault: string | null;
+          tailscale_vault: string | null;
         }>(),
       db
         .prepare(
@@ -331,6 +332,7 @@ export function registerServiceRoutes(
         sealKey: node.seal_key,
         security: securityReport(node.security, ranges, network),
         vault: parsed(node.vault),
+        tailscaleVault: parsed(node.tailscale_vault),
         webAddresses: addresses.results
           .filter((address) => address.node_id === node.id)
           .map(({ node_id: _, ...address }) => address),

@@ -31,6 +31,7 @@ import {
   useOverview,
   useQuarantine,
   useServices,
+  useTailscale,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import { leaveParagraph, networkText } from "@/lib/network";
@@ -63,6 +64,7 @@ export function DeleteNodeDialog({
   const leave = useSignChange();
   const keys = useNetworkKeys(network?.members ?? []);
   const operate = useSignedOperation(false);
+  const credential = useSignedOperation(false);
   const run = useSignedAction(false);
   const unblock = useSignedAction(false);
   const quarantined = !!node.quarantine;
@@ -90,6 +92,25 @@ export function DeleteNodeDialog({
       setId,
     ) !== null;
   const plan = planFor(nodesFor(null), node.id, setId, addresses);
+  const tailnetSet = useTailscale().data?.connected?.setId ?? null;
+  const tailnetNodes = (fingerprint: string | null) =>
+    services.data && overview.data
+      ? vaultNodes(
+          services.data,
+          overview.data.nodes,
+          fingerprint,
+          seen,
+          "tailscale",
+        )
+      : [];
+  const tailnetPlan = planFor(
+    tailnetNodes(null),
+    node.id,
+    tailnetSet,
+    false,
+    "tailscale",
+  );
+  const tailnetHolds = tailnetPlan.ok && tailnetPlan.needed;
   const holds = !plan.ok || plan.needed;
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
@@ -107,6 +128,7 @@ export function DeleteNodeDialog({
       remove.reset();
       leave.reset();
       operate.reset();
+      credential.reset();
       run.reset();
       unblock.reset();
       setKeepAgent(false);
@@ -130,7 +152,44 @@ export function DeleteNodeDialog({
           { onSuccess: then },
         )
       : then();
-  const first = (then: () => void) =>
+  const reshareCredential = (then: () => void) =>
+    tailnetHolds
+      ? credential.mutate(
+          {
+            kind: "reshare",
+            reach: [],
+            build: (fingerprint) => {
+              const all = tailnetNodes(fingerprint);
+              const chosen = planFor(
+                all,
+                node.id,
+                tailnetSet,
+                false,
+                "tailscale",
+              );
+              if (!chosen.ok) throw new Error(chosen.reason);
+              if (!chosen.needed || !tailnetSet) {
+                throw new Error("Nothing to reshare.");
+              }
+              return reshareSteps({
+                releaser: chosen.releaser,
+                assembler: chosen.assembler,
+                holders: chosen.holders,
+                keyOf: Object.fromEntries(
+                  all.map((item) => [item.id, item.sealKey ?? ""]),
+                ),
+                set: crypto.randomUUID(),
+                source: tailnetSet,
+                zone: "",
+                forgets: chosen.forgets,
+                name: "tailscale",
+              });
+            },
+          },
+          { onSuccess: then },
+        )
+      : then();
+  const unblockThen = (then: () => void) =>
     block
       ? unblock.mutate(
           {
@@ -145,6 +204,8 @@ export function DeleteNodeDialog({
           { onSuccess: () => leaveThen(then) },
         )
       : leaveThen(then);
+  const first = (then: () => void) =>
+    reshareCredential(() => unblockThen(then));
   const deleteNow = () =>
     remove.mutate(node.id, {
       onSuccess: () => {
@@ -210,11 +271,17 @@ export function DeleteNodeDialog({
   const busy =
     leave.isPending ||
     operate.isPending ||
+    credential.isPending ||
     run.isPending ||
     unblock.isPending ||
     remove.isPending;
   const error =
-    unblock.error ?? leave.error ?? remove.error ?? operate.error ?? run.error;
+    credential.error ??
+    unblock.error ??
+    leave.error ??
+    remove.error ??
+    operate.error ??
+    run.error;
 
   return (
     <AlertDialog open={open} onOpenChange={close}>
@@ -259,6 +326,20 @@ export function DeleteNodeDialog({
                   {piece
                     ? `${node.name} holds a piece of the Cloudflare token. Krynodes first spreads the token across the other servers and removes the tunnel of ${node.name} from Cloudflare, then deletes it.`
                     : `${node.name} has web addresses. Krynodes first removes its tunnel, DNS records and logins from Cloudflare, then deletes it.`}
+                </p>
+              )}
+              {tailnetHolds && (
+                <p>
+                  {node.name} holds a piece of the Tailscale credential.
+                  Krynodes first shares it again among your other servers, with
+                  the same fingerprint.
+                </p>
+              )}
+              {!tailnetPlan.ok && (
+                <p>
+                  {node.name} holds a piece of the Tailscale credential, and it
+                  cannot move now: {tailnetPlan.reason} Change the credential on
+                  Network after deleting it.
                 </p>
               )}
               {background && (

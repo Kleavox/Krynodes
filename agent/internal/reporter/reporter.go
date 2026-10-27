@@ -293,10 +293,26 @@ func (r PackagesReport) MarshalJSON() ([]byte, error) {
 }
 
 type TailscaleReport struct {
-	State     string   `json:"state"`
-	Addresses []string `json:"addresses"`
-	Name      *string  `json:"name"`
-	KeyExpiry *string  `json:"keyExpiry"`
+	State     string            `json:"state"`
+	Addresses []string          `json:"addresses"`
+	Name      *string           `json:"name"`
+	KeyExpiry *string           `json:"keyExpiry"`
+	ID        *string           `json:"id"`
+	Tailnet   *string           `json:"tailnet"`
+	Tags      []string          `json:"tags"`
+	Peers     int               `json:"peers"`
+	Reach     *[]TailscaleReach `json:"reach"`
+	Names     map[string]string `json:"names"`
+}
+
+type TailscaleReach struct {
+	From  []string `json:"from"`
+	Ports []string `json:"ports"`
+}
+
+type TailscaleUse struct {
+	From string `json:"from"`
+	Port string `json:"port"`
 }
 
 type InventoryReport struct {
@@ -312,6 +328,8 @@ type InventoryReport struct {
 	Packages  *PackagesReport   `json:"packages,omitempty"`
 	Tailscale *TailscaleReport  `json:"tailscale,omitempty"`
 	Network   *NetworkInventory `json:"network,omitempty"`
+
+	TailscaleVault *VaultSlot `json:"tailscaleVault,omitempty"`
 }
 
 type NetworkInventory struct {

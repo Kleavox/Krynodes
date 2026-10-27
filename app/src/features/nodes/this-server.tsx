@@ -6,6 +6,7 @@ import { dnsName } from "@krynodes/protocol";
 import { AddressRows } from "@/components/server-addresses";
 import { Button } from "@/components/ui/button";
 import { AgentDialog } from "@/features/agent/agent-panel";
+import { useTailnet } from "@/features/network/use-tailscale";
 import { SignInDialog } from "@/features/packages/sign-in-dialog";
 import {
   useDevices,
@@ -18,6 +19,8 @@ import { agentLine } from "@/lib/agent";
 import { parseTimestamp, shortDate } from "@/lib/format";
 import { presenceOf, serverRow } from "@/lib/network";
 import { packagesBlocker, tailscaleLine, updatesLine } from "@/lib/packages";
+import { tailnetRemoved } from "@/lib/quarantine";
+import { notApplied, serverLines } from "@/lib/tailscale";
 import { cn } from "@/lib/utils";
 import type { AgentRelease, NodeRecord } from "@/types";
 
@@ -50,10 +53,18 @@ export function ThisServer({
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
   const updates = updatesLine(node.updates, now);
-  const blocked =
-    useQuarantine(node.id, !!node.quarantine).data?.quarantine?.tailnet ?? [];
-  const tailnet: ReturnType<typeof tailscaleLine> | null =
-    node.quarantine && blocked.length > 0
+  const record = useQuarantine(node.id, !!node.quarantine).data?.quarantine;
+  const blocked = record?.tailnet ?? [];
+  const removed =
+    node.quarantine && record ? tailnetRemoved(record, now) : null;
+  const tailnet: ReturnType<typeof tailscaleLine> | null = removed
+    ? {
+        lines: [removed.title, removed.detail],
+        warn: true,
+        action: null,
+        after: null,
+      }
+    : node.quarantine && blocked.length > 0
       ? {
           lines: [`${blocked[0]} · Blocked by your servers`],
           warn: true,
@@ -63,6 +74,17 @@ export function ThisServer({
       : node.tailscale
         ? tailscaleLine(node.tailscale, node.name, now)
         : null;
+  const tail = useTailnet().data;
+  const onTailnet = tail?.servers.find((entry) => entry.nodeId === node.id);
+  const rules =
+    tail?.connected && onTailnet?.report && !node.quarantine
+      ? {
+          sources: serverLines(onTailnet, tail.connected, tail.servers).sources,
+          late: notApplied(tail.connected, tail.servers, now).find(
+            (item) => item.nodeId === node.id,
+          ),
+        }
+      : null;
   const blocker = packagesBlocker(node, (trust?.core.length ?? 0) > 0, now);
   const member = network.data?.members.find(
     (entry) => entry.nodeId === node.id,
@@ -184,6 +206,35 @@ export function ThisServer({
                     </button>
                     {tailnet.after}
                   </span>
+                )}
+                {rules?.sources.map((source) => (
+                  <span key={source.source} className="block text-foreground">
+                    {source.source}
+                    {source.outside && (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · Admin Console
+                      </span>
+                    )}
+                    <span className="text-muted-foreground">
+                      {" "}
+                      · {source.ports}
+                    </span>
+                  </span>
+                ))}
+                {rules?.late && (
+                  <span className="block text-warning">
+                    {rules.late.title}
+                    <span className="block font-sans">{rules.late.text}</span>
+                  </span>
+                )}
+                {rules && (
+                  <Link
+                    to="/network"
+                    className="block text-primary underline-offset-4 hover:underline"
+                  >
+                    Rules ›
+                  </Link>
                 )}
               </dd>
               <dd />

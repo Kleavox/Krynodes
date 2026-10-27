@@ -9,6 +9,7 @@ import {
   useDevices,
   useOverview,
   useServices,
+  useTailscale,
 } from "@/lib/api";
 import { openSession } from "@/lib/deploy-session";
 import { signersFor } from "@/lib/devices";
@@ -18,7 +19,7 @@ import { signCommand, signTargets, type CommandTarget } from "@/lib/passkeys";
 import { failure } from "@/lib/proof";
 import { acceptsWarning, planWithout, releaseInputs } from "@/lib/quarantine";
 import { queryKeys } from "@/lib/query-client";
-import { reshareSteps, vaultNodes } from "@/lib/vault";
+import { reshareSteps, vaultNodes, type VaultName } from "@/lib/vault";
 import type {
   ActionVerb,
   NetworkView,
@@ -203,13 +204,20 @@ export function useRelease(node: NodeRecord) {
   );
 }
 
-export function useReshareWithout(node: NodeRecord) {
+export function useReshareWithout(
+  node: NodeRecord,
+  name: VaultName = "cloudflare",
+) {
   const operate = useSignedOperation(false);
   const services = useServices();
   const overview = useOverview();
   const settings = useCloudflare();
-  const setId = settings.data?.setId ?? null;
-  const zone = settings.data?.zone ?? "";
+  const tailscale = useTailscale();
+  const setId =
+    (name === "tailscale"
+      ? tailscale.data?.connected?.setId
+      : settings.data?.setId) ?? null;
+  const zone = name === "tailscale" ? "" : (settings.data?.zone ?? "");
   const nodesFor = (fingerprint: string | null) =>
     services.data && overview.data
       ? vaultNodes(
@@ -217,17 +225,18 @@ export function useReshareWithout(node: NodeRecord) {
           overview.data.nodes,
           fingerprint,
           overview.dataUpdatedAt,
+          name,
         )
       : [];
   const plan = (addresses: boolean) =>
-    planWithout(nodesFor(null), node.id, setId, addresses);
+    planWithout(nodesFor(null), node.id, setId, addresses, name);
   const run = (addresses: boolean) =>
     operate.mutate({
       kind: "reshare",
       reach: [],
       build: (fingerprint) => {
         const all = nodesFor(fingerprint);
-        const chosen = planWithout(all, node.id, setId, addresses);
+        const chosen = planWithout(all, node.id, setId, addresses, name);
         if (!chosen.ok) throw new Error(chosen.reason);
         if (!chosen.needed || !setId) throw new Error("Nothing to reshare.");
         return reshareSteps({
@@ -242,6 +251,7 @@ export function useReshareWithout(node: NodeRecord) {
           ...(addresses ? { cleanup: node.id } : {}),
           zone,
           forgets: chosen.forgets,
+          name,
         });
       },
     });

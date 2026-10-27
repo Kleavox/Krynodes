@@ -64,7 +64,7 @@ func ValidTarget(kind, name string) bool {
 	case "host":
 		return name == "server" || name == "docker" || name == "tailscale" || slices.Contains(Recipes, name)
 	case "vault":
-		return name == "cloudflare"
+		return name == "cloudflare" || name == "tailscale"
 	case "apt":
 		return apt.ValidName(name)
 	case "network":

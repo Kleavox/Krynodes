@@ -402,6 +402,22 @@ describe("the Tailscale row", () => {
     ).toBe("Key does not expire");
     expect(
       tailscaleLine(
+        { ...running, keyExpiry: ahead(3 * DAY), tags: ["tag:kry"] },
+        "pivox",
+        NOW,
+      ),
+    ).toEqual({
+      lines: [
+        "100.101.7.12",
+        "vps-2.tail4d2a.ts.net",
+        "tag:kry · key never expires",
+      ],
+      warn: false,
+      action: null,
+      after: null,
+    });
+    expect(
+      tailscaleLine(
         {
           ...running,
           state: "needs-login",
@@ -1364,6 +1380,21 @@ describe("Fleet", () => {
         NOW,
       ),
     ).toEqual({ reasons: [], notes: ["Tailscale key expires in 12 days"] });
+    expect(
+      packageAttention(
+        {
+          ...node,
+          updates: null,
+          tailscale: {
+            ...running,
+            keyExpiry: ahead(12 * DAY),
+            tags: ["tag:kry"],
+          },
+        },
+        on,
+        NOW,
+      ),
+    ).toEqual({ reasons: [], notes: [] });
   });
 
   it("says on the card what a package job is doing", () => {

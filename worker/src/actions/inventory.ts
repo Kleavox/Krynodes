@@ -281,7 +281,8 @@ export async function applyInventory(
            security = COALESCE(?5, security),
            vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END,
            updates = CASE WHEN ?9 = 1 THEN ?10 ELSE updates END,
-           tailscale = ?11
+           tailscale = ?11,
+           tailscale_vault = CASE WHEN ?12 = 1 THEN ?13 ELSE tailscale_vault END
          WHERE id = ?8`,
       )
       .bind(
@@ -296,6 +297,10 @@ export async function applyInventory(
         inventory.packages === undefined ? 0 : 1,
         inventory.packages ? summaryOf(inventory.packages) : null,
         inventory.tailscale ? JSON.stringify(inventory.tailscale) : null,
+        inventory.tailscaleVault === undefined ? 0 : 1,
+        inventory.tailscaleVault
+          ? JSON.stringify(inventory.tailscaleVault)
+          : null,
       ),
   ]);
   await applyNetworkInventory(db, node.id, inventory.network ?? null, at);

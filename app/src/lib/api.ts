@@ -35,6 +35,7 @@ import type {
   PackagesResponse,
   ProposalRecord,
   QuarantineView,
+  TailscaleResponse,
   RecentMetrics,
   ServicesResponse,
   SessionResponse,
@@ -461,15 +462,31 @@ export interface OperationStep {
 }
 
 export const postOperation = (body: {
-  kind: "move" | "expose" | "unexpose" | "split" | "reshare";
+  kind:
+    | "move"
+    | "expose"
+    | "unexpose"
+    | "split"
+    | "reshare"
+    | "tailnet"
+    | "disconnect";
   steps: OperationStep[];
   zone?: string;
+  tailscale?: { tailnet: string; clientId: string; webhookSecret?: string };
   deleteNode?: string;
 }) =>
   apiFetch<{ batchId: string; actions: { id: string }[] }>(
     "/api/operations",
     send("POST", body),
   );
+
+export function useTailscale(refetchInterval: number | false = false) {
+  return useQuery({
+    queryKey: queryKeys.tailscale,
+    queryFn: () => apiFetch<TailscaleResponse>("/api/tailscale"),
+    refetchInterval,
+  });
+}
 
 export function useNetwork(refetchInterval: number | false = false) {
   return useQuery({

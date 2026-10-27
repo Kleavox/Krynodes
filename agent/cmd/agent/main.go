@@ -29,6 +29,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/metrics"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/stream"
+	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 	"github.com/Kleavox/krynodes/agent/internal/update"
 )
 
@@ -634,7 +635,8 @@ func execActions() error {
 		Collect: func(ctx context.Context, remembered []string) (actions.Snapshot, error) {
 			return actions.Collect(ctx, actions.RunCommand, remembered)
 		},
-		Audit: true,
+		Audit:          true,
+		TailscaleLocal: tailscale.Socket,
 	}
 	return executor.Execute(context.Background())
 }

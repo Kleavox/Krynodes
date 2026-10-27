@@ -34,6 +34,7 @@ export const queryKeys = {
   packages: (id: string) => ["packages", "node", id],
   packageNames: ["packages", "names"],
   network: ["network"],
+  tailscale: ["tailscale"],
   networkNext: (nodes: string[], range?: string) => [
     "network",
     "next",

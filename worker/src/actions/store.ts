@@ -6,6 +6,7 @@ import {
 } from "@krynodes/protocol";
 
 import { fromB64url } from "../lib/b64url";
+import { tailscaleResults } from "../tailscale/results";
 import { loadEstate } from "./attention";
 
 const ACTION_TTL_MS = 10 * 60_000;
@@ -75,7 +76,11 @@ export type ActionVerb =
   | "block"
   | "unblock"
   | "drop"
-  | "tighten";
+  | "tighten"
+  | "policy"
+  | "save"
+  | "key"
+  | "join";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -92,7 +97,12 @@ interface ActionTarget {
   attachment?: string;
 }
 
-export const SEALED_VERBS: readonly string[] = ["export", "release", "reshare"];
+export const SEALED_VERBS: readonly string[] = [
+  "export",
+  "release",
+  "reshare",
+  "key",
+];
 export const QUESTIONS: readonly string[] = [
   "find",
   "preview",
@@ -418,7 +428,9 @@ function followUp(
       )
       .bind(output, action.batch_id, action.position);
     const cleanup =
-      action.action === "reshare" ? argsOf(action).cleanup : undefined;
+      action.action === "reshare" && action.name === "cloudflare"
+        ? argsOf(action).cleanup
+        : undefined;
     return cleanup
       ? [
           attach,
@@ -431,6 +443,9 @@ function followUp(
             .bind(cleanup, nodeId),
         ]
       : [attach];
+  }
+  if (action.name === "tailscale" && action.kind !== "compose") {
+    return tailscaleResults(db, nodeId, action, argsOf(action), at, output);
   }
   if (action.action === "store") {
     const { set, holders } = argsOf(action);

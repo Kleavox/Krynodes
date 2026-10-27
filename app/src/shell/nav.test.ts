@@ -6,7 +6,7 @@ import type {
   Overview,
   ServicesResponse,
 } from "../types";
-import { alsoActive, navCounts, PAGES, SECTIONS } from "./nav";
+import { alsoActive, navCounts, networkWarns, PAGES, SECTIONS } from "./nav";
 
 const incident = (status: Incident["status"]) => ({ status }) as Incident;
 const action = (status: ActionRecord["status"]) => ({ status }) as ActionRecord;
@@ -39,6 +39,13 @@ describe("the menu", () => {
       1,
     );
     expect(counts).toEqual({ "/checks": 2, "/services": 1, "/network": 1 });
+  });
+
+  it("puts Tailscale alarms on Network in red, over the amber count", () => {
+    expect(navCounts(undefined, undefined, 1, 2)["/network"]).toBe(2);
+    expect(navCounts(undefined, undefined, 1, 0)["/network"]).toBe(1);
+    expect(networkWarns(2)).toBe(false);
+    expect(networkWarns(0)).toBe(true);
   });
 
   it("marks Checks while an incident is open on screen", () => {

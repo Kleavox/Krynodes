@@ -26,6 +26,7 @@ import {
   verb,
 } from "./services";
 import { containersOf, stackOf } from "./stacks";
+import { tailnetActionText } from "./tailscale";
 
 type Stacks = Pick<StackEntry, "project" | "containers">[];
 
@@ -208,6 +209,7 @@ export function historyText(
 ): string {
   const packages =
     packageText(action, nodeName) ??
+    tailnetActionText(action, nodeName) ??
     networkActionText(action) ??
     quarantineActionText(action);
   if (packages) return packages;

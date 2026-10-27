@@ -1,4 +1,8 @@
-import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
+import {
+  agentHasFeatures,
+  FEATURE_AGENT,
+  MIN_AGENT_VERSION,
+} from "@krynodes/protocol/versions";
 import type {
   ActionRecord,
   ActionVerb,
@@ -25,8 +29,23 @@ export interface OperationTarget extends CommandTarget {
 
 const encoder = new TextEncoder();
 
-const vault = (nodeId: string) =>
-  ({ nodeId, kind: "vault", name: "cloudflare" }) as const;
+export type VaultName = "cloudflare" | "tailscale";
+
+const WORDS = {
+  cloudflare: {
+    thing: "the token",
+    again: "Paste the token again.",
+    agent: MIN_AGENT_VERSION,
+  },
+  tailscale: {
+    thing: "the credential",
+    again: "Change the credential to share it again.",
+    agent: FEATURE_AGENT,
+  },
+} as const;
+
+const vault = (nodeId: string, name: VaultName = "cloudflare") =>
+  ({ nodeId, kind: "vault", name }) as const;
 
 export function pieceJson(set: string, piece: Uint8Array): string {
   return JSON.stringify({ set, piece: btoa(String.fromCharCode(...piece)) });
@@ -37,11 +56,12 @@ export async function splitSteps(
   holders: Holder[],
   set: string,
   source: string | null,
+  name: VaultName = "cloudflare",
 ): Promise<OperationTarget[]> {
   const pieces = split(encoder.encode(token.trim()), holders.length);
   return Promise.all(
     holders.map(async (holder, index) => ({
-      ...vault(holder.nodeId),
+      ...vault(holder.nodeId, name),
       action: "store" as const,
       piece: await seal(holder.sealKey, pieceJson(set, pieces[index]!)),
       args: {
@@ -53,13 +73,14 @@ export async function splitSteps(
   );
 }
 
-const release = (
+export const release = (
   releaser: string,
   to: string,
   key: string,
   set: string,
+  name: VaultName = "cloudflare",
 ): OperationTarget => ({
-  ...vault(releaser),
+  ...vault(releaser, name),
   action: "release",
   args: { to, key, set },
 });
@@ -74,7 +95,9 @@ export function reshareSteps(input: {
   cleanup?: string;
   zone: string;
   forgets: string[];
+  name?: VaultName;
 }): OperationTarget[] {
+  const name = input.name ?? "cloudflare";
   const steps: OperationTarget[] = input.releaser
     ? [
         release(
@@ -82,12 +105,13 @@ export function reshareSteps(input: {
           input.assembler,
           input.keyOf[input.assembler] ?? "",
           input.source,
+          name,
         ),
       ]
     : [];
   const index = steps.length;
   steps.push({
-    ...vault(input.assembler),
+    ...vault(input.assembler, name),
     action: "reshare",
     args: {
       holders: input.holders
@@ -102,7 +126,7 @@ export function reshareSteps(input: {
   });
   for (const holder of input.holders) {
     steps.push({
-      ...vault(holder.nodeId),
+      ...vault(holder.nodeId, name),
       action: "store",
       args: {
         set: input.set,
@@ -114,7 +138,7 @@ export function reshareSteps(input: {
     });
   }
   for (const nodeId of input.forgets) {
-    steps.push({ ...vault(nodeId), action: "forget" });
+    steps.push({ ...vault(nodeId, name), action: "forget" });
   }
   return steps;
 }
@@ -290,6 +314,8 @@ export interface VaultNode {
   } | null;
   reachable: boolean;
   online: boolean;
+  quarantined?: boolean;
+  version?: string | null;
 }
 
 type Plan<T> = ({ ok: true } & T) | { ok: false; reason: string };
@@ -303,55 +329,93 @@ export function pieceOf(
   return node.vault.previous?.set === setId ? node.vault.previous : null;
 }
 
-export const splitHolders = (nodes: VaultNode[]): Holder[] =>
+const usable = (node: VaultNode) =>
+  node.reachable && node.online && !node.quarantined;
+
+const twoOnline = (count: number, without?: string) =>
+  `Two servers ${without ? `other than ${without} ` : ""}holding a piece must be online; ${count} is.`;
+
+export const splitHolders = (
+  nodes: VaultNode[],
+  name: VaultName = "cloudflare",
+): Holder[] =>
   nodes
-    .filter((node) => node.reachable && node.online && node.sealKey)
+    .filter(
+      (node) =>
+        usable(node) &&
+        node.sealKey &&
+        (name === "cloudflare" || agentHasFeatures(node.version)),
+    )
     .map((node) => ({ nodeId: node.id, sealKey: node.sealKey! }));
 
 export function planSpread(
   nodes: VaultNode[],
   setId: string | null,
+  name: VaultName = "cloudflare",
+  without?: string,
 ): Plan<{
   assembler: string;
   releaser: string | null;
   holders: Holder[];
   forgets: string[];
 }> {
-  const holders = splitHolders(nodes);
+  const words = WORDS[name];
+  const holders = splitHolders(nodes, name);
   const current = nodes.filter((node) => pieceOf(node, setId) !== null);
   if (current.length === 0) {
     return {
       ok: false,
-      reason: "No server holds a piece any more. Paste the token again.",
+      reason: `No server holds a piece any more. ${words.again}`,
     };
   }
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `This device reaches no online server with agent ${MIN_AGENT_VERSION}.`,
+      reason: `This device reaches no online server with agent ${words.agent}.`,
     };
   }
-  const usable = current.filter((node) => node.reachable && node.online);
+  const online = current.filter(usable);
   const whole =
     current.length === 1 && pieceOf(current[0], setId)!.holders === 1;
-  if (whole ? usable.length < 1 : usable.length < 2) {
+  if (whole ? online.length < 1 : online.length < 2) {
     return {
       ok: false,
       reason: whole
-        ? `${current[0]!.name} holds the token and must be online.`
-        : `Two servers holding a piece must be online; ${usable.length} is.`,
+        ? `${current[0]!.name} holds ${words.thing} and must be online.`
+        : twoOnline(online.length, without),
     };
   }
   const kept = holders.map((holder) => holder.nodeId);
   return {
     ok: true,
-    assembler: usable[0]!.id,
-    releaser: whole ? null : usable[1]!.id,
+    assembler: online[0]!.id,
+    releaser: whole ? null : online[1]!.id,
     holders,
-    forgets: usable
+    forgets: online
       .filter((node) => !kept.includes(node.id))
       .map((node) => node.id),
   };
+}
+
+export function planUse(
+  nodes: VaultNode[],
+  setId: string | null,
+  without?: string,
+): Plan<{ assembler: string; releaser: string }> {
+  const online = nodes.filter(
+    (node) =>
+      node.id !== without && usable(node) && pieceOf(node, setId) !== null,
+  );
+  if (online.length < 2) {
+    return {
+      ok: false,
+      reason: twoOnline(
+        online.length,
+        nodes.find((node) => node.id === without)?.name,
+      ),
+    };
+  }
+  return { ok: true, assembler: online[0]!.id, releaser: online[1]!.id };
 }
 
 export function planRemoval(
@@ -359,6 +423,8 @@ export function planRemoval(
   removed: string,
   setId: string | null,
   addresses = false,
+  name: VaultName = "cloudflare",
+  suspect = false,
 ): Plan<
   | { needed: false }
   | {
@@ -376,13 +442,15 @@ export function planRemoval(
   const plan = planSpread(
     [...nodes.filter((node) => node.id !== removed), gone],
     setId,
+    name,
+    suspect ? gone.name : undefined,
   );
   if (!plan.ok) return plan;
   const holders = plan.holders.filter((holder) => holder.nodeId !== removed);
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `No other server with agent ${MIN_AGENT_VERSION} that this device reaches can take the token.`,
+      reason: `No other server with agent ${WORDS[name].agent} that this device reaches can take ${WORDS[name].thing}.`,
     };
   }
   return {
@@ -430,6 +498,7 @@ export function vaultNodes(
   nodes: NodeRecord[],
   fingerprint: string | null,
   seen: number,
+  name: VaultName = "cloudflare",
 ): VaultNode[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   return data.nodes.flatMap((entry) => {
@@ -440,12 +509,15 @@ export function vaultNodes(
         id: entry.id,
         name: node.name,
         sealKey: entry.sealKey ?? null,
-        vault: entry.vault ?? null,
+        vault:
+          (name === "tailscale" ? entry.tailscaleVault : entry.vault) ?? null,
         reachable:
           fingerprint === null
             ? (entry.trust?.access.length ?? 0) > 0
             : (entry.trust?.access.includes(fingerprint) ?? false),
         online: nodeState(node, seen) !== "offline",
+        quarantined: Boolean(node.quarantine),
+        version: node.agent_version,
       },
     ];
   });

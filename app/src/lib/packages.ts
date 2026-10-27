@@ -1,4 +1,4 @@
-import type { TailscaleReport } from "@krynodes/protocol";
+import { TAILSCALE, type TailscaleReport } from "@krynodes/protocol";
 import { agentHasFeatures } from "@krynodes/protocol/versions";
 
 import type {
@@ -413,9 +413,10 @@ export function packageAttention(
   ) {
     reasons.push(`${count(updates.security, "security update")} waiting`);
   }
-  const expiry = node.tailscale?.keyExpiry
-    ? parseTimestamp(node.tailscale.keyExpiry)
-    : null;
+  const expiry =
+    node.tailscale?.keyExpiry && !tagged(node.tailscale)
+      ? parseTimestamp(node.tailscale.keyExpiry)
+      : null;
   if (expiry !== null && expiry <= now) {
     reasons.push("Tailscale key expired");
   } else if (expiry !== null && expiry - now <= EXPIRY_WARN_DAYS * DAY_MS) {
@@ -460,6 +461,9 @@ export interface TailscaleLine {
   after: string | null;
 }
 
+const tagged = (report: TailscaleReport) =>
+  report.tags?.includes(TAILSCALE.tag) ?? false;
+
 export function tailscaleLine(
   report: TailscaleReport,
   name: string,
@@ -472,6 +476,18 @@ export function tailscaleLine(
         "Start it from Services. Signing in waits until it runs.",
       ],
       warn: true,
+      action: null,
+      after: null,
+    };
+  }
+  if (report.state === "running" && tagged(report)) {
+    return {
+      lines: [
+        report.addresses[0] ?? "--",
+        ...(report.name ? [report.name] : []),
+        `${TAILSCALE.tag} · key never expires`,
+      ],
+      warn: false,
       action: null,
       after: null,
     };

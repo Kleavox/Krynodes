@@ -51,6 +51,7 @@
     ["host", "free-port-53"],
     ["host", "docker"],
     ["vault", "cloudflare"],
+    ["vault", "tailscale"],
     ["host", "tailscale"],
     ["apt", "system"],
     ["apt", "nginx"],

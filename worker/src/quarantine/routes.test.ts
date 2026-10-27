@@ -345,6 +345,7 @@ describe("a quarantined server", () => {
     expect(read.changeThese).toEqual({
       stacks: ["app"],
       vault: null,
+      tailscaleVault: null,
       webAddresses: [{ hostname: "app.example.com", project: "app" }],
       trusted: [
         { nodeId: V2, nodeName: "vps-2", project: "db", port: "5432/tcp" },
@@ -353,6 +354,26 @@ describe("a quarantined server", () => {
     expect(
       (await json(await call("GET", `/api/nodes/${V3}/quarantine`))).quarantine,
     ).toBeNull();
+  });
+
+  it("names the Tailscale credential's pieces and when it left the tailnet", async () => {
+    const { db, sqlite, call } = setup();
+    sqlite
+      .prepare("UPDATE nodes SET tailscale_vault = ? WHERE id = ?")
+      .run(JSON.stringify({ set: "t1", holders: 3 }), V1);
+    await quarantine(db, { nodeId: V1, why: "why", now: Date.now() });
+    sqlite
+      .prepare(
+        `UPDATE quarantines SET timeline = json_set(timeline, '$.removed', json(?)) WHERE node_id = ?`,
+      )
+      .run(JSON.stringify({ at: "2026-10-27T14:40:12Z", by: "dev-1" }), V1);
+    const read = await json(await call("GET", `/api/nodes/${V1}/quarantine`));
+    expect(read.quarantine).toMatchObject({
+      removed: { at: "2026-10-27T14:40:12Z", by: "dev-1" },
+    });
+    expect(read.changeThese).toMatchObject({
+      tailscaleVault: { set: "t1", holders: 3 },
+    });
   });
 
   it("names the knocks that led to it, the address they came from and a stopped stack's count", async () => {

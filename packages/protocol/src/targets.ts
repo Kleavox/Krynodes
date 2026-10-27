@@ -48,7 +48,7 @@ export function isValidTarget(kind: string, name: string): boolean {
       (RECIPES as readonly string[]).includes(name)
     );
   }
-  if (kind === "vault") return name === "cloudflare";
+  if (kind === "vault") return name === "cloudflare" || name === "tailscale";
   if (kind === "apt") return APT_NAME.test(name);
   if (kind === "network") return name === "kry0";
   if (!TARGET_NAME.test(name)) return false;

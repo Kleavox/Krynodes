@@ -6,9 +6,19 @@ import {
   stackNetworkSchema,
 } from "./network";
 import { eventSchema, releaseSchema } from "./quarantine";
+import { reachSchema } from "./tailscale";
 import { isValidTarget, RECIPES } from "./targets";
 
 export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
+export {
+  portSchema,
+  reachSchema,
+  ruleSchema,
+  TAILSCALE,
+  webhookBodySchema,
+  type TailnetRule,
+  type WebhookEvent,
+} from "./tailscale";
 export {
   EVENT_KINDS,
   eventSchema,
@@ -253,9 +263,20 @@ export const KIND_VERBS = {
     "release",
     "block",
     "unblock",
+    "join",
+    "inspect",
   ],
   trust: ["trust"],
-  vault: ["store", "release", "reshare", "forget"],
+  vault: [
+    "store",
+    "release",
+    "reshare",
+    "forget",
+    "policy",
+    "save",
+    "key",
+    "remove",
+  ],
   apt: [
     "refresh",
     "find",
@@ -283,8 +304,15 @@ export const KIND_VERBS = {
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
 
+const TOKEN_VERBS: readonly string[] = [
+  "store",
+  "release",
+  "reshare",
+  "forget",
+];
+
 export function hostVerbFits(name: string, action: string): boolean {
-  const tailnet = ["signin", "block", "unblock"];
+  const tailnet = ["signin", "block", "unblock", "join", "inspect"];
   if (name === "tailscale" || tailnet.includes(action)) {
     return name === "tailscale" && tailnet.includes(action);
   }
@@ -371,6 +399,10 @@ export const agentActionSchema = z
       "unblock",
       "drop",
       "tighten",
+      "policy",
+      "save",
+      "key",
+      "join",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -392,6 +424,13 @@ export const agentActionSchema = z
     const allowed: readonly string[] = KIND_VERBS[action.kind];
     if (!allowed.includes(action.action)) return false;
     if (action.kind === "host" && !hostVerbFits(action.name, action.action)) {
+      return false;
+    }
+    if (
+      action.kind === "vault" &&
+      action.name === "cloudflare" &&
+      !TOKEN_VERBS.includes(action.action)
+    ) {
       return false;
     }
     if (action.action === "lockdown" && action.signed === undefined) {
@@ -587,6 +626,15 @@ export const tailscaleReportSchema = z.strictObject({
   addresses: z.array(z.string().max(64)).max(8),
   name: z.string().max(253).nullable(),
   keyExpiry: stamp.nullable(),
+  id: z.string().max(64).nullable().optional(),
+  tailnet: z.string().max(253).nullable().optional(),
+  tags: z.array(z.string().max(64)).max(8).optional(),
+  peers: z.number().int().nonnegative().optional(),
+  reach: z.array(reachSchema).max(64).nullable().optional(),
+  names: z
+    .record(z.string().max(64), z.string().max(63))
+    .refine((names) => Object.keys(names).length <= 64)
+    .optional(),
 });
 
 export const progressSchema = z.strictObject({
@@ -620,6 +668,7 @@ export const agentActionsRequestSchema = z
           .optional(),
         security: securityReportSchema.optional(),
         vault: vaultReportSchema.optional(),
+        tailscaleVault: vaultReportSchema.optional(),
         services: z.array(serviceEntrySchema).max(500).optional(),
         stacks: z.array(stackEntrySchema).max(50).optional(),
         trust: trustReportSchema.optional(),

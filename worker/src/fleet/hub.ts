@@ -34,8 +34,11 @@ import {
   sendSecurityEmail,
   sendServerEmail,
   sendStoppedEmail,
+  sendTailnetDeviceEmail,
+  sendTailnetPolicyEmail,
   sendWarningEmail,
   type StoppedMail,
+  type TailnetMail,
   type WarningMail,
 } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
@@ -65,6 +68,7 @@ import {
   quarantineReport,
 } from "../quarantine/quarantine";
 import { readSettings } from "../quarantine/settings";
+import { judgeTailnet } from "../tailscale/hook";
 
 const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_requested_at,
          update_attempts, update_error, inventory_hash, refresh_requested_at, security,
@@ -75,6 +79,7 @@ const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_
   WHERE id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
 
 const CUTOFFS = "cutoffs";
+const TAILNET = "tailnet";
 const QUIET_HANDSHAKE_S = 180;
 const CLONED = "Reported from two machines at once";
 
@@ -101,6 +106,11 @@ const DISK_FULL = 95;
 const DISK_CLEAR = 90;
 
 type Roster = Record<string, RosterEntry>;
+
+interface Tailnet {
+  owner: string;
+  due: number;
+}
 
 const offlineAfterMs = (interval: number) => Math.max(90, 3 * interval) * 1000;
 
@@ -175,6 +185,22 @@ export class FleetHub {
     }
     if (url.pathname === "/network") {
       return Response.json(Object.fromEntries(this.network.latest));
+    }
+    if (url.pathname === "/tailnet" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        owner?: unknown;
+        due?: unknown;
+      } | null;
+      if (typeof body?.owner !== "string" || typeof body.due !== "number") {
+        return new Response(null, { status: 400 });
+      }
+      const stored = await this.ctx.storage.get<Tailnet>(TAILNET);
+      await this.ctx.storage.put(TAILNET, {
+        owner: body.owner,
+        due: Math.min(stored?.due ?? Infinity, body.due),
+      });
+      await this.schedule(Date.now());
+      return Response.json({});
     }
     if (url.pathname === "/poke" && request.method === "POST") {
       const body = (await request.json().catch(() => null)) as {
@@ -440,15 +466,25 @@ export class FleetHub {
     warned?: WarningMail[];
     stopped?: StoppedMail[];
     quarantined?: string[];
+    tailnet?: TailnetMail[];
   }) {
-    const { warned = [], stopped = [], quarantined = [] } = told;
-    if (warned.length + stopped.length + quarantined.length === 0) return;
+    const { warned = [], stopped = [], quarantined = [], tailnet = [] } = told;
+    if (
+      warned.length + stopped.length + quarantined.length + tailnet.length ===
+      0
+    )
+      return;
     try {
       for (const mail of warned) await sendWarningEmail(this.env, mail);
       for (const mail of stopped) await sendStoppedEmail(this.env, mail);
       for (const nodeId of quarantined) {
         const report = await quarantineReport(this.env.DB, nodeId);
         if (report) await sendQuarantineEmail(this.env, report);
+      }
+      for (const mail of tailnet) {
+        if (mail.kind === "device")
+          await sendTailnetDeviceEmail(this.env, mail);
+        else await sendTailnetPolicyEmail(this.env, mail);
       }
       await this.noteMail(this.mailSetup());
     } catch (error) {
@@ -529,8 +565,19 @@ export class FleetHub {
     await this.tell({ warned });
   }
 
+  private async judge(now: number) {
+    const tailnet = await this.ctx.storage.get<Tailnet>(TAILNET);
+    if (!tailnet || tailnet.due > now) return;
+    const judged = await judgeTailnet(this.env.DB, tailnet.owner, now);
+    if (judged.due === null) await this.ctx.storage.delete(TAILNET);
+    else await this.ctx.storage.put(TAILNET, { ...tailnet, due: judged.due });
+    await this.tell({ tailnet: judged.mails });
+  }
+
   private async schedule(now: number) {
     const times: number[] = Object.values(await this.cutoffs());
+    const tailnet = await this.ctx.storage.get<Tailnet>(TAILNET);
+    if (tailnet) times.push(tailnet.due);
     for (const [nodeId, entry] of Object.entries(await this.roster())) {
       if (entry.offline) continue;
       const { seen, limit } = this.pulse(nodeId, entry);
@@ -625,6 +672,7 @@ export class FleetHub {
       const offline = await this.watchdog(now);
       send = offline.length > 0 ? await this.notify(offline, now) : [];
       await this.cutOff(now);
+      await this.judge(now);
       await this.schedule(now);
     } catch (error) {
       console.error("[kry fleet] watchdog", error);

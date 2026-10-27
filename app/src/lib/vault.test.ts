@@ -10,10 +10,12 @@ import {
   planRemoval,
   pendingTokenSteps,
   planSpread,
+  planUse,
   reshareSteps,
   splitHolders,
   splitSteps,
   unexposeSteps,
+  vaultNodes,
 } from "./vault";
 
 const SET = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a20";
@@ -346,6 +348,8 @@ const node = (
     reachable: boolean;
     online: boolean;
     sealKey: string | null;
+    quarantined: boolean;
+    version: string | null;
   }> = {},
 ) => ({
   id,
@@ -557,5 +561,118 @@ describe("a token change on its way", () => {
         step("compose", "expose", "queued"),
       ]),
     ).toBe(2);
+  });
+});
+
+describe("the Tailscale credential in pieces", () => {
+  it("leaves out quarantined servers, and servers before agent 0.7.0 for Tailscale", async () => {
+    const nodes = [
+      node(A, { version: "0.7.0" }),
+      node(B, { version: "0.7.0", quarantined: true }),
+      node(C, { version: "0.6.14" }),
+    ];
+    expect(splitHolders(nodes).map((holder) => holder.nodeId)).toEqual([A, C]);
+    expect(
+      splitHolders(nodes, "tailscale").map((holder) => holder.nodeId),
+    ).toEqual([A]);
+    const [step] = await splitSteps(
+      "tskey-client-k1",
+      [{ nodeId: A, sealKey: await serverKey() }],
+      SET,
+      null,
+      "tailscale",
+    );
+    expect(step).toMatchObject({
+      nodeId: A,
+      kind: "vault",
+      name: "tailscale",
+      action: "store",
+      args: { set: SET, holders: "1" },
+    });
+    expect(
+      reshareSteps({
+        releaser: B,
+        assembler: A,
+        holders: [{ nodeId: A, sealKey: "key-1" }],
+        keyOf: { [A]: "key-1" },
+        set: "next",
+        source: SET,
+        zone: "",
+        forgets: [B],
+        name: "tailscale",
+      }).map((entry) => `${entry.name} ${entry.action}`),
+    ).toEqual([
+      "tailscale release",
+      "tailscale reshare",
+      "tailscale store",
+      "tailscale forget",
+    ]);
+  });
+
+  it("picks two online servers holding a piece, never the one it is told to leave out", () => {
+    expect(planUse([node(A), node(B), node(C)], SET)).toEqual({
+      ok: true,
+      assembler: A,
+      releaser: B,
+    });
+    expect(planUse([node(A), node(B), node(C)], SET, A)).toEqual({
+      ok: true,
+      assembler: B,
+      releaser: C,
+    });
+    expect(
+      planUse([node(A, { quarantined: true }), node(B), node(C)], SET),
+    ).toMatchObject({ assembler: B, releaser: C });
+    expect(
+      planUse([node(A), node(B), node(C, { vault: null })], SET, A),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Two servers other than server-1 holding a piece must be online; 1 is.",
+    });
+    expect(planUse([node(A), node(B, { online: false })], SET)).toEqual({
+      ok: false,
+      reason: "Two servers holding a piece must be online; 1 is.",
+    });
+  });
+
+  it("reads each server's Tailscale piece, version and quarantine", () => {
+    const seen = Date.parse("2026-10-27T07:00:00Z");
+    const row = {
+      id: A,
+      name: "pivox",
+      agent_version: "0.7.0",
+      last_seen_at: "2026-10-27 06:59:50",
+      interval_seconds: 60,
+      quarantine: { at: "2026-10-27T06:00:00Z", why: "why" },
+    } as unknown as Parameters<typeof vaultNodes>[1][number];
+    const data = {
+      nodes: [
+        {
+          id: A,
+          sealKey: "key-1",
+          vault: { set: "cf", holders: 3 },
+          tailscaleVault: { set: SET, holders: 4 },
+          trust: { version: 1, core: [], access: ["fp"] },
+        },
+      ],
+      actions: [],
+    } as unknown as Parameters<typeof vaultNodes>[0];
+    expect(vaultNodes(data, [row], "fp", seen, "tailscale")).toEqual([
+      {
+        id: A,
+        name: "pivox",
+        sealKey: "key-1",
+        vault: { set: SET, holders: 4 },
+        reachable: true,
+        online: true,
+        quarantined: true,
+        version: "0.7.0",
+      },
+    ]);
+    expect(vaultNodes(data, [row], "fp", seen)[0]?.vault).toEqual({
+      set: "cf",
+      holders: 3,
+    });
   });
 });

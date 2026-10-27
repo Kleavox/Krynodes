@@ -144,13 +144,14 @@ async function verified(
 
 const ownedNode = (context: KrynodesContext, id: string) =>
   context.env.DB.prepare(
-    "SELECT id, name, vault, release FROM nodes WHERE id = ? AND owner_user_id = ?",
+    "SELECT id, name, vault, tailscale_vault, release FROM nodes WHERE id = ? AND owner_user_id = ?",
   )
     .bind(id, context.get("identity").id)
     .first<{
       id: string;
       name: string;
       vault: string | null;
+      tailscale_vault: string | null;
       release: string | null;
     }>();
 
@@ -419,6 +420,7 @@ export function registerQuarantineRoutes(
             releasedAt: row.released_at,
             releasedBy: row.released_by,
             tailnet: timeline.tailnet,
+            removed: timeline.removed ?? null,
             address: address ?? null,
             knocks,
             steps: steps.map((step) => ({
@@ -440,6 +442,7 @@ export function registerQuarantineRoutes(
       changeThese: {
         stacks: stacks.results.map((stack) => stack.project),
         vault: parsed<unknown>(node.vault, null),
+        tailscaleVault: parsed<unknown>(node.tailscale_vault, null),
         webAddresses: web.results,
         trusted: others,
       },

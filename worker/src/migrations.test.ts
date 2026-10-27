@@ -702,3 +702,51 @@ describe("migration 0035", () => {
     }
   });
 });
+
+describe("migration 0036", () => {
+  it("keeps every action, takes the Tailscale verbs, and drops a node's Tailscale rows with it", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0036");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'vps-1', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "tailscale", "inspect", "queued"));
+    expect(() =>
+      sqlite.exec(action("a2", "vault", "tailscale", "save", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0036"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(action("a2", "vault", "tailscale", "save", "queued", "{}"));
+    sqlite.exec(action("a3", "host", "tailscale", "join", "queued", "{}"));
+    sqlite.exec(action("a4", "vault", "tailscale", "release", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a5", "vault", "tailscale", "key", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(action("a6", "vault", "cloudflare", "store", "queued", "{}"));
+    sqlite.exec("UPDATE nodes SET tailscale_vault = '{}' WHERE id = 'n1'");
+    sqlite.exec(
+      `INSERT INTO tailscale (owner_user_id, tailnet, client_id, webhook_secret, connected_at) VALUES ('standalone', 'tail4d2a.ts.net', 'kQ1', 's', 'now')`,
+    );
+    expect(
+      sqlite.prepare("SELECT rules, lines, members FROM tailscale").get(),
+    ).toEqual({ rules: "[]", lines: "[]", members: "[]" });
+    sqlite.exec(
+      "INSERT INTO tailscale_nodes (node_id, device, joined_at) VALUES ('n1', 'nA', 'now')",
+    );
+    sqlite.exec(
+      `INSERT INTO tailscale_alarms (id, owner_user_id, kind, detail, at) VALUES ('t1', 'standalone', 'device', '{}', 'now')`,
+    );
+    expect(() =>
+      sqlite.exec(
+        `INSERT INTO tailscale_alarms (id, owner_user_id, kind, detail, at) VALUES ('t2', 'standalone', 'other', '{}', 'now')`,
+      ),
+    ).toThrow();
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS n FROM tailscale_nodes").get(),
+    ).toEqual({ n: 0 });
+  });
+});

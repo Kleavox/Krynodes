@@ -1142,3 +1142,91 @@ describe("package messages of agent 0.7.0", () => {
     ).toBe(false);
   });
 });
+
+describe("Tailscale rules messages of agent 0.7.0", () => {
+  const base = {
+    id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a90",
+    kind: "host",
+    name: "tailscale",
+    expiresAt: "2026-10-27T10:10:00.000Z",
+  };
+  const nodeId = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a91";
+  const hash = "b".repeat(64);
+  const parses = (action: Record<string, unknown>) =>
+    agentActionSchema.safeParse({ ...base, ...action }).success;
+  const accepts = (inventory: Record<string, unknown>) =>
+    agentActionsRequestSchema.safeParse({
+      nodeId,
+      inventory: { hash, ...inventory },
+    }).success;
+  const report = {
+    ...shared.tailscale,
+    id: "nAbC123CNTRL",
+    tailnet: "tail4d2a.ts.net",
+    tags: ["tag:kry"],
+    peers: 8,
+    reach: [{ from: ["*"], ports: ["*"] }],
+    names: { "100.101.7.11": "io" },
+  };
+
+  it("reads In Use Now without a signature and joins only with one", () => {
+    expect(parses({ action: "inspect" })).toBe(true);
+    expect(parses({ action: "inspect", signed: signedCommand })).toBe(false);
+    expect(parses({ action: "join", signed: signedCommand })).toBe(true);
+    expect(parses({ action: "join" })).toBe(false);
+    expect(
+      parses({ action: "join", name: "server", signed: signedCommand }),
+    ).toBe(false);
+    expect(parses({ action: "inspect", name: "server" })).toBe(false);
+  });
+
+  it("uses the Tailscale credential only with a signed command", () => {
+    for (const action of [
+      "store",
+      "release",
+      "reshare",
+      "forget",
+      "policy",
+      "save",
+      "key",
+      "remove",
+    ]) {
+      const step = { kind: "vault", name: "tailscale", action };
+      expect(parses({ ...step, signed: signedCommand }), action).toBe(true);
+      expect(parses(step), action).toBe(false);
+    }
+    for (const action of ["policy", "save", "key", "remove"]) {
+      expect(
+        parses({
+          kind: "vault",
+          name: "cloudflare",
+          action,
+          signed: signedCommand,
+        }),
+        action,
+      ).toBe(false);
+    }
+  });
+
+  it("reports who may reach the server, its tag and the credential's piece", () => {
+    expect(accepts({ tailscale: report })).toBe(true);
+    expect(accepts({ tailscale: { ...report, reach: null } })).toBe(true);
+    expect(accepts({ tailscale: shared.tailscale })).toBe(true);
+    expect(
+      accepts({
+        tailscale: {
+          ...report,
+          reach: Array(65).fill({ from: ["*"], ports: ["*"] }),
+        },
+      }),
+    ).toBe(false);
+    expect(
+      accepts({
+        tailscaleVault: {
+          set: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a92",
+          holders: 4,
+        },
+      }),
+    ).toBe(true);
+  });
+});

@@ -36,12 +36,15 @@ export function navCounts(
   overview: Overview | undefined,
   services: ServicesResponse | undefined,
   networkProblems = 0,
+  tailnetAlarms = 0,
 ): Record<string, number> {
   return {
     "/checks":
       overview?.incidents.filter((incident) => incident.status === "OPEN")
         .length ?? 0,
     "/services": services?.actions.filter(isPending).length ?? 0,
-    "/network": networkProblems,
+    "/network": tailnetAlarms > 0 ? tailnetAlarms : networkProblems,
   };
 }
+
+export const networkWarns = (tailnetAlarms = 0) => tailnetAlarms === 0;

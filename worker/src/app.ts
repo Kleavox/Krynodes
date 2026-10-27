@@ -23,6 +23,8 @@ import { registerNetworkRoutes } from "./routes/network";
 import { registerPackageRoutes } from "./routes/packages";
 import { registerSettingRoutes } from "./routes/settings";
 import { registerQuarantineRoutes } from "./quarantine/routes";
+import { registerTailscaleHook } from "./tailscale/hook";
+import { registerTailscaleRoutes } from "./tailscale/routes";
 import { registerUsageRoutes } from "./usage/usage";
 import type { KrynodesEnv } from "./routes/shared";
 
@@ -124,7 +126,9 @@ registerProposalRoutes(app, requireOperator);
 registerUsageRoutes(app, requireOperator);
 registerSettingRoutes(app, requireOperator);
 registerQuarantineRoutes(app, requireOperator);
+registerTailscaleRoutes(app, requireOperator);
 registerAgentRoutes(app);
+registerTailscaleHook(app);
 
 app.all("/api/*", (context) =>
   context.json({ code: "NOT_FOUND", message: "No such endpoint." }, 404),

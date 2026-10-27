@@ -16,7 +16,7 @@ import type {
   StoppedStack,
 } from "../types";
 import { parseTimestamp, shortDate, stampTime } from "./format";
-import { planRemoval, type VaultNode } from "./vault";
+import { planRemoval, type VaultName, type VaultNode } from "./vault";
 
 export const REPORTED = "Reported by the server itself, may not be true";
 
@@ -116,6 +116,7 @@ export const planWithout = (
   suspect: string,
   setId: string | null,
   addresses = false,
+  name: VaultName = "cloudflare",
 ) =>
   planRemoval(
     nodes.map((node) =>
@@ -124,6 +125,8 @@ export const planWithout = (
     suspect,
     setId,
     addresses,
+    name,
+    true,
   );
 
 export function quarantineReasons(
@@ -164,6 +167,8 @@ const mark = (step: QuarantineStep) =>
 export function whatHappened(
   record: QuarantineRecord,
   now: number,
+  nodeName = "it",
+  devices: { id: string; name: string }[] = [],
 ): { time: string; lead: string | null; text: string }[] {
   const where = record.address ?? "it";
   const lines: { at: string; lead: string | null; text: string }[] =
@@ -229,6 +234,14 @@ export function whatHappened(
       });
     }
   }
+  if (record.removed) {
+    const by = devices.find((device) => device.id === record.removed!.by);
+    lines.push({
+      at: record.removed.at,
+      lead: null,
+      text: `Removed ${nodeName} from your tailnet · ${by?.name ?? "--"}`,
+    });
+  }
   return lines
     .map((line, index) => ({ line, index }))
     .sort(
@@ -246,6 +259,7 @@ export function whatHappened(
 type ChangeAction =
   | { kind: "reshare"; label: "Reshare Without It" }
   | { kind: "unexpose"; label: "Remove Web Addresses" }
+  | { kind: "remove"; label: "Remove from Tailnet" }
   | { kind: "console"; label: "Admin Console ↗" };
 
 export interface ChangeRow {
@@ -256,12 +270,19 @@ export interface ChangeRow {
   action: ChangeAction | null;
 }
 
+const RESHARE_NOTE =
+  "One piece alone opens nothing. Reshare so the old piece is worthless.";
+
 export function changeThese(
   view: QuarantineView,
   nodeName: string,
+  connected = false,
 ): { title: string; rows: ChangeRow[] } {
-  const { stacks, vault, webAddresses, trusted } = view.changeThese;
-  const tailnet = view.quarantine?.tailnet ?? [];
+  const { stacks, vault, tailscaleVault, webAddresses, trusted } =
+    view.changeThese;
+  const tailnet = view.quarantine?.removed
+    ? []
+    : (view.quarantine?.tailnet ?? []);
   const rows: ChangeRow[] = [
     ...(stacks.length > 0
       ? [
@@ -287,7 +308,7 @@ export function changeThese(
             id: "vault",
             title: "Cloudflare token",
             tag: `${nodeName} held 1 of ${vault.holders} pieces`,
-            note: "One piece alone opens nothing. Reshare so the old piece is worthless.",
+            note: RESHARE_NOTE,
             action: { kind: "reshare", label: "Reshare Without It" } as const,
           },
         ]
@@ -312,8 +333,23 @@ export function changeThese(
             id: "tailnet",
             title: "Tailscale",
             tag: `${nodeName} is on your tailnet as ${tailnet[0]}`,
-            note: "Your servers block it already. Remove it in Tailscale's admin console, so its Tailscale key opens nothing anywhere else on your tailnet.",
-            action: { kind: "console", label: "Admin Console ↗" } as const,
+            note: connected
+              ? "Your servers block it already, and your rules never let a server reach your devices. Remove it, so its Tailscale key opens nothing at all."
+              : "Your servers block it already. Remove it in Tailscale's admin console, so its Tailscale key opens nothing anywhere else on your tailnet.",
+            action: connected
+              ? ({ kind: "remove", label: "Remove from Tailnet" } as const)
+              : ({ kind: "console", label: "Admin Console ↗" } as const),
+          },
+        ]
+      : []),
+    ...(tailscaleVault && tailscaleVault.holders > 0
+      ? [
+          {
+            id: "tailscale-vault",
+            title: "Tailscale credential",
+            tag: `${nodeName} held 1 of ${tailscaleVault.holders} pieces`,
+            note: RESHARE_NOTE,
+            action: { kind: "reshare", label: "Reshare Without It" } as const,
           },
         ]
       : []),
@@ -336,6 +372,14 @@ export function changeThese(
 }
 
 export const TAILSCALE_CONSOLE = "https://login.tailscale.com/admin/machines";
+
+export const tailnetRemoved = (record: QuarantineRecord, now: number) =>
+  record.removed
+    ? {
+        title: "Removed from your tailnet",
+        detail: `${stampTime(record.removed.at, now)} · Sign it in again after Release`,
+      }
+    : null;
 
 export function tailnetBlock(
   record: QuarantineRecord | null | undefined,

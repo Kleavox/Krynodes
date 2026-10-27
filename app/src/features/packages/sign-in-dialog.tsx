@@ -1,3 +1,4 @@
+import { agentHasFeatures } from "@krynodes/protocol/versions";
 import { useEffect, useState } from "react";
 
 import { Elapsed } from "@/components/node-status";
@@ -12,11 +13,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
+import { useJoinTailnet, useTailnet } from "@/features/network/use-tailscale";
 import { useAction } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import { signedIn, signedInLines, signInRows } from "@/lib/packages";
 import { openSealed, sealPair, type SealPair } from "@/lib/seal";
 import { isPending } from "@/lib/services";
+import { joinedLines } from "@/lib/tailscale";
 import type { NodeRecord } from "@/types";
 
 import { Lines, Said, SHEET, SignButton } from "./lines";
@@ -175,6 +178,62 @@ function SignIn({
   );
 }
 
+function Keyed({ node, onClose }: { node: NodeRecord; onClose: () => void }) {
+  const { data } = useTailnet();
+  const join = useJoinTailnet();
+  const done = join.data;
+  const connected = data?.connected;
+  const joined =
+    done && connected
+      ? joinedLines(done.report, node.name, connected, done.servers)
+      : null;
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>
+          {joined?.title ?? `Sign in ${node.name} to Tailscale`}
+        </DialogTitle>
+        <DialogDescription>
+          {joined?.intro ??
+            `A server that holds a piece of your Tailscale credential makes a one-time key tagged kry, sealed to ${node.name}. There is nothing to approve in Tailscale.`}
+        </DialogDescription>
+      </DialogHeader>
+      {joined && <Lines lines={joined.lines} />}
+      {done && !done.saved.saved && (
+        <p className="text-sm text-warning">
+          A Krynodes rule was changed in Tailscale's admin console, so your
+          rules do not name {node.name} yet. Save them again on Network.
+        </p>
+      )}
+      {join.isPending && (
+        <p role="status" className="text-sm text-muted-foreground">
+          … Signing in {node.name} and saving your rules
+        </p>
+      )}
+      <Said text={join.error?.message ?? null} />
+      <DialogFooter>
+        {done ? (
+          <Button onClick={onClose}>Close</Button>
+        ) : (
+          <>
+            <DialogClose asChild>
+              <Button variant="outline" disabled={join.isPending}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <SignButton
+              label="Sign In"
+              pending={join.isPending}
+              onClick={() => join.mutate(node.id)}
+            />
+          </>
+        )}
+      </DialogFooter>
+    </>
+  );
+}
+
 export function SignInDialog({
   node,
   again,
@@ -186,16 +245,21 @@ export function SignInDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const connected = !!useTailnet().data?.connected;
+  const keyed = connected && agentHasFeatures(node.agent_version);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={SHEET}>
-        {open && (
-          <SignIn
-            node={node}
-            again={again}
-            onClose={() => onOpenChange(false)}
-          />
-        )}
+        {open &&
+          (keyed ? (
+            <Keyed node={node} onClose={() => onOpenChange(false)} />
+          ) : (
+            <SignIn
+              node={node}
+              again={again}
+              onClose={() => onOpenChange(false)}
+            />
+          ))}
       </DialogContent>
     </Dialog>
   );

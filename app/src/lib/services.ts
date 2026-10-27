@@ -147,6 +147,10 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
     unblock: { verb: "Unblock", doing: "Unblocking…", done: "Unblocked" },
     drop: { verb: "Drop", doing: "Dropping…", done: "Dropped" },
     tighten: { verb: "Tighten", doing: "Tightening…", done: "Tightened" },
+    policy: { verb: "Read", doing: "Reading…", done: "Read" },
+    save: { verb: "Save", doing: "Saving…", done: "Saved" },
+    key: { verb: "Make a Key", doing: "Making a key…", done: "Made a key" },
+    join: { verb: "Sign In", doing: "Signing in…", done: "Signed in" },
   };
 
 export const RECIPE_TITLES: Record<string, string> = {
@@ -187,7 +191,11 @@ export interface ServerGroup {
 
 export function displayName(kind: ActionKind, name: string): string {
   if (kind === "trust") return "Trusted Devices";
-  if (kind === "vault") return "the Cloudflare token";
+  if (kind === "vault") {
+    return name === "tailscale"
+      ? "the Tailscale credential"
+      : "the Cloudflare token";
+  }
   if (kind === "network") return "the private network";
   if (kind === "host" && name === "docker") return "Docker";
   if (kind === "host") return RECIPE_TITLES[name]?.toLowerCase() ?? "server";

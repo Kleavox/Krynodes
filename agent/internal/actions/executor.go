@@ -24,6 +24,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
+	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 )
 
 const (
@@ -56,6 +57,10 @@ type Executor struct {
 
 	CloudflareBase string
 	CloudflareHTTP *http.Client
+
+	TailscaleLocal tailscale.Local
+	TailscaleBase  string
+	TailscaleHTTP  *http.Client
 
 	HealthTimeout time.Duration
 	HealthEvery   time.Duration
@@ -171,7 +176,7 @@ run:
 		packages = e.packages(ctx)
 		tailnet = e.tailnet(ctx)
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport(), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot)}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport("cloudflare"), TailscaleVault: e.vaultReport("tailscale"), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot)}, e.Now())
 	if err != nil {
 		return err
 	}

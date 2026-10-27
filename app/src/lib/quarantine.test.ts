@@ -8,7 +8,7 @@ import type {
   QuarantineView,
 } from "../types";
 import { historyText } from "./history";
-import type { VaultNode } from "./vault";
+import { planUse, type VaultNode } from "./vault";
 import {
   acceptsWarning,
   actionsFor,
@@ -26,6 +26,7 @@ import {
   REPORTED,
   settingsRows,
   stoppedRow,
+  tailnetRemoved,
   warningStrip,
   whatHappened,
 } from "./quarantine";
@@ -782,5 +783,99 @@ describe("Change These while a reshare runs", () => {
     );
     expect(resharing([step("restart", "queued", "systemd")])).toBe(false);
     expect(resharing([])).toBe(false);
+  });
+});
+
+describe("quarantine on a connected tailnet", () => {
+  const view: QuarantineView = {
+    quarantine: record({ tailnet: ["100.101.7.10"] }),
+    release: null,
+    stopped: [],
+    changeThese: {
+      stacks: [],
+      vault: { set: "s1", holders: 3 },
+      tailscaleVault: { set: "t1", holders: 4 },
+      webAddresses: [],
+      trusted: [],
+    },
+  };
+
+  it("offers Remove from Tailnet and Reshare Without It for the Tailscale credential", () => {
+    expect(changeThese(view, "vps-1", true).rows).toEqual([
+      {
+        id: "vault",
+        title: "Cloudflare token",
+        tag: "vps-1 held 1 of 3 pieces",
+        note: "One piece alone opens nothing. Reshare so the old piece is worthless.",
+        action: { kind: "reshare", label: "Reshare Without It" },
+      },
+      {
+        id: "tailnet",
+        title: "Tailscale",
+        tag: "vps-1 is on your tailnet as 100.101.7.10",
+        note: "Your servers block it already, and your rules never let a server reach your devices. Remove it, so its Tailscale key opens nothing at all.",
+        action: { kind: "remove", label: "Remove from Tailnet" },
+      },
+      {
+        id: "tailscale-vault",
+        title: "Tailscale credential",
+        tag: "vps-1 held 1 of 4 pieces",
+        note: "One piece alone opens nothing. Reshare so the old piece is worthless.",
+        action: { kind: "reshare", label: "Reshare Without It" },
+      },
+    ]);
+    const removed = {
+      ...view,
+      quarantine: record({
+        tailnet: ["100.101.7.10"],
+        removed: { at: "2026-10-27T14:40:12Z", by: "dev-1" },
+      }),
+    };
+    expect(
+      changeThese(removed, "vps-1", true).rows.map((row) => row.id),
+    ).toEqual(["vault", "tailscale-vault"]);
+  });
+
+  it("tells What Happened and This Server that it was removed from the tailnet", () => {
+    const removed = record({
+      removed: { at: "2026-10-27T14:40:12Z", by: "dev-1" },
+    });
+    expect(
+      whatHappened(removed, NOW, "vps-1", [{ id: "dev-1", name: "Laptop" }]).at(
+        -1,
+      ),
+    ).toEqual({
+      time: "21:40:12",
+      lead: null,
+      text: "Removed vps-1 from your tailnet · Laptop",
+    });
+    expect(whatHappened(removed, NOW, "vps-1").at(-1)?.text).toBe(
+      "Removed vps-1 from your tailnet · --",
+    );
+    expect(tailnetRemoved(removed, NOW)).toEqual({
+      title: "Removed from your tailnet",
+      detail: "21:40 · Sign it in again after Release",
+    });
+    expect(tailnetRemoved(record(), NOW)).toBeNull();
+  });
+
+  it("says why neither runs when the suspect held one of only two pieces", () => {
+    const node = (id: string, name: string): VaultNode => ({
+      id,
+      name,
+      sealKey: `seal-${name}`,
+      vault: { set: "t1", holders: 2 },
+      reachable: true,
+      online: true,
+      version: "0.7.0",
+    });
+    const nodes = [node(V1, "vps-1"), node(V2, "vps-2")];
+    const reason =
+      "Two servers other than vps-1 holding a piece must be online; 1 is.";
+    expect(planWithout(nodes, V1, "t1", false, "tailscale")).toEqual({
+      ok: false,
+      reason,
+    });
+    expect(planUse(nodes, "t1", V1)).toEqual({ ok: false, reason });
   });
 });

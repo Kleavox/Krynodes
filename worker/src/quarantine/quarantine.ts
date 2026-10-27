@@ -18,6 +18,7 @@ export interface Timeline {
   batches: string[];
   tailnet: string[];
   dropped: string[];
+  removed?: { at: string; by: string | null };
 }
 
 export const holdStatement = (db: D1Database, nodeId: string, at: string) =>

@@ -73,3 +73,14 @@ func SignIn(ctx context.Context, run Runner, stream Stream) (Login, error) {
 	}
 	return Login{}, errors.New("tailscaled gave no sign-in link")
 }
+
+func Join(ctx context.Context, stream Stream, keyFile string) error {
+	link, _, failure, err := up(ctx, stream, []string{"up", "--auth-key=file:" + keyFile, "--accept-dns=false", "--ssh=false", "--timeout=30s"})
+	switch {
+	case link != "":
+		return errors.New("Tailscale asked for a sign-in link instead of taking the one-time key")
+	case err != nil && failure != "":
+		return errors.New(failure)
+	}
+	return err
+}

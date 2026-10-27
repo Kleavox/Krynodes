@@ -18,6 +18,12 @@ import {
   ThisNetwork,
   WaitingCard,
 } from "@/features/network/sections";
+import {
+  TailnetDialogs,
+  TailscaleSection,
+  ThisTailnet,
+  type TailnetOpen,
+} from "@/features/network/tailscale-section";
 import { TestDialog } from "@/features/network/test-dialog";
 import { useJoin } from "@/features/network/use-network-sign";
 import {
@@ -53,6 +59,7 @@ export function NetworkPage() {
   const [open, setOpen] = useState<Open | null>(
     joining ? { kind: "add", preset: joining } : null,
   );
+  const [tailnet, setTailnet] = useState<TailnetOpen | null>(null);
 
   useEffect(() => {
     if (joining) setSearch({}, { replace: true });
@@ -128,15 +135,19 @@ export function NetworkPage() {
         }
       />
       {!view.network ? (
-        <EmptyState
-          title={creating ? "Creating…" : "No private network yet"}
-          body="Connect your servers to each other over WireGuard, so a stack on one can reach a database on another without opening it to the internet."
-          action={
-            <Button onClick={() => setOpen({ kind: "create" })}>
-              {creating ? "Show Progress" : "Create Network"}
-            </Button>
-          }
-        />
+        <div className="space-y-6">
+          <EmptyState
+            title={creating ? "Creating…" : "No private network yet"}
+            body="Connect your servers to each other over WireGuard, so a stack on one can reach a database on another without opening it to the internet."
+            action={
+              <Button onClick={() => setOpen({ kind: "create" })}>
+                {creating ? "Show Progress" : "Create Network"}
+              </Button>
+            }
+          />
+          <TailscaleSection now={now} onOpen={setTailnet} />
+          <ThisTailnet onOpen={setTailnet} />
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
           <div className="min-w-0 space-y-6">
@@ -164,6 +175,7 @@ export function NetworkPage() {
                 setOpen({ kind: "remove", nodeId: server.nodeId })
               }
             />
+            <TailscaleSection now={now} onOpen={setTailnet} />
             <ChangesCard view={view} />
           </div>
           <aside className="min-w-0">
@@ -174,6 +186,7 @@ export function NetworkPage() {
               onKeys={() => setOpen({ kind: "keys" })}
               onDelete={() => setOpen({ kind: "delete" })}
             />
+            <ThisTailnet onOpen={setTailnet} />
           </aside>
         </div>
       )}
@@ -222,6 +235,7 @@ export function NetworkPage() {
           onClose={close}
         />
       )}
+      <TailnetDialogs open={tailnet} onOpen={setTailnet} />
       {open?.kind === "keys" && (
         <KeysDialog view={view} presence={presence} onClose={close} />
       )}

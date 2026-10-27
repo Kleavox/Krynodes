@@ -867,6 +867,49 @@ Stacks on the network:
   outside the network. Checks suggests a TCP check for each place a Contained
   stack reaches; **Not now** hides it until that list changes.
 
+### Tailscale rules
+
+Krynodes can keep who may reach your servers over Tailscale. Rules for your
+laptop, phone and other people stay yours, in Tailscale's admin console. From
+agent 0.7.0.
+
+- **Before Connect** each server reads from its own tailscaled which peers may
+  open connections to it, on which ports, and Network turns amber when every
+  device reaches every port. No credential is needed for that.
+- **Connect Tailscale** (Network) asks for four things from Tailscale's admin
+  console: `"tag:kry": ["autogroup:admin"],` inside `tagOwners`; a trust
+  credential with Policy File Write, Devices Core Write, Auth Keys Write and
+  Tags `tag:kry` and nothing else (Tailscale adds the read scopes itself); its
+  client ID and secret; and a webhook to `<agent origin>/hooks/tailscale`
+  (`AGENT_ORIGIN`, else `PUBLIC_ORIGIN`) with the events `nodeCreated` and
+  `policyUpdate`.
+- **What is kept where.** The client secret is held as the Cloudflare token is:
+  split in the browser, one piece sealed to each 0.7.0 server that is not
+  quarantined, any two rebuild it on one server for one signed job, which uses
+  it and erases it. It needs two such servers. The Worker keeps the sealed
+  pieces, the client ID, the tailnet, the rules you saved and the webhook
+  secret; that secret can only make Krynodes believe an event that did not
+  happen, never open anything.
+- **Start With These Rules** opens after Connect, from what listens on each
+  server and what was in use when the policy file was read. An "everyone to
+  everything" rule becomes "Your devices → everything except your servers".
+  Saving tags the servers `tag:kry` and turns off their key expiry.
+- **Saving** reads the policy file, replaces only the lines between
+  `// krynodes: begin` and `// krynodes: end`, has Tailscale validate the
+  file and writes it only if it did not change since it was read. Rules name
+  servers by their Tailscale addresses, never by the tag. A Krynodes line
+  changed in the admin console is never overwritten: Keep the Change or Put
+  Back Krynodes', then sign again. Each server's own report shows Applied.
+- **Sign In**, once connected, needs no link: a server holding a piece makes a
+  one-time key tagged `tag:kry`, sealed to the joining server.
+- **Two alarms**, each a red row on Network and one mail: a device that joins
+  with `tag:kry` that Krynodes never signed in, and a policy change made with
+  Krynodes' credential without your fingerprint.
+- A quarantined server's place on your tailnet gets **Remove from Tailnet**;
+  its credential piece gets **Reshare Without It**, and Delete Node reshares it
+  first. **Disconnect** erases every piece and leaves your rules in the policy
+  file; delete the trust credential in the admin console too.
+
 ### Quarantine
 
 What Krynodes does on its own when a server looks broken into. It only ever

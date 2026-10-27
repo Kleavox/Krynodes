@@ -16,6 +16,7 @@ import { pokeSoon } from "../fleet/client";
 import { decodeJson } from "../lib/b64url";
 import { assertionUv } from "../lib/webauthn";
 import { quarantineRefusal } from "../quarantine/quarantine";
+import { tailnetStatements } from "../tailscale/results";
 import { ownersRefusal } from "../trust/approval";
 import { loadFleet } from "../trust/fleet";
 import {
@@ -47,6 +48,10 @@ const stepSchema = z.object({
     "forget",
     "uninstall",
     "reach",
+    "policy",
+    "save",
+    "key",
+    "join",
   ]),
   signed: signedCommandSchema,
   attachFrom: z.number().int().min(0).max(19).optional(),
@@ -54,8 +59,23 @@ const stepSchema = z.object({
 });
 
 const operationSchema = z.object({
-  kind: z.enum(["move", "expose", "unexpose", "split", "reshare"]),
+  kind: z.enum([
+    "move",
+    "expose",
+    "unexpose",
+    "split",
+    "reshare",
+    "tailnet",
+    "disconnect",
+  ]),
   zone: z.string().regex(HOSTNAME).optional(),
+  tailscale: z
+    .object({
+      tailnet: z.string().regex(HOSTNAME),
+      clientId: z.string().min(1).max(128),
+      webhookSecret: z.string().min(1).max(256).optional(),
+    })
+    .optional(),
   steps: z.array(stepSchema).min(1).max(20),
   deleteNode: uuid.optional(),
 });
@@ -74,6 +94,23 @@ type Step = z.infer<typeof stepSchema> & { args: Record<string, string> };
 
 const TOKEN_CHANGES = ["store", "reshare", "forget"];
 
+const TAILNET_JOBS = ["policy", "save", "key", "remove"];
+
+const VAULT_WORDS = {
+  cloudflare: {
+    piece: "the Cloudflare token. Spread it again.",
+    changed:
+      "The Cloudflare token is being changed. Try again when that finishes.",
+    busy: "The Cloudflare token is in use for a web address. Try again when that finishes.",
+  },
+  tailscale: {
+    piece: "the Tailscale credential. Change the credential to share it again.",
+    changed:
+      "The Tailscale credential is being changed. Try again when that finishes.",
+    busy: "The Tailscale credential is in use. Try again when that finishes.",
+  },
+} as const;
+
 interface NodeRow {
   id: string;
   name: string;
@@ -81,6 +118,7 @@ interface NodeRow {
   docker: string | null;
   seal_key: string | null;
   vault: string | null;
+  tailscale_vault: string | null;
 }
 
 const is = (step: Step | undefined, kind: string, ...actions: string[]) =>
@@ -160,6 +198,35 @@ function shaped(kind: string, steps: Step[]): boolean {
         )
       );
     }
+    case "tailnet": {
+      const released = is(first, "vault", "release");
+      const main = released ? second : first;
+      const rest = steps.slice(released ? 2 : 1);
+      if (
+        !is(main, "vault", ...TAILNET_JOBS) ||
+        (released
+          ? !releasesTo(first!, main!, main!)
+          : main!.attachFrom !== undefined)
+      ) {
+        return false;
+      }
+      if (main!.action !== "key") return rest.length === 0;
+      const [joining, ...more] = rest;
+      return (
+        more.length === 0 &&
+        is(joining, "host", "join") &&
+        joining!.name === "tailscale" &&
+        joining!.attachFrom === (released ? 1 : 0) &&
+        joining!.nodeId === main!.args.to
+      );
+    }
+    case "disconnect":
+      return (
+        steps.every(
+          (step) =>
+            is(step, "vault", "forget") && step.attachFrom === undefined,
+        ) && new Set(steps.map((step) => step.nodeId)).size === steps.length
+      );
     case "split": {
       const set = first?.args.set;
       return (
@@ -221,10 +288,14 @@ interface HeldPiece {
   holders: number;
 }
 
-function vaultOf(node: NodeRow): (HeldPiece & { previous?: HeldPiece }) | null {
+function vaultOf(
+  node: NodeRow,
+  name: string,
+): (HeldPiece & { previous?: HeldPiece }) | null {
   try {
-    return JSON.parse(node.vault ?? "null") as
-      (HeldPiece & { previous?: HeldPiece }) | null;
+    return JSON.parse(
+      (name === "tailscale" ? node.tailscale_vault : node.vault) ?? "null",
+    ) as (HeldPiece & { previous?: HeldPiece }) | null;
   } catch {
     return null;
   }
@@ -241,7 +312,7 @@ export function registerOperationRoutes(
   app.post("/api/operations", requireOperator, async (context) => {
     const parsed = operationSchema.safeParse(await readJson(context));
     if (!parsed.success) return invalidRequest(context);
-    const { kind, zone, deleteNode } = parsed.data;
+    const { kind, zone, tailscale, deleteNode } = parsed.data;
     const steps: Step[] = [];
     for (const step of parsed.data.steps) {
       const command = commandSchema.safeParse(decodeJson(step.signed.command));
@@ -276,10 +347,24 @@ export function registerOperationRoutes(
     const cleanup = steps.find((step) => step.action === "reshare")?.args
       .cleanup;
     const leaving = steps.some((step) => step.action === "uninstall");
+    const vaults = new Set(
+      steps.filter((step) => step.kind === "vault").map((step) => step.name),
+    );
+    const vaultName = vaults.has("tailscale") ? "tailscale" : "cloudflare";
+    const tailnetOnly = kind === "tailnet" || kind === "disconnect";
     if (
       !shaped(kind, steps) ||
+      vaults.size > 1 ||
+      (tailnetOnly && vaultName !== "tailscale") ||
+      ((kind === "expose" || kind === "unexpose") &&
+        vaultName !== "cloudflare") ||
       new Set(steps.map((step) => step.id)).size !== steps.length ||
-      (kind === "split" && !zone) ||
+      (kind === "split" && vaultName === "cloudflare" && !zone) ||
+      (kind === "split" &&
+        vaultName === "tailscale" &&
+        (!tailscale || steps.length < 2)) ||
+      (tailscale !== undefined &&
+        (kind !== "split" || vaultName !== "tailscale")) ||
       (deleteNode !== undefined &&
         (kind !== "reshare" || deleteNode !== cleanup)) ||
       (leaving && deleteNode === undefined)
@@ -315,7 +400,7 @@ export function registerOperationRoutes(
     const wanted = [...new Set(steps.map((step) => step.nodeId))];
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker, seal_key, vault FROM nodes
+        `SELECT id, name, agent_version, docker, seal_key, vault, tailscale_vault FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
@@ -342,7 +427,7 @@ export function registerOperationRoutes(
     }
     const behind = steps.find(
       (step) =>
-        step.action === "reach" &&
+        (step.action === "reach" || step.name === "tailscale") &&
         !agentHasFeatures(byId.get(step.nodeId)!.agent_version),
     );
     if (behind) {
@@ -367,15 +452,23 @@ export function registerOperationRoutes(
           );
         }
       }
-      if (step.action === "release" || step.action === "reshare") {
-        const vault = vaultOf(byId.get(step.nodeId)!);
+      if (
+        step.action === "release" ||
+        step.action === "reshare" ||
+        (step.kind === "vault" && TAILNET_JOBS.includes(step.action))
+      ) {
+        const vault = vaultOf(byId.get(step.nodeId)!, step.name);
         const wanted =
-          step.action === "release" ? step.args.set : step.args.source;
+          step.action === "release"
+            ? step.args.set
+            : step.action === "reshare"
+              ? step.args.source
+              : undefined;
         if (!holdsSet(vault, wanted)) {
           return context.json(
             {
               code: "NO_PIECE",
-              message: `${byId.get(step.nodeId)!.name} holds no piece of the Cloudflare token. Spread it again.`,
+              message: `${byId.get(step.nodeId)!.name} holds no piece of ${VAULT_WORDS[vaultName].piece}`,
             },
             422,
           );
@@ -405,12 +498,13 @@ export function registerOperationRoutes(
       const pending = await db
         .prepare(
           `SELECT action FROM actions
-           WHERE status IN ('queued', 'sent') AND kind = 'vault'
+           WHERE status IN ('queued', 'sent') AND kind = 'vault' AND name = ?
              AND node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)`,
         )
-        .bind(identity.id)
+        .bind(vaultName, identity.id)
         .all<{ action: string }>();
-      const changing = kind === "split" || kind === "reshare";
+      const changing =
+        kind === "split" || kind === "reshare" || kind === "disconnect";
       const changed = pending.results.some((row) =>
         TOKEN_CHANGES.includes(row.action),
       );
@@ -419,8 +513,8 @@ export function registerOperationRoutes(
           {
             code: "TOKEN_BUSY",
             message: changed
-              ? "The Cloudflare token is being changed. Try again when that finishes."
-              : "The Cloudflare token is in use for a web address. Try again when that finishes.",
+              ? VAULT_WORDS[vaultName].changed
+              : VAULT_WORDS[vaultName].busy,
           },
           409,
         );
@@ -498,8 +592,15 @@ export function registerOperationRoutes(
       now,
       deviceId: steps[0]!.signed.grant.credentialId,
     });
+    if (tailscale && !tailscale.webhookSecret) {
+      const known = await db
+        .prepare("SELECT 1 AS known FROM tailscale WHERE owner_user_id = ?")
+        .bind(identity.id)
+        .first();
+      if (!known) return invalidRequest(context);
+    }
     const settings =
-      kind === "split"
+      kind === "split" && vaultName === "cloudflare"
         ? [
             db
               .prepare(
@@ -520,8 +621,20 @@ export function registerOperationRoutes(
             .bind(batch.batchId, deleteNode, identity.id),
         ]
       : [];
+    const tailnet = tailnetStatements(db, {
+      owner: identity.id,
+      kind,
+      connect: tailscale,
+      device: steps[0]!.signed.grant.credentialId,
+      at: new Date(now).toISOString(),
+    });
     try {
-      await db.batch([...batch.statements, ...settings, ...deleting]);
+      await db.batch([
+        ...batch.statements,
+        ...settings,
+        ...deleting,
+        ...tailnet,
+      ]);
     } catch (error) {
       if (!String(error).includes("UNIQUE")) throw error;
       return context.json(

@@ -97,6 +97,6 @@ func (e Executor) tailnet(ctx context.Context) *reporter.TailscaleReport {
 	if _, err := os.Stat(e.path(tailscale.Binary)); err != nil {
 		return nil
 	}
-	report := tailscale.Status(ctx, tailscale.Runner(e.Run))
+	report := tailscale.Report(ctx, tailscale.Runner(e.Run), e.TailscaleLocal)
 	return &report
 }
