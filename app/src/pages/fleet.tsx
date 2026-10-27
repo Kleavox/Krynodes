@@ -907,7 +907,7 @@ function FleetTable({
                 <div className="flex min-w-0 items-center gap-2">
                   <StatusDot
                     tone={
-                      halted(operation)
+                      node.quarantine || halted(operation)
                         ? "bad"
                         : operation
                           ? "warn"

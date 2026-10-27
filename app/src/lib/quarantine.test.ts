@@ -18,6 +18,7 @@ import {
   fleetQuarantine,
   QUARANTINE_INTRO,
   releaseInputs,
+  resharing,
   quarantineCard,
   releaseCode,
   releaseCodeProblem,
@@ -762,5 +763,24 @@ describe("the release batch", () => {
       addresses: "100.101.7.10",
       unlock: false,
     });
+  });
+});
+
+describe("Change These while a reshare runs", () => {
+  const step = (
+    verb: ActionRecord["action"],
+    status: ActionRecord["status"],
+    kind: ActionRecord["kind"] = "vault",
+  ) => ({ kind, name: "cloudflare", action: verb, status }) as ActionRecord;
+
+  it("holds the token and web address rows until the reshare is done", () => {
+    expect(resharing([step("reshare", "queued")])).toBe(true);
+    expect(resharing([step("store", "sent")])).toBe(true);
+    expect(resharing([step("release", "queued")])).toBe(true);
+    expect(resharing([step("reshare", "done"), step("store", "failed")])).toBe(
+      false,
+    );
+    expect(resharing([step("restart", "queued", "systemd")])).toBe(false);
+    expect(resharing([])).toBe(false);
   });
 });

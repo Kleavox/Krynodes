@@ -291,7 +291,10 @@ describe("a quarantined server", () => {
     };
     const node = (id: string) =>
       overview.nodes.find((entry) => entry.id === id)!;
-    expect(node(V1).quarantine).toMatchObject({ why: "why" });
+    expect(node(V1).quarantine).toMatchObject({
+      why: "why",
+      tailnet: TAILNET.split(" "),
+    });
     expect(node(V1).warnings).toEqual([
       expect.objectContaining({ id: "w1", kind: "ssh-key", detail: sshKey }),
     ]);

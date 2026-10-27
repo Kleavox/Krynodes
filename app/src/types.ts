@@ -67,7 +67,7 @@ export interface NodeRecord {
     address: string | null;
     port: number;
   } | null;
-  quarantine?: { at: string; why: string } | null;
+  quarantine?: { at: string; why: string; tailnet?: string[] } | null;
   warnings?: NodeWarning[];
 }
 

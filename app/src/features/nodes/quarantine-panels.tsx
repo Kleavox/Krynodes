@@ -1,20 +1,23 @@
 import { Fingerprint } from "lucide-react";
-import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { LogsDialog } from "@/features/services/logs-dialog";
-import { useCutOff, useNetwork } from "@/lib/api";
+import { useCutOff, useNetwork, useServices } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import {
   changeThese,
   quarantineCard,
+  resharing,
   stoppedRow,
   TAILSCALE_CONSOLE,
   warningStrip,
   whatHappened,
   type ChangeRow,
 } from "@/lib/quarantine";
+import { queryKeys } from "@/lib/query-client";
 import type { NodeRecord, QuarantineView, StoppedStack } from "@/types";
 
 import { useItWasMe, useReshareWithout } from "./use-quarantine";
@@ -85,12 +88,10 @@ export function WarningStrips({
 
 export function QuarantineCard({
   node,
-  view,
   now,
   onRelease,
 }: {
   node: NodeRecord;
-  view: QuarantineView | undefined;
   now: number;
   onRelease: () => void;
 }) {
@@ -98,7 +99,7 @@ export function QuarantineCard({
   const card = quarantineCard(
     node.quarantine,
     node.name,
-    view?.quarantine?.tailnet ?? [],
+    node.quarantine.tailnet ?? [],
     now,
   );
   return (
@@ -161,10 +162,12 @@ function ChangeAction({
   row,
   node,
   reshare,
+  busy,
 }: {
   row: ChangeRow;
   node: NodeRecord;
   reshare: ReturnType<typeof useReshareWithout>;
+  busy: boolean;
 }) {
   if (!row.action) return null;
   if (row.action.kind === "console") {
@@ -174,6 +177,13 @@ function ChangeAction({
           {row.action.label}
         </a>
       </Button>
+    );
+  }
+  if (busy) {
+    return (
+      <span className="font-mono text-xs text-muted-foreground">
+        Resharing…
+      </span>
     );
   }
   const addresses = row.action.kind === "unexpose";
@@ -207,6 +217,17 @@ export function ChangeThese({
   view: QuarantineView | undefined;
 }) {
   const reshare = useReshareWithout(node);
+  const client = useQueryClient();
+  const busy = resharing(useServices().data?.actions ?? []);
+  const was = useRef(busy);
+  useEffect(() => {
+    if (was.current && !busy) {
+      void client.invalidateQueries({
+        queryKey: queryKeys.quarantine(node.id),
+      });
+    }
+    was.current = busy;
+  }, [busy, client, node.id]);
   if (!view) return null;
   const { title, rows } = changeThese(view, node.name);
   return (
@@ -231,7 +252,7 @@ export function ChangeThese({
                 <p className="text-xs text-muted-foreground">{row.note}</p>
               )}
             </div>
-            <ChangeAction row={row} node={node} reshare={reshare} />
+            <ChangeAction row={row} node={node} reshare={reshare} busy={busy} />
           </li>
         ))}
       </ul>

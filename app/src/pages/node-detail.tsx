@@ -142,7 +142,6 @@ export function NodeDetailPage() {
       <WarningStrips node={node} now={now} />
       <QuarantineCard
         node={node}
-        view={quarantine.data}
         now={now}
         onRelease={() => setReleasing(true)}
       />

@@ -50,7 +50,9 @@ export function registerAdminRoutes(
               updates, tailscale,
               (SELECT json_object('state', state, 'address', address, 'port', port)
                FROM network_members WHERE node_id = nodes.id) AS network,
-              (SELECT json_object('at', at, 'why', why) FROM quarantines
+              (SELECT json_object('at', at, 'why', why, 'tailnet',
+                 json(COALESCE(json_extract(timeline, '$.tailnet'), '[]')))
+               FROM quarantines
                WHERE node_id = nodes.id AND released_at IS NULL) AS quarantine,
               (SELECT json_group_array(json_object('id', id, 'kind', kind,
                  'detail', json(detail), 'at', at, 'cutAt', cut_at))

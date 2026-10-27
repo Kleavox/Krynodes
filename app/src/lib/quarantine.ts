@@ -359,6 +359,16 @@ export function tailnetBlock(
   };
 }
 
+const RESHARE_VERBS = ["release", "reshare", "store"];
+
+export const resharing = (actions: ActionRecord[]) =>
+  actions.some(
+    (action) =>
+      action.kind === "vault" &&
+      RESHARE_VERBS.includes(action.action) &&
+      (action.status === "queued" || action.status === "sent"),
+  );
+
 export function releaseInputs(
   record: QuarantineRecord,
   release: PendingRelease,
