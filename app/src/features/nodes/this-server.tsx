@@ -207,8 +207,11 @@ export function ThisServer({
                     {tailnet.after}
                   </span>
                 )}
-                {rules?.sources.map((source) => (
-                  <span key={source.source} className="block text-foreground">
+                {rules?.sources.map((source, index) => (
+                  <span
+                    key={`${index}:${source.source}`}
+                    className="block text-foreground"
+                  >
                     {source.source}
                     {source.outside && (
                       <span className="text-muted-foreground">

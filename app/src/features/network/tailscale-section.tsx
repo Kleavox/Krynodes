@@ -1,4 +1,5 @@
 import { TAILSCALE } from "@krynodes/protocol";
+import { useNavigate } from "react-router";
 
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
@@ -213,6 +214,7 @@ export function TailscaleSection({
   onOpen: (open: TailnetOpen) => void;
 }) {
   const { data } = useTailnet();
+  const navigate = useNavigate();
   if (!data) return null;
   const connected = data.connected;
   if (!connected) {
@@ -286,11 +288,15 @@ export function TailscaleSection({
                 <RowMenu
                   label={`More for ${row.route}`}
                   items={[
-                    {
-                      label: "Edit Rule",
-                      onSelect: () =>
-                        onOpen({ kind: "rule", index: row.index }),
-                    },
+                    ...(row.editable
+                      ? [
+                          {
+                            label: "Edit Rule",
+                            onSelect: () =>
+                              onOpen({ kind: "rule", index: row.index }),
+                          },
+                        ]
+                      : []),
                     {
                       label: "Remove",
                       destructive: true,
@@ -343,7 +349,7 @@ export function TailscaleSection({
               return (
                 <li
                   key={server.nodeId}
-                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-3.5 py-2.5 text-sm sm:grid-cols-[minmax(0,1fr)_220px_96px]"
+                  className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-0.5 py-1.5 pr-2 pl-3.5 text-sm sm:grid-cols-[minmax(0,1fr)_220px_96px_auto]"
                 >
                   <span className="min-w-0">
                     <span className="font-medium">{server.name}</span>{" "}
@@ -367,6 +373,26 @@ export function TailscaleSection({
                       : taken === false
                         ? "Not Applied"
                         : "--"}
+                  </span>
+                  <span className="max-sm:col-start-3 max-sm:row-span-2 max-sm:row-start-1">
+                    <RowMenu
+                      label={`More for ${server.name}`}
+                      items={[
+                        {
+                          label: "Open Server",
+                          onSelect: () => navigate(`/nodes/${server.nodeId}`),
+                        },
+                        {
+                          label: "Admin Console ↗",
+                          onSelect: () =>
+                            window.open(
+                              CONSOLE.machines,
+                              "_blank",
+                              "noopener,noreferrer",
+                            ),
+                        },
+                      ]}
+                    />
                   </span>
                 </li>
               );
@@ -411,7 +437,7 @@ export function ThisTailnet({
     ],
   ];
   return (
-    <section className="mt-6">
+    <section>
       <div className="mb-1 flex items-center justify-between">
         <h2 className={sectionTitle}>This Tailnet</h2>
         <RowMenu

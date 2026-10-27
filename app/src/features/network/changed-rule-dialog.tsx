@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Said, SignButton } from "@/features/packages/lines";
 import { clockTime } from "@/lib/format";
-import { changedLines, keepChange } from "@/lib/tailscale";
+import { brokenLines, changedLines, keepChange } from "@/lib/tailscale";
 import { cn } from "@/lib/utils";
 
 import { useSaveRules, useTailnet } from "./use-tailscale";
@@ -54,6 +54,8 @@ export function ChangedRuleDialog({
   const connected = data?.connected;
   if (!connected) return null;
   const lines = changedLines(connected, changed.now, data.servers);
+  const broken = brokenLines(connected, changed.now).length > 0;
+  const chosen = broken ? "back" : choice;
 
   return (
     <Dialog open onOpenChange={(open) => !open && !save.isPending && onClose()}>
@@ -91,8 +93,8 @@ export function ChangedRuleDialog({
                 type="radio"
                 name="changed-rule"
                 className="mt-0.5 size-4 accent-primary"
-                checked={choice === each.value}
-                disabled={save.isPending}
+                checked={chosen === each.value}
+                disabled={save.isPending || (broken && each.value === "keep")}
                 onChange={() => setChoice(each.value)}
               />
               <span>
@@ -104,6 +106,13 @@ export function ChangedRuleDialog({
             </label>
           ))}
         </fieldset>
+        {broken && (
+          <p className="text-sm text-warning">
+            A changed line is not one grant on one line, so Krynodes cannot keep
+            it as written. Put it on one line in Tailscale's admin console, or
+            put Krynodes' back.
+          </p>
+        )}
         <Said text={save.error?.message ?? null} />
         <DialogFooter>
           <DialogClose asChild>
@@ -116,7 +125,7 @@ export function ChangedRuleDialog({
             pending={save.isPending}
             onClick={() => {
               const rules =
-                choice === "keep"
+                chosen === "keep"
                   ? keepChange(connected, changed.now, changed.wanted)
                   : changed.wanted;
               save.mutate(

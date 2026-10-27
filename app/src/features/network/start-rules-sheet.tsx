@@ -1,4 +1,4 @@
-import { TAILSCALE, type TailnetRule } from "@krynodes/protocol";
+import { TAILSCALE } from "@krynodes/protocol";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import {
 import { Said, SHEET, SignButton } from "@/features/packages/lines";
 import { clockTime } from "@/lib/format";
 import { listOf } from "@/lib/network";
-import { losesAccess, proposals } from "@/lib/tailscale";
+import { losesAccess, proposals, startRules } from "@/lib/tailscale";
 import { cn } from "@/lib/utils";
 
 import type { Changed } from "./changed-rule-dialog";
@@ -44,21 +44,18 @@ export function StartRulesSheet({
   const [current, setCurrent] = useState(started);
   const servers = data?.servers ?? [];
   const rows = proposals(servers, listeners, current.inUse);
-  const [ticked, setTicked] = useState(() =>
-    rows.filter((row) => row.ticked).map((row) => row.id),
-  );
+  const ticks = (inUse: Started["inUse"]) =>
+    proposals(servers, listeners, inUse)
+      .filter((row) => row.ticked)
+      .map((row) => row.id);
+  const [ticked, setTicked] = useState(() => ticks(started.inUse));
   const toggle = (id: string) =>
     setTicked(
       ticked.includes(id)
         ? ticked.filter((each) => each !== id)
         : [...ticked, id],
     );
-  const rules: TailnetRule[] = [
-    ...(current.read.open ? [{ from: "devices", to: "rest" } as const] : []),
-    ...rows.flatMap((row) =>
-      row.rule && ticked.includes(row.id) ? [row.rule] : [],
-    ),
-  ];
+  const rules = startRules(!!current.read.open, rows, ticked);
   const untagged = servers
     .filter(
       (server) => server.report && !server.report.tags?.includes(TAILSCALE.tag),
@@ -96,7 +93,12 @@ export function StartRulesSheet({
                 pending={again.isPending}
                 disabled={busy}
                 onClick={() =>
-                  again.mutate(null, { onSuccess: (next) => setCurrent(next) })
+                  again.mutate(null, {
+                    onSuccess: (next) => {
+                      setCurrent(next);
+                      setTicked(ticks(next.inUse));
+                    },
+                  })
                 }
               />
             </div>

@@ -1,4 +1,3 @@
-import { portSchema, type TailnetRule } from "@krynodes/protocol";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -21,12 +20,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Said, SignButton } from "@/features/packages/lines";
-import { addRuleEffect, allowedAlready, listeningOn } from "@/lib/tailscale";
+import { addRuleEffect, ruleForm } from "@/lib/tailscale";
 
 import type { Changed } from "./changed-rule-dialog";
 import { useSaveRules, useTailnet } from "./use-tailscale";
-
-type PortRule = Extract<TailnetRule, { ports: string[] }>;
 
 function Choose({
   id,
@@ -87,40 +84,16 @@ export function RuleDialog({
   const [other, setOther] = useState("");
   if (!connected) return null;
 
-  const others = connected.rules.filter((_, at) => at !== index);
-  const allowed = allowedAlready(others, from, to);
-  const listening =
-    to === "servers"
-      ? on
-          .map((server) => listeningOn(server, listeners[server.nodeId]))
-          .reduce(
-            (a, b) =>
-              a.filter((entry) => b.some((each) => each.port === entry.port)),
-            on.length > 0 ? listeningOn(on[0]!, listeners[on[0]!.nodeId]) : [],
-          )
-      : on
-          .filter((server) => server.nodeId === to)
-          .flatMap((server) => listeningOn(server, listeners[server.nodeId]));
-  const options = [
-    ...listening.filter((entry) => !allowed.includes(entry.port)),
-    ...ticked
-      .filter((port) => !listening.some((entry) => entry.port === port))
-      .map((port) => ({ port, process: null })),
-  ];
-  const extra = other.trim();
-  const otherOk = extra === "" || portSchema.safeParse(extra).success;
-  const ports = [...new Set([...ticked, ...(extra && otherOk ? [extra] : [])])];
-  const rule: PortRule = {
-    from: from as PortRule["from"],
-    to: to as PortRule["to"],
-    ports,
-  };
-  const problem = !otherOk
-    ? "Other Port takes one port or a range, like 9100/tcp or 6000-6010."
-    : from === to
-      ? "A server always reaches itself. Pick another one."
-      : null;
-  const ready = problem === null && ports.length > 0;
+  const { options, allowed, rule, problem, readable, ready } = ruleForm({
+    connected,
+    index,
+    servers: data.servers,
+    listeners,
+    from,
+    to,
+    ticked,
+    other,
+  });
   const label = index === null ? "Add Rule" : "Edit Rule";
   const toggle = (port: string) =>
     setTicked(
@@ -216,7 +189,7 @@ export function RuleDialog({
               placeholder="9100/tcp"
               autoComplete="off"
               disabled={save.isPending}
-              aria-invalid={!otherOk}
+              aria-invalid={!readable}
               onChange={(event) => setOther(event.target.value)}
             />
           </div>

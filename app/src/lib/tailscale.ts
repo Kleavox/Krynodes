@@ -1,4 +1,5 @@
 import {
+  portSchema,
   TAILSCALE,
   type TailnetRule,
   type TailscaleReport,
@@ -146,10 +147,7 @@ export function beforeConnect(servers: TailnetServer[]) {
   };
 }
 
-export function listeningOn(
-  server: TailnetServer,
-  listeners: Listening[] = [],
-) {
+function listeningOn(server: TailnetServer, listeners: Listening[] = []) {
   const own = server.report?.addresses ?? [];
   const found = new Map<number, { protocols: Set<string>; process: string }>();
   for (const item of listeners) {
@@ -176,11 +174,7 @@ export function listeningOn(
 const listening = (server: TailnetServer, listeners: Listening[] = []) =>
   listeningOn(server, listeners).map((entry) => entry.port);
 
-export const allowedAlready = (
-  rules: TailnetRule[],
-  from: string,
-  to: string,
-) =>
+const allowedAlready = (rules: TailnetRule[], from: string, to: string) =>
   rules.flatMap((rule) =>
     "ports" in rule &&
     rule.from === from &&
@@ -296,6 +290,69 @@ export function proposals(
     rule: null,
   });
   return rows;
+}
+
+export const startRules = (
+  open: boolean,
+  rows: Proposal[],
+  ticked: string[],
+): TailnetRule[] => [
+  ...(open ? [{ from: "devices", to: "rest" } as const] : []),
+  ...rows.flatMap((row) =>
+    row.rule && ticked.includes(row.id) ? [row.rule] : [],
+  ),
+];
+
+export function ruleForm(input: {
+  connected: TailnetConnected;
+  index: number | null;
+  servers: TailnetServer[];
+  listeners: Record<string, Listening[]>;
+  from: string;
+  to: string;
+  ticked: string[];
+  other: string;
+}) {
+  const on = input.servers.filter((server) => server.report);
+  const others = input.connected.rules.filter((_, at) => at !== input.index);
+  const allowed = allowedAlready(others, input.from, input.to);
+  const lists = on
+    .filter((server) => input.to === "servers" || server.nodeId === input.to)
+    .map((server) => listeningOn(server, input.listeners[server.nodeId]));
+  const heard =
+    lists.length === 0
+      ? []
+      : lists.reduce((a, b) =>
+          a.filter((entry) => b.some((each) => each.port === entry.port)),
+        );
+  const options: { port: string; process: string | null }[] = [
+    ...heard.filter((entry) => !allowed.includes(entry.port)),
+    ...input.ticked
+      .filter((port) => !heard.some((entry) => entry.port === port))
+      .map((port) => ({ port, process: null })),
+  ];
+  const extra = input.other.trim();
+  const readable = extra === "" || portSchema.safeParse(extra).success;
+  const rule: PortRule = {
+    from: input.from as PortRule["from"],
+    to: input.to as PortRule["to"],
+    ports: [
+      ...new Set([...input.ticked, ...(extra && readable ? [extra] : [])]),
+    ],
+  };
+  const problem = !readable
+    ? "Other Port takes one port or a range, like 9100/tcp or 6000-6010."
+    : input.from === input.to
+      ? "A server always reaches itself. Pick another one."
+      : null;
+  return {
+    options,
+    allowed,
+    rule,
+    problem,
+    readable,
+    ready: problem === null && rule.ports.length > 0,
+  };
 }
 
 export function losesAccess(
@@ -429,10 +486,17 @@ export function ruleRows(
               : "--",
           ports: found?.ports ?? "",
           locked: false,
+          editable: "ports" in rule,
         },
       ];
     }),
-    { index: null, route: BACK.route, ports: BACK.ports, locked: true },
+    {
+      index: null,
+      route: BACK.route,
+      ports: BACK.ports,
+      locked: true,
+      editable: false,
+    },
   ];
 }
 
@@ -630,6 +694,18 @@ export const changedLines = (
     .filter((line) => !connected.lines.includes(line))
     .map((line) => `+ ${ruleText(line, servers)}`),
 ];
+
+const oneGrant = (line: string) => {
+  try {
+    const value: unknown = JSON.parse(line);
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  } catch {
+    return false;
+  }
+};
+
+export const brokenLines = (connected: TailnetConnected, now: string[]) =>
+  now.filter((line) => !connected.lines.includes(line) && !oneGrant(line));
 
 const same = (a: TailnetRule, b: TailnetRule) =>
   JSON.stringify(a) === JSON.stringify(b);

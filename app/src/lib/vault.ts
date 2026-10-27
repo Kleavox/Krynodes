@@ -453,6 +453,12 @@ export function planRemoval(
       reason: `No other server with agent ${WORDS[name].agent} that this device reaches can take ${WORDS[name].thing}.`,
     };
   }
+  if (name === "tailscale" && holders.length < 2) {
+    return {
+      ok: false,
+      reason: `Only one other server with agent ${WORDS[name].agent} that this device reaches can take ${WORDS[name].thing}, and it needs two.`,
+    };
+  }
   return {
     ...plan,
     needed: true,

@@ -178,7 +178,7 @@ export function NetworkPage() {
             <TailscaleSection now={now} onOpen={setTailnet} />
             <ChangesCard view={view} />
           </div>
-          <aside className="min-w-0">
+          <aside className="min-w-0 space-y-6">
             <ThisNetwork
               view={view}
               presence={presence}

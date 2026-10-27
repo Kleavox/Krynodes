@@ -609,6 +609,26 @@ describe("the Tailscale credential in pieces", () => {
     ]);
   });
 
+  it("refuses to leave the credential with one server, since any two rebuild it", () => {
+    const on = { version: "0.7.0" };
+    expect(
+      planRemoval([node(A, on), node(B, on)], A, SET, false, "tailscale"),
+    ).toEqual({
+      ok: false,
+      reason:
+        "Only one other server with agent 0.7.0 that this device reaches can take the credential, and it needs two.",
+    });
+    expect(
+      planRemoval(
+        [node(A, on), node(B, on), node(C, on)],
+        A,
+        SET,
+        false,
+        "tailscale",
+      ),
+    ).toMatchObject({ ok: true, needed: true });
+  });
+
   it("picks two online servers holding a piece, never the one it is told to leave out", () => {
     expect(planUse([node(A), node(B), node(C)], SET)).toEqual({
       ok: true,

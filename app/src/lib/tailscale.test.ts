@@ -7,6 +7,7 @@ import {
   alarmRows,
   applied,
   beforeConnect,
+  brokenLines,
   changedLines,
   connectSteps,
   disconnectSteps,
@@ -20,10 +21,12 @@ import {
   readSteps,
   removeSteps,
   removeText,
+  ruleForm,
   ruleRows,
   ruleText,
   saveSteps,
   serverLines,
+  startRules,
   tailnetActionText,
 } from "./tailscale";
 
@@ -254,6 +257,19 @@ describe("Start With These Rules", () => {
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
   });
 
+  it("saves the open rule's replacement only when the read found one, then what is ticked", () => {
+    const ticked = rows.filter((row) => row.ticked).map((row) => row.id);
+    expect(startRules(true, rows, ticked)).toEqual([
+      { from: "devices", to: "rest" },
+      { from: "devices", to: "servers", ports: ["22/tcp"] },
+      { from: "devices", to: P, ports: ["53", "80/tcp"] },
+      { from: I, to: P, ports: ["53/udp"] },
+    ]);
+    expect(startRules(false, rows, [rows[2]!.id, "back"])).toEqual([
+      { from: "devices", to: P, ports: ["3000/tcp"] },
+    ]);
+  });
+
   it("says who loses access", () => {
     const ticked = rows.filter((row) => row.ticked).map((row) => row.id);
     expect(losesAccess(OPEN, rows, ticked)).toEqual([
@@ -277,20 +293,48 @@ describe("the Network page once connected", () => {
         route: "Your devices → All servers",
         ports: "22/tcp",
         locked: false,
+        editable: true,
       },
       {
         index: 2,
         route: "Your devices → pivox",
         ports: "53 · 80/tcp",
         locked: false,
+        editable: true,
       },
-      { index: 3, route: "io → pivox", ports: "53/udp", locked: false },
+      {
+        index: 3,
+        route: "io → pivox",
+        ports: "53/udp",
+        locked: false,
+        editable: true,
+      },
       {
         index: null,
         route: "Your servers → your devices",
         ports: "Never",
         locked: true,
+        editable: false,
       },
+    ]);
+  });
+
+  it("offers no Edit for a rule kept as it was written", () => {
+    const kept = {
+      ...CONNECTED,
+      rules: [
+        ...CONNECTED.rules,
+        {
+          raw: '{"src":["autogroup:member"],"dst":["100.101.7.20"],"ip":["tcp:3000"]}',
+        },
+      ],
+    };
+    expect(ruleRows(kept, SERVERS).map((row) => row.editable)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
     ]);
   });
 
@@ -699,11 +743,83 @@ describe("a changed Krynodes rule", () => {
     ]);
   });
 
+  it("names a changed line that is not one grant on one line", () => {
+    const split = [
+      '{"src":["autogroup:member"]',
+      '"dst":["100.101.7.20"]',
+      '"ip":["tcp:3000"]}',
+    ];
+    expect(brokenLines(SAVED, [REST, SSH, ...split, IO])).toEqual(split);
+    expect(brokenLines(SAVED, NOW)).toEqual([]);
+  });
+
   it("still takes out the rule you removed", () => {
     expect(keepChange(SAVED, NOW, CONNECTED.rules.slice(0, 3))).toEqual([
       CONNECTED.rules[0],
       CONNECTED.rules[1],
       { raw: WIDER },
     ]);
+  });
+});
+
+describe("Add Rule and Edit Rule", () => {
+  const form = (over: Partial<Parameters<typeof ruleForm>[0]>) =>
+    ruleForm({
+      connected: CONNECTED,
+      index: null,
+      servers: SERVERS,
+      listeners: LISTENERS,
+      from: "devices",
+      to: P,
+      ticked: [],
+      other: "",
+      ...over,
+    });
+
+  it("offers what listens on the target with its process, apart from what is allowed already", () => {
+    expect(form({ ticked: ["3000/tcp"], other: " 9100/tcp " })).toEqual({
+      options: [{ port: "3000/tcp", process: "AdGuardHome" }],
+      allowed: ["22/tcp", "53", "80/tcp"],
+      rule: { from: "devices", to: P, ports: ["3000/tcp", "9100/tcp"] },
+      problem: null,
+      readable: true,
+      ready: true,
+    });
+  });
+
+  it("keeps the edited rule's own ports on offer, even one nothing listens on", () => {
+    expect(
+      form({ index: 2, ticked: ["53", "80/tcp", "9100/tcp"] }),
+    ).toMatchObject({
+      options: [
+        { port: "53", process: "AdGuardHome" },
+        { port: "80/tcp", process: "AdGuardHome" },
+        { port: "3000/tcp", process: "AdGuardHome" },
+        { port: "9100/tcp", process: null },
+      ],
+      allowed: ["22/tcp"],
+      ready: true,
+    });
+  });
+
+  it("offers for All servers only what listens on every server", () => {
+    expect(form({ to: "servers" })).toMatchObject({
+      options: [],
+      allowed: ["22/tcp"],
+      ready: false,
+    });
+  });
+
+  it("refuses an unreadable port and a server reaching itself", () => {
+    expect(form({ ticked: ["3000/tcp"], other: "abc" })).toMatchObject({
+      problem:
+        "Other Port takes one port or a range, like 9100/tcp or 6000-6010.",
+      readable: false,
+      ready: false,
+    });
+    expect(form({ from: P, ticked: ["3000/tcp"] })).toMatchObject({
+      problem: "A server always reaches itself. Pick another one.",
+      ready: false,
+    });
   });
 });
