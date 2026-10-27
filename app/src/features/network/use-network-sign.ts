@@ -14,6 +14,7 @@ import { activeSession, openSession } from "@/lib/deploy-session";
 import { signersFor } from "@/lib/devices";
 import { apiFetch, errorMessage } from "@/lib/http";
 import {
+  baseOf,
   buildDocument,
   joinerOf,
   missingSeals,
@@ -204,10 +205,12 @@ export async function finishJoin() {
             join,
           }
         : { kind: "add", join };
+    const base = await baseOf(view);
     const document = await buildDocument(
-      view.document,
+      base?.document ?? null,
       change,
       current.sealKeys,
+      base?.parent,
     );
     const session = activeSession() ?? (await openSession(current.signers));
     const names = ready.map(({ seat }) => seat.name);
@@ -259,11 +262,12 @@ async function signChange(input: Change) {
     );
   }
   const session = await openSession(input.signers);
-  const view = await apiFetch<NetworkView>("/api/network");
+  const base = await baseOf(await apiFetch<NetworkView>("/api/network"));
   const document = await buildDocument(
-    view.document,
+    base?.document ?? null,
     input.change,
     input.sealKeys ?? {},
+    base?.parent,
   );
   await postNetworkDocument({
     signed: await signDocument(session, document),

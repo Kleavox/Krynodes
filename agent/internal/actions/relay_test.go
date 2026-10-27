@@ -281,3 +281,107 @@ func TestPollSendsTheSealKey(t *testing.T) {
 		t.Fatalf("unexpected reports %#v", poster.reports)
 	}
 }
+
+func watchingRelay(t *testing.T) *Relay {
+	t.Helper()
+	relay, _ := newRelay(t)
+	relay.Dir = filepath.Join(filepath.Dir(relay.RequestDir), "relay")
+	relay.Boot = func() string { return "4f0c6a3e-1d2b-4c5a-9e8f-7a6b5c4d3e2f" }
+	events := eventLog{Events: []reporter.Event{
+		{ID: "knock:10.88.0.1:1", Kind: "knock", At: "2026-09-29T09:59:00Z", Detail: map[string]string{"from": "10.88.0.1"}},
+		{ID: "port:aa", Kind: "port", At: "2026-09-29T09:59:30Z", Detail: map[string]string{"port": "4444/tcp"}},
+	}}
+	if err := writeJSON(relay.StateDir, eventsFile, events, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	return relay
+}
+
+func eventIDs(beat reporter.Heartbeat) []string {
+	var ids []string
+	for _, event := range beat.Events {
+		ids = append(ids, event.ID)
+	}
+	return ids
+}
+
+func TestTheRelaySendsEventsUntilTheyAreAcked(t *testing.T) {
+	relay := watchingRelay(t)
+	var beat reporter.Heartbeat
+	relay.Report(&beat)
+	if ids := eventIDs(beat); !reflect.DeepEqual(ids, []string{"knock:10.88.0.1:1", "port:aa"}) {
+		t.Fatalf("events %v", ids)
+	}
+	if err := relay.Answer(reporter.HeartbeatResponse{Acked: []string{"knock:10.88.0.1:1", "unknown"}}); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &Relay{RequestDir: relay.RequestDir, StateDir: relay.StateDir, Dir: relay.Dir, Now: relay.Now}
+	beat = reporter.Heartbeat{}
+	restarted.Report(&beat)
+	if ids := eventIDs(beat); !reflect.DeepEqual(ids, []string{"port:aa"}) {
+		t.Fatalf("after the ack %v", ids)
+	}
+	var acked []string
+	if err := readJSON(filepath.Join(relay.Dir, ackedFile), &acked); err != nil || !reflect.DeepEqual(acked, []string{"knock:10.88.0.1:1"}) {
+		t.Fatalf("acked %v %v", acked, err)
+	}
+}
+
+func TestTheBootCounterRisesOncePerReportAndSurvivesARestart(t *testing.T) {
+	relay := watchingRelay(t)
+	for want := int64(1); want <= 2; want++ {
+		var beat reporter.Heartbeat
+		relay.Report(&beat)
+		if beat.Boot == nil || beat.Boot.ID != "4f0c6a3e-1d2b-4c5a-9e8f-7a6b5c4d3e2f" || beat.Boot.Count != want {
+			t.Fatalf("boot %+v, want count %d", beat.Boot, want)
+		}
+	}
+	restarted := &Relay{RequestDir: relay.RequestDir, StateDir: relay.StateDir, Dir: relay.Dir, Now: relay.Now, Boot: func() string { return "a-new-boot" }}
+	var beat reporter.Heartbeat
+	restarted.Report(&beat)
+	if beat.Boot == nil || beat.Boot.ID != "a-new-boot" || beat.Boot.Count != 3 {
+		t.Fatalf("after a restart %+v", beat.Boot)
+	}
+	silent := &Relay{RequestDir: relay.RequestDir, StateDir: relay.StateDir, Dir: relay.Dir, Now: relay.Now, Boot: func() string { return "" }}
+	beat = reporter.Heartbeat{}
+	silent.Report(&beat)
+	if beat.Boot != nil {
+		t.Fatalf("a boot with no id %+v", beat.Boot)
+	}
+}
+
+func TestAPendingReleaseIsReportedUntilItEnds(t *testing.T) {
+	relay := watchingRelay(t)
+	pending := reporter.Release{Key: "a2V5", Signer: "c2lnbmVy", Seal: "c2VhbA", Token: strings.Repeat("a", 64), Expires: executorNow.Add(5 * time.Minute).Format(time.RFC3339)}
+	if err := writeJSON(relay.StateDir, releaseFile, pending, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	var beat reporter.Heartbeat
+	relay.Report(&beat)
+	if beat.Release == nil || *beat.Release != pending {
+		t.Fatalf("release %+v", beat.Release)
+	}
+	relay.Now = func() time.Time { return executorNow.Add(6 * time.Minute) }
+	beat = reporter.Heartbeat{}
+	relay.Report(&beat)
+	if beat.Release != nil {
+		t.Fatalf("an ended release %+v", beat.Release)
+	}
+}
+
+func TestTheRelayMarksTheServerQuarantinedWhileTheWorkerSaysSo(t *testing.T) {
+	relay := watchingRelay(t)
+	mark := filepath.Join(relay.Dir, quarantinedFile)
+	if err := relay.Answer(reporter.HeartbeatResponse{Quarantined: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(mark); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Answer(reporter.HeartbeatResponse{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(mark); !os.IsNotExist(err) {
+		t.Fatalf("mark kept: %v", err)
+	}
+}

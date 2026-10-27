@@ -32,6 +32,7 @@ import {
   nodeState,
   parseTimestamp,
 } from "./format";
+import { b64url, fromB64url } from "./passkeys";
 import { seal } from "./seal";
 
 type ServiceNode = ServicesResponse["nodes"][number];
@@ -535,15 +536,23 @@ function pairOf(
   return { state: "unknown", since: null };
 }
 
+const trusted = (view: NetworkView) =>
+  inside(view).filter((member) => !view.quarantined.includes(member.nodeId));
+
 const pairsWith = (
   view: NetworkView,
   presence: Presence,
   server: NetworkServer,
   now: number,
 ) =>
-  inside(view)
-    .filter((peer) => peer.nodeId !== server.nodeId)
-    .map((peer) => ({ peer, ...pairOf(view, presence, server, peer, now) }));
+  view.quarantined.includes(server.nodeId)
+    ? []
+    : trusted(view)
+        .filter((peer) => peer.nodeId !== server.nodeId)
+        .map((peer) => ({
+          peer,
+          ...pairOf(view, presence, server, peer, now),
+        }));
 
 export function linkProgress(
   view: NetworkView,
@@ -572,7 +581,7 @@ export function problemRows(
   presence: Presence,
   now: number,
 ) {
-  const members = inside(view);
+  const members = trusted(view);
   const reaches = (server: NetworkServer, other: NetworkServer) => {
     const counted = pairsWith(view, presence, server, now).filter(
       (pair) =>
@@ -606,6 +615,24 @@ export function problemRows(
   );
 }
 
+export function wrongPortRows(view: NetworkView) {
+  const names = new Map(
+    view.members.map((member) => [member.address, member.name]),
+  );
+  const named = (address: string | null) =>
+    (address !== null && names.get(address)) || (address ?? "--");
+  return view.wrongPorts.map((entry) => {
+    const knocker = named(entry.from);
+    const [address = null, port = "--"] = entry.target?.split(/:(.*)/su) ?? [];
+    const server = named(address);
+    return {
+      nodeId: entry.nodeId,
+      text: `${knocker} keeps knocking on ${server}:${port.replace(/\/tcp$/u, "")}, and nothing serves it there`,
+      detail: `A setting on ${knocker} points at a port ${server} does not give it. Nothing was cut off.`,
+    };
+  });
+}
+
 export const navNetworkCount = (
   view: NetworkView,
   presence: Presence,
@@ -624,12 +651,13 @@ export function serverRow(
     (pair) => pair.state === "up" || pair.state === "down",
   );
   const up = counted.filter((pair) => pair.state === "up").length;
+  const cut = view.quarantined.includes(server.nodeId);
   return {
     name: server.name,
     address: `${server.address ?? "--"} · ${kryName(server.name)}`,
     endpoint: server.nat ? "Behind NAT" : (server.endpoint ?? "--"),
-    links: online ? `Links ${up} of ${counted.length}` : "--",
-    short: online && up < counted.length,
+    links: cut ? "Cut off" : online ? `Links ${up} of ${counted.length}` : "--",
+    short: !cut && online && up < counted.length,
     offline: online
       ? null
       : `Offline${seenAt === null ? "" : ` ${formatDuration(now - seenAt)}`}. It picks up the last change when it is back; nothing to approve again.`,
@@ -993,7 +1021,11 @@ export function moveBlock(
     members.find((member) => member.nodeId === id)?.address ?? null;
   const from = addressOf(source.nodeId);
   const to = addressOf(target.nodeId);
-  const serves = stack.network?.serves ?? [];
+  const serves = (stack.network?.serves ?? []).flatMap((serve) => {
+    if (serve.all) return [serve];
+    const others = (serve.to ?? []).filter((id) => id !== target.nodeId);
+    return others.length > 0 ? [{ ...serve, to: others }] : [];
+  });
   const reaches = stack.network?.reaches ?? [];
   const served = stack.network?.private ?? [];
   const reachers = servers
@@ -1068,6 +1100,11 @@ export function moveBlock(
     reaches: reaches.filter((place) => !place.startsWith(`${to}:`)),
   };
 }
+
+export const moveProblem = (changes: MoveBlock["changes"]) =>
+  changes.length > NETWORK.moveReaches
+    ? `One move changes at most ${NETWORK.moveReaches} other stacks. Untick some and change them after the move.`
+    : null;
 
 export const hostingOf = (
   reports: { id: string; stacks?: Hosting["stacks"] }[],
@@ -1858,7 +1895,29 @@ export type DocumentChange =
   | { kind: "rekey"; keys: Record<string, string> }
   | { kind: "mtu"; nodeId: string; mtu: number | null }
   | { kind: "rename"; nodeId: string; name: string }
+  | { kind: "release"; nodeId: string; key: string; signer: string }
   | { kind: "again" };
+
+export async function baseOf(
+  view: NetworkView,
+): Promise<{ document: NetworkDocument; parent: string } | null> {
+  if (!view.body) return null;
+  const bytes = fromB64url(view.body);
+  const document = networkDocumentSchema.parse(
+    JSON.parse(new TextDecoder().decode(bytes)),
+  );
+  return {
+    document: {
+      ...document,
+      members: document.members.map((member) =>
+        view.quarantined.includes(member.node)
+          ? { ...member, cut: true as const }
+          : member,
+      ),
+    },
+    parent: b64url(await crypto.subtle.digest("SHA-256", bytes)),
+  };
+}
 
 async function pairKey(
   a: NetworkMember,
@@ -1887,6 +1946,7 @@ export async function buildDocument(
   current: NetworkDocument | null,
   change: DocumentChange,
   sealKeys: Record<string, string>,
+  parent?: string,
 ): Promise<NetworkDocument> {
   const next: NetworkDocument =
     change.kind === "create"
@@ -1973,8 +2033,24 @@ export async function buildDocument(
         if (member.node === change.nodeId) member.name = change.name;
       }
       break;
+    case "release": {
+      const released = next.members.find(
+        (member) => member.node === change.nodeId,
+      );
+      if (!released) break;
+      next.blocked.push(released.key);
+      released.key = change.key;
+      released.signer = change.signer;
+      delete released.cut;
+      for (const member of next.members) {
+        if (member !== released) await pairKey(member, released, sealKeys);
+      }
+      break;
+    }
     case "again":
       break;
   }
+  if (parent) next.parent = parent;
+  else delete next.parent;
   return networkDocumentSchema.parse(next);
 }

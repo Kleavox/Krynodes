@@ -124,8 +124,9 @@ export function summarize(text: string): ComposeSummary {
   return summary;
 }
 
-export function publishedPorts(
+function published(
   text: string,
+  shape: RegExp,
 ): { port: string; service: string }[] {
   const found: { port: string; service: string }[] = [];
   for (const [service, value] of Object.entries(load(text).services ?? {})) {
@@ -141,16 +142,19 @@ export function publishedPorts(
         protocol = long.protocol ?? "tcp";
       }
       const name = `${String(host)}/${String(protocol)}`;
-      if (
-        /^\d{1,5}\/(tcp|udp)$/u.test(name) &&
-        !found.some((entry) => entry.port === name)
-      ) {
+      if (shape.test(name) && !found.some((entry) => entry.port === name)) {
         found.push({ port: name, service });
       }
     }
   }
   return found;
 }
+
+export const publishedPorts = (text: string) =>
+  published(text, /^\d{1,5}\/(tcp|udp)$/u);
+
+export const publishedRanges = (text: string) =>
+  published(text, /^\d{1,5}-\d{1,5}\/(tcp|udp)$/u);
 
 export const usesPrivateIp = (text: string) =>
   /\$\{?KRY_PRIVATE_IP\b/u.test(text);

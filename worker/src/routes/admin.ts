@@ -11,6 +11,7 @@ import { listAddresses, type AddressColumns } from "../lib/addresses";
 import { readReport, trusts, viewerPrints } from "../trust/fleet";
 import { confirmed } from "../trust/intent";
 import { manualStatement, unitOf } from "../actions/store";
+import { WARNING_KINDS } from "../quarantine/events";
 import {
   agentOrigin,
   findOwnedNode,
@@ -48,10 +49,16 @@ export function registerAdminRoutes(
               ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report,
               updates, tailscale,
               (SELECT json_object('state', state, 'address', address, 'port', port)
-               FROM network_members WHERE node_id = nodes.id) AS network
-       FROM nodes WHERE owner_user_id = ? ORDER BY created_at DESC`,
+               FROM network_members WHERE node_id = nodes.id) AS network,
+              (SELECT json_object('at', at, 'why', why) FROM quarantines
+               WHERE node_id = nodes.id AND released_at IS NULL) AS quarantine,
+              (SELECT json_group_array(json_object('id', id, 'kind', kind,
+                 'detail', json(detail), 'at', at, 'cutAt', cut_at))
+               FROM (SELECT * FROM warnings WHERE node_id = nodes.id AND answer IS NULL
+                 AND kind IN (SELECT value FROM json_each(?2)) ORDER BY at)) AS warnings
+       FROM nodes WHERE owner_user_id = ?1 ORDER BY created_at DESC`,
       )
-        .bind(ownerId)
+        .bind(ownerId, JSON.stringify(WARNING_KINDS))
         .all<
           AddressColumns & {
             id: string;
@@ -60,6 +67,8 @@ export function registerAdminRoutes(
             updates: string | null;
             tailscale: string | null;
             network: string | null;
+            quarantine: string | null;
+            warnings: string;
           }
         >(),
       context.env.DB.prepare(
@@ -113,10 +122,15 @@ export function registerAdminRoutes(
         updates,
         tailscale,
         network,
+        quarantine,
+        warnings,
         ...rest
       }) => ({
         ...rest,
         network: network === null ? null : (JSON.parse(network) as unknown),
+        quarantine:
+          quarantine === null ? null : (JSON.parse(quarantine) as unknown),
+        warnings: JSON.parse(warnings) as unknown[],
         updates: updates === null ? null : (JSON.parse(updates) as unknown),
         tailscale:
           tailscale === null ? null : (JSON.parse(tailscale) as unknown),
@@ -142,10 +156,17 @@ export function registerAdminRoutes(
       rows.length > 0
         ? await fleetLive(context.env, ownerId)
         : { nodes: {}, mail: null };
+    const untrusted = new Set(
+      rows.filter((row) => row.quarantine !== null).map((row) => row.id),
+    );
     return context.json({
       nodes: mergeLive(rows, live === null ? null : live.nodes),
       mail: live?.mail ?? null,
-      checks: checks.results,
+      checks: checks.results.map((check) =>
+        untrusted.has(String(check.node_id))
+          ? { ...check, status: "UNTRUSTED" }
+          : check,
+      ),
       incidents: incidents.results,
       agentRelease: {
         ...(await readAgentRelease(context.env.DB)),

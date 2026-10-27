@@ -26,6 +26,7 @@ func TestChosenServersPassThenTheRestIsDropped(t *testing.T) {
 	want := []string{
 		"-A KRY-SERVE -s 10.88.0.1/32 " + match + " -j RETURN",
 		"-A KRY-SERVE -s 10.88.0.3/32 " + match + " -j RETURN",
+		"-A KRY-SERVE " + match + " -m limit --limit 600/min -j LOG --log-prefix \"kry-knock \" --log-level 6",
 		"-A KRY-SERVE " + match + " -m comment --comment kry-serve:db -j DROP",
 	}
 	if !slices.Equal(serve, want) {
@@ -35,7 +36,8 @@ func TestChosenServersPassThenTheRestIsDropped(t *testing.T) {
 
 func TestAnUnknownOrOwnChosenServerIsSkipped(t *testing.T) {
 	serve, _ := Rules("10.88.0.2", ruleMembers, []StackRules{{Project: "db", Serves: []Serve{{Port: "53/udp", To: []string{"44444444-4444-4444-8444-444444444444", nodeB}}}}})
-	if !slices.Equal(serve, []string{"-A KRY-SERVE -p udp -m conntrack --ctorigdst 10.88.0.2/32 --ctorigdstport 53 -m comment --comment kry-serve:db -j DROP"}) {
+	match := "-A KRY-SERVE -p udp -m conntrack --ctorigdst 10.88.0.2/32 --ctorigdstport 53"
+	if !slices.Equal(serve, []string{match + " -m limit --limit 600/min -j LOG --log-prefix \"kry-knock \" --log-level 6", match + " -m comment --comment kry-serve:db -j DROP"}) {
 		t.Fatalf("serve %q", serve)
 	}
 }
@@ -49,8 +51,11 @@ func TestRepliesPassFirstAndAPlaceIsReachedFromEveryBridge(t *testing.T) {
 		"-A KRY-REACH -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN",
 		"-A KRY-REACH -d 10.88.0.1/32 -i krc111111111111 -p tcp -m tcp --dport 5432 -j RETURN",
 		"-A KRY-REACH -d 10.88.0.1/32 -i krc222222222222 -p tcp -m tcp --dport 5432 -j RETURN",
+		"-A KRY-REACH -i krc111111111111 -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
 		"-A KRY-REACH -i krc111111111111 -m comment --comment kry-reach:umami -j DROP",
+		"-A KRY-REACH -i krc222222222222 -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
 		"-A KRY-REACH -i krc222222222222 -m comment --comment kry-reach:umami -j DROP",
+		"-A KRY-REACH -i krc333333333333 -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
 		"-A KRY-REACH -i krc333333333333 -m comment --comment kry-reach:lone -j DROP",
 		"-A KRY-REACH -j DROP",
 	}
@@ -61,14 +66,39 @@ func TestRepliesPassFirstAndAPlaceIsReachedFromEveryBridge(t *testing.T) {
 
 func TestTheJumpsEnterFromKry0AndFromContainedBridgesToTheRange(t *testing.T) {
 	jumps := Jumps("10.88.0.0/24")
-	if len(jumps) != 2 || strings.Join(jumps[0], " ") != "-i kry0 -j KRY-SERVE" || strings.Join(jumps[1], " ") != "-d 10.88.0.0/24 -i krc+ -j KRY-REACH" {
+	if len(jumps) != 3 || strings.Join(jumps[0], " ") != "-i kry0 -j KRY-SERVE" || strings.Join(jumps[1], " ") != "-d 10.88.0.0/24 -i krc+ -j KRY-REACH" || strings.Join(jumps[2], " ") != "-i kry0 -j KRY-DROP" {
 		t.Fatalf("jumps %q", jumps)
+	}
+	input := InputJumps()
+	if len(input) != 2 || strings.Join(input[0], " ") != "-i kry0 -m conntrack --ctstate NEW -j KRY-KNOCK" || strings.Join(input[1], " ") != "-i kry0 -j KRY-DROP" {
+		t.Fatalf("input %q", input)
 	}
 }
 
-func TestTheRestoreFileDeclaresOnlyTheTwoChains(t *testing.T) {
-	text := Restore([]string{"-A KRY-SERVE -j RETURN"}, []string{"-A KRY-REACH -j DROP"})
-	want := "*filter\n:KRY-SERVE - [0:0]\n:KRY-REACH - [0:0]\n-A KRY-SERVE -j RETURN\n-A KRY-REACH -j DROP\nCOMMIT\n"
+func TestTheWatchChainsDropAndLogOnlyClosedPorts(t *testing.T) {
+	tcp := []int{22, 80}
+	for port := 1000; port < 1014; port++ {
+		tcp = append(tcp, port)
+	}
+	drop, knock := Watch([]string{"10.88.0.9"}, tcp, []int{53})
+	if !slices.Equal(drop, []string{"-A KRY-DROP -s 10.88.0.9/32 -j DROP"}) {
+		t.Fatalf("drop %q", drop)
+	}
+	want := []string{
+		"-A KRY-KNOCK -p icmp -j RETURN",
+		"-A KRY-KNOCK -p tcp -m multiport --dports 22,80,1000,1001,1002,1003,1004,1005,1006,1007,1008,1009,1010,1011,1012 -j RETURN",
+		"-A KRY-KNOCK -p tcp -m multiport --dports 1013 -j RETURN",
+		"-A KRY-KNOCK -p udp -m multiport --dports 53 -j RETURN",
+		"-A KRY-KNOCK -m limit --limit 600/min -j LOG --log-prefix \"kry-knock \" --log-level 6",
+	}
+	if !slices.Equal(knock, want) {
+		t.Fatalf("knock\n%s", strings.Join(knock, "\n"))
+	}
+}
+
+func TestTheRestoreFileDeclaresOnlyItsFourChains(t *testing.T) {
+	text := Restore([]string{"-A KRY-SERVE -j RETURN"}, []string{"-A KRY-REACH -j DROP"}, []string{"-A KRY-DROP -s 10.88.0.9/32 -j DROP"}, []string{"-A KRY-KNOCK -p icmp -j RETURN"})
+	want := "*filter\n:KRY-SERVE - [0:0]\n:KRY-REACH - [0:0]\n:KRY-DROP - [0:0]\n:KRY-KNOCK - [0:0]\n-A KRY-SERVE -j RETURN\n-A KRY-REACH -j DROP\n-A KRY-DROP -s 10.88.0.9/32 -j DROP\n-A KRY-KNOCK -p icmp -j RETURN\nCOMMIT\n"
 	if text != want {
 		t.Fatalf("restore %q", text)
 	}

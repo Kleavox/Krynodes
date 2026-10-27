@@ -35,6 +35,29 @@ type Heartbeat struct {
 	Results []CheckResult    `json:"results,omitempty"`
 	Update  *UpdateFailure   `json:"update,omitempty"`
 	Network *NetworkBeat     `json:"network,omitempty"`
+	Boot    *Boot            `json:"boot,omitempty"`
+	Events  []Event          `json:"events,omitempty"`
+	Release *Release         `json:"release,omitempty"`
+}
+
+type Boot struct {
+	ID    string `json:"id"`
+	Count int64  `json:"count"`
+}
+
+type Release struct {
+	Key     string `json:"key"`
+	Signer  string `json:"signer"`
+	Seal    string `json:"seal"`
+	Token   string `json:"token"`
+	Expires string `json:"expires"`
+}
+
+type Event struct {
+	ID     string            `json:"id"`
+	Kind   string            `json:"kind"`
+	At     string            `json:"at"`
+	Detail map[string]string `json:"detail"`
 }
 
 type NetworkBeat struct {
@@ -79,6 +102,8 @@ type HeartbeatResponse struct {
 	Actions         []ActionRequest    `json:"actions,omitempty"`
 	Refresh         bool               `json:"refresh,omitempty"`
 	Network         *NetworkReply      `json:"network,omitempty"`
+	Acked           []string           `json:"acked,omitempty"`
+	Quarantined     bool               `json:"quarantined,omitempty"`
 }
 
 type UpdateInstruction struct {

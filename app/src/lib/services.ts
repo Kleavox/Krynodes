@@ -142,6 +142,11 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Making a new key for…",
       done: "New key made",
     },
+    accept: { verb: "Accept", doing: "Accepting…", done: "Accepted" },
+    block: { verb: "Block", doing: "Blocking…", done: "Blocked" },
+    unblock: { verb: "Unblock", doing: "Unblocking…", done: "Unblocked" },
+    drop: { verb: "Drop", doing: "Dropping…", done: "Dropped" },
+    tighten: { verb: "Tighten", doing: "Tightening…", done: "Tightened" },
   };
 
 export const RECIPE_TITLES: Record<string, string> = {

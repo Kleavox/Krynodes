@@ -5,6 +5,7 @@ import { receiveReport } from "../actions/report";
 import type { AgentNode } from "../agent/ingest";
 import { app } from "../app";
 import type { Env } from "../env";
+import { quarantine } from "../quarantine/quarantine";
 import { seedNode } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
 
@@ -61,7 +62,7 @@ const member = (node: string, address: string) => ({
   psk: {} as Record<string, string>,
 });
 
-type Member = ReturnType<typeof member>;
+type Member = ReturnType<typeof member> & { cut?: boolean };
 
 function documentOf(
   version: number,
@@ -233,6 +234,103 @@ describe("the network document", () => {
       200,
     );
     expect((await network()).network).toMatchObject({ version: 2 });
+  });
+
+  it("returns the stored body and keeps every version in the history", async () => {
+    const { post, network, sqlite } = setup();
+    const first = documentOf(1, [
+      member(A, "10.88.0.1"),
+      member(B, "10.88.0.2"),
+    ]);
+    await post(first, "Create the private network with vps-1 and vps-2");
+    expect((await network()).body).toBe(b64(first));
+    await post(
+      documentOf(2, [
+        member(A, "10.88.0.1"),
+        member(B, "10.88.0.2"),
+        member(C, "10.88.0.3"),
+      ]),
+      "Add vps-3 to the private network",
+    );
+    expect(
+      sqlite
+        .prepare("SELECT version FROM network_documents ORDER BY version")
+        .all(),
+    ).toEqual([{ version: 1 }, { version: 2 }]);
+  });
+
+  it("lists the wrong ports knocked in the last day, once each", async () => {
+    const { sqlite, network } = setup();
+    const insert = sqlite.prepare(
+      "INSERT INTO warnings (node_id, id, kind, detail, at) VALUES (?, ?, 'wrong-port', ?, ?)",
+    );
+    const detail = JSON.stringify({
+      from: "10.88.0.1",
+      target: "10.88.0.2:5433/tcp",
+    });
+    const now = Date.now();
+    const hour = (h: number) => new Date(now - h * 3_600_000).toISOString();
+    insert.run(B, "w1", detail, hour(2));
+    insert.run(B, "w2", detail, hour(1));
+    insert.run(
+      B,
+      "w3",
+      JSON.stringify({ from: "10.88.0.3", target: "x" }),
+      hour(30),
+    );
+    expect((await network()).wrongPorts).toEqual([
+      {
+        nodeId: B,
+        from: "10.88.0.1",
+        target: "10.88.0.2:5433/tcp",
+        at: hour(1),
+      },
+    ]);
+  });
+
+  it("keeps a quarantined member cut until it is released, and its old key blocked after", async () => {
+    const { db, sqlite, post, network } = setup();
+    await post(documentOf(1, [member(A, "10.88.0.1"), member(B, "10.88.0.2")]));
+    expect((await network()).quarantined).toEqual([]);
+    await quarantine(db, { nodeId: A, why: "why", now: Date.now() });
+    expect((await network()).quarantined).toEqual([A]);
+    const uncut = await post(
+      documentOf(2, [member(A, "10.88.0.1"), member(B, "10.88.0.2")]),
+    );
+    expect(uncut.status).toBe(422);
+    expect(await json(uncut)).toEqual({
+      code: "QUARANTINED",
+      message: "vps-1 is quarantined. Keep it cut off until you release it.",
+    });
+    expect(
+      (
+        await post(
+          documentOf(2, [
+            { ...member(A, "10.88.0.1"), cut: true },
+            member(B, "10.88.0.2"),
+          ]),
+        )
+      ).status,
+    ).toBe(200);
+    sqlite.exec("UPDATE quarantines SET released_at = 'now'");
+    const reused = await post(
+      documentOf(3, [member(A, "10.88.0.1"), member(B, "10.88.0.2")]),
+    );
+    expect(await json(reused)).toMatchObject({ code: "KEY_BLOCKED" });
+    expect(
+      (
+        await post(
+          documentOf(
+            3,
+            [
+              { ...member(A, "10.88.0.1"), key: key(9), signer: key(109) },
+              member(B, "10.88.0.2"),
+            ],
+            { blocked: [key(1)] },
+          ),
+        )
+      ).status,
+    ).toBe(200);
   });
 
   it("refuses an old agent, a foreign server, a bad document, and a changed range, port or address", async () => {

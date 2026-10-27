@@ -61,6 +61,8 @@ type networkRecord struct {
 	Port      int                       `json:"port,omitempty"`
 	Firewall  string                    `json:"firewall,omitempty"`
 	Tools     bool                      `json:"tools,omitempty"`
+	Dropped   []string                  `json:"dropped,omitempty"`
+	Tightened *network.Knocks           `json:"tightened,omitempty"`
 }
 
 type networkLinks struct {
@@ -99,7 +101,7 @@ func (e Executor) network(ctx context.Context, request Request) (Result, bool) {
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
 		}
-	case "apply", "announce":
+	case "apply", "announce", "drop", "tighten":
 	default:
 		return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action)), false
 	}
@@ -133,10 +135,16 @@ func (e Executor) applyNetwork(ctx context.Context, request Request) Result {
 	switch request.Action {
 	case "apply":
 		return e.applyDocument(ctx, request)
-	case "announce":
+	case "announce", "drop", "tighten":
 		args, err := asked(request)
 		if err != nil {
 			return e.refuse(request.ID, err)
+		}
+		switch request.Action {
+		case "drop":
+			return e.dropMember(ctx, request, args)
+		case "tighten":
+			return e.tighten(request, args)
 		}
 		return e.takeAnnouncement(ctx, request, args)
 	}
@@ -333,9 +341,10 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 		return e.refuse(request.ID, err)
 	}
 	record := e.readNetwork()
-	self, err := network.Accept(document, record.Applied, trust.NodeID)
+	hash := network.BodyHash(body)
+	self, err := network.Accept(document, record.Applied, trust.NodeID, record.Joined)
 	if errors.Is(err, network.ErrLeave) {
-		return e.leaveNetwork(ctx, request, document, record)
+		return e.leaveNetwork(ctx, request, document, hash, record)
 	}
 	if err != nil {
 		return e.refuse(request.ID, err)
@@ -369,15 +378,25 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 			delete(record.Announced, node)
 		}
 	}
+	joining := !record.Joined
 	if err := e.writeNetwork(ctx, &record, document, self, keys, psk); err != nil {
 		return e.failed(request, err, "")
 	}
-	record.Applied = record.Applied.After(document)
+	record.Applied = record.Applied.After(document, hash)
 	record.Document, record.Key, record.Signer, record.Prepared = &document, keys.Public, keys.Signer, nil
+	record.Tightened = nil
+	record.Dropped = slices.DeleteFunc(record.Dropped, func(address string) bool {
+		return slices.ContainsFunc(document.Members, func(entry network.Member) bool {
+			return entry.Address == address && !entry.Cut && !slices.Contains(record.Applied.Blocked, entry.Key)
+		})
+	})
 	if err := e.saveNetwork(record); err != nil {
 		return e.failed(request, err, "")
 	}
 	e.syncRules(ctx)
+	if joining {
+		e.retake(ctx, true)
+	}
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("applied version %d", document.Version), FinishedAt: e.stamp()}
 }
 
@@ -437,9 +456,9 @@ func (e Executor) syncNetwork(ctx context.Context, config string) error {
 	return nil
 }
 
-func (e Executor) leaveNetwork(ctx context.Context, request Request, document network.Document, record networkRecord) Result {
+func (e Executor) leaveNetwork(ctx context.Context, request Request, document network.Document, hash string, record networkRecord) Result {
 	if !record.Joined {
-		record.Applied = record.Applied.After(document)
+		record.Applied = record.Applied.After(document, hash)
 		if err := e.saveNetwork(record); err != nil {
 			return e.failed(request, err, "")
 		}
@@ -447,7 +466,7 @@ func (e Executor) leaveNetwork(ctx context.Context, request Request, document ne
 	}
 	_, own := e.ownAddress()
 	problems := e.takeDown(ctx, record)
-	if err := e.saveNetwork(networkRecord{Applied: record.Applied.After(document)}); err != nil {
+	if err := e.saveNetwork(networkRecord{Applied: record.Applied.After(document, hash)}); err != nil {
 		problems = append(problems, err.Error())
 	}
 	problems = append(problems, e.unserve(ctx, own)...)
@@ -764,6 +783,9 @@ func (e Executor) WatchLinks(ctx context.Context, every time.Duration) {
 	for {
 		e.WriteLinks(ctx)
 		e.syncRules(ctx)
+		e.watchKnocks(ctx)
+		e.watchServer(ctx)
+		e.syncTailnet(ctx)
 		select {
 		case <-ctx.Done():
 			return

@@ -85,6 +85,8 @@ func run(args []string) error {
 		return execActions()
 	case "host-apply":
 		return hostApply()
+	case "release-code":
+		return releaseCode()
 	case "guard":
 		return guardCommand()
 	case "watch-containers":
@@ -260,6 +262,11 @@ func runDaemon(args []string, once bool) error {
 		NodeID:     cfg.NodeID,
 		Server:     client,
 		Now:        time.Now,
+		Dir:        stateDirectory,
+		Boot: func() string {
+			id, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
+			return string(id)
+		},
 	}
 	monitoringCycle := cycle.New(client, host, requestFile{}, relay)
 
@@ -645,8 +652,21 @@ func hostApply() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("host-apply must run as root on Linux")
 	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand, ConfigPath: defaultConfigPath}
 	return executor.HostApply(context.Background())
+}
+
+func releaseCode() error {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return fmt.Errorf("release-code must run as root on Linux")
+	}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	code, err := executor.ReleaseCode(filepath.Join(stateDirectory, "quarantined"))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Release code: %s · works for 10 minutes\n", code)
+	return nil
 }
 
 func prepareActionDirectories(uid, gid int) error {

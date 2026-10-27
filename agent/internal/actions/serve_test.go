@@ -138,8 +138,11 @@ func TestTheChainsAreRewrittenOnlyWhenTheyDiffer(t *testing.T) {
 	run.respond["iptables -S KRY-REACH"] = "-N KRY-REACH\n" +
 		"-A KRY-REACH -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n" +
 		"-A KRY-REACH -d 10.88.0.1/32 -i " + bridge + " -p tcp -m tcp --dport 5432 -j RETURN\n" +
+		"-A KRY-REACH -i " + bridge + " -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6\n" +
 		"-A KRY-REACH -i " + bridge + " -m comment --comment kry-reach:kuma -j DROP\n" +
 		"-A KRY-REACH -j DROP\n"
+	run.respond["iptables -S KRY-DROP"] = "-N KRY-DROP\n"
+	run.respond["iptables -S KRY-KNOCK"] = "-N KRY-KNOCK\n-A KRY-KNOCK -p icmp -j RETURN\n-A KRY-KNOCK -m limit --limit 600/min -j LOG --log-prefix \"kry-knock \" --log-level 6\n"
 	executor.syncRules(context.Background())
 	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "iptables-restore") }) {
 		t.Fatalf("nothing to rewrite: %q", run.calls)

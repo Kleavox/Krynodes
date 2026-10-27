@@ -8,7 +8,7 @@ import {
 } from "../agent/windows";
 
 type Metrics = AgentHeartbeat["metrics"];
-type Beat = Omit<AgentHeartbeat, "results" | "network">;
+type Beat = Omit<AgentHeartbeat, "results" | "network" | "events" | "release">;
 
 const AVERAGED = [
   "cpuPercent",
@@ -186,7 +186,13 @@ export function fold(
   const rolled = state.window !== null && state.window.start !== start;
   const flushed = rolled && state.window ? flushOf(state.window) : null;
   const window = rolled || !state.window ? emptyWindow(start) : state.window;
-  const { results: _results, network: _network, ...beat } = heartbeat;
+  const {
+    results: _results,
+    network: _network,
+    events: _events,
+    release: _release,
+    ...beat
+  } = heartbeat;
   return {
     state: {
       ...state,

@@ -4,6 +4,7 @@ import {
   moveCompose,
   portsOf,
   publishedPorts,
+  publishedRanges,
   servicesOf,
   summarize,
   usePrivateAddress,
@@ -81,6 +82,24 @@ describe("reading a compose file", () => {
     expect(publishedPorts("services:\n  web:\n    ports: ['80']\n")).toEqual(
       [],
     );
+  });
+
+  it("lists published port ranges apart, since only single ports are served", () => {
+    const text = `services:
+  rtp:
+    ports:
+      - "10000-10010:10000-10010/udp"
+      - target: 8000
+        published: "8000-8002"
+      - "3000:3000"
+`;
+    expect(publishedRanges(text)).toEqual([
+      { port: "10000-10010/udp", service: "rtp" },
+      { port: "8000-8002/tcp", service: "rtp" },
+    ]);
+    expect(publishedPorts(text)).toEqual([
+      { port: "3000/tcp", service: "rtp" },
+    ]);
   });
 
   it("moves only ports with no host address to the private address", () => {

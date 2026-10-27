@@ -57,6 +57,27 @@ describe("the network document", () => {
     ).toBe(false);
   });
 
+  it("names its parent by hash, marks cut members and carries the knock settings", () => {
+    const parent = "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0";
+    expect(
+      changed((copy) => {
+        copy.parent = parent;
+        copy.members[1]!.cut = true;
+        copy.knocks = { scan: 5, stop: false };
+      }),
+    ).toBe(true);
+    expect(
+      changed((copy) => {
+        copy.parent = "abc";
+      }),
+    ).toBe(false);
+    expect(
+      changed((copy) => {
+        copy.knocks = { scan: 7 as 5, stop: true };
+      }),
+    ).toBe(false);
+  });
+
   it("wants a preshared key for every other member and no one else", () => {
     expect(
       changed((copy) => {

@@ -13,6 +13,10 @@ import (
 const (
 	ServeChain  = "KRY-SERVE"
 	ReachChain  = "KRY-REACH"
+	DropChain   = "KRY-DROP"
+	KnockChain  = "KRY-KNOCK"
+	logRule     = " -m limit --limit 600/min -j LOG --log-prefix \"%s\" --log-level 6"
+	multiports  = 15
 	Variable    = "KRY_PRIVATE_IP"
 	MaxServes   = 16
 	MaxPlaces   = 32
@@ -118,7 +122,36 @@ func Jumps(networkRange string) [][]string {
 	return [][]string{
 		{"-i", Interface, "-j", ServeChain},
 		{"-d", networkRange, "-i", "krc+", "-j", ReachChain},
+		{"-i", Interface, "-j", DropChain},
 	}
+}
+
+func InputJumps() [][]string {
+	return [][]string{
+		{"-i", Interface, "-m", "conntrack", "--ctstate", "NEW", "-j", KnockChain},
+		{"-i", Interface, "-j", DropChain},
+	}
+}
+
+func Watch(dropped []string, tcp, udp []int) ([]string, []string) {
+	drop := []string{}
+	for _, address := range dropped {
+		drop = append(drop, fmt.Sprintf("-A %s -s %s/32 -j DROP", DropChain, address))
+	}
+	knock := []string{"-A " + KnockChain + " -p icmp -j RETURN"}
+	for _, open := range []struct {
+		protocol string
+		ports    []int
+	}{{"tcp", tcp}, {"udp", udp}} {
+		for chunk := range slices.Chunk(open.ports, multiports) {
+			numbers := make([]string, len(chunk))
+			for index, port := range chunk {
+				numbers[index] = strconv.Itoa(port)
+			}
+			knock = append(knock, fmt.Sprintf("-A %s -p %s -m multiport --dports %s -j RETURN", KnockChain, open.protocol, strings.Join(numbers, ",")))
+		}
+	}
+	return drop, append(knock, "-A "+KnockChain+fmt.Sprintf(logRule, KnockPrefix))
 }
 
 func Rules(own string, members []Member, stacks []StackRules) ([]string, []string) {
@@ -140,7 +173,7 @@ func Rules(own string, members []Member, stacks []StackRules) ([]string, []strin
 					serve = append(serve, fmt.Sprintf("-A %s -s %s/32 %s -j RETURN", ServeChain, address, match))
 				}
 			}
-			serve = append(serve, fmt.Sprintf("-A %s %s -m comment --comment kry-serve:%s -j DROP", ServeChain, match, stack.Project))
+			serve = append(serve, fmt.Sprintf("-A %s %s"+logRule, ServeChain, match, KnockPrefix), fmt.Sprintf("-A %s %s -m comment --comment kry-serve:%s -j DROP", ServeChain, match, stack.Project))
 		}
 		for _, bridge := range stack.Bridges {
 			for _, place := range stack.Reaches {
@@ -150,16 +183,19 @@ func Rules(own string, members []Member, stacks []StackRules) ([]string, []strin
 			}
 		}
 		for _, bridge := range stack.Bridges {
-			reach = append(reach, fmt.Sprintf("-A %s -i %s -m comment --comment kry-reach:%s -j DROP", ReachChain, bridge, stack.Project))
+			reach = append(reach, fmt.Sprintf("-A %s -i %s"+logRule, ReachChain, bridge, ReachPrefix), fmt.Sprintf("-A %s -i %s -m comment --comment kry-reach:%s -j DROP", ReachChain, bridge, stack.Project))
 		}
 	}
 	return serve, append(reach, "-A "+ReachChain+" -j DROP")
 }
 
-func Restore(serve, reach []string) string {
+func Restore(serve, reach, drop, knock []string) string {
 	var text strings.Builder
-	text.WriteString("*filter\n:" + ServeChain + " - [0:0]\n:" + ReachChain + " - [0:0]\n")
-	for _, line := range append(slices.Clone(serve), reach...) {
+	text.WriteString("*filter\n")
+	for _, chain := range []string{ServeChain, ReachChain, DropChain, KnockChain} {
+		text.WriteString(":" + chain + " - [0:0]\n")
+	}
+	for _, line := range slices.Concat(serve, reach, drop, knock) {
 		text.WriteString(line + "\n")
 	}
 	text.WriteString("COMMIT\n")

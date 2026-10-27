@@ -119,7 +119,7 @@ func TestLeavingPutsAServedStackBackOnTheServerOnly(t *testing.T) {
 	executor.Root = t.TempDir()
 	run.calls = nil
 	run.respond["iptables -S KRY-SERVE"] = "-N KRY-SERVE\n"
-	left := executor.leaveNetwork(context.Background(), Request{ID: idC}, onNetwork, executor.readNetwork())
+	left := executor.leaveNetwork(context.Background(), Request{ID: idC}, onNetwork, "", executor.readNetwork())
 	if !left.OK {
 		t.Fatalf("leave %#v calls %q", left, run.calls)
 	}

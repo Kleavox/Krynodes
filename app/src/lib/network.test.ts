@@ -1,8 +1,9 @@
-import type {
-  NetworkDocument,
-  NetworkInspect,
-  NetworkTest,
-  StackNetwork,
+import {
+  NETWORK,
+  type NetworkDocument,
+  type NetworkInspect,
+  type NetworkTest,
+  type StackNetwork,
 } from "@krynodes/protocol";
 import { describe, expect, it } from "vitest";
 
@@ -23,6 +24,7 @@ import {
   firewallRow,
   fixLabel,
   moveBlock,
+  moveProblem,
   networkHint,
   opensBox,
   parsePlaces,
@@ -67,6 +69,8 @@ import {
   testRows,
   testingText,
   type TestEnd,
+  baseOf,
+  wrongPortRows,
 } from "./network";
 import { b64url } from "./passkeys";
 import { openSealed, sealPair } from "./seal";
@@ -133,6 +137,9 @@ function view(extra: Partial<NetworkView> = {}): NetworkView {
     },
     version: 4,
     document: null,
+    body: null,
+    quarantined: [],
+    wrongPorts: [],
     members: [vps1, vps2, vps3, pivox],
     waiting: [],
     links: [
@@ -244,6 +251,64 @@ describe("the Network page", () => {
     });
     expect(problemRows(both, online, NOW)).toEqual([]);
     expect(serverRow(pivox, both, online, NOW).links).toBe("Links 1 of 1");
+  });
+
+  it("counts no link to a quarantined member, which is cut off on purpose", () => {
+    const cut = view({
+      quarantined: [C],
+      links: [
+        { a: A, b: B, answering: true, since: "2026-10-26T10:00:00Z" },
+        { a: A, b: C, answering: false, since: "2026-10-26T11:54:00Z" },
+        { a: B, b: C, answering: false, since: "2026-10-26T11:54:00Z" },
+      ],
+    });
+    expect(problemRows(cut, presence, NOW)).toEqual([]);
+    expect(serverRow(vps2, cut, presence, NOW)).toMatchObject({
+      links: "Links 1 of 1",
+      short: false,
+    });
+    expect(serverRow(vps3, cut, presence, NOW)).toMatchObject({
+      links: "Cut off",
+      short: false,
+    });
+    expect(peerRows(vps3, cut, presence, NOW)).toEqual([]);
+    expect(peerRows(vps2, cut, presence, NOW).map((row) => row.nodeId)).toEqual(
+      [A, D],
+    );
+  });
+
+  it("names a wrong port knocked again and again as a setting mistake", () => {
+    const knocked = view({
+      wrongPorts: [
+        {
+          nodeId: B,
+          from: "10.88.0.1",
+          target: "10.88.0.2:5433/tcp",
+          at: "2026-10-26T11:58:00Z",
+        },
+        {
+          nodeId: C,
+          from: "10.88.0.9",
+          target: "10.88.0.3:53/udp",
+          at: "2026-10-26T11:50:00Z",
+        },
+      ],
+    });
+    expect(wrongPortRows(knocked)).toEqual([
+      {
+        nodeId: B,
+        text: "vps-1 keeps knocking on vps-2:5433, and nothing serves it there",
+        detail:
+          "A setting on vps-1 points at a port vps-2 does not give it. Nothing was cut off.",
+      },
+      {
+        nodeId: C,
+        text: "10.88.0.9 keeps knocking on vps-3:53/udp, and nothing serves it there",
+        detail:
+          "A setting on 10.88.0.9 points at a port vps-3 does not give it. Nothing was cut off.",
+      },
+    ]);
+    expect(navNetworkCount(knocked, presence, NOW)).toBe(1);
   });
 
   it("shows This Network and each held address", () => {
@@ -1281,6 +1346,81 @@ describe("the network document", () => {
     );
   });
 
+  it("builds on the body it hashed, names it as the parent and keeps quarantined members cut", async () => {
+    const { keys } = await ends([A, B]);
+    const start = await buildDocument(
+      null,
+      {
+        kind: "create",
+        range: "10.88.0.0/24",
+        port: 51820,
+        mtu: 1420,
+        join: [joiner(vps1), joiner(vps2)],
+      },
+      keys,
+    );
+    expect(start.parent).toBeUndefined();
+    const bytes = new TextEncoder().encode(JSON.stringify(start));
+    const base = await baseOf(
+      view({
+        document: { ...start, members: [] },
+        body: b64url(bytes),
+        quarantined: [B],
+      }),
+    );
+    expect(base!.parent).toBe(
+      b64url(await crypto.subtle.digest("SHA-256", bytes)),
+    );
+    expect(
+      base!.document.members.map((entry) => [entry.node, entry.cut]),
+    ).toEqual([
+      [A, undefined],
+      [B, true],
+    ]);
+    const next = await buildDocument(
+      base!.document,
+      { kind: "again" },
+      keys,
+      base!.parent,
+    );
+    expect(next.parent).toBe(base!.parent);
+    expect(next.members[1]!.cut).toBe(true);
+    expect(await baseOf(view())).toBeNull();
+  });
+
+  it("releases a cut member with its new keys and keeps the old one blocked", async () => {
+    const { keys } = await ends([A, B]);
+    const start = await buildDocument(
+      null,
+      {
+        kind: "create",
+        range: "10.88.0.0/24",
+        port: 51820,
+        mtu: 1420,
+        join: [joiner(vps1), joiner(vps2)],
+      },
+      keys,
+    );
+    const cut = {
+      ...start,
+      members: [
+        start.members[0]!,
+        { ...start.members[1]!, cut: true as const },
+      ],
+    };
+    const released = await buildDocument(
+      cut,
+      { kind: "release", nodeId: B, key: key(212), signer: key(213) },
+      keys,
+    );
+    expect(released.members[1]).toMatchObject({
+      key: key(212),
+      signer: key(213),
+    });
+    expect(released.members[1]!.cut).toBeUndefined();
+    expect(released.blocked).toEqual([vps2.key]);
+  });
+
   it("renames one member and changes nothing else", async () => {
     const { keys } = await ends([A, B]);
     const start = await buildDocument(
@@ -1764,6 +1904,53 @@ describe("stacks on the private network", () => {
         [shop],
       ),
     ).toBeNull();
+  });
+
+  it("leaves the server it moves to out of who may reach it", () => {
+    const cache = {
+      project: "cache",
+      network: {
+        serves: [
+          { port: "6379/tcp", to: [A, C] },
+          { port: "9090/tcp", to: [A] },
+        ],
+        reaches: [],
+        private: ["6379/tcp", "9090/tcp"],
+      },
+    };
+    expect(
+      moveBlock(
+        cache,
+        { nodeId: B, name: "vps-2" },
+        { nodeId: A, name: "vps-1" },
+        view(),
+        [],
+      ),
+    ).toMatchObject({
+      lines: ["On vps-1, cache serves 6379/tcp to vps-3 only, as it does now."],
+      serves: [{ port: "6379/tcp", to: [C] }],
+    });
+  });
+
+  it("says when a move would change more stacks than one move may", () => {
+    const change = (index: number) => ({
+      nodeId: C,
+      project: `shop-${index}`,
+      text: "",
+      reaches: [],
+    });
+    expect(
+      moveProblem(
+        Array.from({ length: NETWORK.moveReaches }, (_, at) => change(at)),
+      ),
+    ).toBeNull();
+    expect(
+      moveProblem(
+        Array.from({ length: NETWORK.moveReaches + 1 }, (_, at) => change(at)),
+      ),
+    ).toBe(
+      "One move changes at most 8 other stacks. Untick some and change them after the move.",
+    );
   });
 
   it("names each server's stacks from the server list", () => {

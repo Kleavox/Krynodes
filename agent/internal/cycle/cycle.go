@@ -31,6 +31,8 @@ type Actions interface {
 	Refresh() error
 	NetworkBeat() *reporter.NetworkBeat
 	NetworkReply(*reporter.NetworkReply) error
+	Report(*reporter.Heartbeat)
+	Answer(reporter.HeartbeatResponse) error
 }
 
 type implementation struct {
@@ -67,6 +69,7 @@ func (cycle *implementation) Execute(ctx context.Context, nodeID string) (int, e
 	}
 	if cycle.actions != nil {
 		beat.Network = cycle.actions.NetworkBeat()
+		cycle.actions.Report(&beat)
 	}
 	interval := 0
 	if cycle.config != nil {
@@ -103,6 +106,9 @@ func (cycle *implementation) Execute(ctx context.Context, nodeID string) (int, e
 		}
 		if err := cycle.actions.NetworkReply(response.Network); err != nil {
 			return 0, fmt.Errorf("queue private network changes: %w", err)
+		}
+		if err := cycle.actions.Answer(response); err != nil {
+			return 0, fmt.Errorf("keep what the dashboard heard: %w", err)
 		}
 	}
 	if response.IntervalSeconds > 0 {

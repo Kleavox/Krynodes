@@ -238,12 +238,27 @@ async function authenticateAgent(
 ): Promise<AgentNode | null> {
   const token = readBearerToken(context.req.header("authorization"));
   if (!token) return null;
-  return context.env.DB.prepare(
-    `SELECT id, owner_user_id, interval_seconds
-     FROM nodes
-     WHERE agent_token_hash = ? AND enrolled_at IS NOT NULL
-       AND disabled_at IS NULL LIMIT 1`,
-  )
-    .bind(await sha256(token))
+  const db = context.env.DB;
+  const hash = await sha256(token);
+  const node = await db
+    .prepare(
+      `SELECT id, owner_user_id, interval_seconds
+       FROM nodes
+       WHERE agent_token_hash = ? AND enrolled_at IS NOT NULL
+         AND disabled_at IS NULL LIMIT 1`,
+    )
+    .bind(hash)
     .first<AgentNode>();
+  if (node) return node;
+  const released = await db
+    .prepare(
+      `UPDATE nodes SET agent_token_hash = ?1, release = NULL
+       WHERE json_extract(release, '$.released') = 1
+         AND json_extract(release, '$.token') = ?1
+         AND enrolled_at IS NOT NULL AND disabled_at IS NULL
+       RETURNING id, owner_user_id, interval_seconds`,
+    )
+    .bind(hash)
+    .first<AgentNode>();
+  return released ?? null;
 }

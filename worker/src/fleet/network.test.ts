@@ -23,6 +23,36 @@ const SIGNED = {
   signature: "c2lnbmF0dXJl",
 };
 
+const signedOf = (version: number, nodes: string[]) => ({
+  ...SIGNED,
+  document: Buffer.from(
+    JSON.stringify({
+      v: 1,
+      version,
+      range: "10.88.0.0/24",
+      port: 51820,
+      mtu: 1420,
+      members: nodes.map((node, index) => ({
+        node,
+        name: `vps-${index + 1}`,
+        address: `10.88.0.${index + 1}`,
+        key: key(index + 1),
+        signer: key(index + 101),
+        port: 51820,
+        mtu: null,
+        endpoint: null,
+        nat: false,
+        psk: Object.fromEntries(
+          nodes
+            .filter((other) => other !== node)
+            .map((other) => [other, "c2VhbGVk"]),
+        ),
+      })),
+      blocked: [],
+    }),
+  ).toString("base64url"),
+});
+
 const beat = (nodeId: string, network: NetworkBeat): AgentHeartbeat => ({
   nodeId,
   hostname: nodeId.slice(0, 4),
@@ -51,6 +81,24 @@ const link = (peer: number, ago: number | null) => ({
   endpoint: null,
   ms: ago === null ? null : 4,
 });
+
+function keep(
+  sqlite: ReturnType<typeof createTestDb>["sqlite"],
+  history: ReturnType<typeof signedOf>[],
+) {
+  for (const [index, signed] of history.entries()) {
+    sqlite
+      .prepare(
+        "INSERT INTO network_documents (owner_user_id, version, document) VALUES ('standalone', ?, ?)",
+      )
+      .run(index + 1, JSON.stringify(signed));
+  }
+  sqlite
+    .prepare(
+      "UPDATE network SET version = ?, document = ? WHERE owner_user_id = 'standalone'",
+    )
+    .run(history.length, JSON.stringify(history.at(-1)));
+}
 
 function setup() {
   const { db, sqlite } = createTestDb();
@@ -98,6 +146,33 @@ describe("the network on the heartbeat", () => {
     expect(
       (await send(ws, A, { version: 2, key: key(1), links: [] }))?.document,
     ).toBeUndefined();
+  });
+
+  it("walks a lagging member one version at a time", async () => {
+    const { connect, send, sqlite } = setup();
+    const history = [
+      signedOf(1, [A, B]),
+      signedOf(2, [A, B]),
+      signedOf(3, [A, B]),
+    ];
+    keep(sqlite, history);
+    const ws = await connect(A);
+    expect(
+      (await send(ws, A, { version: 1, key: key(1), links: [] }))?.document,
+    ).toEqual(history[1]);
+    expect(
+      (await send(ws, A, { version: 2, key: key(1), links: [] }))?.document,
+    ).toEqual(history[2]);
+  });
+
+  it("gives the latest to a server that was not a member of the version it reports", async () => {
+    const { connect, send, sqlite } = setup();
+    const history = [signedOf(1, [B]), signedOf(2, [B]), signedOf(3, [A, B])];
+    keep(sqlite, history);
+    const ws = await connect(A);
+    expect(
+      (await send(ws, A, { version: 1, key: key(1), links: [] }))?.document,
+    ).toEqual(history[2]);
   });
 
   it("writes a pair's state once each time it flips", async () => {

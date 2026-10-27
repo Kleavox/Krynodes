@@ -213,10 +213,12 @@ export function MachineTiles({
   node,
   range,
   onRange,
+  reported = false,
 }: {
   node: NodeRecord;
   range: MetricRange;
   onRange: (range: MetricRange) => void;
+  reported?: boolean;
 }) {
   const query = useNodeMetrics(node.id, range);
   const [open, setOpen] = useState<TileId | null>(null);
@@ -228,7 +230,7 @@ export function MachineTiles({
           id="node-machine"
           className="text-xs font-medium text-muted-foreground"
         >
-          Machine
+          Machine{reported && " · reported by the server itself"}
         </h2>
         <span className="ml-auto">
           <RangeChips range={range} onRange={onRange} />

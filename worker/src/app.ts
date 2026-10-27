@@ -22,6 +22,7 @@ import { registerOperationRoutes } from "./routes/operations";
 import { registerNetworkRoutes } from "./routes/network";
 import { registerPackageRoutes } from "./routes/packages";
 import { registerSettingRoutes } from "./routes/settings";
+import { registerQuarantineRoutes } from "./quarantine/routes";
 import { registerUsageRoutes } from "./usage/usage";
 import type { KrynodesEnv } from "./routes/shared";
 
@@ -122,6 +123,7 @@ registerDeviceRoutes(app, requireOperator);
 registerProposalRoutes(app, requireOperator);
 registerUsageRoutes(app, requireOperator);
 registerSettingRoutes(app, requireOperator);
+registerQuarantineRoutes(app, requireOperator);
 registerAgentRoutes(app);
 
 app.all("/api/*", (context) =>

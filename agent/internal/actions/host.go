@@ -105,7 +105,18 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		return Result{ID: request.ID, OK: true, Output: "Krynodes leaves this server in 30 seconds; its apps keep running", FinishedAt: e.stamp()}, false
 	case request.Name == "reboot-window" && (request.Action == "apply" || request.Action == "undo"):
 		return e.rebootSetting(request), false
-	case (server && (request.Action == "lockdown" || request.Action == "unlock")) ||
+	case server && request.Action == "accept":
+		return e.accept(request), false
+	case request.Name == "tailscale" && request.Action == "block":
+		return e.blockTailnet(ctx, request), false
+	case request.Name == "tailscale" && request.Action == "unblock":
+		return e.unblockTailnet(ctx, request), false
+	case server && request.Action == "lockdown":
+		if err := writeJSON(filepath.Join(e.StateDir, "host"), request.ID+".json", request, 0o600); err != nil {
+			return e.failed(request, err, ""), false
+		}
+		return Result{}, true
+	case (server && (request.Action == "unlock" || request.Action == "release")) ||
 		(request.Name == "docker" && request.Action == "install") ||
 		(request.Name == "tailscale" && request.Action == "signin") ||
 		(!server && slices.Contains(Recipes, request.Name) && (request.Action == "apply" || request.Action == "undo")):
@@ -211,6 +222,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 	}
 	if processed {
 		os.Remove(filepath.Join(e.StateDir, "security.json"))
+		e.retake(ctx, false)
 	}
 	return nil
 }
@@ -224,6 +236,9 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 	}
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
+	}
+	if request.Name == "server" && request.Action == "lockdown" {
+		return e.lockdown(ctx, request, e.recipeEnv())
 	}
 	command, err := e.authorize(request)
 	if err != nil {
@@ -288,8 +303,8 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 			}
 		}
 		return Result{ID: request.ID, OK: true, Output: result.Message, FinishedAt: e.stamp()}
-	case "lockdown":
-		return e.lockdown(ctx, request, env)
+	case "release":
+		return e.release(ctx, request, command)
 	case "unlock":
 		return e.unlock(ctx, request, env)
 	case "signin":

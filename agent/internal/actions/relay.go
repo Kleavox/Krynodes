@@ -25,6 +25,11 @@ const (
 	reportBudget  = 512 << 10
 	maxProgress   = 10
 	progressGap   = 5 * time.Second
+
+	ackedFile       = "acked.json"
+	reportsFile     = "reports"
+	quarantinedFile = "quarantined"
+	releaseFile     = "release.json"
 )
 
 type sentStep struct {
@@ -42,6 +47,8 @@ type Relay struct {
 	NodeID     string
 	Server     Poster
 	Now        func() time.Time
+	Dir        string
+	Boot       func() string
 
 	mu        sync.Mutex
 	acked     string
@@ -269,6 +276,65 @@ func fitted(result Result) Result {
 		return result
 	}
 	return Result{ID: result.ID, OK: false, Output: fmt.Sprintf("the result was %d KB, larger than the 64 KB a report can carry", len(result.Output)>>10), FinishedAt: result.FinishedAt}
+}
+
+func (r *Relay) Report(beat *reporter.Heartbeat) {
+	if r.Boot != nil && r.Dir != "" {
+		if id := strings.TrimSpace(r.Boot()); id != "" && len(id) <= 64 {
+			var count int64
+			readJSON(filepath.Join(r.Dir, reportsFile), &count)
+			if err := writeJSON(r.Dir, reportsFile, count+1, 0o640); err == nil {
+				beat.Boot = &reporter.Boot{ID: id, Count: count + 1}
+			} else {
+				r.note(err)
+			}
+		}
+	}
+	var log eventLog
+	readJSON(filepath.Join(r.StateDir, eventsFile), &log)
+	var acked []string
+	readJSON(filepath.Join(r.Dir, ackedFile), &acked)
+	for _, event := range log.Events {
+		if !slices.Contains(acked, event.ID) && len(beat.Events) < eventsMax {
+			beat.Events = append(beat.Events, event)
+		}
+	}
+	var release reporter.Release
+	if readJSON(filepath.Join(r.StateDir, releaseFile), &release) == nil {
+		if expires, err := time.Parse(time.RFC3339, release.Expires); err == nil && r.Now().Before(expires) {
+			beat.Release = &release
+		}
+	}
+}
+
+func (r *Relay) Answer(response reporter.HeartbeatResponse) error {
+	if r.Dir == "" {
+		return nil
+	}
+	mark := filepath.Join(r.Dir, quarantinedFile)
+	if _, err := os.Stat(mark); response.Quarantined && errors.Is(err, os.ErrNotExist) {
+		if err := writeWhole(r.Dir, quarantinedFile, nil, 0o640); err != nil {
+			return err
+		}
+	} else if !response.Quarantined && err == nil {
+		if err := os.Remove(mark); err != nil {
+			return err
+		}
+	}
+	if len(response.Acked) == 0 {
+		return nil
+	}
+	var log eventLog
+	readJSON(filepath.Join(r.StateDir, eventsFile), &log)
+	var acked []string
+	readJSON(filepath.Join(r.Dir, ackedFile), &acked)
+	kept := []string{}
+	for _, event := range log.Events {
+		if slices.Contains(acked, event.ID) || slices.Contains(response.Acked, event.ID) {
+			kept = append(kept, event.ID)
+		}
+	}
+	return writeJSON(r.Dir, ackedFile, kept, 0o640)
 }
 
 func (r *Relay) Watch(ctx context.Context, every time.Duration) {

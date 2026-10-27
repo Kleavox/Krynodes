@@ -7,6 +7,7 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import { createBatch, sweepStatements } from "../actions/store";
+import { quarantineRefusal } from "../quarantine/quarantine";
 import { pokeSoon } from "../fleet/client";
 import { fromB64url } from "../lib/b64url";
 import { notYours } from "../trust/approval";
@@ -299,6 +300,8 @@ export function registerDeviceRoutes(
         );
       }
     }
+    const held = await quarantineRefusal(db, nodeIds, "trust");
+    if (held) return context.json(held, 409);
     const batch = createBatch(db, {
       action: "trust",
       mode: "parallel",

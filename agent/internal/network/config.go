@@ -40,7 +40,7 @@ func Render(document Document, self Member, private string, psk map[string]strin
 		fmt.Fprintf(&config, "PostUp = iptables -w "+clamp+"\nPostDown = iptables -w "+clamp+"\n", "-A", "-D")
 	}
 	for _, peer := range document.Members {
-		if peer.Node == self.Node {
+		if peer.Node == self.Node || peer.Cut {
 			continue
 		}
 		fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s/32\n", peer.Key, psk[peer.Node], peer.Address)

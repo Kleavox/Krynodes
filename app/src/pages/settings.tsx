@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 const SECTIONS = [
   { path: "cloudflare", label: "Cloudflare" },
   { path: "private-addresses", label: "Private Addresses" },
+  { path: "quarantine", label: "Quarantine" },
   { path: "enroll", label: "Enroll Defaults" },
   { path: "usage", label: "Usage" },
 ];

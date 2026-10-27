@@ -10,6 +10,7 @@ import { z } from "zod";
 import { fleetLinks, pokeSoon } from "../fleet/client";
 import { assertionUv } from "../lib/webauthn";
 import { nextAddresses, type AddressRow } from "../network/addresses";
+import { quarantinedNodes } from "../quarantine/quarantine";
 import {
   documentIn,
   liveRange,
@@ -114,8 +115,8 @@ export function registerNetworkRoutes(
   app.get("/api/network", requireOperator, async (context) => {
     const db = context.env.DB;
     const owner = context.get("identity").id;
-    const [row, members, addresses, links, changes, stored] = await Promise.all(
-      [
+    const [row, members, addresses, links, changes, stored, held, wrong] =
+      await Promise.all([
         readNetwork(db, owner),
         membersOf(db, owner),
         addressesOf(db, owner),
@@ -148,8 +149,23 @@ export function registerNetworkRoutes(
           )
           .bind(owner)
           .all<{ node_id: string; links: string }>(),
-      ],
-    );
+        db
+          .prepare(
+            `SELECT q.node_id FROM quarantines q JOIN nodes n ON n.id = q.node_id
+             WHERE n.owner_user_id = ? AND q.released_at IS NULL ORDER BY q.at`,
+          )
+          .bind(owner)
+          .all<{ node_id: string }>(),
+        db
+          .prepare(
+            `SELECT w.node_id, w.detail, MAX(w.at) AS at FROM warnings w
+             JOIN nodes n ON n.id = w.node_id
+             WHERE n.owner_user_id = ? AND w.kind = 'wrong-port' AND w.at >= ?
+             GROUP BY w.node_id, w.detail ORDER BY at DESC`,
+          )
+          .bind(owner, new Date(Date.now() - 86_400_000).toISOString())
+          .all<{ node_id: string; detail: string; at: string }>(),
+      ]);
     const live: Record<string, { at: number; links: unknown[] }> = {};
     for (const entry of stored.results) {
       try {
@@ -180,6 +196,19 @@ export function registerNetworkRoutes(
           : null,
       version: row?.version ?? 0,
       document: row ? (storedDocument(row.document)?.document ?? null) : null,
+      body: row
+        ? (storedDocument(row.document)?.signed.document ?? null)
+        : null,
+      quarantined: held.results.map((entry) => entry.node_id),
+      wrongPorts: wrong.results.map((entry) => {
+        const detail = JSON.parse(entry.detail) as Record<string, string>;
+        return {
+          nodeId: entry.node_id,
+          from: detail.from ?? null,
+          target: detail.target ?? null,
+          at: entry.at,
+        };
+      }),
       members: members.results
         .filter((member) => member.state !== "waiting")
         .map((member) => ({
@@ -441,9 +470,24 @@ export function registerNetworkRoutes(
     const leaving = [...inside.values()].filter(
       (member) => !kept.has(member.node_id),
     );
+    const held = await quarantinedNodes(
+      db,
+      document.members.map((member) => member.node),
+    );
+    const loose = document.members.find(
+      (member) => held.has(member.node) && !member.cut,
+    );
+    if (loose) {
+      return refusal(
+        context,
+        422,
+        "QUARANTINED",
+        `${held.get(loose.node)} is quarantined. Keep it cut off until you release it.`,
+      );
+    }
     const blockedKeys = new Set(blocked.results.map((entry) => entry.key));
-    const reused = document.members.find((member) =>
-      blockedKeys.has(member.key),
+    const reused = document.members.find(
+      (member) => !member.cut && blockedKeys.has(member.key),
     );
     if (reused) {
       return refusal(
@@ -507,6 +551,13 @@ export function registerNetworkRoutes(
               at,
             ),
     ];
+    statements.push(
+      db
+        .prepare(
+          "INSERT INTO network_documents (owner_user_id, version, document) VALUES (?, ?, ?)",
+        )
+        .bind(owner, document.version, JSON.stringify(signed)),
+    );
     if (creating || document.deleted) {
       statements.push(
         db

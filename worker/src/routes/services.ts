@@ -30,6 +30,7 @@ import {
 import { decodeJson, toB64url } from "../lib/b64url";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
 import { liveRange, readNetwork } from "../network/document";
+import { quarantineRefusal } from "../quarantine/quarantine";
 import { networkMember } from "./admin";
 import { readPrivateRanges } from "./settings";
 import { ownersRefusal } from "../trust/approval";
@@ -83,6 +84,7 @@ const actionRequestSchema = z.object({
     "prepare",
     "unprepare",
     "rekey",
+    "unblock",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -551,6 +553,12 @@ export function registerServiceRoutes(
 
     const db = context.env.DB;
     const identity = context.get("identity");
+    const held = await quarantineRefusal(
+      db,
+      targets.map((target) => target.nodeId),
+      action,
+    );
+    if (held) return context.json(held, 409);
     if (!unsigned) {
       const refused = await ownersRefusal(
         context.env,
@@ -686,7 +694,7 @@ export function registerServiceRoutes(
              AND action NOT IN (SELECT value FROM json_each(?2))
              AND node_id IN (SELECT value FROM json_each(?1))`,
         )
-        .bind(nodeIds, JSON.stringify([...READ_ONLY]))
+        .bind(nodeIds, JSON.stringify([...READ_ONLY, "block"]))
         .all<{ nodeId: string; kind: string; name: string }>(),
     ]);
 
@@ -753,7 +761,9 @@ export function registerServiceRoutes(
             ...(node.docker === "missing" || node.docker === "no-compose"
               ? ["docker"]
               : []),
-            ...(node.tailscale === null ? [] : ["tailscale"]),
+            ...(node.tailscale === null && action !== "unblock"
+              ? []
+              : ["tailscale"]),
           ].map((name) => targetKey({ nodeId: node.id, kind: "host", name })),
         ),
       ]);

@@ -34,6 +34,8 @@ const NODE_KEYS = [
   "updates",
   "tailscale",
   "network",
+  "quarantine",
+  "warnings",
 ];
 const CHECK_KEYS = [
   "id",

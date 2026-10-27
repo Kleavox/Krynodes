@@ -6,6 +6,8 @@ import {
   type SignedDocument,
 } from "@krynodes/protocol";
 
+import { storedDocument } from "../network/document";
+
 interface Member {
   node_id: string;
   state: "waiting" | "in" | "leaving";
@@ -47,11 +49,11 @@ export class HubNetwork {
     this.latest.set(nodeId, { at: now, links: beat.links });
     const row = await this.db
       .prepare(
-        `SELECT stamp, CASE WHEN version > ?2 THEN document END AS document
+        `SELECT stamp, version, CASE WHEN version > ?2 THEN document END AS document
          FROM network WHERE owner_user_id = ?1`,
       )
       .bind(ownerId, beat.version)
-      .first<{ stamp: string; document: string | null }>();
+      .first<{ stamp: string; version: number; document: string | null }>();
     if (!row) return { reply: null, stamp: null, poke: [] };
     const members = await this.members(ownerId, row.stamp);
     const self = members.find((member) => member.node_id === nodeId);
@@ -102,9 +104,8 @@ export class HubNetwork {
     }
     if (pairs) await this.storage.put(PAIRS, pairs);
     const reply: NetworkReply = {};
-    if (row.document) {
-      reply.document = JSON.parse(row.document) as SignedDocument;
-    }
+    const document = await this.nextFor(nodeId, ownerId, beat.version, row);
+    if (document) reply.document = JSON.parse(document) as SignedDocument;
     if (self?.state === "in" && sent !== row.stamp) {
       const endpoints = peers.flatMap((peer) =>
         peer.endpoint && peer.nat === 0
@@ -130,6 +131,32 @@ export class HubNetwork {
       stamp: row.stamp,
       poke,
     };
+  }
+
+  private async nextFor(
+    nodeId: string,
+    ownerId: string,
+    version: number,
+    row: { version: number; document: string | null },
+  ): Promise<string | null> {
+    if (!row.document || version === 0 || row.version <= version + 1) {
+      return row.document;
+    }
+    const steps = (
+      await this.db
+        .prepare(
+          `SELECT version, document FROM network_documents
+           WHERE owner_user_id = ? AND version IN (?, ?)`,
+        )
+        .bind(ownerId, version, version + 1)
+        .all<{ version: number; document: string }>()
+    ).results;
+    const applied = steps.find((step) => step.version === version);
+    const next = steps.find((step) => step.version === version + 1);
+    const member = storedDocument(
+      applied?.document ?? "",
+    )?.document.members.some((entry) => entry.node === nodeId);
+    return next && member ? next.document : row.document;
   }
 
   private async members(ownerId: string, stamp: string): Promise<Member[]> {

@@ -18,6 +18,8 @@ export const queryKeys = {
   services: ["services"],
   privateRanges: ["settings", "private-ranges"],
   enrollDefaults: ["settings", "enroll-defaults"],
+  quarantineSettings: ["settings", "quarantine"],
+  quarantine: (id: string) => ["quarantine", id],
   nodeActions: (id: string) => ["actions", "node", id],
   action: (id: string | null) => ["actions", "one", id],
   history: (path: string) => ["actions", "history", path],

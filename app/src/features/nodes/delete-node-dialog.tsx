@@ -29,10 +29,12 @@ import {
   useDevices,
   useNetwork,
   useOverview,
+  useQuarantine,
   useServices,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import { leaveParagraph, networkText } from "@/lib/network";
+import { planWithout, tailnetBlock } from "@/lib/quarantine";
 import {
   pieceOf,
   planRemoval,
@@ -62,6 +64,11 @@ export function DeleteNodeDialog({
   const keys = useNetworkKeys(network?.members ?? []);
   const operate = useSignedOperation(false);
   const run = useSignedAction(false);
+  const unblock = useSignedAction(false);
+  const quarantined = !!node.quarantine;
+  const record = useQuarantine(node.id, quarantined).data?.quarantine;
+  const block = quarantined ? tailnetBlock(record, node.name) : null;
+  const planFor = quarantined ? planWithout : planRemoval;
   const devices = useDevices();
   const services = useServices();
   const overview = useOverview();
@@ -82,11 +89,12 @@ export function DeleteNodeDialog({
       nodesFor(null).find((item) => item.id === node.id),
       setId,
     ) !== null;
-  const plan = planRemoval(nodesFor(null), node.id, setId, addresses);
+  const plan = planFor(nodesFor(null), node.id, setId, addresses);
   const holds = !plan.ok || plan.needed;
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
   const offer =
+    !quarantined &&
     plan.ok &&
     removalReady(node, trust, devices.data?.devices ?? [], Date.now());
   const leaving = offer && !keepAgent;
@@ -100,6 +108,7 @@ export function DeleteNodeDialog({
       leave.reset();
       operate.reset();
       run.reset();
+      unblock.reset();
       setKeepAgent(false);
     }
     onOpenChange(next);
@@ -110,7 +119,7 @@ export function DeleteNodeDialog({
     );
     close(false);
   };
-  const first = (then: () => void) =>
+  const leaveThen = (then: () => void) =>
     member
       ? leave.mutate(
           {
@@ -121,6 +130,21 @@ export function DeleteNodeDialog({
           { onSuccess: then },
         )
       : then();
+  const first = (then: () => void) =>
+    block
+      ? unblock.mutate(
+          {
+            action: "unblock",
+            targets: block.nodeIds.map((nodeId) => ({
+              nodeId,
+              kind: "host" as const,
+              name: "tailscale",
+              args: { addresses: block.addresses },
+            })),
+          },
+          { onSuccess: () => leaveThen(then) },
+        )
+      : leaveThen(then);
   const deleteNow = () =>
     remove.mutate(node.id, {
       onSuccess: () => {
@@ -147,7 +171,7 @@ export function DeleteNodeDialog({
         deleteNode: node.id,
         build: (fingerprint) => {
           const all = nodesFor(fingerprint);
-          const chosen = planRemoval(all, node.id, setId, addresses);
+          const chosen = planFor(all, node.id, setId, addresses);
           if (!chosen.ok) throw new Error(chosen.reason);
           if (!chosen.needed || !setId) throw new Error("Nothing to spread.");
           const gone = all.find((item) => item.id === node.id);
@@ -184,8 +208,13 @@ export function DeleteNodeDialog({
     );
 
   const busy =
-    leave.isPending || operate.isPending || run.isPending || remove.isPending;
-  const error = leave.error ?? remove.error ?? operate.error ?? run.error;
+    leave.isPending ||
+    operate.isPending ||
+    run.isPending ||
+    unblock.isPending ||
+    remove.isPending;
+  const error =
+    unblock.error ?? leave.error ?? remove.error ?? operate.error ?? run.error;
 
   return (
     <AlertDialog open={open} onOpenChange={close}>
@@ -211,6 +240,19 @@ export function DeleteNodeDialog({
               </p>
               {member && network && (
                 <p>{leaveParagraph(member, network, !leaving)}</p>
+              )}
+              {block && (
+                <p>
+                  {block.text}{" "}
+                  <a
+                    href={block.console}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-4"
+                  >
+                    Admin Console ↗
+                  </a>
+                </p>
               )}
               {holds && plan.ok && (
                 <p>

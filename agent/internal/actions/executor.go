@@ -52,6 +52,7 @@ type Executor struct {
 	Free       func(string) (uint64, error)
 	Root       string
 	Audit      bool
+	ConfigPath string
 
 	CloudflareBase string
 	CloudflareHTTP *http.Client

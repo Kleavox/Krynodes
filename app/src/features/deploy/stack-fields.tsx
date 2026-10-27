@@ -11,7 +11,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useNetwork } from "@/lib/api";
-import { publishedPorts, usePrivateAddress } from "@/lib/compose";
+import {
+  publishedPorts,
+  publishedRanges,
+  usePrivateAddress,
+} from "@/lib/compose";
 import {
   inside,
   opensBox,
@@ -374,16 +378,22 @@ export function useStackNetwork(
   const view = useNetwork().data;
   const members = view ? inside(view) : [];
   const member = members.find((entry) => entry.nodeId === nodeId) ?? null;
-  const [serving, setServing] = useState<ServeRow[] | null>(null);
-  const [typed, setTyped] = useState<string | null>(null);
+  const [serving, setServing] = useState<{
+    nodeId: string;
+    rows: ServeRow[];
+  } | null>(null);
+  const [typed, setTyped] = useState<{ nodeId: string; text: string } | null>(
+    null,
+  );
   const ports = publishedPorts(text);
   const rows = ports.map(
     ({ port }) =>
-      serving?.find((row) => row.port === port) ??
-      readServes(start?.serves, [port])[0]!,
+      (serving?.nodeId === nodeId
+        ? serving.rows.find((row) => row.port === port)
+        : undefined) ?? readServes(start?.serves, [port])[0]!,
   );
   const places =
-    typed ??
+    (typed?.nodeId === nodeId ? typed.text : null) ??
     (start?.reaches ?? [])
       .map((place) => (view ? placeText(view, place) : place))
       .join(", ");
@@ -395,10 +405,11 @@ export function useStackNetwork(
     member,
     others: members.filter((entry) => entry.nodeId !== nodeId),
     ports,
+    ranges: publishedRanges(text),
     rows,
-    onRows: setServing,
+    onRows: (next: ServeRow[]) => setServing({ nodeId, rows: next }),
     places,
-    onPlaces: setTyped,
+    onPlaces: (next: string) => setTyped({ nodeId, text: next }),
     placesProblem: parsed.problem,
     servesProblem: servesProblem(rows),
     args: { serves: servesArg(rows), reaches: parsed.places.join(",") },
@@ -410,7 +421,8 @@ export function NetworkSection({
 }: {
   network: ReturnType<typeof useStackNetwork>;
 }) {
-  const { member, others, ports, rows, onRows, places, onPlaces } = network;
+  const { member, others, ports, ranges, rows, onRows, places, onPlaces } =
+    network;
   if (!member) return null;
   const update = (index: number, change: Partial<ServeRow>) =>
     onRows(rows.map((row, at) => (at === index ? { ...row, ...change } : row)));
@@ -423,10 +435,20 @@ export function NetworkSection({
           {member.name} is {member.address ?? "--"} on the private network.
         </p>
       </div>
-      {rows.length === 0 ? (
+      {ranges.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          No ports in the compose file
+          Port ranges stay on This Server Only:{" "}
+          <span className="font-mono">
+            {ranges.map((range) => range.port).join(", ")}
+          </span>
         </p>
+      )}
+      {rows.length === 0 ? (
+        ranges.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            No ports in the compose file
+          </p>
+        )
       ) : (
         <ul className="space-y-3">
           {rows.map((row, index) => (

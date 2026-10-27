@@ -1,6 +1,8 @@
 import {
   FEATURE_AGENT,
   MIN_AGENT_VERSION,
+  NETWORK,
+  QUARANTINE,
   agentHasFeatures,
   agentSupported,
   isValidTarget,
@@ -13,6 +15,7 @@ import { createBatch, sweepStatements } from "../actions/store";
 import { pokeSoon } from "../fleet/client";
 import { decodeJson } from "../lib/b64url";
 import { assertionUv } from "../lib/webauthn";
+import { quarantineRefusal } from "../quarantine/quarantine";
 import { ownersRefusal } from "../trust/approval";
 import { loadFleet } from "../trust/fleet";
 import {
@@ -125,7 +128,7 @@ function shaped(kind: string, steps: Step[]): boolean {
         first!.args.to === second!.nodeId &&
         (!removed ||
           (third!.nodeId === first!.nodeId && third!.name === first!.name)) &&
-        reaches.length <= 8 &&
+        reaches.length <= NETWORK.moveReaches &&
         reaches.every(
           (step) =>
             is(step, "compose", "reach") &&
@@ -286,6 +289,16 @@ export function registerOperationRoutes(
 
     const db = context.env.DB;
     const identity = context.get("identity");
+    const writing = steps.filter(
+      (step) =>
+        !(QUARANTINE.readVerbs as readonly string[]).includes(step.action),
+    );
+    const held = await quarantineRefusal(
+      db,
+      writing.map((step) => step.nodeId),
+      writing[0]?.action ?? "",
+    );
+    if (held) return context.json(held, 409);
     const refusal = await ownersRefusal(
       context.env,
       await loadFleet(db, identity.id),

@@ -112,7 +112,8 @@ export function ChecksPage() {
   const isDown = (check: CheckRecord) =>
     display(check) === "DOWN" && view.live(check).tone !== "work";
   const isOffline = (check: CheckRecord) =>
-    display(check) === "OFFLINE" && view.live(check).tone === "off";
+    display(check) === "UNTRUSTED" ||
+    (display(check) === "OFFLINE" && view.live(check).tone === "off");
   const isUp = (check: CheckRecord) => display(check) === "UP";
   const down = checks.filter(isDown);
   const offline = checks.filter(isOffline);

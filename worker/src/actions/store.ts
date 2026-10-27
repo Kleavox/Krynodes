@@ -70,7 +70,12 @@ export type ActionVerb =
   | "test"
   | "prepare"
   | "unprepare"
-  | "rekey";
+  | "rekey"
+  | "accept"
+  | "block"
+  | "unblock"
+  | "drop"
+  | "tighten";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -412,7 +417,20 @@ function followUp(
          WHERE batch_id = ?2 AND attach_from = ?3`,
       )
       .bind(output, action.batch_id, action.position);
-    return [attach];
+    const cleanup =
+      action.action === "reshare" ? argsOf(action).cleanup : undefined;
+    return cleanup
+      ? [
+          attach,
+          db
+            .prepare(
+              `DELETE FROM web_addresses WHERE node_id = ?1 AND node_id IN (
+                 SELECT id FROM nodes WHERE owner_user_id =
+                   (SELECT owner_user_id FROM nodes WHERE id = ?2))`,
+            )
+            .bind(cleanup, nodeId),
+        ]
+      : [attach];
   }
   if (action.action === "store") {
     const { set, holders } = argsOf(action);
@@ -488,6 +506,10 @@ function followUp(
     ];
   }
   if (action.kind !== "compose") return [];
+  const stopped = db
+    .prepare("DELETE FROM stopped_stacks WHERE node_id = ? AND project = ?")
+    .bind(nodeId, action.name);
+  if (action.action === "start") return [stopped];
   const stack = db
     .prepare("DELETE FROM stacks WHERE node_id = ? AND project = ?")
     .bind(nodeId, action.name);
@@ -503,9 +525,10 @@ function followUp(
         )
         .bind(at, nodeId, action.name),
       stack,
+      stopped,
     ];
   }
-  if (action.action === "purge") return [stack, removed];
+  if (action.action === "purge") return [stack, removed, stopped];
   if (action.action === "restore") return [removed];
   return [];
 }

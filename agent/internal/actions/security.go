@@ -313,7 +313,7 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 			wireguard = entry.Port
 		}
 	}
-	var public []reporter.Listener
+	public := []reporter.Listener{}
 	stub := false
 	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Fields(line)

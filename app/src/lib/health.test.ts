@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { CheckRecord, NodeRecord } from "../types";
-import { bySeverity, fleetSummary, nodeHealth, usageLevel } from "./health";
+import {
+  bySeverity,
+  fleetSummary,
+  nodeHealth,
+  serversTile,
+  usageLevel,
+} from "./health";
 
 const NOW = Date.parse("2026-09-28T12:00:00Z");
 const seen = (secondsAgo: number) =>
@@ -35,7 +41,7 @@ function node(extra: Partial<NodeRecord> = {}): NodeRecord {
 }
 
 function check(
-  status: "UP" | "DOWN" | "UNKNOWN",
+  status: CheckRecord["status"],
   extra: Partial<CheckRecord> = {},
 ): CheckRecord {
   return {
@@ -119,6 +125,41 @@ describe("nodeHealth", () => {
     });
   });
 
+  it("puts a quarantined server first, like an offline one, whatever it reports", () => {
+    const quarantine = { at: "2026-09-28T11:18:00Z", why: "why" };
+    expect(
+      nodeHealth(node({ quarantine, cpu_percent: 97 }), [check("DOWN")], NOW),
+    ).toEqual({
+      severity: "critical",
+      reasons: ["Quarantined · release it from the server"],
+    });
+    expect(
+      nodeHealth(node({ quarantine, last_seen_at: seen(3600) }), [], NOW),
+    ).toEqual({
+      severity: "critical",
+      reasons: ["Quarantined · release it from the server"],
+    });
+  });
+
+  it("turns a server with a warning waiting amber, with the strip's first line", () => {
+    const warning = {
+      id: "w1",
+      kind: "ssh-key",
+      detail: { user: "root", key: "ED25519 SHA256:x" },
+      at: "2026-09-28T11:04:00Z",
+      cutAt: "2026-09-28T11:19:00Z",
+    };
+    expect(
+      nodeHealth(node({ warnings: [warning] }), [check("UP")], NOW),
+    ).toEqual({
+      severity: "warning",
+      reasons: ["New SSH key for root, not added through Krynodes · 18:04"],
+    });
+    expect(
+      nodeHealth(node({ warnings: [warning] }), [check("DOWN")], NOW).severity,
+    ).toBe("critical");
+  });
+
   it("keeps pending and disabled nodes out of the alarm", () => {
     expect(nodeHealth(node({ enrolled_at: null }), [], NOW).severity).toBe(
       "idle",
@@ -162,8 +203,37 @@ describe("fleetSummary", () => {
       check("UP", { id: "c4", node_id: "n3" }),
     ];
     expect(fleetSummary(nodes, checks, NOW)).toEqual({
-      nodes: { total: 3, online: 1, offline: 1 },
+      nodes: { total: 3, online: 1, offline: 1, quarantined: 0 },
       checks: { total: 4, up: 1, down: 1, offline: 1, stale: 1 },
     });
+  });
+
+  it("counts a quarantined server apart, and its checks like an offline server's", () => {
+    const quarantine = { at: "2026-09-28T11:18:00Z", why: "why" };
+    const nodes = [
+      node(),
+      node({ id: "n2", last_seen_at: seen(3600) }),
+      node({ id: "n3", quarantine }),
+    ];
+    const checks = [
+      check("UP"),
+      check("UNTRUSTED", { id: "c2", node_id: "n3" }),
+    ];
+    const summary = fleetSummary(nodes, checks, NOW);
+    expect(summary).toEqual({
+      nodes: { total: 3, online: 1, offline: 1, quarantined: 1 },
+      checks: { total: 2, up: 1, down: 0, offline: 1, stale: 0 },
+    });
+    expect(serversTile(summary.nodes)).toEqual({
+      value: "1/3",
+      detail: "1 offline · 1 quarantined",
+      bad: true,
+    });
+    expect(
+      serversTile({ total: 7, online: 6, offline: 0, quarantined: 1 }),
+    ).toEqual({ value: "6/7", detail: "1 quarantined", bad: true });
+    expect(
+      serversTile({ total: 7, online: 7, offline: 0, quarantined: 0 }),
+    ).toEqual({ value: "7/7", detail: "None Offline", bad: false });
   });
 });

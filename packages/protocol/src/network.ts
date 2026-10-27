@@ -11,6 +11,7 @@ export const NETWORK = {
   mtuMargin: 80,
   variable: "KRY_PRIVATE_IP",
   places: 32,
+  moveReaches: 8,
 } as const;
 
 const OCTET = "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
@@ -71,6 +72,7 @@ const memberSchema = z.strictObject({
   nat: z.boolean(),
   psk: z.record(z.string().uuid(), b64url),
   rekey: z.literal(true).optional(),
+  cut: z.literal(true).optional(),
 });
 
 const distinct = (values: string[]) => new Set(values).size === values.length;
@@ -83,6 +85,16 @@ export const networkDocumentSchema = z
     port,
     mtu,
     deleted: z.literal(true).optional(),
+    parent: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{43}$/u)
+      .optional(),
+    knocks: z
+      .strictObject({
+        scan: z.union([z.literal(5), z.literal(10), z.literal(20)]),
+        stop: z.boolean(),
+      })
+      .optional(),
     members: z.array(memberSchema).max(32),
     blocked: z.array(wireguardKey).max(1000),
   })
@@ -142,6 +154,15 @@ const NETWORK_ARGS: Record<string, z.ZodType> = {
   prepare: z.strictObject({ range: z.string().regex(RANGE), port: portText }),
   unprepare: z.strictObject({}),
   rekey: z.strictObject({}),
+  drop: z.strictObject({
+    node: z.string().uuid(),
+    key: wireguardKey,
+    address: z.string().regex(POOL_HOST),
+  }),
+  tighten: z.strictObject({
+    scan: z.enum(["5", "10", "20"]),
+    stop: z.enum(["true", "false"]),
+  }),
 };
 
 export function networkArgsValid(verb: string, args: unknown): boolean {

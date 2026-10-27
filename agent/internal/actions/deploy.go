@@ -135,6 +135,15 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 			return e.refuse(request.ID, err)
 		}
 	}
+	result := e.composeVerb(ctx, request, command, stack)
+	if result.OK && slices.Contains(startVerbs, request.Action) {
+		e.unknock(ctx, stack.Project)
+		e.retake(ctx, false)
+	}
+	return result
+}
+
+func (e Executor) composeVerb(ctx context.Context, request Request, command Command, stack Stack) Result {
 	switch request.Action {
 	case "deploy":
 		return e.deploy(ctx, request, stack)

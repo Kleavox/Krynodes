@@ -867,6 +867,53 @@ Stacks on the network:
   outside the network. Checks suggests a TCP check for each place a Contained
   stack reaches; **Not now** hides it until that list changes.
 
+### Quarantine
+
+What Krynodes does on its own when a server looks broken into. It only ever
+takes access away; giving access back always asks for your fingerprint. From
+agent 0.7.0.
+
+- **A warning first.** A new SSH key, a sign-in with a key not from Krynodes, a
+  new user or sudo rule, a port opened on a public address outside Krynodes,
+  Krynodes' firewall rule removed, or an agent that goes quiet while its peers
+  still see the server: the server page shows an amber strip and a mail goes
+  out. **Cut Off Now** quarantines it at once; **It Was Me** (fingerprint)
+  takes the change as yours. Unanswered, the server is cut off after the time
+  in Settings, Quarantine (15 minutes by default, or Warn Only).
+- **A scan.** A member that knocks on more closed ports or servers in one
+  minute than **Counts as a Scan** is dropped at once by every server it
+  knocked on, and quarantined when enough servers agree. One wrong port knocked
+  again and again is a setting mistake: a row on the Network page, nothing cut
+  off.
+- **Quarantined.** Every other server drops its WireGuard key for good and,
+  when it is on your tailnet, blocks its Tailscale address; Krynodes locks it
+  down, sends it nothing, refuses every action except reading and believes
+  none of its reports (its checks show **Not Trusted**). The server page shows
+  the red card, **What Happened** to the second, and **Change These**: the
+  stacks whose secrets to change, services elsewhere that trusted it, its
+  Cloudflare token piece (**Reshare Without It**), web addresses still on its
+  tunnel (**Remove Web Addresses**) and its place on your tailnet (**Admin
+  Console ↗**). Actions keeps only Refresh Services, Release Server, Remove
+  from Network and Delete Node.
+- **Release Server.** Really broken into? Reinstall it and enroll it again. A
+  false alarm: run `sudo kry release-code` on the server, type the code it
+  shows (it works for 10 minutes) and sign. The server makes new keys
+  (WireGuard, sealing and its sign-in to Krynodes); the old ones stay blocked.
+  The same fingerprint unlocks it, lifts the Tailscale block and sends its new
+  keys to the network. The code shows you were on the server; it does not show
+  the server is clean.
+- **A Contained stack that knocks** (tries places it was not given) is stopped
+  and stays stopped after a reboot, while the server stays trusted. What Runs
+  shows what it tried, with Logs and Start; change its secrets first.
+- **Settings, Quarantine** holds the four choices. A stricter one reaches the
+  servers at once; a looser one asks for your fingerprint and travels in the
+  next signed network document.
+- Delete Node on a quarantined server first makes your servers stop blocking
+  its Tailscale address; remove it from your tailnet before.
+- Every network document names the one before it, and an agent refuses one
+  that is not built on what it applied, so the Worker cannot slip a member list
+  past the browser.
+
 ## Data retention
 
 A daily cron (03:17 UTC) keeps the database small enough for the Free plan's

@@ -11,6 +11,7 @@ import {
   heldRows,
   networkFacts,
   problemRows,
+  wrongPortRows,
   serverRow,
   waitingLine,
   type Mark,
@@ -114,35 +115,58 @@ export function ProblemsCard({
   onTest: (a: string, b: string) => void;
 }) {
   const problems = problemRows(view, presence, now);
-  if (problems.length === 0) return null;
+  const wrong = wrongPortRows(view);
+  if (problems.length === 0 && wrong.length === 0) return null;
   return (
-    <ul className={cn(card, "border-destructive/40")}>
-      {problems.map((problem) => (
-        <li
-          key={`${problem.a}-${problem.b}`}
-          className="flex items-start gap-3 px-3.5 py-3 text-sm"
-        >
-          <StatusDot tone="bad" className="mt-1.5" />
-          <span className="min-w-0 flex-1">
-            <span className="font-medium">{problem.pair}</span>{" "}
-            <span className="font-mono text-xs text-destructive">
-              {problem.text}
-            </span>
-            <span className="block text-xs text-muted-foreground">
-              {problem.detail}
-            </span>
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-9 md:h-8"
-            onClick={() => onTest(problem.a, problem.b)}
-          >
-            Test Link
-          </Button>
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-2">
+      {wrong.length > 0 && (
+        <ul className={cn(card, "border-warning/40")}>
+          {wrong.map((row) => (
+            <li
+              key={row.text}
+              className="flex items-start gap-3 px-3.5 py-3 text-sm"
+            >
+              <StatusDot tone="warn" className="mt-1.5" />
+              <span className="min-w-0 flex-1">
+                <span className="font-mono text-xs">{row.text}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {row.detail}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {problems.length > 0 && (
+        <ul className={cn(card, "border-destructive/40")}>
+          {problems.map((problem) => (
+            <li
+              key={`${problem.a}-${problem.b}`}
+              className="flex items-start gap-3 px-3.5 py-3 text-sm"
+            >
+              <StatusDot tone="bad" className="mt-1.5" />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{problem.pair}</span>{" "}
+                <span className="font-mono text-xs text-destructive">
+                  {problem.text}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {problem.detail}
+                </span>
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 md:h-8"
+                onClick={() => onTest(problem.a, problem.b)}
+              >
+                Test Link
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

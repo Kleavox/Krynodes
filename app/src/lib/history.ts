@@ -17,6 +17,7 @@ import {
 import { networkActionText } from "./network";
 import { actorOf } from "./operations";
 import { namesServer, outcomeOf, packageText } from "./packages";
+import { quarantineActionText } from "./quarantine";
 import {
   displayName,
   durationText,
@@ -205,7 +206,10 @@ export function historyText(
   stacks: Stacks = [],
   nodeName?: string,
 ): string {
-  const packages = packageText(action, nodeName) ?? networkActionText(action);
+  const packages =
+    packageText(action, nodeName) ??
+    networkActionText(action) ??
+    quarantineActionText(action);
   if (packages) return packages;
   const stack =
     action.kind === "docker" ? stackOf(stacks, action.name) : undefined;

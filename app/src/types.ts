@@ -2,6 +2,7 @@ import type {
   NetworkDocument,
   NetworkLink,
   PackagesReport,
+  PendingRelease,
   StackNetwork,
   TailscaleReport,
 } from "@krynodes/protocol";
@@ -66,6 +67,60 @@ export interface NodeRecord {
     address: string | null;
     port: number;
   } | null;
+  quarantine?: { at: string; why: string } | null;
+  warnings?: NodeWarning[];
+}
+
+export interface NodeWarning {
+  id: string;
+  kind: string;
+  detail: Record<string, string>;
+  at: string;
+  cutAt: string | null;
+}
+
+export interface QuarantineStep {
+  nodeId: string;
+  nodeName: string;
+  action: ActionVerb;
+  status: ActionStatus;
+  finishedAt: string | null;
+}
+
+export interface QuarantineRecord {
+  id: string;
+  why: string;
+  at: string;
+  releasedAt: string | null;
+  releasedBy: string | null;
+  tailnet: string[];
+  address: string | null;
+  knocks: { reporter: string; at: string; count: number }[];
+  steps: QuarantineStep[];
+}
+
+export interface StoppedStack {
+  project: string;
+  at: string;
+  tried: string[];
+  count: number;
+}
+
+export interface QuarantineView {
+  quarantine: QuarantineRecord | null;
+  release: PendingRelease | null;
+  stopped: StoppedStack[];
+  changeThese: {
+    stacks: string[];
+    vault: VaultReport | null;
+    webAddresses: { hostname: string; project: string }[];
+    trusted: {
+      nodeId: string;
+      nodeName: string;
+      project: string;
+      port: string;
+    }[];
+  };
 }
 
 interface NetworkPoint {
@@ -111,6 +166,14 @@ export interface NetworkView {
   } | null;
   version: number;
   document: NetworkDocument | null;
+  body: string | null;
+  quarantined: string[];
+  wrongPorts: {
+    nodeId: string;
+    from: string | null;
+    target: string | null;
+    at: string;
+  }[];
   members: NetworkServer[];
   waiting: {
     nodeId: string;
@@ -161,7 +224,7 @@ interface ActionStep {
 }
 
 export type CheckKind = "HTTP" | "TCP" | "SERVICE" | "CONTAINER";
-export type CheckStatus = "UNKNOWN" | "UP" | "DOWN";
+export type CheckStatus = "UNKNOWN" | "UP" | "DOWN" | "UNTRUSTED";
 
 export interface CheckRecord {
   id: string;
@@ -371,7 +434,12 @@ export type ActionVerb =
   | "test"
   | "prepare"
   | "unprepare"
-  | "rekey";
+  | "rekey"
+  | "accept"
+  | "block"
+  | "unblock"
+  | "drop"
+  | "tighten";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =

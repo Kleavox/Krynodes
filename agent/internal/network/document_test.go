@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,8 @@ func TestADocumentThatBreaksItsOwnRulesIsRefused(t *testing.T) {
 		"an unknown field":             func(document map[string]any) { document["allowedIPs"] = "0.0.0.0/0" },
 		"a member field unknown":       func(document map[string]any) { member(document, 1)["allowedIPs"] = "0.0.0.0/0" },
 		"an endpoint that is a name":   func(document map[string]any) { member(document, 0)["endpoint"] = "vps-1.example.com:51820" },
+		"a parent that is not a hash":  func(document map[string]any) { document["parent"] = "abc" },
+		"a scan outside the choices":   func(document map[string]any) { document["knocks"] = map[string]any{"scan": 7, "stop": true} },
 	}
 	for name, change := range cases {
 		if _, err := Parse(edited(t, change)); err == nil {
@@ -101,11 +104,11 @@ func TestADocumentThatBreaksItsOwnRulesIsRefused(t *testing.T) {
 func TestOnlyANewerVersionIsApplied(t *testing.T) {
 	document := fixture(t)
 	for _, applied := range []int{3, 4, 9} {
-		if _, err := Accept(document, Applied{Version: applied}, nodeA); err == nil || !strings.Contains(err.Error(), "not newer") {
+		if _, err := Accept(document, Applied{Version: applied}, nodeA, false); err == nil || !strings.Contains(err.Error(), "not newer") {
 			t.Errorf("applied %d: %v", applied, err)
 		}
 	}
-	own, err := Accept(document, Applied{Version: 1}, nodeA)
+	own, err := Accept(document, Applied{Version: 1}, nodeA, false)
 	if err != nil || own.Name != "vps-1" {
 		t.Fatalf("own %+v err %v", own, err)
 	}
@@ -113,7 +116,7 @@ func TestOnlyANewerVersionIsApplied(t *testing.T) {
 
 func TestABlockedKeyNeverComesBack(t *testing.T) {
 	document := fixture(t)
-	_, err := Accept(document, Applied{Version: 1, Blocked: []string{document.Members[1].Key}}, nodeA)
+	_, err := Accept(document, Applied{Version: 1, Blocked: []string{document.Members[1].Key}}, nodeA, false)
 	if err == nil || !strings.Contains(err.Error(), "cannot come back") {
 		t.Fatalf("err %v", err)
 	}
@@ -121,19 +124,82 @@ func TestABlockedKeyNeverComesBack(t *testing.T) {
 
 func TestADocumentWithoutThisServerSaysLeave(t *testing.T) {
 	document := fixture(t)
-	if _, err := Accept(document, Applied{}, nodeC); !errors.Is(err, ErrLeave) {
+	if _, err := Accept(document, Applied{}, nodeC, false); !errors.Is(err, ErrLeave) {
 		t.Fatalf("not a member: %v", err)
 	}
 	document.Deleted = true
-	if _, err := Accept(document, Applied{}, nodeA); !errors.Is(err, ErrLeave) {
+	if _, err := Accept(document, Applied{}, nodeA, false); !errors.Is(err, ErrLeave) {
 		t.Fatalf("deleted: %v", err)
 	}
 }
 
 func TestAppliedKeepsEveryBlockedKey(t *testing.T) {
 	document := fixture(t)
-	next := Applied{Version: 1, Blocked: []string{"old"}}.After(document)
+	next := Applied{Version: 1, Blocked: []string{"old"}}.After(document, "")
 	if next.Version != 3 || strings.Join(next.Blocked, ",") != "HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=,old" {
 		t.Fatalf("next %+v", next)
+	}
+}
+
+func TestAJoinedServerAppliesOnlyTheNextVersionOnTopOfWhatItApplied(t *testing.T) {
+	document := fixture(t)
+	applied := Applied{Version: 2, Hash: BodyHash([]byte("two"))}
+	document.Parent = BodyHash([]byte("doctored"))
+	if _, err := Accept(document, applied, nodeA, true); err == nil || err.Error() != "version 3 does not follow the version this server applied" {
+		t.Fatalf("wrong parent: %v", err)
+	}
+	document.Parent = applied.Hash
+	if own, err := Accept(document, applied, nodeA, true); err != nil || own.Name != "vps-1" {
+		t.Fatalf("next: %+v %v", own, err)
+	}
+	if _, err := Accept(document, Applied{Version: 1, Hash: applied.Hash}, nodeA, true); err == nil || err.Error() != "version 3 is not the next one after 1" {
+		t.Fatalf("jump: %v", err)
+	}
+}
+
+func TestAServerThatIsNotJoinedTakesAnyNewerVersion(t *testing.T) {
+	if _, err := Accept(fixture(t), Applied{Version: 1, Hash: BodyHash([]byte("one"))}, nodeA, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheBodyHashIsSHA256InBase64URL(t *testing.T) {
+	if got := BodyHash([]byte("abc")); got != "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0" {
+		t.Fatal(got)
+	}
+}
+
+func TestACutMemberRendersNoPeerAndItsKeyCountsAsBlocked(t *testing.T) {
+	document := fixture(t)
+	cut := document.Members[1].Key
+	document.Members[1].Cut = true
+	if config := Render(document, document.Members[0], "private", map[string]string{}); strings.Contains(config, cut) {
+		t.Fatalf("config %s", config)
+	}
+	applied := Applied{}.After(document, "h")
+	if !slices.Contains(applied.Blocked, cut) || applied.Hash != "h" || applied.Version != 3 {
+		t.Fatalf("applied %+v", applied)
+	}
+	document.Version, document.Parent = 4, "h"
+	if _, err := Accept(document, applied, nodeA, true); err != nil {
+		t.Fatalf("still cut: %v", err)
+	}
+	document.Members[1].Cut = false
+	if _, err := Accept(document, applied, nodeA, true); err == nil || !strings.Contains(err.Error(), "cannot come back") {
+		t.Fatalf("back uncut: %v", err)
+	}
+}
+
+func TestTheStricterKnockSettingWins(t *testing.T) {
+	document := fixture(t)
+	if got := Effective(document, nil); got != (Knocks{Scan: 10, Stop: true}) {
+		t.Fatalf("default %+v", got)
+	}
+	document.Knocks = &Knocks{Scan: 20, Stop: false}
+	if got := Effective(document, nil); got != (Knocks{Scan: 20, Stop: false}) {
+		t.Fatalf("document %+v", got)
+	}
+	if got := Effective(document, &Knocks{Scan: 5, Stop: true}); got != (Knocks{Scan: 5, Stop: true}) {
+		t.Fatalf("tightened %+v", got)
 	}
 }

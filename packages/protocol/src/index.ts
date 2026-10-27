@@ -5,9 +5,23 @@ import {
   networkInventorySchema,
   stackNetworkSchema,
 } from "./network";
+import { eventSchema, releaseSchema } from "./quarantine";
 import { isValidTarget, RECIPES } from "./targets";
 
 export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
+export {
+  EVENT_KINDS,
+  eventSchema,
+  looser,
+  QUARANTINE,
+  quarantineSettingsSchema,
+  codeOf,
+  releaseSchema,
+  releaseText,
+  type PendingRelease,
+  type QuarantineEvent,
+  type QuarantineSettings,
+} from "./quarantine";
 export {
   dnsName,
   NETWORK,
@@ -100,6 +114,14 @@ export const agentHeartbeatSchema = agentHostSchema.extend({
     })
     .optional(),
   network: networkBeatSchema.optional(),
+  boot: z
+    .strictObject({
+      id: z.string().min(1).max(64),
+      count: z.number().int().nonnegative(),
+    })
+    .optional(),
+  events: z.array(eventSchema).max(50).optional(),
+  release: releaseSchema.optional(),
 });
 
 export const enrollmentResponseSchema = z.object({
@@ -182,6 +204,9 @@ export const UNSIGNED_VERBS = [
   "inspect",
   "probe",
   "test",
+  "block",
+  "drop",
+  "tighten",
 ] as const;
 
 export const KIND_VERBS = {
@@ -224,6 +249,10 @@ export const KIND_VERBS = {
     "install",
     "uninstall",
     "signin",
+    "accept",
+    "release",
+    "block",
+    "unblock",
   ],
   trust: ["trust"],
   vault: ["store", "release", "reshare", "forget"],
@@ -240,14 +269,24 @@ export const KIND_VERBS = {
     "addrepo",
     "droprepo",
   ],
-  network: ["inspect", "probe", "test", "prepare", "unprepare", "rekey"],
+  network: [
+    "inspect",
+    "probe",
+    "test",
+    "prepare",
+    "unprepare",
+    "rekey",
+    "drop",
+    "tighten",
+  ],
 } as const;
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
 
 export function hostVerbFits(name: string, action: string): boolean {
-  if (name === "tailscale" || action === "signin") {
-    return name === "tailscale" && action === "signin";
+  const tailnet = ["signin", "block", "unblock"];
+  if (name === "tailscale" || tailnet.includes(action)) {
+    return name === "tailscale" && tailnet.includes(action);
   }
   if (action === "uninstall") return name === "server";
   if (name === "docker") return action === "install";
@@ -327,6 +366,11 @@ export const agentActionSchema = z
       "prepare",
       "unprepare",
       "rekey",
+      "accept",
+      "block",
+      "unblock",
+      "drop",
+      "tighten",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -350,6 +394,9 @@ export const agentActionSchema = z
     if (action.kind === "host" && !hostVerbFits(action.name, action.action)) {
       return false;
     }
+    if (action.action === "lockdown" && action.signed === undefined) {
+      return true;
+    }
     return (UNSIGNED_VERBS as readonly string[]).includes(action.action)
       ? action.signed === undefined
       : signedCommandSchema.safeParse(action.signed).success;
@@ -367,6 +414,8 @@ export const heartbeatResponseSchema = z.object({
     .optional(),
   actions: z.array(agentActionSchema).max(10).optional(),
   refresh: z.literal(true).optional(),
+  acked: z.array(z.string().max(64)).max(50).optional(),
+  quarantined: z.literal(true).optional(),
   network: networkReplySchema.optional(),
 });
 

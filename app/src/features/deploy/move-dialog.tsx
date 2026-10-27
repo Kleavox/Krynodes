@@ -38,6 +38,7 @@ import {
   hostingOf,
   inside,
   moveBlock,
+  moveProblem,
   privateIpProblem,
   readServes,
   servesArg,
@@ -183,7 +184,8 @@ function MoveForm({
   );
   const secretsWrong = secretsProblem(secrets);
   const privateWrong = privateIpProblem(text, targetName, there !== null);
-  const problem = secretsWrong ?? privateWrong;
+  const tooMany = block && !block.red ? moveProblem(changes) : null;
+  const problem = secretsWrong ?? privateWrong ?? tooMany;
   const carried = chosenAccess === "contained" ? (read?.hostPorts ?? []) : [];
   const blocked = moveBlocker(addresses, original);
   const targetKey = entries.get(chosen)?.sealKey ?? "";
@@ -372,6 +374,7 @@ function MoveForm({
                   {block.note && (
                     <p className="text-muted-foreground">{block.note}</p>
                   )}
+                  {tooMany && <p className="text-destructive">{tooMany}</p>}
                 </>
               )}
             </div>

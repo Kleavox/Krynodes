@@ -7,7 +7,13 @@ import { AddressRows } from "@/components/server-addresses";
 import { Button } from "@/components/ui/button";
 import { AgentDialog } from "@/features/agent/agent-panel";
 import { SignInDialog } from "@/features/packages/sign-in-dialog";
-import { useDevices, useNetwork, useOverview, useServices } from "@/lib/api";
+import {
+  useDevices,
+  useNetwork,
+  useOverview,
+  useQuarantine,
+  useServices,
+} from "@/lib/api";
 import { agentLine } from "@/lib/agent";
 import { parseTimestamp, shortDate } from "@/lib/format";
 import { presenceOf, serverRow } from "@/lib/network";
@@ -44,9 +50,19 @@ export function ThisServer({
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
   const updates = updatesLine(node.updates, now);
-  const tailnet = node.tailscale
-    ? tailscaleLine(node.tailscale, node.name, now)
-    : null;
+  const blocked =
+    useQuarantine(node.id, !!node.quarantine).data?.quarantine?.tailnet ?? [];
+  const tailnet: ReturnType<typeof tailscaleLine> | null =
+    node.quarantine && blocked.length > 0
+      ? {
+          lines: [`${blocked[0]} · Blocked by your servers`],
+          warn: true,
+          action: null,
+          after: null,
+        }
+      : node.tailscale
+        ? tailscaleLine(node.tailscale, node.name, now)
+        : null;
   const blocker = packagesBlocker(node, (trust?.core.length ?? 0) > 0, now);
   const member = network.data?.members.find(
     (entry) => entry.nodeId === node.id,
@@ -78,7 +94,8 @@ export function ThisServer({
               </dt>
               <dd className="min-w-0 py-2 leading-4">
                 <span className="block truncate">
-                  {node.network.address ?? "--"} · {dnsName(node.name)}.kry
+                  {node.network.address ?? "--"} ·{" "}
+                  {node.quarantine ? "cut off" : `${dnsName(node.name)}.kry`}
                 </span>
                 <Link
                   to="/network"

@@ -180,7 +180,11 @@ func (e Executor) diskRules(pending []network.StackRules) []network.StackRules {
 }
 
 func (e Executor) chain(ctx context.Context, name string) string {
-	text, _ := e.output(ctx, "iptables", "-S", name)
+	return e.listed(ctx, "iptables", name)
+}
+
+func (e Executor) listed(ctx context.Context, tool, name string) string {
+	text, _ := e.output(ctx, tool, "-S", name)
 	var lines []string
 	for line := range strings.SplitSeq(text, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
@@ -196,11 +200,22 @@ func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) 
 		return nil
 	}
 	serve, reach := network.Rules(own, document.Members, e.diskRules(pending))
+	tcp, udp := e.openPorts(ctx, own)
+	drop, knock := network.Watch(e.droppedAddresses(document), tcp, udp)
 	wanted := func(name string, rules []string) string {
 		return strings.Join(append([]string{"-N " + name}, rules...), "\n")
 	}
-	if e.chain(ctx, network.ServeChain) != wanted(network.ServeChain, serve) || e.chain(ctx, network.ReachChain) != wanted(network.ReachChain, reach) {
-		if err := writeWhole(e.networkDir(), rulesFile, []byte(network.Restore(serve, reach)), 0o600); err != nil {
+	chains := map[string][]string{network.ServeChain: serve, network.ReachChain: reach, network.DropChain: drop, network.KnockChain: knock}
+	current := map[string]string{}
+	for name := range chains {
+		current[name] = e.chain(ctx, name)
+	}
+	if slices.ContainsFunc(slices.Collect(maps.Keys(chains)), func(name string) bool { return current[name] != wanted(name, chains[name]) }) {
+		restore := network.Restore(serve, reach, drop, knock)
+		if last, err := os.ReadFile(filepath.Join(e.networkDir(), rulesFile)); err == nil && string(last) == restore {
+			e.removedRule(current, chains)
+		}
+		if err := writeWhole(e.networkDir(), rulesFile, []byte(restore), 0o600); err != nil {
 			return err
 		}
 		if err := e.firewall(ctx, "iptables-restore", "--noflush", filepath.Join(e.networkDir(), rulesFile)); err != nil {
@@ -213,20 +228,59 @@ func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) 
 			return fmt.Errorf("send the private network through its rules: %w", err)
 		}
 	}
+	for _, jump := range network.InputJumps() {
+		if err := e.ensure(ctx, "iptables", []string{"-I", "INPUT", "1"}, "INPUT", jump); err != nil {
+			return fmt.Errorf("send the private network through its rules: %w", err)
+		}
+	}
 	return nil
+}
+
+func (e Executor) droppedAddresses(document network.Document) []string {
+	addresses := slices.Clone(e.readNetwork().Dropped)
+	for _, entry := range document.Members {
+		if entry.Cut && !slices.Contains(addresses, entry.Address) {
+			addresses = append(addresses, entry.Address)
+		}
+	}
+	return addresses
+}
+
+func (e Executor) openPorts(ctx context.Context, own string) ([]int, []int) {
+	output, _ := e.output(ctx, "ss", "-H", "-tuln")
+	open := map[string][]int{}
+	for line := range strings.SplitSeq(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || (fields[0] != "tcp" && fields[0] != "udp") {
+			continue
+		}
+		colon := strings.LastIndex(fields[4], ":")
+		host := strings.Trim(fields[4][:max(colon, 0)], "[]")
+		number, err := strconv.Atoi(fields[4][colon+1:])
+		if colon < 0 || err != nil || (host != "0.0.0.0" && host != "*" && host != "::" && host != own) || slices.Contains(open[fields[0]], number) {
+			continue
+		}
+		open[fields[0]] = append(open[fields[0]], number)
+	}
+	slices.Sort(open["tcp"])
+	slices.Sort(open["udp"])
+	return open["tcp"], open["udp"]
 }
 
 func (e Executor) dropRules(ctx context.Context) {
 	if !strings.Contains(e.chain(ctx, network.ServeChain), "-N "+network.ServeChain) && !strings.Contains(e.chain(ctx, network.ReachChain), "-N "+network.ReachChain) {
 		return
 	}
-	for line := range strings.SplitSeq(e.chain(ctx, dockerUser), "\n") {
-		rule, found := strings.CutPrefix(line, "-A "+dockerUser+" ")
-		if found && (strings.HasSuffix(rule, "-j "+network.ServeChain) || strings.HasSuffix(rule, "-j "+network.ReachChain)) {
-			e.firewall(ctx, "iptables", append([]string{"-D", dockerUser}, strings.Fields(rule)...)...)
+	ours := []string{network.ServeChain, network.ReachChain, network.DropChain, network.KnockChain}
+	for _, parent := range []string{dockerUser, "INPUT"} {
+		for line := range strings.SplitSeq(e.chain(ctx, parent), "\n") {
+			rule, found := strings.CutPrefix(line, "-A "+parent+" ")
+			if found && slices.ContainsFunc(ours, func(name string) bool { return strings.HasSuffix(rule, "-j "+name) }) {
+				e.firewall(ctx, "iptables", append([]string{"-D", parent}, strings.Fields(rule)...)...)
+			}
 		}
 	}
-	for _, name := range []string{network.ServeChain, network.ReachChain} {
+	for _, name := range ours {
 		e.firewall(ctx, "iptables", "-F", name)
 		e.firewall(ctx, "iptables", "-X", name)
 	}

@@ -97,7 +97,11 @@ func twoMembers(t *testing.T, executor Executor, version int, keys network.Keys,
 		t.Fatal(err)
 	}
 	endpoint := peerEndpoint
-	return network.Document{V: 1, Version: version, Range: "10.88.0.0/24", Port: 51820, MTU: 1420, Blocked: []string{}, Members: []network.Member{
+	parent := ""
+	if applied := executor.readNetwork().Applied; applied.Version == version-1 {
+		parent = applied.Hash
+	}
+	return network.Document{V: 1, Version: version, Range: "10.88.0.0/24", Port: 51820, MTU: 1420, Parent: parent, Blocked: []string{}, Members: []network.Member{
 		{Node: peerNode, Name: "io", Address: "10.88.0.1", Key: peer.Public, Signer: peer.Signer, Port: 51820, Endpoint: &endpoint, PSK: map[string]string{testNode: "eyJ2IjoxfQ"}},
 		{Node: testNode, Name: "vps-2", Address: "10.88.0.2", Key: keys.Public, Signer: keys.Signer, Port: 51821, PSK: map[string]string{peerNode: sealed}},
 	}}
@@ -228,7 +232,7 @@ func TestLeavingRemovesExactlyWhatKrynodesMade(t *testing.T) {
 	run.respond["ufw status numbered"] = "[ 1] 22/tcp ALLOW IN Anywhere\n[ 2] 51821/udp ALLOW IN Anywhere # krynodes-network\n[ 3] Anywhere on kry0 ALLOW IN Anywhere # krynodes-network\n[ 4] 51820/udp ALLOW IN Anywhere # wg0\n"
 	run.calls = nil
 	endpoint := peerEndpoint
-	alone := network.Document{V: 1, Version: 2, Range: "10.88.0.0/24", Port: 51820, MTU: 1420, Members: []network.Member{
+	alone := network.Document{V: 1, Version: 2, Range: "10.88.0.0/24", Port: 51820, MTU: 1420, Parent: executor.readNetwork().Applied.Hash, Members: []network.Member{
 		{Node: peerNode, Name: "io", Address: "10.88.0.1", Key: peer.Public, Signer: peer.Signer, Port: 51820, Endpoint: &endpoint, PSK: map[string]string{}},
 	}}
 	if result := hostRun(t, executor, applyDocument(t, idC, alone)); !result.OK {
@@ -262,12 +266,12 @@ func TestLeavingRemovesExactlyWhatKrynodesMade(t *testing.T) {
 
 func TestOnlyTheNewestDocumentIsAppliedAndNothingIsRewritten(t *testing.T) {
 	executor, run, keys, peer, _ := joinedServer(t)
-	if result := hostRun(t, executor, applyDocument(t, idC, twoMembers(t, executor, 3, keys, peer))); !result.OK {
-		t.Fatalf("v3 %+v", result)
+	if result := hostRun(t, executor, applyDocument(t, idC, twoMembers(t, executor, 2, keys, peer))); !result.OK {
+		t.Fatalf("v2 %+v", result)
 	}
 	config := readRoot(t, executor, network.ConfigPath)
 	run.calls = nil
-	for index, version := range []int{2, 3} {
+	for index, version := range []int{1, 2} {
 		id := []string{"0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a04", "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a05"}[index]
 		document := twoMembers(t, executor, version, keys, peer)
 		document.Members[0].Address = "10.88.0.9"
@@ -277,6 +281,27 @@ func TestOnlyTheNewestDocumentIsAppliedAndNothingIsRewritten(t *testing.T) {
 	}
 	if readRoot(t, executor, network.ConfigPath) != config || len(run.calls) != 0 {
 		t.Fatalf("an old document changed something: %v", run.calls)
+	}
+}
+
+func TestAJoinedServerRefusesADocumentBuiltOnAnotherBase(t *testing.T) {
+	executor, run, keys, peer, _ := joinedServer(t)
+	config := readRoot(t, executor, network.ConfigPath)
+	run.calls = nil
+	doctored := twoMembers(t, executor, 2, keys, peer)
+	doctored.Parent = network.BodyHash([]byte("a body the Worker made up"))
+	if result := hostRun(t, executor, applyDocument(t, idC, doctored)); result.OK || !strings.Contains(result.Output, "does not follow the version this server applied") {
+		t.Fatalf("doctored %+v", result)
+	}
+	if readRoot(t, executor, network.ConfigPath) != config || len(run.calls) != 0 || executor.readNetwork().Applied.Version != 1 {
+		t.Fatalf("a doctored document changed something: %v", run.calls)
+	}
+	skipped := twoMembers(t, executor, 3, keys, peer)
+	if result := hostRun(t, executor, applyDocument(t, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a06", skipped)); result.OK || !strings.Contains(result.Output, "is not the next one after 1") {
+		t.Fatalf("skipped %+v", result)
+	}
+	if result := hostRun(t, executor, applyDocument(t, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a07", twoMembers(t, executor, 2, keys, peer))); !result.OK {
+		t.Fatalf("next %+v", result)
 	}
 }
 

@@ -5,6 +5,7 @@ import {
   useQueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
+import type { QuarantineSettings } from "@krynodes/protocol";
 import { toast } from "sonner";
 
 import type {
@@ -33,6 +34,7 @@ import type {
   Overview,
   PackagesResponse,
   ProposalRecord,
+  QuarantineView,
   RecentMetrics,
   ServicesResponse,
   SessionResponse,
@@ -253,6 +255,65 @@ export const useSaveEnrollDefaults = () =>
         send("PUT", defaults),
       ),
     [queryKeys.enrollDefaults],
+  );
+
+export function useQuarantineSettings() {
+  return useQuery({
+    queryKey: queryKeys.quarantineSettings,
+    queryFn: () =>
+      apiFetch<{ settings: QuarantineSettings }>("/api/settings/quarantine"),
+  });
+}
+
+export const useSaveQuarantineSettings = () =>
+  useApiMutation(
+    (settings: QuarantineSettings) =>
+      guardedFetch<{ settings: QuarantineSettings }>(
+        "/api/settings/quarantine",
+        send("PUT", settings),
+      ),
+    [queryKeys.quarantineSettings],
+  );
+
+export function useQuarantine(id: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.quarantine(id),
+    queryFn: () =>
+      apiFetch<QuarantineView>(
+        `/api/nodes/${encodeURIComponent(id)}/quarantine`,
+      ),
+    enabled,
+    refetchInterval: () => untilWindowSettles(Date.now()),
+  });
+}
+
+export const useCutOff = () =>
+  useApiMutation(
+    ({ nodeId, id }: { nodeId: string; id: string }) =>
+      apiFetch(
+        `/api/nodes/${encodeURIComponent(nodeId)}/warnings/${encodeURIComponent(id)}/cut`,
+        send("POST"),
+      ),
+    [queryKeys.overview, ["quarantine"], queryKeys.network],
+  );
+
+export const postItWasMe = (
+  nodeId: string,
+  id: string,
+  target?: SignedTarget & { action: ActionVerb },
+) =>
+  guardedFetch(
+    `/api/nodes/${encodeURIComponent(nodeId)}/warnings/${encodeURIComponent(id)}/me`,
+    send("POST", target ? { target } : {}),
+  );
+
+export const postRelease = (
+  nodeId: string,
+  body: { code: string; steps: (SignedTarget & { action: ActionVerb })[] },
+) =>
+  apiFetch<{ batchId: string; actions: { id: string }[] }>(
+    `/api/nodes/${encodeURIComponent(nodeId)}/release`,
+    send("POST", body),
   );
 
 export const useSavePrivateRanges = () =>

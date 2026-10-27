@@ -643,3 +643,62 @@ describe("migration 0034", () => {
     expect(sqlite.prepare("SELECT * FROM check_dismissals").all()).toEqual([]);
   });
 });
+
+describe("migration 0035", () => {
+  it("keeps every action, takes the quarantine verbs outside the one-pending rule, and drops a node's quarantine rows with it", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0035");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'vps-1', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "server", "unlock", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a2", "network", "kry0", "drop", "queued")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0035"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(action("a2", "host", "server", "lockdown", "queued"));
+    sqlite.exec(action("a3", "host", "server", "accept", "queued", "{}"));
+    sqlite.exec(action("a4", "network", "kry0", "drop", "queued"));
+    sqlite.exec(action("a5", "network", "kry0", "drop", "queued"));
+    sqlite.exec(action("a6", "network", "kry0", "tighten", "queued"));
+    sqlite.exec(action("a7", "host", "tailscale", "block", "queued"));
+    sqlite.exec(action("a8", "host", "tailscale", "unblock", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a9", "host", "server", "reboot", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(
+      "UPDATE nodes SET boot = 'b1', reports = 7, release = '{}' WHERE id = 'n1'",
+    );
+    sqlite.exec(
+      `INSERT INTO warnings (node_id, id, kind, detail, at) VALUES ('n1', 'ssh-key:abc', 'ssh-key', '{}', 'now')`,
+    );
+    sqlite.exec(
+      `INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', 'n1', 'why', 'now', '{}')`,
+    );
+    expect(() =>
+      sqlite.exec(
+        `INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q2', 'n1', 'why', 'now', '{}')`,
+      ),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(
+      `INSERT INTO stopped_stacks (node_id, project, at, tried) VALUES ('n1', 'app', 'now', '[]')`,
+    );
+    sqlite.exec(
+      `INSERT INTO knocks (suspect, reporter, at, count) VALUES ('n1', 'n1', 'now', 12)`,
+    );
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    for (const table of [
+      "warnings",
+      "quarantines",
+      "stopped_stacks",
+      "knocks",
+      "actions",
+    ]) {
+      expect(sqlite.prepare(`SELECT * FROM ${table}`).all()).toEqual([]);
+    }
+  });
+});
