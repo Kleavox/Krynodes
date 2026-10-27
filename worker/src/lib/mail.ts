@@ -16,6 +16,7 @@ const COLOR = {
   muted: "#8a8a94",
   primary: "#8b7bff",
   destructive: "#f0616d",
+  warning: "#f5b544",
 };
 
 const SANS =
@@ -31,6 +32,7 @@ interface Layout {
   intro: string;
   rows: [string, string][];
   action: { label: string; href: string };
+  after?: string;
 }
 
 export function escapeHtml(value: string): string {
@@ -90,7 +92,12 @@ function render(layout: Layout, origin: string): string {
                 </table>
                 <p style="margin:24px 0 0">
                   <a href="${escapeHtml(layout.action.href)}" style="display:inline-block;padding:12px 16px;background:${COLOR.primary};border-radius:6px;${SANS};font-size:14px;font-weight:600;color:${COLOR.bg};text-decoration:none">${escapeHtml(layout.action.label)}</a>
-                </p>
+                </p>${
+                  layout.after
+                    ? `
+                <p style="margin:20px 0 0;${SANS};font-size:13px;line-height:1.6;color:${COLOR.muted}">${escapeHtml(layout.after)}</p>`
+                    : ""
+                }
               </td>
             </tr>
             <tr>
@@ -110,6 +117,7 @@ function plainText(layout: Layout): string {
     layout.intro,
     layout.rows.map(([label, value]) => `${label}: ${value}`).join("\n"),
     `${layout.action.label}: ${layout.action.href}`,
+    ...(layout.after ? [layout.after] : []),
   ].join("\n\n");
 }
 
@@ -314,5 +322,304 @@ export async function sendProposalEmail(
       label: "Open Trusted devices",
       href: new URL("/devices", env.PUBLIC_ORIGIN).toString(),
     },
+  });
+}
+
+export interface WarningMail {
+  nodeId: string;
+  nodeName: string;
+  kind: string;
+  detail: Record<string, string>;
+  at: string;
+  cutAt: number | null;
+}
+
+export interface QuarantineMail {
+  nodeId: string;
+  nodeName: string;
+  why: string;
+  at: string;
+  droppedBy: string[];
+  stacks: number;
+  pieces: number;
+  trusted: number;
+  tailnet: boolean;
+}
+
+export interface StoppedMail {
+  nodeId: string;
+  nodeName: string;
+  project: string;
+  count: number;
+  tried: string[];
+  at: string;
+}
+
+const listed = (names: string[]) =>
+  names.length < 2
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+
+const serverLink = (env: Env, nodeId: string, nodeName: string) => ({
+  label: `Open ${nodeName}`,
+  href: new URL(`/nodes/${nodeId}`, env.PUBLIC_ORIGIN).toString(),
+});
+
+function warningParts(mail: WarningMail): {
+  heading: string;
+  what: string;
+  rows: [string, string][];
+} {
+  const value = (key: string) => mail.detail[key] || "--";
+  const added = utcTime(mail.at);
+  switch (mail.kind) {
+    case "ssh-key":
+      return {
+        heading: `new SSH key for ${value("user")}`,
+        what: `A key was added to ${value("file")} and not through Krynodes. If you did not add it`,
+        rows: [
+          ["Key", value("key")],
+          ["Added", added],
+        ],
+      };
+    case "ssh-login":
+      return {
+        heading: `${value("user")} signed in with a key not from Krynodes`,
+        what: `${value("user")} signed in to ${mail.nodeName} with a key Krynodes does not know. If it was not you`,
+        rows: [
+          ["Key", value("key")],
+          ["From", value("from")],
+          ["At", utcTime(mail.detail.at ?? mail.at)],
+        ],
+      };
+    case "user":
+      return {
+        heading: `new user ${value("user")}`,
+        what: `The user ${value("user")} was added and not through Krynodes. If you did not add it`,
+        rows: [
+          ["User", value("user")],
+          ["Added", added],
+        ],
+      };
+    case "sudo":
+      return {
+        heading: "new sudo rule",
+        what: "A sudo rule was added and not through Krynodes. If you did not add it",
+        rows: [
+          ["Rule", value("rule")],
+          ["Added", added],
+        ],
+      };
+    case "rule":
+      return {
+        heading: "Krynodes' firewall rule was removed",
+        what: "One of Krynodes' blocking rules was removed outside Krynodes, and Krynodes put it back. If you did not remove it",
+        rows: [
+          ["Rule", `${value("chain")} · ${value("rule")}`],
+          ["Removed", added],
+        ],
+      };
+    case "port":
+      return {
+        heading: "a port was opened outside Krynodes",
+        what: `${value("port")} was opened on a public address and not through Krynodes. If you did not open it`,
+        rows: [
+          ["Port", value("port")],
+          ["Process", value("process")],
+          ["Opened", added],
+        ],
+      };
+    default:
+      return {
+        heading: "the agent went quiet while the server is up",
+        what: `The agent on ${mail.nodeName} stopped reporting while ${value("seenBy")} still saw it on the private network. If you did not stop it`,
+        rows: [
+          ["Last report", utcTime(value("lastReport"))],
+          ["Seen by", value("seenBy")],
+        ],
+      };
+  }
+}
+
+export async function sendWarningEmail(
+  env: Env,
+  mail: WarningMail,
+): Promise<void> {
+  const { heading, what, rows } = warningParts(mail);
+  const title = `${mail.nodeName}: ${heading}`;
+  const intro =
+    mail.cutAt === null
+      ? `${what}, cut ${mail.nodeName} off from the server page.`
+      : `${what}, do nothing: ${mail.nodeName} is cut off from the private network at ${new Date(mail.cutAt).toISOString().slice(11, 16)} UTC.`;
+  await deliver(env, {
+    title: `[Krynodes] ${title}`,
+    preheader: intro,
+    badge: { label: "Warning", color: COLOR.warning },
+    heading: title,
+    intro,
+    rows: [
+      ["Server", mail.nodeName],
+      ...rows,
+      ...(mail.cutAt === null
+        ? []
+        : [
+            [
+              "Cut off",
+              `${utcTime(new Date(mail.cutAt).toISOString())}, unless you say it was you`,
+            ] as [string, string],
+          ]),
+    ],
+    action: serverLink(env, mail.nodeId, mail.nodeName),
+    after:
+      "It Was Me is on the server page and asks for your fingerprint. Nothing in this mail can answer for you.",
+  });
+}
+
+export async function sendQuarantineEmail(
+  env: Env,
+  mail: QuarantineMail,
+): Promise<void> {
+  const heading = `${mail.nodeName} is quarantined`;
+  const intro = `${mail.why}. ${mail.droppedBy.length > 0 ? "The other servers dropped it, and Krynodes" : "Krynodes"} refuses every action there except reading.`;
+  const reach = [
+    ...(mail.stacks > 0
+      ? [`the secrets of ${plural(mail.stacks, "stack")}`]
+      : []),
+    ...(mail.pieces > 0 ? [plural(mail.pieces, "Cloudflare token piece")] : []),
+    ...(mail.trusted > 0
+      ? [`${plural(mail.trusted, "service")} that trusted it`]
+      : []),
+  ];
+  const reached = listed(reach);
+  const change =
+    reach.length > 0
+      ? `${reached[0]!.toUpperCase()}${reached.slice(1)}${mail.tailnet ? ", and its place on your tailnet" : ""}, listed on the server page`
+      : mail.tailnet
+        ? "Its place on your tailnet, listed on the server page"
+        : "Nothing Krynodes knows of; see the server page";
+  await deliver(env, {
+    title: `[Krynodes] ${heading}`,
+    preheader: intro,
+    badge: { label: "Quarantined", color: COLOR.destructive },
+    heading,
+    intro,
+    rows: [
+      ["Server", mail.nodeName],
+      ["Why", mail.why],
+      ["Cut off", utcTime(mail.at)],
+      ["Dropped by", listed(mail.droppedBy) || "--"],
+      ["Change", change],
+    ],
+    action: serverLink(env, mail.nodeId, mail.nodeName),
+    after: `Reinstall ${mail.nodeName} if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your fingerprint.`,
+  });
+}
+
+export async function sendStoppedEmail(
+  env: Env,
+  mail: StoppedMail,
+): Promise<void> {
+  const heading = `${mail.project} on ${mail.nodeName} was stopped`;
+  const intro = `A container in ${mail.project} tried ${mail.count} places it was not given. Krynodes stopped the stack, and it stays stopped after a reboot. ${mail.nodeName} is still trusted.`;
+  const more = mail.count - mail.tried.length;
+  await deliver(env, {
+    title: `[Krynodes] ${heading}`,
+    preheader: intro,
+    badge: { label: "Stopped", color: COLOR.destructive },
+    heading,
+    intro,
+    rows: [
+      ["Stack", mail.project],
+      [
+        "Tried",
+        mail.tried.length === 0
+          ? plural(mail.count, "place")
+          : `${mail.tried.join(", ")}${more > 0 ? ` and ${more} more` : ""}`,
+      ],
+      ["Stopped", utcTime(mail.at)],
+      ["Change", `The secrets of ${mail.project}, listed on the server page`],
+    ],
+    action: serverLink(env, mail.nodeId, mail.nodeName),
+    after:
+      "Change its secrets before you start it again. Start asks for your fingerprint.",
+  });
+}
+
+export interface TailnetDeviceMail {
+  kind: "device";
+  name: string;
+  tag: string;
+  at: string;
+}
+
+export interface TailnetPolicyMail {
+  kind: "policy";
+  at: string;
+  block: boolean;
+  added: number;
+  removed: number;
+}
+
+export type TailnetMail = TailnetDeviceMail | TailnetPolicyMail;
+
+const networkLink = (env: Env) => ({
+  label: "Open Network",
+  href: new URL("/network", env.PUBLIC_ORIGIN).toString(),
+});
+
+export async function sendTailnetDeviceEmail(
+  env: Env,
+  mail: TailnetDeviceMail,
+): Promise<void> {
+  const heading = `${mail.name.split(".")[0]} joined your tailnet with your servers' tag`;
+  const intro =
+    "Krynodes did not sign it in. Your rules give it nothing, but someone may have your Tailscale credential.";
+  await deliver(env, {
+    title: `[Krynodes] ${heading}`,
+    preheader: intro,
+    badge: { label: "Tailscale", color: COLOR.destructive },
+    heading,
+    intro,
+    rows: [
+      ["Device", mail.name],
+      ["Tag", mail.tag],
+      ["Joined", utcTime(mail.at)],
+    ],
+    action: networkLink(env),
+    after:
+      "If you signed it in yourself, enroll it in Krynodes. If not, remove it and delete Krynodes' credential in Tailscale's admin console, then connect a new one.",
+  });
+}
+
+export async function sendTailnetPolicyEmail(
+  env: Env,
+  mail: TailnetPolicyMail,
+): Promise<void> {
+  const heading = "Your Tailscale policy was changed without your fingerprint";
+  const intro =
+    "The change was made with Krynodes' credential, and you signed no change in Krynodes. Someone else has the credential.";
+  const word = mail.block ? "rule" : "line";
+  const parts = [
+    ...(mail.added > 0 ? [`${plural(mail.added, word)} added`] : []),
+    ...(mail.removed > 0 ? [`${plural(mail.removed, word)} removed`] : []),
+  ];
+  await deliver(env, {
+    title: `[Krynodes] ${heading}`,
+    preheader: intro,
+    badge: { label: "Tailscale", color: COLOR.destructive },
+    heading,
+    intro,
+    rows: [
+      ["Changed", utcTime(mail.at)],
+      [
+        "Change",
+        parts.length === 0
+          ? "Only spacing changed"
+          : `${listed(parts)}, shown on the Network page`,
+      ],
+    ],
+    action: networkLink(env),
+    after:
+      "Delete Krynodes' credential in Tailscale's admin console, put the policy back there, then connect a new credential.",
   });
 }

@@ -17,6 +17,7 @@ export interface Finding {
 }
 
 const PUBLIC_PORTS = "Listening on public addresses outside Krynodes: ";
+const PRIVATE_PORTS = "On the private network only: ";
 
 function ipv4(text: string): bigint | null {
   const parts = text.split(".");
@@ -129,18 +130,25 @@ export function inRanges(text: string, ranges: string[]): boolean {
 
 export function filterListeners<
   T extends { findings: Finding[]; listeners?: Listener[] },
->(report: T, ranges: string[]): T {
-  if (ranges.length === 0 || !report.listeners) return report;
-  const entries = [
+>(report: T, ranges: string[], network?: string): T {
+  if ((ranges.length === 0 && !network) || !report.listeners) return report;
+  const own = network ? [network] : [];
+  const all = report.listeners;
+  const listed = (keep: (listener: Listener) => boolean) => [
     ...new Set(
-      report.listeners
-        .filter((listener) => !inRanges(listener.address, ranges))
+      all
+        .filter(keep)
         .map(
           (listener) =>
             `${listener.port}/${listener.protocol}${listener.process ? ` (${listener.process})` : ""}`,
         ),
     ),
   ];
+  const entries = listed(
+    (listener) =>
+      !inRanges(listener.address, ranges) && !inRanges(listener.address, own),
+  );
+  const inside = listed((listener) => inRanges(listener.address, own));
   const findings = report.findings.flatMap((finding) =>
     finding.id !== "public-ports"
       ? [finding]
@@ -148,5 +156,12 @@ export function filterListeners<
         ? []
         : [{ ...finding, detail: PUBLIC_PORTS + entries.join(", ") }],
   );
+  if (inside.length > 0) {
+    findings.push({
+      id: "private-ports",
+      severity: "note",
+      detail: PRIVATE_PORTS + inside.join(", "),
+    });
+  }
   return { ...report, findings };
 }

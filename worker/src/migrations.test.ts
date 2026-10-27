@@ -491,3 +491,262 @@ describe("migration 0026", () => {
     ).toThrow();
   });
 });
+
+describe("migration 0032", () => {
+  it("keeps every action, takes apt and Sign In, and leaves dry runs out of the one-pending rule", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0032");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "docker", "install", "done", "{}"));
+    sqlite.exec(
+      "UPDATE actions SET hidden_at = '2026-10-20T00:00:00.000Z', hidden_by = 'owner' WHERE id = 'a1'",
+    );
+    expect(() =>
+      sqlite.exec(action("a2", "apt", "nginx", "install", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0032"));
+    expect(
+      sqlite.prepare("SELECT id, hidden_by, progress FROM actions").all(),
+    ).toEqual([{ id: "a1", hidden_by: "owner", progress: null }]);
+    sqlite.exec(action("a2", "apt", "nginx", "install", "queued", "{}"));
+    sqlite.exec(action("a3", "apt", "nginx", "preview", "queued"));
+    sqlite.exec(action("a4", "apt", "nginx", "find", "queued"));
+    sqlite.exec(action("a5", "apt", "system", "refresh", "queued"));
+    sqlite.exec(action("a6", "apt", "system", "refresh", "queued"));
+    sqlite.exec(action("a7", "host", "tailscale", "signin", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a8", "apt", "nginx", "remove", "queued", "{}")),
+    ).toThrow();
+    for (const verb of ["upgrade", "hold", "unhold", "addrepo", "droprepo"]) {
+      sqlite.exec(action(`v-${verb}`, "apt", `x-${verb}`, verb, "done", "{}"));
+    }
+    expect(() =>
+      sqlite.exec(action("a9", "apt", "nginx", "explode", "queued", "{}")),
+    ).toThrow();
+    sqlite.exec(
+      "INSERT INTO packages (node_id, hash, report, updated_at) VALUES ('n1', 'h', '{}', '2026-10-26T00:00:00.000Z')",
+    );
+    sqlite.exec(
+      `UPDATE nodes SET updates = '{"waiting":3}', tailscale = '{"state":"running"}' WHERE id = 'n1'`,
+    );
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(sqlite.prepare("SELECT * FROM packages").all()).toEqual([]);
+  });
+});
+
+describe("migration 0033", () => {
+  it("keeps every action, takes the network's verbs, and keeps reads out of the one-pending rule", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0033");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1'), ('n2', 'standalone', 'io', 'h2')",
+    );
+    sqlite.exec(action("a1", "apt", "system", "upgrade", "sent", "{}"));
+    sqlite.exec(
+      `UPDATE actions SET progress = '{"done":1}', hidden_by = 'owner' WHERE id = 'a1'`,
+    );
+    expect(() =>
+      sqlite.exec(action("a2", "network", "kry0", "prepare", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0033"));
+    expect(
+      sqlite.prepare("SELECT id, progress, hidden_by FROM actions").all(),
+    ).toEqual([{ id: "a1", progress: '{"done":1}', hidden_by: "owner" }]);
+    sqlite.exec(action("a2", "network", "kry0", "prepare", "queued", "{}"));
+    for (const verb of ["inspect", "probe", "test", "test"]) {
+      sqlite.exec(
+        action(`r-${crypto.randomUUID()}`, "network", "kry0", verb, "queued"),
+      );
+    }
+    expect(() =>
+      sqlite.exec(action("a3", "network", "kry0", "rekey", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(action("a4", "network", "kry0", "unprepare", "done", "{}"));
+    expect(() =>
+      sqlite.exec(action("a5", "network", "kry0", "explode", "done", "{}")),
+    ).toThrow();
+    sqlite.exec(
+      `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+       VALUES ('standalone', '10.88.0.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
+    );
+    sqlite.exec(
+      `INSERT INTO network_members (node_id, state, address, port, key, signer, since)
+       VALUES ('n1', 'in', '10.88.0.1', 51820, 'k1', 's1', 'now'), ('n2', 'waiting', NULL, 51821, 'k2', 's2', 'now')`,
+    );
+    expect(() =>
+      sqlite.exec(
+        "UPDATE network_members SET state = 'gone' WHERE node_id = 'n1'",
+      ),
+    ).toThrow(/CHECK/u);
+    sqlite.exec(
+      "INSERT INTO network_links (a, b, answering, since) VALUES ('n1', 'n2', 1, 'now')",
+    );
+    sqlite.exec(
+      `INSERT INTO network_addresses (owner_user_id, address, state, node_id, node_name)
+       VALUES ('standalone', '10.88.0.1', 'used', 'n1', 'pivox')`,
+    );
+    sqlite.exec("UPDATE nodes SET links = '[]' WHERE id = 'n1'");
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(sqlite.prepare("SELECT node_id FROM network_members").all()).toEqual(
+      [{ node_id: "n2" }],
+    );
+    expect(sqlite.prepare("SELECT * FROM network_links").all()).toEqual([]);
+    expect(
+      sqlite.prepare("SELECT node_name FROM network_addresses").all(),
+    ).toEqual([{ node_name: "pivox" }]);
+  });
+});
+
+describe("migration 0034", () => {
+  it("keeps every action and stack, takes compose reach, and adds the stack's network and check dismissals", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0034");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'io', 'h1')",
+    );
+    sqlite.exec(action("a1", "network", "kry0", "prepare", "done", "{}"));
+    sqlite.exec(
+      "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access) VALUES ('n1', 'shop', '/srv/shop', 1, 1, 1, 0, 'now', 'contained')",
+    );
+    expect(() =>
+      sqlite.exec(action("a2", "compose", "shop", "reach", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0034"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(action("a2", "compose", "shop", "reach", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a3", "compose", "shop", "edit", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(
+      `UPDATE stacks SET network = '{"serves":[],"reaches":[],"private":[]}' WHERE project = 'shop'`,
+    );
+    expect(
+      sqlite.prepare("SELECT project, access, network FROM stacks").all(),
+    ).toEqual([
+      {
+        project: "shop",
+        access: "contained",
+        network: '{"serves":[],"reaches":[],"private":[]}',
+      },
+    ]);
+    sqlite.exec(
+      `INSERT INTO check_dismissals (node_id, project, reaches, at) VALUES ('n1', 'shop', '["10.88.0.2:5432/tcp"]', 'now')`,
+    );
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(sqlite.prepare("SELECT * FROM check_dismissals").all()).toEqual([]);
+  });
+});
+
+describe("migration 0035", () => {
+  it("keeps every action, takes the quarantine verbs outside the one-pending rule, and drops a node's quarantine rows with it", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0035");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'vps-1', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "server", "unlock", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a2", "network", "kry0", "drop", "queued")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0035"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(action("a2", "host", "server", "lockdown", "queued"));
+    sqlite.exec(action("a3", "host", "server", "accept", "queued", "{}"));
+    sqlite.exec(action("a4", "network", "kry0", "drop", "queued"));
+    sqlite.exec(action("a5", "network", "kry0", "drop", "queued"));
+    sqlite.exec(action("a6", "network", "kry0", "tighten", "queued"));
+    sqlite.exec(action("a7", "host", "tailscale", "block", "queued"));
+    sqlite.exec(action("a8", "host", "tailscale", "unblock", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a9", "host", "server", "reboot", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(
+      "UPDATE nodes SET boot = 'b1', reports = 7, release = '{}' WHERE id = 'n1'",
+    );
+    sqlite.exec(
+      `INSERT INTO warnings (node_id, id, kind, detail, at) VALUES ('n1', 'ssh-key:abc', 'ssh-key', '{}', 'now')`,
+    );
+    sqlite.exec(
+      `INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', 'n1', 'why', 'now', '{}')`,
+    );
+    expect(() =>
+      sqlite.exec(
+        `INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q2', 'n1', 'why', 'now', '{}')`,
+      ),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(
+      `INSERT INTO stopped_stacks (node_id, project, at, tried) VALUES ('n1', 'app', 'now', '[]')`,
+    );
+    sqlite.exec(
+      `INSERT INTO knocks (suspect, reporter, at, count) VALUES ('n1', 'n1', 'now', 12)`,
+    );
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    for (const table of [
+      "warnings",
+      "quarantines",
+      "stopped_stacks",
+      "knocks",
+      "actions",
+    ]) {
+      expect(sqlite.prepare(`SELECT * FROM ${table}`).all()).toEqual([]);
+    }
+  });
+});
+
+describe("migration 0036", () => {
+  it("keeps every action, takes the Tailscale verbs, and drops a node's Tailscale rows with it", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0036");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'vps-1', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "tailscale", "inspect", "queued"));
+    expect(() =>
+      sqlite.exec(action("a2", "vault", "tailscale", "save", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0036"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(action("a2", "vault", "tailscale", "save", "queued", "{}"));
+    sqlite.exec(action("a3", "host", "tailscale", "join", "queued", "{}"));
+    sqlite.exec(action("a4", "vault", "tailscale", "release", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a5", "vault", "tailscale", "key", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec(action("a6", "vault", "cloudflare", "store", "queued", "{}"));
+    sqlite.exec("UPDATE nodes SET tailscale_vault = '{}' WHERE id = 'n1'");
+    sqlite.exec(
+      `INSERT INTO tailscale (owner_user_id, tailnet, client_id, webhook_secret, connected_at) VALUES ('standalone', 'tail4d2a.ts.net', 'kQ1', 's', 'now')`,
+    );
+    expect(
+      sqlite.prepare("SELECT rules, lines, members FROM tailscale").get(),
+    ).toEqual({ rules: "[]", lines: "[]", members: "[]" });
+    sqlite.exec(
+      "INSERT INTO tailscale_nodes (node_id, device, joined_at) VALUES ('n1', 'nA', 'now')",
+    );
+    sqlite.exec(
+      `INSERT INTO tailscale_alarms (id, owner_user_id, kind, detail, at) VALUES ('t1', 'standalone', 'device', '{}', 'now')`,
+    );
+    expect(() =>
+      sqlite.exec(
+        `INSERT INTO tailscale_alarms (id, owner_user_id, kind, detail, at) VALUES ('t2', 'standalone', 'other', '{}', 'now')`,
+      ),
+    ).toThrow();
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS n FROM tailscale_nodes").get(),
+    ).toEqual({ n: 0 });
+  });
+});

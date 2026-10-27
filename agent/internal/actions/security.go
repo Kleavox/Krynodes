@@ -306,7 +306,14 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 	if settings["ports"] == "" {
 		ssh = []string{"22"}
 	}
-	var public []reporter.Listener
+	document, own := e.ownAddress()
+	wireguard := 0
+	for _, entry := range document.Members {
+		if entry.Address == own {
+			wireguard = entry.Port
+		}
+	}
+	public := []reporter.Listener{}
 	stub := false
 	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Fields(line)
@@ -338,6 +345,9 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 		if err != nil || (fields[0] != "tcp" && fields[0] != "udp") {
 			continue
 		}
+		if fields[0] == "udp" && process == "" && wireguard != 0 && number == wireguard {
+			host, process = own, "WireGuard"
+		}
 		public = addListener(public, reporter.Listener{Address: host, Port: number, Protocol: fields[0], Process: process})
 	}
 	return public, stub
@@ -351,7 +361,7 @@ func (e Executor) publicContainers(ctx context.Context) []reporter.Listener {
 	var public []reporter.Listener
 	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(fields) < 3 || fields[0] == TunnelContainer || e.fullAccess(fields[2]) {
+		if len(fields) < 3 || fields[0] == TunnelContainer {
 			continue
 		}
 		for _, bound := range publicBindings(fields[1]) {

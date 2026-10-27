@@ -125,6 +125,21 @@ describe("a server's addresses", () => {
     expect(listAddresses(vpn, [])).toHaveLength(1);
   });
 
+  it("names the private network on its kry0 address", () => {
+    const joined = {
+      ...pivox,
+      interfaces: on(["eth0", "192.168.1.5"], ["kry0", "10.88.0.2"]),
+    };
+    expect(listAddresses(joined, ["10.88.0.0/24"])[1]).toEqual({
+      label: "kry0",
+      family: 4,
+      address: "10.88.0.2",
+      router: false,
+      network: "Private Network",
+      owner: null,
+    });
+  });
+
   it("drop a family the server stopped answering on", () => {
     const stale = columns({
       ipv4: "203.0.113.12",

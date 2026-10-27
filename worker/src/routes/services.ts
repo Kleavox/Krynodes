@@ -1,13 +1,16 @@
 import { pokeSoon } from "../fleet/client";
 import {
+  FEATURE_AGENT,
   KIND_VERBS,
   MIN_AGENT_VERSION,
   RECIPES,
   UNSIGNED_VERBS,
+  agentHasFeatures,
   agentSupported,
   hostVerbFits,
   isProtectedTarget,
   isValidTarget,
+  networkArgsValid,
   signedCommandSchema,
 } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
@@ -18,13 +21,17 @@ import { assertionUv } from "../lib/webauthn";
 import {
   cancelStatement,
   createBatch,
+  QUESTIONS,
   SEALED_VERBS,
   sweepStatements,
   UNIT_SQL,
   type ActionRow,
 } from "../actions/store";
-import { decodeJson } from "../lib/b64url";
+import { decodeJson, toB64url } from "../lib/b64url";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
+import { liveRange, readNetwork } from "../network/document";
+import { quarantineRefusal } from "../quarantine/quarantine";
+import { networkMember } from "./admin";
 import { readPrivateRanges } from "./settings";
 import { ownersRefusal } from "../trust/approval";
 import { loadFleet, readReport } from "../trust/fleet";
@@ -62,6 +69,22 @@ const actionRequestSchema = z.object({
     "scan",
     "install",
     "uninstall",
+    "signin",
+    "refresh",
+    "find",
+    "preview",
+    "upgrade",
+    "hold",
+    "unhold",
+    "addrepo",
+    "droprepo",
+    "inspect",
+    "probe",
+    "test",
+    "prepare",
+    "unprepare",
+    "rekey",
+    "unblock",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -69,9 +92,17 @@ const actionRequestSchema = z.object({
       z.object({
         id: z.string().uuid().optional(),
         nodeId: z.string().uuid(),
-        kind: z.enum(["systemd", "docker", "compose", "host"]),
+        kind: z.enum([
+          "systemd",
+          "docker",
+          "compose",
+          "host",
+          "apt",
+          "network",
+        ]),
         name: z.string().min(1).max(128),
         signed: signedCommandSchema.optional(),
+        args: z.record(z.string().max(64), z.string()).optional(),
       }),
     )
     .min(1)
@@ -81,7 +112,38 @@ const actionRequestSchema = z.object({
 
 const OWN_STACK = /^\/var\/lib\/kry-exec\/compose\/[^/]+$/u;
 
-export const READ_ONLY = new Set(["logs", "read", "scan"]);
+export const READ_ONLY = new Set([
+  "logs",
+  "read",
+  "scan",
+  "refresh",
+  "find",
+  "preview",
+  "inspect",
+  "probe",
+  "test",
+]);
+
+const MAX_ASKED_BYTES = 4096;
+
+const askedAttachment = (args: Record<string, string> | undefined) => {
+  if (args === undefined) return undefined;
+  const bytes = new TextEncoder().encode(JSON.stringify(args));
+  return bytes.length > MAX_ASKED_BYTES ? null : toB64url(bytes);
+};
+
+const needsFeatures = (target: { kind: string; name: string }) =>
+  target.kind === "apt" ||
+  target.kind === "network" ||
+  (target.kind === "host" && target.name === "tailscale");
+
+const askedFits = (
+  kind: string,
+  action: string,
+  args: Record<string, string>,
+) =>
+  askedAttachment(args) !== null &&
+  (kind === "apt" || (kind === "network" && networkArgsValid(action, args)));
 
 const commandSchema = z.object({
   v: z.literal(1),
@@ -116,10 +178,15 @@ export function toActionRecord(row: ActionRow) {
     exitCode: row.exit_code,
     output: row.output,
     deviceId: row.device_id,
+    progress: parsed(row.progress ?? null),
   };
 }
 
-function securityReport(text: string | null, ranges: string[]): unknown {
+function securityReport(
+  text: string | null,
+  ranges: string[],
+  network: string | null,
+): unknown {
   const report = parsed(text) as {
     findings?: unknown;
     listeners?: Listener[];
@@ -129,6 +196,7 @@ function securityReport(text: string | null, ranges: string[]): unknown {
     ? filterListeners(
         report as { findings: Finding[]; listeners?: Listener[] },
         ranges,
+        network ?? undefined,
       )
     : report;
   return shown;
@@ -155,12 +223,15 @@ export function registerServiceRoutes(
     const owner = context.get("identity").id;
     const now = Date.now();
     await db.batch(sweepStatements(db, now));
-    const ranges = await readPrivateRanges(db);
+    const [ranges, network] = await Promise.all([
+      readPrivateRanges(db, owner),
+      readNetwork(db, owner).then(liveRange),
+    ]);
     const [nodes, services, actions] = await Promise.all([
       db
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
-                  seal_key, security, vault
+                  seal_key, security, vault, tailscale_vault
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
@@ -173,6 +244,7 @@ export function registerServiceRoutes(
           seal_key: string | null;
           security: string | null;
           vault: string | null;
+          tailscale_vault: string | null;
         }>(),
       db
         .prepare(
@@ -202,7 +274,7 @@ export function registerServiceRoutes(
     const [stacks, removed, addresses] = await Promise.all([
       db
         .prepare(
-          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers FROM stacks
+          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network FROM stacks
            WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
            ORDER BY node_id, project`,
         )
@@ -218,6 +290,7 @@ export function registerServiceRoutes(
           access: string | null;
           public: string | null;
           containers: string | null;
+          network: string | null;
         }>(),
       db
         .prepare(
@@ -257,8 +330,9 @@ export function registerServiceRoutes(
         trust: readReport(node.trust_report),
         docker: node.docker,
         sealKey: node.seal_key,
-        security: securityReport(node.security, ranges),
+        security: securityReport(node.security, ranges, network),
         vault: parsed(node.vault),
+        tailscaleVault: parsed(node.tailscale_vault),
         webAddresses: addresses.results
           .filter((address) => address.node_id === node.id)
           .map(({ node_id: _, ...address }) => address),
@@ -274,6 +348,7 @@ export function registerServiceRoutes(
             access: stack.access,
             public: (parsed(stack.public) as string[] | null) ?? [],
             containers: (parsed(stack.containers) as string[] | null) ?? [],
+            network: parsed(stack.network),
           })),
         removed: removed.results
           .filter((stack) => stack.node_id === node.id)
@@ -344,14 +419,45 @@ export function registerServiceRoutes(
       .first<{ id: string }>();
     if (!node) return context.json({ code: "NOT_FOUND" }, 404);
     await db.batch(sweepStatements(db, Date.now()));
-    const rows = await db
-      .prepare(
-        `SELECT * FROM actions WHERE node_id = ? AND action <> 'logs'
-         ORDER BY requested_at DESC, position DESC LIMIT 10`,
-      )
-      .bind(node.id)
-      .all<ActionRow>();
-    return context.json({ actions: rows.results.map(toActionRecord) });
+    const [rows, network] = await Promise.all([
+      db
+        .prepare(
+          `SELECT * FROM actions WHERE node_id = ?1
+             AND action <> 'logs' AND action NOT IN (SELECT value FROM json_each(?2))
+           ORDER BY requested_at DESC, position DESC LIMIT 10`,
+        )
+        .bind(node.id, JSON.stringify(QUESTIONS))
+        .all<ActionRow>(),
+      db
+        .prepare(
+          `SELECT id, at, requested_by, device_id,
+                  CASE WHEN EXISTS (SELECT 1 FROM json_each(joins) WHERE value = ?1)
+                    THEN 'Joined Private Network' ELSE 'Left Private Network' END AS change
+           FROM network_changes
+           WHERE owner_user_id = ?2
+             AND (EXISTS (SELECT 1 FROM json_each(joins) WHERE value = ?1)
+               OR EXISTS (SELECT 1 FROM json_each(leaves) WHERE value = ?1))
+           ORDER BY at DESC, id DESC LIMIT 10`,
+        )
+        .bind(node.id, context.get("identity").id)
+        .all<{
+          id: string;
+          at: string;
+          requested_by: string;
+          device_id: string | null;
+          change: string;
+        }>(),
+    ]);
+    return context.json({
+      actions: rows.results.map(toActionRecord),
+      network: network.results.map((row) => ({
+        id: row.id,
+        at: row.at,
+        change: row.change,
+        requestedBy: row.requested_by,
+        deviceId: row.device_id,
+      })),
+    });
   });
 
   app.post("/api/actions", requireOperator, async (context) => {
@@ -369,6 +475,11 @@ export function registerServiceRoutes(
           !isValidTarget(target.kind, target.name) ||
           !(KIND_VERBS[target.kind] as readonly string[]).includes(action) ||
           (target.kind === "host" && !hostVerbFits(target.name, action)) ||
+          (target.args !== undefined &&
+            (!unsigned || !askedFits(target.kind, action, target.args))) ||
+          (target.kind === "network" &&
+            unsigned &&
+            !networkArgsValid(action, target.args ?? {})) ||
           (unsigned
             ? target.signed !== undefined
             : target.signed === undefined || target.id === undefined),
@@ -427,9 +538,29 @@ export function registerServiceRoutes(
         422,
       );
     }
+    if (
+      (action === "remove" || action === "purge") &&
+      targets.some(
+        (target) => target.kind === "apt" && target.name === "openssh-server",
+      )
+    ) {
+      return context.json(
+        {
+          code: "PROTECTED_TARGET",
+          message: "Krynodes never removes openssh-server.",
+        },
+        422,
+      );
+    }
 
     const db = context.env.DB;
     const identity = context.get("identity");
+    const held = await quarantineRefusal(
+      db,
+      targets.map((target) => target.nodeId),
+      action,
+    );
+    if (held) return context.json(held, 409);
     if (!unsigned) {
       const refused = await ownersRefusal(
         context.env,
@@ -449,7 +580,10 @@ export function registerServiceRoutes(
     const nodeIds = JSON.stringify([...wanted]);
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker FROM nodes
+        `SELECT id, name, agent_version, docker, tailscale,
+                (SELECT json_extract(report, '$.apt') FROM packages
+                 WHERE node_id = nodes.id) AS apt
+         FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
@@ -459,6 +593,8 @@ export function registerServiceRoutes(
         name: string;
         agent_version: string | null;
         docker: string | null;
+        tailscale: string | null;
+        apt: number | null;
       }>();
     if (nodes.results.length !== wanted.size) {
       return context.json(
@@ -475,6 +611,36 @@ export function registerServiceRoutes(
         {
           code: "AGENT_TOO_OLD",
           message: `Update the agent on ${old.name} to ${MIN_AGENT_VERSION} or newer.`,
+        },
+        422,
+      );
+    }
+    const behind = targets.find(
+      (target) =>
+        needsFeatures(target) &&
+        !agentHasFeatures(byId.get(target.nodeId)!.agent_version),
+    );
+    if (behind) {
+      return context.json(
+        {
+          code: "AGENT_TOO_OLD",
+          message: `Update the agent on ${byId.get(behind.nodeId)!.name} to ${FEATURE_AGENT} or newer.`,
+        },
+        422,
+      );
+    }
+    if (then) {
+      const member = await networkMember(db, targets[0]!.nodeId);
+      if (member) return member(context);
+    }
+    const aptless = targets.find(
+      (target) => target.kind === "apt" && byId.get(target.nodeId)!.apt === 0,
+    );
+    if (aptless) {
+      return context.json(
+        {
+          code: "NO_APT",
+          message: `${byId.get(aptless.nodeId)!.name} does not use apt.`,
         },
         422,
       );
@@ -526,10 +692,11 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT node_id AS nodeId, kind, name FROM actions
-           WHERE status IN ('queued', 'sent') AND action NOT IN ('logs', 'read', 'scan')
-             AND node_id IN (SELECT value FROM json_each(?))`,
+           WHERE status IN ('queued', 'sent')
+             AND action NOT IN (SELECT value FROM json_each(?2))
+             AND node_id IN (SELECT value FROM json_each(?1))`,
         )
-        .bind(nodeIds)
+        .bind(nodeIds, JSON.stringify([...READ_ONLY, "block"]))
         .all<{ nodeId: string; kind: string; name: string }>(),
     ]);
 
@@ -596,10 +763,20 @@ export function registerServiceRoutes(
             ...(node.docker === "missing" || node.docker === "no-compose"
               ? ["docker"]
               : []),
+            ...(node.tailscale === null && action !== "unblock"
+              ? []
+              : ["tailscale"]),
           ].map((name) => targetKey({ nodeId: node.id, kind: "host", name })),
         ),
       ]);
-      if (targets.some((target) => !present.has(targetKey(target)))) {
+      if (
+        targets.some(
+          (target) =>
+            target.kind !== "apt" &&
+            target.kind !== "network" &&
+            !present.has(targetKey(target)),
+        )
+      ) {
         return context.json(
           {
             code: "UNKNOWN_TARGET",
@@ -641,7 +818,10 @@ export function registerServiceRoutes(
     const batch = createBatch(db, {
       action,
       mode,
-      targets,
+      targets: targets.map(({ args, ...target }) => ({
+        ...target,
+        attachment: askedAttachment(args) ?? undefined,
+      })),
       requestedBy: identity.email,
       now,
       deviceId: targets[0]?.signed?.grant.credentialId,

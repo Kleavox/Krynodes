@@ -155,6 +155,23 @@ describe("enrollment tokens", () => {
     ).toBe(409);
   });
 
+  it("gets the server ready for the private network only while one exists", async () => {
+    const { create, script, sqlite } = fleet();
+    const { token } = await create({ docker: true, network: true });
+    expect(tail((await script(token)).text)).toBe(
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker'\n  main $kry_args\n}\n`,
+    );
+    sqlite.exec(
+      `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+       VALUES ('standalone', '10.88.4.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
+    );
+    expect(tail((await script(token)).text)).toBe(
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker --network 10.88.4.0/24'\n  main $kry_args\n}\n`,
+    );
+    sqlite.exec("UPDATE network SET deleted = 1");
+    expect(tail((await script(token)).text)).not.toContain("--network");
+  });
+
   it("answers a used or unknown command with a script that says why and stops", async () => {
     const { create, script, enroll } = fleet();
     const { token } = await create();

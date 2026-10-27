@@ -1,3 +1,13 @@
+import type {
+  NetworkDocument,
+  NetworkLink,
+  PackagesReport,
+  PendingRelease,
+  StackNetwork,
+  TailnetRule,
+  TailscaleReport,
+} from "@krynodes/protocol";
+
 export interface Identity {
   id: string;
   email: string;
@@ -51,10 +61,173 @@ export interface NodeRecord {
   addresses?: Address[] | null;
   connected_at?: string;
   grace_seconds?: number;
+  updates?: UpdatesSummary | null;
+  tailscale?: TailscaleReport | null;
+  network?: {
+    state: "waiting" | "in" | "leaving";
+    address: string | null;
+    port: number;
+  } | null;
+  quarantine?: { at: string; why: string; tailnet?: string[] } | null;
+  warnings?: NodeWarning[];
+}
+
+export interface NodeWarning {
+  id: string;
+  kind: string;
+  detail: Record<string, string>;
+  at: string;
+  cutAt: string | null;
+}
+
+export interface QuarantineStep {
+  nodeId: string;
+  nodeName: string;
+  action: ActionVerb;
+  status: ActionStatus;
+  finishedAt: string | null;
+}
+
+export interface QuarantineRecord {
+  id: string;
+  why: string;
+  at: string;
+  releasedAt: string | null;
+  releasedBy: string | null;
+  tailnet: string[];
+  address: string | null;
+  knocks: { reporter: string; at: string; count: number }[];
+  steps: QuarantineStep[];
+  removed?: { at: string; by: string | null } | null;
+}
+
+export interface StoppedStack {
+  project: string;
+  at: string;
+  tried: string[];
+  count: number;
+}
+
+export interface QuarantineView {
+  quarantine: QuarantineRecord | null;
+  release: PendingRelease | null;
+  stopped: StoppedStack[];
+  changeThese: {
+    stacks: string[];
+    vault: VaultReport | null;
+    tailscaleVault?: VaultReport | null;
+    webAddresses: { hostname: string; project: string }[];
+    trusted: {
+      nodeId: string;
+      nodeName: string;
+      project: string;
+      port: string;
+    }[];
+  };
+}
+
+interface NetworkPoint {
+  nodeId: string;
+  stack: string;
+  target: string;
+}
+
+export interface NetworkServer {
+  nodeId: string;
+  name: string;
+  state: "in" | "leaving";
+  address: string | null;
+  port: number;
+  mtu: number | null;
+  key: string;
+  signer: string;
+  endpoint: string | null;
+  nat: boolean;
+  announced: { key: string; signature: string } | null;
+  since: string;
+  joinedAt: string | null;
+  points: { stack: string; target: string }[];
+}
+
+export interface NetworkChange {
+  id: string;
+  at: string;
+  change: string;
+  detail: string | null;
+  requestedBy: string;
+  deviceId: string | null;
+}
+
+export interface NetworkView {
+  network: {
+    range: string;
+    port: number;
+    mtu: number;
+    version: number;
+    createdAt: string;
+    createdBy: string;
+  } | null;
+  version: number;
+  document: NetworkDocument | null;
+  body: string | null;
+  quarantined: string[];
+  wrongPorts: {
+    nodeId: string;
+    from: string | null;
+    target: string | null;
+    at: string;
+  }[];
+  members: NetworkServer[];
+  waiting: {
+    nodeId: string;
+    name: string;
+    key: string;
+    signer: string;
+    port: number;
+    mtu: number | null;
+    since: string;
+  }[];
+  links: { a: string; b: string; answering: boolean; since: string }[];
+  live: Record<string, { at: number; links: NetworkLink[] }>;
+  held: {
+    address: string;
+    nodeId: string | null;
+    nodeName: string | null;
+    points: NetworkPoint[];
+  }[];
+  changes: NetworkChange[];
+}
+
+export interface NetworkNext {
+  addresses: { nodeId: string; address: string; name: string }[];
+  held: NetworkView["held"];
+}
+
+export type AptReport = Extract<PackagesReport, { apt: true }>;
+export type RestartFacts = NonNullable<AptReport["restart"]>;
+
+export interface UpdatesSummary {
+  waiting: number;
+  security: number;
+  held: number;
+  checkedAt: string | null;
+  restart: RestartFacts | null;
+}
+
+export interface PackagesResponse {
+  report: PackagesReport | null;
+  readAt: string | null;
+}
+
+interface ActionStep {
+  at: string;
+  done: number;
+  total: number;
+  line: string;
 }
 
 export type CheckKind = "HTTP" | "TCP" | "SERVICE" | "CONTAINER";
-export type CheckStatus = "UNKNOWN" | "UP" | "DOWN";
+export type CheckStatus = "UNKNOWN" | "UP" | "DOWN" | "UNTRUSTED";
 
 export interface CheckRecord {
   id: string;
@@ -216,7 +389,8 @@ export interface CheckResults {
 export type ServiceKind = "systemd" | "docker";
 export type ServiceState = "running" | "stopped" | "failed" | "starting";
 export type ServiceAction = "start" | "stop" | "restart";
-export type ActionKind = ServiceKind | "compose" | "trust" | "host" | "vault";
+export type ActionKind =
+  ServiceKind | "compose" | "trust" | "host" | "vault" | "apt" | "network";
 export type ActionVerb =
   | ServiceAction
   | "deploy"
@@ -237,6 +411,7 @@ export type ActionVerb =
   | "expose"
   | "unexpose"
   | "adopt"
+  | "reach"
   | "apply"
   | "undo"
   | "lockdown"
@@ -247,7 +422,31 @@ export type ActionVerb =
   | "reshare"
   | "forget"
   | "install"
-  | "uninstall";
+  | "uninstall"
+  | "signin"
+  | "refresh"
+  | "find"
+  | "preview"
+  | "upgrade"
+  | "hold"
+  | "unhold"
+  | "addrepo"
+  | "droprepo"
+  | "inspect"
+  | "probe"
+  | "test"
+  | "prepare"
+  | "unprepare"
+  | "rekey"
+  | "accept"
+  | "block"
+  | "unblock"
+  | "drop"
+  | "tighten"
+  | "policy"
+  | "save"
+  | "key"
+  | "join";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
@@ -271,6 +470,7 @@ export interface StackEntry {
   access?: "contained" | "full" | null;
   public?: string[];
   containers?: string[];
+  network?: StackNetwork | null;
 }
 
 export interface Finding {
@@ -293,6 +493,12 @@ export interface SecurityReport {
   lockdown: boolean;
   rebootHour: number | null;
   platform?: Platform;
+  listeners?: {
+    address: string;
+    port: number;
+    protocol: "tcp" | "udp";
+    process: string;
+  }[];
 }
 
 export interface WebAddress {
@@ -341,6 +547,7 @@ interface ServiceNode {
   sealKey?: string | null;
   security?: SecurityReport | null;
   vault?: VaultReport | null;
+  tailscaleVault?: VaultReport | null;
   webAddresses?: WebAddress[];
 }
 
@@ -405,6 +612,7 @@ interface HistoryIncident {
 
 export type HistoryEntry =
   | { type: "action"; at: string; action: ActionRecord }
+  | { type: "network"; at: string; change: NetworkChange }
   | {
       type: "incident";
       at: string;
@@ -450,6 +658,7 @@ export interface ActionRecord {
   exitCode: number | null;
   output: string | null;
   deviceId: string | null;
+  progress?: ActionStep | null;
 }
 
 export interface ServicesResponse {
@@ -474,4 +683,52 @@ export interface UsageResponse {
   storage: { bytes: number | null; limit: number };
   quotas: UsageShare & { objects: number };
   resetAt: string;
+}
+
+export interface TailnetServer {
+  nodeId: string;
+  name: string;
+  report: TailscaleReport | null;
+  vault: VaultReport | null;
+  signedIn: boolean;
+  listeners?: NonNullable<SecurityReport["listeners"]>;
+}
+
+export interface TailnetConnected {
+  tailnet: string;
+  clientId: string;
+  setId: string | null;
+  rules: TailnetRule[];
+  block: string | null;
+  lines: string[];
+  members: string[];
+  savedAt: string | null;
+  savedBy: string | null;
+  connectedAt: string;
+}
+
+export type TailnetAlarm =
+  | {
+      id: string;
+      kind: "device";
+      at: string;
+      device: { name: string; tag: string };
+    }
+  | {
+      id: string;
+      kind: "policy";
+      at: string;
+      change: {
+        block: boolean;
+        added: number;
+        removed: number;
+        lines: string[];
+      };
+    };
+
+export interface TailscaleResponse {
+  hook: string;
+  connected: TailnetConnected | null;
+  servers: TailnetServer[];
+  alarms: TailnetAlarm[];
 }

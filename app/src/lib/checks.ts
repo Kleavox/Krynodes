@@ -198,6 +198,7 @@ export function checkLive(view: {
 }): { label: string; tone: LiveTone } {
   const { check, display, incident, now } = view;
   if (display === "PAUSED") return { label: "Paused", tone: "idle" };
+  if (display === "UNTRUSTED") return { label: "Not Trusted", tone: "off" };
   const work = (view.work ?? []).find((span) =>
     covers(span.from, span.to, now),
   );

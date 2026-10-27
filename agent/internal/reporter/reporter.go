@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/metrics"
+	"github.com/Kleavox/krynodes/agent/internal/network"
 )
 
 type Host struct {
@@ -33,6 +34,59 @@ type Heartbeat struct {
 	Metrics metrics.Snapshot `json:"metrics"`
 	Results []CheckResult    `json:"results,omitempty"`
 	Update  *UpdateFailure   `json:"update,omitempty"`
+	Network *NetworkBeat     `json:"network,omitempty"`
+	Boot    *Boot            `json:"boot,omitempty"`
+	Events  []Event          `json:"events,omitempty"`
+	Release *Release         `json:"release,omitempty"`
+}
+
+type Boot struct {
+	ID    string `json:"id"`
+	Count int64  `json:"count"`
+}
+
+type Release struct {
+	Key     string `json:"key"`
+	Signer  string `json:"signer"`
+	Seal    string `json:"seal"`
+	Token   string `json:"token"`
+	Expires string `json:"expires"`
+}
+
+type Event struct {
+	ID     string            `json:"id"`
+	Kind   string            `json:"kind"`
+	At     string            `json:"at"`
+	Detail map[string]string `json:"detail"`
+}
+
+type NetworkBeat struct {
+	Version  int              `json:"version"`
+	Key      *string          `json:"key"`
+	Links    []network.Link   `json:"links"`
+	Announce *NetworkAnnounce `json:"announce,omitempty"`
+}
+
+type NetworkAnnounce struct {
+	Key       string `json:"key"`
+	Signature string `json:"signature"`
+}
+
+type NetworkReply struct {
+	Document  json.RawMessage    `json:"document,omitempty"`
+	Endpoints []NetworkEndpoint  `json:"endpoints,omitempty"`
+	Announced []NetworkAnnounced `json:"announced,omitempty"`
+}
+
+type NetworkEndpoint struct {
+	Key      string `json:"key"`
+	Endpoint string `json:"endpoint"`
+}
+
+type NetworkAnnounced struct {
+	Node      string `json:"node"`
+	Key       string `json:"key"`
+	Signature string `json:"signature"`
 }
 
 type UpdateFailure struct {
@@ -47,6 +101,9 @@ type HeartbeatResponse struct {
 	Update          *UpdateInstruction `json:"update,omitempty"`
 	Actions         []ActionRequest    `json:"actions,omitempty"`
 	Refresh         bool               `json:"refresh,omitempty"`
+	Network         *NetworkReply      `json:"network,omitempty"`
+	Acked           []string           `json:"acked,omitempty"`
+	Quarantined     bool               `json:"quarantined,omitempty"`
 }
 
 type UpdateInstruction struct {
@@ -81,15 +138,22 @@ type ServiceEntry struct {
 }
 
 type StackEntry struct {
-	Access     string   `json:"access,omitempty"`
-	Public     []string `json:"public,omitempty"`
-	Project    string   `json:"project"`
-	Directory  string   `json:"directory"`
-	Running    int      `json:"running"`
-	Total      int      `json:"total"`
-	Compose    bool     `json:"compose"`
-	Rollback   bool     `json:"rollback"`
-	Containers []string `json:"containers,omitempty"`
+	Access     string        `json:"access,omitempty"`
+	Public     []string      `json:"public,omitempty"`
+	Project    string        `json:"project"`
+	Directory  string        `json:"directory"`
+	Running    int           `json:"running"`
+	Total      int           `json:"total"`
+	Compose    bool          `json:"compose"`
+	Rollback   bool          `json:"rollback"`
+	Containers []string      `json:"containers,omitempty"`
+	Network    *StackNetwork `json:"network,omitempty"`
+}
+
+type StackNetwork struct {
+	Serves  []network.Serve `json:"serves"`
+	Reaches []string        `json:"reaches"`
+	Private []string        `json:"private"`
 }
 
 type TrustReport struct {
@@ -155,22 +219,149 @@ func (s VaultSlot) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.Report)
 }
 
+type PackageEntry struct {
+	Name    string  `json:"name"`
+	Version string  `json:"version"`
+	From    *string `json:"from"`
+	By      *string `json:"by"`
+	Feature *string `json:"feature"`
+	More    int     `json:"more"`
+	Held    bool    `json:"held"`
+}
+
+type HeldBack struct {
+	Adds    []string `json:"adds"`
+	Removes []string `json:"removes"`
+}
+
+type UpdateEntry struct {
+	Name     string    `json:"name"`
+	From     string    `json:"from"`
+	To       string    `json:"to"`
+	Source   *string   `json:"source"`
+	Security bool      `json:"security"`
+	Held     bool      `json:"held"`
+	Back     *HeldBack `json:"back"`
+}
+
+type SourceEntry struct {
+	Name     string   `json:"name"`
+	Host     string   `json:"host"`
+	Suites   []string `json:"suites"`
+	Key      *string  `json:"key"`
+	Krynodes bool     `json:"krynodes"`
+	File     string   `json:"file"`
+	System   bool     `json:"system"`
+}
+
+type SecurityUpdates struct {
+	On      bool    `json:"on"`
+	LastRan *string `json:"lastRan"`
+}
+
+type RestartReport struct {
+	Since    string   `json:"since"`
+	Running  *string  `json:"running"`
+	Newest   *string  `json:"newest"`
+	File     bool     `json:"file"`
+	Services []string `json:"services"`
+}
+
+type PackagesReport struct {
+	Apt       bool            `json:"apt"`
+	System    string          `json:"system"`
+	Codename  string          `json:"codename"`
+	ReadAt    string          `json:"readAt"`
+	CheckedAt *string         `json:"checkedAt"`
+	Installed int             `json:"installed"`
+	Packages  []PackageEntry  `json:"packages"`
+	Updates   []UpdateEntry   `json:"updates"`
+	Sources   []SourceEntry   `json:"sources"`
+	Security  SecurityUpdates `json:"security"`
+	Restart   *RestartReport  `json:"restart"`
+}
+
+func (r PackagesReport) MarshalJSON() ([]byte, error) {
+	if !r.Apt {
+		return json.Marshal(struct {
+			Apt    bool   `json:"apt"`
+			System string `json:"system"`
+		}{false, r.System})
+	}
+	type plain PackagesReport
+	return json.Marshal(plain(r))
+}
+
+type TailscaleReport struct {
+	State     string            `json:"state"`
+	Addresses []string          `json:"addresses"`
+	Name      *string           `json:"name"`
+	KeyExpiry *string           `json:"keyExpiry"`
+	ID        *string           `json:"id"`
+	Tailnet   *string           `json:"tailnet"`
+	Tags      []string          `json:"tags"`
+	Peers     int               `json:"peers"`
+	Reach     *[]TailscaleReach `json:"reach"`
+	Names     map[string]string `json:"names"`
+}
+
+type TailscaleReach struct {
+	From  []string `json:"from"`
+	Ports []string `json:"ports"`
+}
+
+type TailscaleUse struct {
+	From string `json:"from"`
+	Port string `json:"port"`
+}
+
 type InventoryReport struct {
-	Hash     string          `json:"hash"`
-	Docker   string          `json:"docker,omitempty"`
-	SealKey  string          `json:"sealKey,omitempty"`
-	Security *SecurityReport `json:"security,omitempty"`
-	Vault    *VaultSlot      `json:"vault,omitempty"`
-	Removed  *[]RemovedStack `json:"removed,omitempty"`
-	Services *[]ServiceEntry `json:"services,omitempty"`
-	Stacks   *[]StackEntry   `json:"stacks,omitempty"`
-	Trust    *TrustReport    `json:"trust,omitempty"`
+	Hash      string            `json:"hash"`
+	Docker    string            `json:"docker,omitempty"`
+	SealKey   string            `json:"sealKey,omitempty"`
+	Security  *SecurityReport   `json:"security,omitempty"`
+	Vault     *VaultSlot        `json:"vault,omitempty"`
+	Removed   *[]RemovedStack   `json:"removed,omitempty"`
+	Services  *[]ServiceEntry   `json:"services,omitempty"`
+	Stacks    *[]StackEntry     `json:"stacks,omitempty"`
+	Trust     *TrustReport      `json:"trust,omitempty"`
+	Packages  *PackagesReport   `json:"packages,omitempty"`
+	Tailscale *TailscaleReport  `json:"tailscale,omitempty"`
+	Network   *NetworkInventory `json:"network,omitempty"`
+
+	TailscaleVault *VaultSlot `json:"tailscaleVault,omitempty"`
+}
+
+type NetworkInventory struct {
+	Prepared *NetworkPrepared `json:"prepared,omitempty"`
+	Points   []NetworkPoint   `json:"points"`
+}
+
+type NetworkPrepared struct {
+	Key    string `json:"key"`
+	Signer string `json:"signer"`
+	Port   int    `json:"port"`
+	MTU    *int   `json:"mtu"`
+}
+
+type NetworkPoint struct {
+	Stack  string `json:"stack"`
+	Target string `json:"target"`
+}
+
+type Progress struct {
+	ID    string `json:"id"`
+	At    string `json:"at"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
+	Line  string `json:"line"`
 }
 
 type ActionsReport struct {
 	NodeID    string           `json:"nodeId"`
 	Results   []ActionResult   `json:"results,omitempty"`
 	Inventory *InventoryReport `json:"inventory,omitempty"`
+	Progress  []Progress       `json:"progress,omitempty"`
 }
 
 type ActionsResponse struct {

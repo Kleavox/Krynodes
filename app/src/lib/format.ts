@@ -37,6 +37,7 @@ export function checkDisplayStatus(
   enabled: boolean | number = true,
 ): CheckDisplay {
   if (!enabled) return "PAUSED";
+  if (status === "UNTRUSTED") return status;
   if (node === "offline") return "OFFLINE";
   if (node === "online" || status === "UNKNOWN") return status;
   return "STALE";

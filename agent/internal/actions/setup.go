@@ -18,6 +18,7 @@ type SetupOptions struct {
 	Docker      bool
 	Anyway      bool
 	RebootHour  *int
+	Network     string
 	Command     string
 }
 
@@ -143,6 +144,13 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			mark("–", result.Message, "")
 		default:
 			mark("✓", result.Message, "")
+		}
+	}
+	if options.Network != "" {
+		if _, err := e.prepareNetwork(ctx, options.Network, 0); err != nil {
+			mark("✗", "Private network", ": "+err.Error())
+		} else {
+			mark("✓", "Private network ready", " · it joins when you press Join on the dashboard")
 		}
 	}
 	os.Remove(filepath.Join(e.StateDir, "security.json"))

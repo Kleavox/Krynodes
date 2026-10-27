@@ -23,6 +23,7 @@ import { useAction, useServices } from "@/lib/api";
 import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import { toast } from "sonner";
+import { privateIpProblem } from "@/lib/network";
 import { isPending } from "@/lib/services";
 import {
   newStackBlocker,
@@ -34,10 +35,12 @@ import type { NodeRecord } from "@/types";
 import {
   AccessChoice,
   FullAccessSummary,
+  NetworkSection,
   ReachField,
   SecretsEditor,
   sealSecrets,
   secretsProblem,
+  useStackNetwork,
   type Access,
   type SecretRow,
 } from "./stack-fields";
@@ -100,6 +103,16 @@ function NewStackForm({
   const modern = chosen !== undefined && agentCurrent(chosen.node);
   const reaching = modern && access === "contained";
   const hostPorts = parseHostPorts(reaching ? reach : "");
+  const network = useStackNetwork(nodeId, text);
+  const serving = reaching && network.member !== null;
+  const privateWrong = privateIpProblem(
+    text,
+    chosen?.node.name ?? "This server",
+    network.member !== null,
+  );
+  const networkWrong = serving
+    ? (network.placesProblem ?? network.servesProblem)
+    : null;
   const taken = (entries.get(nodeId)?.stacks ?? []).map(
     (stack) => stack.project,
   );
@@ -119,6 +132,8 @@ function NewStackForm({
     nameProblem === null &&
     textProblem === null &&
     hostPorts.problem === null &&
+    privateWrong === null &&
+    networkWrong === null &&
     (!modern || secretsProblem(secrets) === null);
 
   const create = async () => {
@@ -146,8 +161,15 @@ function NewStackForm({
             compose: text,
             ...(modern ? { access } : {}),
             ...(sealed ? { secrets: sealed } : {}),
-            ...(hostPorts.ports.length > 0
-              ? { args: { hostPorts: hostPorts.ports.join(",") } }
+            ...(hostPorts.ports.length > 0 || serving
+              ? {
+                  args: {
+                    ...(hostPorts.ports.length > 0
+                      ? { hostPorts: hostPorts.ports.join(",") }
+                      : {}),
+                    ...(serving ? network.args : {}),
+                  },
+                }
               : {}),
           },
         ],
@@ -269,6 +291,9 @@ function NewStackForm({
           {touched && textProblem && (
             <p className="text-xs text-destructive">{textProblem}</p>
           )}
+          {privateWrong && (
+            <p className="text-xs text-destructive">{privateWrong}</p>
+          )}
           {access === "contained" || !modern ? (
             <ul
               id="stack-file-notes"
@@ -295,7 +320,11 @@ function NewStackForm({
             </ul>
           ) : (
             <div id="stack-file-notes">
-              <FullAccessSummary text={text} />
+              <FullAccessSummary
+                text={text}
+                member={network.member}
+                onText={setText}
+              />
             </div>
           )}
         </div>
@@ -312,6 +341,7 @@ function NewStackForm({
                 problem={hostPorts.problem}
               />
             )}
+            {serving && <NetworkSection network={network} />}
             <div className="space-y-1.5">
               <Label>Secrets</Label>
               <SecretsEditor rows={secrets} onChange={setSecrets} />

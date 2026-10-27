@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { failedLine } from "@/lib/history";
 import { activity, hourglassLabel, type ActivityItem } from "@/lib/operations";
+import { jobTitle, namesServer, runningJob } from "@/lib/packages";
 import { runningText } from "@/lib/services";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
@@ -28,19 +29,48 @@ const ROW =
 
 const HEADING = "px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground";
 
-function Running({ item, onPick }: { item: ActivityItem; onPick: () => void }) {
+function Running({
+  item,
+  now,
+  onPick,
+}: {
+  item: ActivityItem;
+  now: number;
+  onPick: () => void;
+}) {
+  const job =
+    item.kind === "apt" || namesServer(item.action)
+      ? runningJob(item.action, item.nodeName, now)
+      : null;
   return (
     <li>
-      <Link to={`/nodes/${item.nodeId}`} onClick={onPick} className={ROW}>
+      <Link
+        to={
+          job
+            ? `/nodes/${item.nodeId}/packages`
+            : item.action.kind === "network"
+              ? "/network"
+              : `/nodes/${item.nodeId}`
+        }
+        onClick={onPick}
+        className={ROW}
+      >
         <StatusDot tone="warn" pulse className="mt-1.5" />
         <span className="min-w-0">
           <span className="block truncate">
-            {runningText(item.action, item.nodeName)}
+            {job
+              ? jobTitle(item.action, item.nodeName)
+              : (item.text ?? runningText(item.action, item.nodeName))}
           </span>
           <span className="block font-mono text-[11px] text-muted-foreground">
             {item.by} · <Elapsed since={item.at} />
             {item.status === "queued" && " · Waiting"}
           </span>
+          {job?.step && (
+            <span className="block truncate font-mono text-[11px] text-muted-foreground">
+              {job.step}
+            </span>
+          )}
         </span>
       </Link>
     </li>
@@ -154,7 +184,7 @@ export function ActivityMenu() {
         ) : (
           <ul>
             {list.map((item) => (
-              <Running key={item.id} item={item} onPick={close} />
+              <Running key={item.id} item={item} now={now} onPick={close} />
             ))}
           </ul>
         )}

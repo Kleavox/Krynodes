@@ -2,13 +2,14 @@ import { ownerOf, touches } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 
 import { loadEstate, notFixed } from "../actions/attention";
-import { SEALED_VERBS, type ActionRow } from "../actions/store";
+import { QUESTIONS, SEALED_VERBS, type ActionRow } from "../actions/store";
 import { READ_ONLY, toActionRecord } from "./services";
 import type { KrynodesApp, KrynodesEnv } from "./shared";
 
 const HISTORY_PAGE = 50;
 const SHOWS = ["everything", "actions", "incidents", "failed"] as const;
 const UNSEARCHED = JSON.stringify([...READ_ONLY, ...SEALED_VERBS]);
+const UNLISTED = JSON.stringify(QUESTIONS);
 
 const like = (text: string) =>
   `%${text.replace(/[\\%_]/gu, (character) => `\\${character}`)}%`;
@@ -17,14 +18,35 @@ const record = (row: ActionRow) =>
   toActionRecord(READ_ONLY.has(row.action) ? { ...row, output: null } : row);
 
 interface EntryKey {
-  type: "action" | "incident";
+  type: "action" | "incident" | "network";
   at: string;
   key: string;
   ref: string;
 }
 
+interface ChangeRow {
+  id: string;
+  at: string;
+  change: string;
+  detail: string | null;
+  requested_by: string;
+  device_id: string | null;
+}
+
 type HistoryEntry =
   | { type: "action"; at: string; action: ReturnType<typeof toActionRecord> }
+  | {
+      type: "network";
+      at: string;
+      change: {
+        id: string;
+        at: string;
+        change: string;
+        detail: string | null;
+        requestedBy: string;
+        deviceId: string | null;
+      };
+    }
   | {
       type: "incident";
       at: string;
@@ -79,6 +101,7 @@ export function registerHistoryRoutes(
            SELECT 'action' AS type, a.requested_at AS at, a.id AS key, a.id AS ref
            FROM actions a JOIN owned n ON n.id = a.node_id
            WHERE ?3 <> 'incidents' AND a.kind <> 'trust'
+             AND a.action NOT IN (SELECT value FROM json_each(?9))
              AND (?2 IS NULL OR a.node_id = ?2)
              AND (?3 <> 'everything' OR a.action NOT IN ('logs', 'read'))
              AND (?3 <> 'failed' OR a.status IN ('failed', 'expired'))
@@ -91,6 +114,12 @@ export function registerHistoryRoutes(
            UNION ALL
            SELECT 'incident', resolved_at, id || ':resolved', id FROM incident_rows
            WHERE resolved_at IS NOT NULL
+           UNION ALL
+           SELECT 'network', c.at, c.id, c.id FROM network_changes c
+           WHERE c.owner_user_id = ?1 AND ?3 IN ('everything', 'actions')
+             AND (?2 IS NULL OR EXISTS (SELECT 1 FROM json_each(c.nodes) WHERE value = ?2))
+             AND (?4 IS NULL OR c.change LIKE ?4 ESCAPE '\\'
+                  OR c.detail LIKE ?4 ESCAPE '\\')
          )
          SELECT type, at, key, ref FROM entries
          WHERE ?6 IS NULL OR at < ?6 OR (at = ?6 AND key < ?7)
@@ -105,6 +134,7 @@ export function registerHistoryRoutes(
         at || null,
         key ?? "",
         HISTORY_PAGE + 1,
+        UNLISTED,
       )
       .all<EntryKey>();
     const page = keys.results.slice(0, HISTORY_PAGE);
@@ -112,7 +142,7 @@ export function registerHistoryRoutes(
       JSON.stringify(
         page.filter((entry) => entry.type === type).map((entry) => entry.ref),
       );
-    const [actions, incidents] = await Promise.all([
+    const [actions, incidents, changes] = await Promise.all([
       db
         .prepare(
           "SELECT * FROM actions WHERE id IN (SELECT value FROM json_each(?))",
@@ -128,12 +158,39 @@ export function registerHistoryRoutes(
         )
         .bind(refs("incident"))
         .all<IncidentRow>(),
+      db
+        .prepare(
+          `SELECT id, at, change, detail, requested_by, device_id FROM network_changes
+           WHERE id IN (SELECT value FROM json_each(?))`,
+        )
+        .bind(refs("network"))
+        .all<ChangeRow>(),
     ]);
     const actionById = new Map(actions.results.map((row) => [row.id, row]));
     const incidentById = new Map(incidents.results.map((row) => [row.id, row]));
+    const changeById = new Map(changes.results.map((row) => [row.id, row]));
     const last = page.at(-1);
     return context.json({
       entries: page.flatMap((entry): HistoryEntry[] => {
+        if (entry.type === "network") {
+          const row = changeById.get(entry.ref);
+          return row
+            ? [
+                {
+                  type: "network",
+                  at: entry.at,
+                  change: {
+                    id: row.id,
+                    at: row.at,
+                    change: row.change,
+                    detail: row.detail,
+                    requestedBy: row.requested_by,
+                    deviceId: row.device_id,
+                  },
+                },
+              ]
+            : [];
+        }
         if (entry.type === "action") {
           const row = actionById.get(entry.ref);
           return row
@@ -178,9 +235,10 @@ export function registerHistoryRoutes(
           `SELECT * FROM actions
            WHERE ${owned} AND kind <> 'trust' AND hidden_at IS NULL
              AND status IN ('failed', 'expired')
+             AND action NOT IN (SELECT value FROM json_each(?))
            ORDER BY requested_at DESC, id DESC`,
         )
-        .bind(owner)
+        .bind(owner, UNLISTED)
         .all<ActionRow>(),
       db
         .prepare(

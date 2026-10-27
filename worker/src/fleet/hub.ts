@@ -30,8 +30,16 @@ import {
 } from "../incident/notify";
 import {
   sendFleetEmail,
+  sendQuarantineEmail,
   sendSecurityEmail,
   sendServerEmail,
+  sendStoppedEmail,
+  sendTailnetDeviceEmail,
+  sendTailnetPolicyEmail,
+  sendWarningEmail,
+  type StoppedMail,
+  type TailnetMail,
+  type WarningMail,
 } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
 import { agentConfigResponseSchema, agentSupported } from "@krynodes/protocol";
@@ -46,11 +54,34 @@ import {
   type StoredWindow,
   type StreamState,
 } from "./stream";
+import { HubNetwork } from "./network";
+import {
+  cutOffWarning,
+  intake,
+  warningStatement,
+  type Cutoff,
+  type Intake,
+} from "../quarantine/events";
+import {
+  holdStatement,
+  quarantine,
+  quarantineReport,
+} from "../quarantine/quarantine";
+import { readSettings } from "../quarantine/settings";
+import { judgeTailnet } from "../tailscale/hook";
 
 const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_requested_at,
-         update_attempts, update_error, inventory_hash, refresh_requested_at, security
+         update_attempts, update_error, inventory_hash, refresh_requested_at, security,
+         boot, reports, release,
+         EXISTS (SELECT 1 FROM quarantines q
+                 WHERE q.node_id = nodes.id AND q.released_at IS NULL) AS quarantined
   FROM nodes
   WHERE id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
+
+const CUTOFFS = "cutoffs";
+const TAILNET = "tailnet";
+const QUIET_HANDSHAKE_S = 180;
+const CLONED = "Reported from two machines at once";
 
 type Reply = (message: Record<string, unknown>) => void;
 
@@ -76,6 +107,11 @@ const DISK_CLEAR = 90;
 
 type Roster = Record<string, RosterEntry>;
 
+interface Tailnet {
+  owner: string;
+  due: number;
+}
+
 const offlineAfterMs = (interval: number) => Math.max(90, 3 * interval) * 1000;
 
 function restarting(security: string | null, seen: number, now: number) {
@@ -97,10 +133,12 @@ export class FleetHub {
     WebSocket,
     { since: number; count: number }
   >();
+  private readonly network: HubNetwork;
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
     this.env = env;
+    this.network = new HubNetwork(env.DB, ctx.storage);
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair("ping", "pong"),
     );
@@ -144,6 +182,25 @@ export class FleetHub {
         ),
         mail: (await this.ctx.storage.get(MAIL_STATE)) ?? null,
       });
+    }
+    if (url.pathname === "/network") {
+      return Response.json(Object.fromEntries(this.network.latest));
+    }
+    if (url.pathname === "/tailnet" && request.method === "POST") {
+      const body = (await request.json().catch(() => null)) as {
+        owner?: unknown;
+        due?: unknown;
+      } | null;
+      if (typeof body?.owner !== "string" || typeof body.due !== "number") {
+        return new Response(null, { status: 400 });
+      }
+      const stored = await this.ctx.storage.get<Tailnet>(TAILNET);
+      await this.ctx.storage.put(TAILNET, {
+        owner: body.owner,
+        due: Math.min(stored?.due ?? Infinity, body.due),
+      });
+      await this.schedule(Date.now());
+      return Response.json({});
     }
     if (url.pathname === "/poke" && request.method === "POST") {
       const body = (await request.json().catch(() => null)) as {
@@ -306,7 +363,13 @@ export class FleetHub {
         );
         reply({ type: "actions", response });
         this.poke(next);
-        this.announce(deleted ? ["all"] : ["actions", "services"]);
+        this.announce(
+          deleted
+            ? ["all"]
+            : parsed.data.results || parsed.data.inventory
+              ? ["actions", "services"]
+              : ["actions"],
+        );
         if (alerts.length > 0) await this.securityMail(node.id, alerts);
       } else {
         invalid();
@@ -367,8 +430,154 @@ export class FleetHub {
     return pulse;
   }
 
+  private async cutoffs() {
+    return (await this.ctx.storage.get<Record<string, number>>(CUTOFFS)) ?? {};
+  }
+
+  private async keepCutoffs(cutoffs: Cutoff[]) {
+    if (cutoffs.length === 0) return;
+    const stored = await this.cutoffs();
+    for (const cutoff of cutoffs) {
+      stored[`${cutoff.nodeId}|${cutoff.id}`] = cutoff.at;
+    }
+    await this.ctx.storage.put(CUTOFFS, stored);
+  }
+
+  private async cutOff(now: number) {
+    const stored = await this.cutoffs();
+    const due = Object.entries(stored).filter(([, at]) => at <= now);
+    if (due.length === 0) return;
+    const poke: string[] = [];
+    const quarantined: string[] = [];
+    for (const [key] of due) {
+      const [nodeId, id] = key.split("|") as [string, string];
+      const cut = await cutOffWarning(this.env.DB, nodeId, id);
+      poke.push(...cut.nodes);
+      quarantined.push(...cut.quarantined);
+      delete stored[key];
+    }
+    await this.ctx.storage.put(CUTOFFS, stored);
+    this.poke(poke);
+    this.announce(["all"]);
+    await this.tell({ quarantined });
+  }
+
+  private async tell(told: {
+    warned?: WarningMail[];
+    stopped?: StoppedMail[];
+    quarantined?: string[];
+    tailnet?: TailnetMail[];
+  }) {
+    const { warned = [], stopped = [], quarantined = [], tailnet = [] } = told;
+    if (
+      warned.length + stopped.length + quarantined.length + tailnet.length ===
+      0
+    )
+      return;
+    try {
+      for (const mail of warned) await sendWarningEmail(this.env, mail);
+      for (const mail of stopped) await sendStoppedEmail(this.env, mail);
+      for (const nodeId of quarantined) {
+        const report = await quarantineReport(this.env.DB, nodeId);
+        if (report) await sendQuarantineEmail(this.env, report);
+      }
+      for (const mail of tailnet) {
+        if (mail.kind === "device")
+          await sendTailnetDeviceEmail(this.env, mail);
+        else await sendTailnetPolicyEmail(this.env, mail);
+      }
+      await this.noteMail(this.mailSetup());
+    } catch (error) {
+      console.error("[kry mail]", error);
+      await this.noteMail(error);
+    }
+  }
+
+  private async quiet(silent: { nodeId: string; seen: number }[], now: number) {
+    if (silent.length === 0) return;
+    const db = this.env.DB;
+    const members = (
+      await db
+        .prepare(
+          `SELECT m.node_id, m.key, n.owner_user_id AS owner, n.name FROM network_members m
+           JOIN nodes n ON n.id = m.node_id
+           WHERE m.state = 'in' AND m.node_id IN (SELECT value FROM json_each(?))`,
+        )
+        .bind(JSON.stringify(silent.map((item) => item.nodeId)))
+        .all<{ node_id: string; key: string; owner: string; name: string }>()
+    ).results;
+    const cutoffs: Cutoff[] = [];
+    const warned: WarningMail[] = [];
+    for (const member of members) {
+      const seenBy = [...this.network.latest]
+        .filter(
+          ([other, entry]) =>
+            other !== member.node_id &&
+            entry.links.some(
+              (link) =>
+                link.key === member.key &&
+                link.handshake !== null &&
+                now / 1000 - link.handshake < QUIET_HANDSHAKE_S,
+            ),
+        )
+        .map(([other]) => other);
+      if (seenBy.length === 0) continue;
+      const names = (
+        await db
+          .prepare(
+            "SELECT name FROM nodes WHERE id IN (SELECT value FROM json_each(?)) ORDER BY name",
+          )
+          .bind(JSON.stringify(seenBy))
+          .all<{ name: string }>()
+      ).results.map((row) => row.name);
+      const seen = silent.find((item) => item.nodeId === member.node_id)!.seen;
+      const settings = await readSettings(db, member.owner);
+      const cutAt =
+        settings.cutoff === null ? null : now + settings.cutoff * 60_000;
+      const id = `quiet:${seen}`;
+      const detail = {
+        lastReport: new Date(seen).toISOString(),
+        seenBy: names.join(", "),
+      };
+      const at = new Date(now).toISOString();
+      const written = await warningStatement(db, {
+        nodeId: member.node_id,
+        id,
+        kind: "quiet",
+        detail,
+        at,
+        cutAt,
+      }).run();
+      if ((written.meta.changes ?? 0) === 0) continue;
+      warned.push({
+        nodeId: member.node_id,
+        nodeName: member.name,
+        kind: "quiet",
+        detail,
+        at,
+        cutAt,
+      });
+      if (cutAt !== null) {
+        cutoffs.push({ nodeId: member.node_id, id, at: cutAt });
+      }
+    }
+    await this.keepCutoffs(cutoffs);
+    await this.tell({ warned });
+  }
+
+  private async judge(now: number) {
+    const tailnet = await this.ctx.storage.get<Tailnet>(TAILNET);
+    if (!tailnet || tailnet.due > now) return;
+    const judged = await judgeTailnet(this.env.DB, tailnet.owner, now);
+    if (judged.due === null) await this.ctx.storage.delete(TAILNET);
+    else await this.ctx.storage.put(TAILNET, { ...tailnet, due: judged.due });
+    await this.tell({ tailnet: judged.mails });
+  }
+
   private async schedule(now: number) {
-    const times: number[] = [];
+    const times: number[] = Object.values(await this.cutoffs());
+    const tailnet = await this.ctx.storage.get<Tailnet>(TAILNET);
+    if (tailnet) times.push(tailnet.due);
     for (const [nodeId, entry] of Object.entries(await this.roster())) {
       if (entry.offline) continue;
       const { seen, limit } = this.pulse(nodeId, entry);
@@ -424,6 +633,7 @@ export class FleetHub {
           ).results;
     const known = new Map(rows.map((row) => [row.id, row.security]));
     const planned = await plannedNodes(db, [...known.keys()], now);
+    const quiet: { nodeId: string; seen: number }[] = [];
     for (const { nodeId, entry, seen } of silent) {
       if (!known.has(nodeId)) {
         delete roster[nodeId];
@@ -435,6 +645,7 @@ export class FleetHub {
       } else {
         entry.offline = true;
         delete entry.checkedAt;
+        quiet.push({ nodeId, seen });
         for (const socket of this.ctx.getWebSockets(nodeId)) {
           const state = socket.deserializeAttachment() as StreamState;
           socket.serializeAttachment({ ...state, away: true });
@@ -450,6 +661,7 @@ export class FleetHub {
       }
     }
     if (changed) await this.ctx.storage.put(ROSTER, roster);
+    await this.quiet(quiet, now);
     return notices;
   }
 
@@ -459,6 +671,8 @@ export class FleetHub {
     try {
       const offline = await this.watchdog(now);
       send = offline.length > 0 ? await this.notify(offline, now) : [];
+      await this.cutOff(now);
+      await this.judge(now);
       await this.schedule(now);
     } catch (error) {
       console.error("[kry fleet] watchdog", error);
@@ -545,6 +759,25 @@ export class FleetHub {
     const now = Date.now();
     const known = await this.node(ws, current);
     if (!known) return;
+    const poked: string[] = [];
+    const cloned: string[] = [];
+    if (
+      !known.quarantined &&
+      beat.boot &&
+      known.boot &&
+      beat.boot.id !== known.boot &&
+      beat.boot.count <= (known.reports ?? 0)
+    ) {
+      const started = await quarantine(db, {
+        nodeId: known.id,
+        why: CLONED,
+        now,
+      });
+      poked.push(...started.nodes);
+      if (started.started) cloned.push(known.id);
+      known.quarantined = 1;
+    }
+    const trusted = !known.quarantined;
     const retried = updateRetry(db, known, beat, now);
     const forced =
       agentSupported(beat.agentVersion) || retried.node.update_requested_version
@@ -573,7 +806,9 @@ export class FleetHub {
     const disk = await this.disk(node.id, current, beat.metrics, now);
     state = { ...state, diskFull: disk.full };
     const agent = await loadAgentConfig(db, node);
-    const accepted = acceptResults(agent.checks, beat.results ?? []);
+    const accepted = trusted
+      ? acceptResults(agent.checks, beat.results ?? [])
+      : [];
     const working = accepted.some((result) => result.status === "DOWN")
       ? await workingChecks(
           db,
@@ -601,6 +836,22 @@ export class FleetHub {
       leading.push(...heartbeatStatements(db, node, beat, now));
     }
     leading.push(...retried.statements, ...forced.statements);
+    const reported = beat.release ? JSON.stringify(beat.release) : null;
+    const pending = known.release ?? null;
+    if (
+      reported !== pending &&
+      !(JSON.parse(pending ?? "null") as { released?: boolean } | null)
+        ?.released
+    ) {
+      leading.push(
+        db
+          .prepare(
+            `UPDATE nodes SET release = ? WHERE id = ?
+             AND (release IS NULL OR json_extract(release, '$.released') IS NULL)`,
+          )
+          .bind(reported, node.id),
+      );
+    }
     if (current.lastSeen === null || current.away) {
       await this.returned(node.id);
     }
@@ -632,21 +883,66 @@ export class FleetHub {
     ];
     const mails = marked.length > 0 ? await this.notify(marked, now) : [];
     await disk.store?.();
+    let taken: Intake | null = null;
     try {
+      const network =
+        beat.network && trusted
+          ? await this.network.beat(
+              node.id,
+              current.ownerId,
+              current.networkStamp,
+              beat.network,
+              now,
+            )
+          : null;
+      taken = !beat.events?.length
+        ? null
+        : trusted
+          ? await intake(db, { nodeId: node.id, events: beat.events, now })
+          : {
+              acked: beat.events.map((event) => event.id),
+              cutoffs: [],
+              nodes: [],
+              quarantined: [],
+              warned: [],
+              stopped: [],
+            };
+      if (taken) {
+        await this.keepCutoffs(taken.cutoffs);
+        poked.push(...taken.nodes);
+        if (taken.cutoffs.length > 0) await this.schedule(now);
+      }
+      if (!trusted) {
+        await holdStatement(db, node.id, new Date(now).toISOString()).run();
+      }
       const actions = await heartbeatActions(db, node.id, now);
-      ws.serializeAttachment({ ...folded.state, away: false });
+      ws.serializeAttachment({
+        ...folded.state,
+        away: false,
+        networkStamp: network?.stamp ?? current.networkStamp,
+      });
       if (current.lastSeen === null || notices.length > 0) {
         await this.schedule(now);
       }
       reply({
         type: "heartbeat",
-        response: heartbeatResponse(
-          node,
-          agent.configVersion,
-          beat.agentVersion,
-          actions,
-        ),
+        response: {
+          ...heartbeatResponse(
+            node,
+            agent.configVersion,
+            beat.agentVersion,
+            actions,
+          ),
+          ...(network?.reply ? { network: network.reply } : {}),
+          ...(taken ? { acked: taken.acked } : {}),
+          ...(trusted ? {} : { quarantined: true }),
+        },
       });
+      if (network) this.poke(network.poke);
+      if (poked.length > 0) {
+        this.poke(poked.filter((id) => id !== node.id));
+        this.announce(["all"]);
+      }
       const topics = [
         ...(current.lastSeen === null ? ["nodes"] : []),
         ...(ingestion.statements.length > 0 || ingestion.transitions.length > 0
@@ -657,6 +953,11 @@ export class FleetHub {
       if (topics.length > 0) this.announce(topics);
     } finally {
       await this.mail(mails);
+      await this.tell({
+        warned: taken?.warned,
+        stopped: taken?.stopped,
+        quarantined: [...cloned, ...(taken?.quarantined ?? [])],
+      });
     }
   }
 

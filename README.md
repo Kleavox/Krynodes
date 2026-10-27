@@ -767,6 +767,196 @@ plugin when Docker is there. It refuses next to Podman. A repository the owner
 added already is used as it is. A Docker it installs keeps container logs small
 (Docker's `local` log driver, unless `/etc/docker/daemon.json` already exists).
 
+### Packages
+
+**Packages** (server menu, after Refresh services, or the Updates row of This
+server) shows a Debian or Ubuntu server's apt packages, from agent 0.7.0: the
+updates waiting, security ones first; what was installed here (by whom, from
+apt's history, plus what Krynodes installed for a protection or Docker) or
+every package; the sources, each key with its fingerprint; and what runs on its
+own. **Check for updates** runs `apt-get update`. **Install package** searches
+by name and shows what the install adds, removes and opens before you sign;
+**Upgrade all**, **Remove** (with or without its settings), **Hold**, **Release
+hold**, **Add repository** (paste the vendor's instructions; Krynodes reads the
+key and shows its fingerprint) and **Remove repository** each take one
+fingerprint, and the agent refuses a key that is not the one shown. A package
+Krynodes installed for a protection or Docker goes when that is turned off.
+
+A running job shows its step in the hourglass and on Fleet; a finished one says
+what changed, what restarted and whether a restart is needed. Restart needed
+shows on the server, and in Fleet's issues when Restart when needed is off, as
+do security updates waiting when Automatic security updates is off. History
+records every change and opens an upgrade to each package's old and new
+version; a failed one keeps apt's last lines and what did change. Search finds
+package names. The search and the try-outs before a change are not kept.
+
+**Tailscale** on This server: once `tailscale` is installed, **Sign in** asks
+tailscaled for a login link, sealed to this browser, so no terminal is needed.
+An expired key shows in Fleet's issues.
+
+Agents before 0.7.0 have no Packages; the page offers Update agent.
+
+### Private network
+
+**Network** (top menu) joins servers into one WireGuard mesh, `kry0`, so a stack
+on one server reaches a database on another without opening it to the
+internet. Every member is a peer of every other; one server going down breaks
+only its own links. From agent 0.7.0.
+
+- **Create Network** reads every candidate first (kernel WireGuard, tools,
+  free range, NAT, the UDP port tested from the other servers, firewall, MTU,
+  clock) and shows what is already fine, what Krynodes does and what is yours to
+  fix. The range is a free `/24` in `10.88.0.0/16` that no interface, Docker
+  network, Tailscale or **Private addresses** range uses; the port is
+  `51820/udp`, or the next free one on a server where it is taken. Both are
+  fixed after creation. A hand-made `wg0` is left alone and avoided.
+- **Each server makes its own key**; only the public half leaves it. The
+  preshared key of each pair is made in the browser and sealed to both servers.
+  The member list is a **network document signed with a trusted device's
+  passkey**; an agent applies only a version newer than its last, so the Worker
+  can neither add a peer nor replay an old list. Without a signature the Worker
+  can only take a member away. A peer's `AllowedIPs` is its own `/32`, never a
+  wider range, so a bad change cannot cut Krynodes off a server.
+- Each server keeps its address for good and gets the name `<server>.kry` in a
+  Krynodes block of `/etc/hosts` on every member. ufw or firewalld get
+  `allow <port>/udp` and `allow in on kry0`; Docker waits for `kry0` at boot.
+  A server behind NAT dials out to the others; two servers both behind NAT
+  cannot link, and their pair says so.
+- **Add Server** shows the address each server gets. **Join Private Network**
+  in Enroll a server (and Enroll defaults) gets a new server ready while it
+  enrolls; the others learn its key only when you press **Join** (or **Not now**
+  undoes it), so a leaked install command cannot bring anyone in.
+- The page lists links with no answer first (a link to an offline server is
+  not a problem), waiting servers, every server with **Links n of m**, Recent
+  changes and This network. The menu item counts the links with no answer.
+  `--` means not measured, never 0 ms.
+- **Test Link** (a problem row, a server's links, **Test links** for all its
+  pairs, **Test all links**) reads both servers and changes nothing: agents,
+  `kry0` and keys, clocks, public addresses, firewall rules, handshakes, small
+  and large packets, then the most likely cause. Its fixes take a fingerprint:
+  **Send again**, **Put rule back** and **Use 1380** (a smaller MTU for that
+  server). Every test is kept in History.
+- **Remove from network**, **Make new keys** and **Delete network** say before
+  you sign what stops working; an address a stack still points to is held, and
+  freed addresses are given out last. Delete network offers to turn off the
+  checks that go through it. Delete node takes the server out of the network
+  first, and renaming a member tells the others its new name.
+
+Stacks on the network:
+
+- **A Contained stack is closed to the network until you say otherwise.** On a
+  member, Edit compose and New stack have a **Private Network** section: each
+  published port is **This Server Only**, **All Servers** or **Chosen Servers**,
+  and **Reach Other Servers On** lists the places on other servers (such as
+  `vps-2:5432/tcp`) its containers may connect to. Replies to connections that
+  came in always pass. The agent keeps the lists beside the stack and turns
+  them into iptables rules for `kry0` in `DOCKER-USER`; a server leaving takes
+  its rules with it.
+- **A Full access stack reaches every server**, and What this stack opens says
+  so. **Use Private Address** rewrites `"3000:3000"` to
+  `"${KRY_PRIVATE_IP}:3000:3000"` in the editor only; Krynodes fills in
+  `KRY_PRIVATE_IP` with the server's own private address at deploy, and refuses
+  a file that uses it on a server outside the network.
+- Inside containers every member is `<server>.kry` (`extra_hosts`, added at
+  deploy without changing the compose file).
+- Listeners only on the private network are not public: Security lists them on
+  a grey line, and on a member points a public Full access stack to the private
+  address. Turn on firewall keeps the network's port as a locked row.
+- **Move** carries the lists, offers to change the other stacks that reach this
+  one (the same fingerprint signs them) and turns red when the new server is
+  outside the network. Checks suggests a TCP check for each place a Contained
+  stack reaches; **Not now** hides it until that list changes.
+
+### Tailscale rules
+
+Krynodes can keep who may reach your servers over Tailscale. Rules for your
+laptop, phone and other people stay yours, in Tailscale's admin console. From
+agent 0.7.0.
+
+- **Before Connect** each server reads from its own tailscaled which peers may
+  open connections to it, on which ports, and Network turns amber when every
+  device reaches every port. No credential is needed for that.
+- **Connect Tailscale** (Network) asks for four things from Tailscale's admin
+  console: `"tag:kry": ["autogroup:admin"],` inside `tagOwners`; a trust
+  credential with Policy File Write, Devices Core Write, Auth Keys Write and
+  Tags `tag:kry` and nothing else (Tailscale adds the read scopes itself); its
+  client ID and secret; and a webhook to `<agent origin>/hooks/tailscale`
+  (`AGENT_ORIGIN`, else `PUBLIC_ORIGIN`) with the events `nodeCreated` and
+  `policyUpdate`.
+- **What is kept where.** The client secret is held as the Cloudflare token is:
+  split in the browser, one piece sealed to each 0.7.0 server that is not
+  quarantined, any two rebuild it on one server for one signed job, which uses
+  it and erases it. It needs two such servers. The Worker keeps the sealed
+  pieces, the client ID, the tailnet, the rules you saved and the webhook
+  secret; that secret can only make Krynodes believe an event that did not
+  happen, never open anything.
+- **Start With These Rules** opens after Connect, from what listens on each
+  server and what was in use when the policy file was read. An "everyone to
+  everything" rule becomes "Your devices → everything except your servers".
+  Saving tags the servers `tag:kry` and turns off their key expiry.
+- **Saving** reads the policy file, replaces only the lines between
+  `// krynodes: begin` and `// krynodes: end`, has Tailscale validate the
+  file and writes it only if it did not change since it was read. Rules name
+  servers by their Tailscale addresses, never by the tag. A Krynodes line
+  changed in the admin console is never overwritten: Keep the Change or Put
+  Back Krynodes', then sign again. Each server's own report shows Applied.
+- **Sign In**, once connected, needs no link: a server holding a piece makes a
+  one-time key tagged `tag:kry`, sealed to the joining server.
+- **Two alarms**, each a red row on Network and one mail: a device that joins
+  with `tag:kry` that Krynodes never signed in, and a policy change made with
+  Krynodes' credential without your fingerprint.
+- A quarantined server's place on your tailnet gets **Remove from Tailnet**;
+  its credential piece gets **Reshare Without It**, and Delete Node reshares it
+  first. **Disconnect** erases every piece and leaves your rules in the policy
+  file; delete the trust credential in the admin console too.
+
+### Quarantine
+
+What Krynodes does on its own when a server looks broken into. It only ever
+takes access away; giving access back always asks for your fingerprint. From
+agent 0.7.0.
+
+- **A warning first.** A new SSH key, a sign-in with a key not from Krynodes, a
+  new user or sudo rule, a port opened on a public address outside Krynodes,
+  Krynodes' firewall rule removed, or an agent that goes quiet while its peers
+  still see the server: the server page shows an amber strip and a mail goes
+  out. **Cut Off Now** quarantines it at once; **It Was Me** (fingerprint)
+  takes the change as yours. Unanswered, the server is cut off after the time
+  in Settings, Quarantine (15 minutes by default, or Warn Only).
+- **A scan.** A member that knocks on more closed ports or servers in one
+  minute than **Counts as a Scan** is dropped at once by every server it
+  knocked on, and quarantined when enough servers agree. One wrong port knocked
+  again and again is a setting mistake: a row on the Network page, nothing cut
+  off.
+- **Quarantined.** Every other server drops its WireGuard key for good and,
+  when it is on your tailnet, blocks its Tailscale address; Krynodes locks it
+  down, sends it nothing, refuses every action except reading and believes
+  none of its reports (its checks show **Not Trusted**). The server page shows
+  the red card, **What Happened** to the second, and **Change These**: the
+  stacks whose secrets to change, services elsewhere that trusted it, its
+  Cloudflare token piece (**Reshare Without It**), web addresses still on its
+  tunnel (**Remove Web Addresses**) and its place on your tailnet (**Admin
+  Console ↗**). Actions keeps only Refresh Services, Release Server, Remove
+  from Network and Delete Node.
+- **Release Server.** Really broken into? Reinstall it and enroll it again. A
+  false alarm: run `sudo kry release-code` on the server, type the code it
+  shows (it works for 10 minutes) and sign. The server makes new keys
+  (WireGuard, sealing and its sign-in to Krynodes); the old ones stay blocked.
+  The same fingerprint unlocks it, lifts the Tailscale block and sends its new
+  keys to the network. The code shows you were on the server; it does not show
+  the server is clean.
+- **A Contained stack that knocks** (tries places it was not given) is stopped
+  and stays stopped after a reboot, while the server stays trusted. What Runs
+  shows what it tried, with Logs and Start; change its secrets first.
+- **Settings, Quarantine** holds the four choices. A stricter one reaches the
+  servers at once; a looser one asks for your fingerprint and travels in the
+  next signed network document.
+- Delete Node on a quarantined server first makes your servers stop blocking
+  its Tailscale address; remove it from your tailnet before.
+- Every network document names the one before it, and an agent refuses one
+  that is not built on what it applied, so the Worker cannot slip a member list
+  past the browser.
+
 ## Data retention
 
 A daily cron (03:17 UTC) keeps the database small enough for the Free plan's

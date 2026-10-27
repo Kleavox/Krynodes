@@ -14,9 +14,12 @@ export const queryKeys = {
     range,
   ],
   checkResults: ["checks", "results"],
+  checkDismissals: ["checks", "dismissals"],
   services: ["services"],
   privateRanges: ["settings", "private-ranges"],
   enrollDefaults: ["settings", "enroll-defaults"],
+  quarantineSettings: ["settings", "quarantine"],
+  quarantine: (id: string) => ["quarantine", id],
   nodeActions: (id: string) => ["actions", "node", id],
   action: (id: string | null) => ["actions", "one", id],
   history: (path: string) => ["actions", "history", path],
@@ -28,6 +31,16 @@ export const queryKeys = {
   proposals: ["proposals"],
   changeHistory: ["proposals", "history"],
   usage: ["usage"],
+  packages: (id: string) => ["packages", "node", id],
+  packageNames: ["packages", "names"],
+  network: ["network"],
+  tailscale: ["tailscale"],
+  networkNext: (nodes: string[], range?: string) => [
+    "network",
+    "next",
+    nodes.join(","),
+    range ?? null,
+  ],
 } as const;
 
 export function createQueryClient(): QueryClient {

@@ -36,6 +36,24 @@ export async function fleetLive(
   }
 }
 
+export async function fleetLinks(
+  env: Env,
+  ownerId: string,
+): Promise<Record<string, { at: number; links: unknown[] }> | null> {
+  if (!streamsOn(env)) return {};
+  try {
+    const response = await hubFor(env, ownerId).fetch("https://fleet/network");
+    if (!response.ok) throw new Error(`hub answered ${response.status}`);
+    return (await response.json()) as Record<
+      string,
+      { at: number; links: unknown[] }
+    >;
+  } catch (error) {
+    console.error("[kry fleet]", error);
+    return null;
+  }
+}
+
 export async function pokeNodes(
   env: Env,
   ownerId: string,

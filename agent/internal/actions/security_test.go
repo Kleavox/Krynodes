@@ -156,7 +156,7 @@ func TestAHealthyServerHasOnlyNotes(t *testing.T) {
 	}
 }
 
-func TestFullAccessStacksMayHoldDockerAndPublicPorts(t *testing.T) {
+func TestFullAccessStacksMayHoldDockerButTheirPortsAreNamed(t *testing.T) {
 	executor, run := securityExecutor(t)
 	healthyServer(t, executor, run)
 	dir := filepath.Join(executor.StateDir, "compose", "adguard")
@@ -172,7 +172,7 @@ func TestFullAccessStacksMayHoldDockerAndPublicPorts(t *testing.T) {
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if found := findingsOf(t, executor); len(found) != 1 {
+	if found := findingsOf(t, executor); len(found) != 2 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (adguard-dns-1)" {
 		t.Fatalf("findings %#v", found)
 	}
 }

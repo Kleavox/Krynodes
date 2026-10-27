@@ -43,6 +43,24 @@ func runSetup(t *testing.T, executor Executor, options SetupOptions, answer bool
 
 func hour(value int) *int { return &value }
 
+func TestSetupGetsTheServerReadyForThePrivateNetwork(t *testing.T) {
+	executor, _ := networkExecutor(t)
+	got := runSetup(t, executor, SetupOptions{Network: "10.88.0.0/24"}, false, false)
+	if !strings.HasSuffix(got, "✓ Private network ready · it joins when you press Join on the dashboard\n") {
+		t.Fatalf("got\n%s", got)
+	}
+	if record := executor.readNetwork(); record.Prepared == nil || record.Prepared.Port != 51821 || record.Key == "" {
+		t.Fatalf("record %+v", record)
+	}
+
+	executor, run := networkExecutor(t)
+	run.respond["docker network ls -q"] = "n1\n"
+	run.respond["docker network inspect --format {{range .IPAM.Config}}{{.Subnet}} {{end}} n1"] = "10.88.0.0/24 \n"
+	if got := runSetup(t, executor, SetupOptions{Network: "10.88.0.0/24"}, false, false); !strings.HasSuffix(got, "✗ Private network: 10.88.0.0/24 is already used on this server\n") {
+		t.Fatalf("got\n%s", got)
+	}
+}
+
 func TestSetupRunsTheRecommendedStepsAndDocker(t *testing.T) {
 	executor, _ := setupServer(t)
 	writeJSON(executor.StateDir, "security.json", securityState{}, 0o640)

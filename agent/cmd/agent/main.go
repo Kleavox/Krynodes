@@ -29,6 +29,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/metrics"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/stream"
+	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 	"github.com/Kleavox/krynodes/agent/internal/update"
 )
 
@@ -85,6 +86,8 @@ func run(args []string) error {
 		return execActions()
 	case "host-apply":
 		return hostApply()
+	case "release-code":
+		return releaseCode()
 	case "guard":
 		return guardCommand()
 	case "watch-containers":
@@ -260,6 +263,11 @@ func runDaemon(args []string, once bool) error {
 		NodeID:     cfg.NodeID,
 		Server:     client,
 		Now:        time.Now,
+		Dir:        stateDirectory,
+		Boot: func() string {
+			id, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
+			return string(id)
+		},
 	}
 	monitoringCycle := cycle.New(client, host, requestFile{}, relay)
 
@@ -309,6 +317,8 @@ func runDaemon(args []string, once bool) error {
 const tickOffset = 2 * time.Second
 
 const addressEvery = 6 * time.Hour
+
+const linksEvery = 30 * time.Second
 
 func untilNextTick(now time.Time, interval time.Duration) time.Duration {
 	since := time.Duration(now.UnixNano()) - tickOffset
@@ -581,6 +591,7 @@ func watchContainers() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}.WatchLinks(ctx, linksEvery)
 	actions.NewWatcher().Watch(ctx)
 	return nil
 }
@@ -624,7 +635,8 @@ func execActions() error {
 		Collect: func(ctx context.Context, remembered []string) (actions.Snapshot, error) {
 			return actions.Collect(ctx, actions.RunCommand, remembered)
 		},
-		Audit: true,
+		Audit:          true,
+		TailscaleLocal: tailscale.Socket,
 	}
 	return executor.Execute(context.Background())
 }
@@ -642,8 +654,21 @@ func hostApply() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("host-apply must run as root on Linux")
 	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand, ConfigPath: defaultConfigPath}
 	return executor.HostApply(context.Background())
+}
+
+func releaseCode() error {
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+		return fmt.Errorf("release-code must run as root on Linux")
+	}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	code, err := executor.ReleaseCode(filepath.Join(stateDirectory, "quarantined"))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Release code: %s · works for 10 minutes\n", code)
+	return nil
 }
 
 func prepareActionDirectories(uid, gid int) error {
@@ -651,7 +676,7 @@ func prepareActionDirectories(uid, gid int) error {
 		return fmt.Errorf("prepare action request directory: %w", err)
 	}
 	modes := stateDirectoryModes()
-	for _, directory := range []string{actions.StateDir, filepath.Join(actions.StateDir, "results")} {
+	for _, directory := range []string{actions.StateDir, filepath.Join(actions.StateDir, "results"), filepath.Join(actions.StateDir, "progress")} {
 		if err := claimDirectory(directory, 0, gid, modes[directory]); err != nil {
 			return fmt.Errorf("prepare %s: %w", directory, err)
 		}
@@ -662,7 +687,8 @@ func prepareActionDirectories(uid, gid int) error {
 func stateDirectoryModes() map[string]os.FileMode {
 	return map[string]os.FileMode{
 		actions.StateDir: 0o750,
-		filepath.Join(actions.StateDir, "results"): 0o750 | os.ModeSetgid,
+		filepath.Join(actions.StateDir, "results"):  0o750 | os.ModeSetgid,
+		filepath.Join(actions.StateDir, "progress"): 0o750 | os.ModeSetgid,
 	}
 }
 

@@ -1,5 +1,6 @@
 const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$/u;
 const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
+const APT_NAME = /^[a-z0-9][a-z0-9+.-]{0,127}$/u;
 
 export const RECIPES = [
   "security-updates",
@@ -43,10 +44,13 @@ export function isValidTarget(kind: string, name: string): boolean {
     return (
       name === "server" ||
       name === "docker" ||
+      name === "tailscale" ||
       (RECIPES as readonly string[]).includes(name)
     );
   }
-  if (kind === "vault") return name === "cloudflare";
+  if (kind === "vault") return name === "cloudflare" || name === "tailscale";
+  if (kind === "apt") return APT_NAME.test(name);
+  if (kind === "network") return name === "kry0";
   if (!TARGET_NAME.test(name)) return false;
   if (kind === "systemd") return name.endsWith(".service");
   return kind === "docker";

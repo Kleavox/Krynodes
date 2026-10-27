@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/Kleavox/krynodes/agent/internal/network"
 )
 
 const (
@@ -25,8 +27,10 @@ const (
 )
 
 type stackMeta struct {
-	Access    string   `json:"access"`
-	HostPorts []string `json:"hostPorts,omitempty"`
+	Access    string          `json:"access"`
+	HostPorts []string        `json:"hostPorts,omitempty"`
+	Serves    []network.Serve `json:"serves,omitempty"`
+	Reaches   []string        `json:"reaches,omitempty"`
 }
 
 const maxHostPorts = 16
@@ -128,6 +132,9 @@ var (
 )
 
 func (e Executor) Contain(ctx context.Context) {
+	if err := e.syncRules(ctx); err != nil {
+		log.Printf("private network rules: %v", err)
+	}
 	if !e.hasContained() {
 		return
 	}
@@ -141,13 +148,15 @@ func (e Executor) firewall(ctx context.Context, tool string, args ...string) err
 	return err
 }
 
-func (e Executor) ensure(ctx context.Context, tool string, add []string, chain string, rule []string) {
+func (e Executor) ensure(ctx context.Context, tool string, add []string, chain string, rule []string) error {
 	if e.firewall(ctx, tool, append([]string{"-C", chain}, rule...)...) == nil {
-		return
+		return nil
 	}
-	if err := e.firewall(ctx, tool, append(add, rule...)...); err != nil {
+	err := e.firewall(ctx, tool, append(add, rule...)...)
+	if err != nil {
 		log.Printf("contain %s %s: %v", tool, chain, err)
 	}
+	return err
 }
 
 func (e Executor) guard(ctx context.Context) {
@@ -210,12 +219,7 @@ func (e Executor) reachRules() [][]string {
 
 func reachFor(config map[string]any, ports []string) [][]string {
 	var rules [][]string
-	networks := asMap(config["networks"])
-	for _, name := range sortedKeys(networks) {
-		bridge := asText(asMap(asMap(networks[name])["driver_opts"])["com.docker.network.bridge.name"])
-		if !strings.HasPrefix(bridge, "krc") {
-			continue
-		}
+	for _, bridge := range bridgesOf(config) {
 		for _, port := range ports {
 			number, protocol, _ := strings.Cut(port, "/")
 			rules = append(rules, []string{"-i", bridge, "-p", protocol, "-m", protocol, "--dport", number, "-j", "ACCEPT"})

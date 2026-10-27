@@ -1,4 +1,6 @@
 import { staleAfterMs } from "../agent/windows";
+import { sha256 } from "../lib/crypto";
+import { applyNetworkInventory } from "../network/document";
 import {
   isProtectedTarget,
   type AgentActionsRequest,
@@ -41,6 +43,7 @@ interface StackRow {
   access: string | null;
   public: string | null;
   containers: string | null;
+  network: string | null;
 }
 
 const publicOf = (entry: StackEntry) =>
@@ -50,6 +53,9 @@ const containersOf = (entry: StackEntry) =>
   entry.containers && entry.containers.length > 0
     ? JSON.stringify(entry.containers)
     : null;
+
+const networkOf = (entry: StackEntry) =>
+  entry.network ? JSON.stringify(entry.network) : null;
 
 function stackChanged(row: StackRow | undefined, entry: StackEntry): boolean {
   return (
@@ -61,7 +67,8 @@ function stackChanged(row: StackRow | undefined, entry: StackEntry): boolean {
     row.rollback !== (entry.rollback ? 1 : 0) ||
     row.access !== (entry.access ?? null) ||
     row.public !== publicOf(entry) ||
-    row.containers !== containersOf(entry)
+    row.containers !== containersOf(entry) ||
+    row.network !== networkOf(entry)
   );
 }
 
@@ -73,7 +80,7 @@ async function stackStatements(
 ): Promise<D1PreparedStatement[]> {
   const existing = await db
     .prepare(
-      "SELECT project, directory, running, total, compose, rollback, access, public, containers FROM stacks WHERE node_id = ?",
+      "SELECT project, directory, running, total, compose, rollback, access, public, containers, network FROM stacks WHERE node_id = ?",
     )
     .bind(nodeId)
     .all<StackRow>();
@@ -88,6 +95,7 @@ async function stackStatements(
       access: stack.access ?? null,
       public: publicOf(stack),
       containers: containersOf(stack),
+      network: networkOf(stack),
     }));
   const removed = existing.results
     .filter((row) => !after.has(row.project))
@@ -97,19 +105,19 @@ async function stackStatements(
       ? [
           db
             .prepare(
-              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, public, containers)
+              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, public, containers, network)
                SELECT ?1, json_extract(value, '$.project'), json_extract(value, '$.directory'),
                       json_extract(value, '$.running'), json_extract(value, '$.total'),
                       json_extract(value, '$.compose'), json_extract(value, '$.rollback'), ?2,
                       json_extract(value, '$.access'), json_extract(value, '$.public'),
-                      json_extract(value, '$.containers')
+                      json_extract(value, '$.containers'), json_extract(value, '$.network')
                FROM json_each(?3) WHERE true
                ON CONFLICT (node_id, project) DO UPDATE SET
                  directory = excluded.directory, running = excluded.running,
                  total = excluded.total, compose = excluded.compose,
                  rollback = excluded.rollback, updated_at = excluded.updated_at,
                  access = excluded.access, public = excluded.public,
-                 containers = excluded.containers`,
+                 containers = excluded.containers, network = excluded.network`,
             )
             .bind(nodeId, at, JSON.stringify(upserts)),
         ]
@@ -129,6 +137,41 @@ async function stackStatements(
 
 const keyOf = (service: { kind: string; name: string }) =>
   `${service.kind}:${service.name}`;
+
+type Packages = NonNullable<Inventory["packages"]>;
+
+const summaryOf = (packages: Packages) =>
+  packages.apt
+    ? JSON.stringify({
+        waiting: packages.updates.length,
+        security: packages.updates.filter((update) => update.security).length,
+        held: packages.updates.filter((update) => update.held).length,
+        checkedAt: packages.checkedAt,
+        restart: packages.restart,
+      })
+    : null;
+
+async function packagesStatement(
+  db: D1Database,
+  nodeId: string,
+  packages: Packages,
+  at: string,
+): Promise<D1PreparedStatement> {
+  const { readAt: _, ...listed } = packages as Packages & { readAt?: string };
+  return db
+    .prepare(
+      `INSERT INTO packages (node_id, hash, report, updated_at) VALUES (?1, ?2, ?3, ?4)
+       ON CONFLICT (node_id) DO UPDATE SET
+         hash = excluded.hash, report = excluded.report, updated_at = excluded.updated_at
+       WHERE packages.hash IS NOT excluded.hash`,
+    )
+    .bind(
+      nodeId,
+      await sha256(JSON.stringify(listed)),
+      JSON.stringify(packages),
+      at,
+    );
+}
 
 function changed(row: ServiceRow | undefined, entry: ServiceEntry): boolean {
   return (
@@ -228,12 +271,18 @@ export async function applyInventory(
             .bind(JSON.stringify(inventory.trust), node.id),
         ]
       : []),
+    ...(inventory.packages
+      ? [await packagesStatement(db, node.id, inventory.packages, at)]
+      : []),
     db
       .prepare(
         `UPDATE nodes SET inventory_hash = ?1, inventory_at = ?2, refresh_requested_at = NULL,
            docker = COALESCE(?3, docker), seal_key = COALESCE(?4, seal_key),
            security = COALESCE(?5, security),
-           vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END
+           vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END,
+           updates = CASE WHEN ?9 = 1 THEN ?10 ELSE updates END,
+           tailscale = ?11,
+           tailscale_vault = CASE WHEN ?12 = 1 THEN ?13 ELSE tailscale_vault END
          WHERE id = ?8`,
       )
       .bind(
@@ -245,8 +294,16 @@ export async function applyInventory(
         inventory.vault === undefined ? 0 : 1,
         inventory.vault ? JSON.stringify(inventory.vault) : null,
         node.id,
+        inventory.packages === undefined ? 0 : 1,
+        inventory.packages ? summaryOf(inventory.packages) : null,
+        inventory.tailscale ? JSON.stringify(inventory.tailscale) : null,
+        inventory.tailscaleVault === undefined ? 0 : 1,
+        inventory.tailscaleVault
+          ? JSON.stringify(inventory.tailscaleVault)
+          : null,
       ),
   ]);
+  await applyNetworkInventory(db, node.id, inventory.network ?? null, at);
   return inventory.hash;
 }
 

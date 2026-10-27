@@ -178,6 +178,36 @@ describe("GET /api/history", () => {
     expect(await find("HTTP 502")).toEqual(["i1:opened"]);
   });
 
+  it("finds a package by name in an upgrade and in a hold", async () => {
+    const t = setup();
+    t.act("upgrade", {
+      at: at(0),
+      kind: "apt",
+      name: "system",
+      action: "upgrade",
+      output: JSON.stringify({
+        upgraded: ["nodejs", "openssl"],
+        moved: [{ name: "nodejs", from: "20.17.0", to: "20.18.0" }],
+      }),
+    });
+    t.act("hold", {
+      at: at(1),
+      kind: "apt",
+      name: "nodejs",
+      action: "hold",
+      output: "hold nodejs 20.18.0",
+    });
+    t.act("find", {
+      at: at(2),
+      kind: "apt",
+      name: "system",
+      action: "find",
+      output: JSON.stringify({ matches: [{ name: "nodejs" }] }),
+    });
+    expect(keys(await t.page("?q=nodejs"))).toEqual(["hold", "upgrade"]);
+    expect(keys(await t.page("?q=openssl"))).toEqual(["upgrade"]);
+  });
+
   it("treats % and _ in a search literally", async () => {
     const t = setup();
     t.act("five-hundred", { at: at(0), status: "failed", output: "HTTP 500" });

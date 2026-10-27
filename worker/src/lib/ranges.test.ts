@@ -100,6 +100,55 @@ describe("the public-address finding", () => {
     ).toEqual(["ssh-keys"]);
   });
 
+  it("names what only the private network reaches on its own line", () => {
+    const member = {
+      ...report,
+      listeners: [
+        ...listeners,
+        {
+          address: "10.88.0.2",
+          port: 5432,
+          protocol: "tcp" as const,
+          process: "db-db-1",
+        },
+        {
+          address: "10.88.0.2",
+          port: 51821,
+          protocol: "udp" as const,
+          process: "WireGuard",
+        },
+        {
+          address: "10.88.0.2",
+          port: 51821,
+          protocol: "udp" as const,
+          process: "WireGuard",
+        },
+      ],
+    };
+    expect(
+      filterListeners(member, ["100.64.0.0/10"], "10.88.0.0/24").findings,
+    ).toEqual([
+      {
+        id: "public-ports",
+        severity: "warning",
+        detail:
+          "Listening on public addresses outside Krynodes: 41641/udp (tailscaled), 8080/tcp (web-1)",
+      },
+      { id: "ssh-keys", severity: "note", detail: "SSH keys for vox" },
+      {
+        id: "private-ports",
+        severity: "note",
+        detail:
+          "On the private network only: 5432/tcp (db-db-1), 51821/udp (WireGuard)",
+      },
+    ]);
+    expect(
+      filterListeners(member, [], "10.88.0.0/24").findings.map(
+        (finding) => finding.id,
+      ),
+    ).toEqual(["public-ports", "ssh-keys", "private-ports"]);
+  });
+
   it("keeps reports it cannot judge as they are", () => {
     expect(filterListeners(report, [])).toBe(report);
     const old = { ...report, listeners: undefined };

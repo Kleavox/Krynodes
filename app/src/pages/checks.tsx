@@ -11,7 +11,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CheckDialog } from "@/features/checks/check-dialog";
 import { CheckRow, useCheckView } from "@/features/checks/check-row";
 import { DownBox, type DownItem } from "@/features/checks/down-box";
-import { useHistoryAttention, useIncidentBoard, useOverview } from "@/lib/api";
+import {
+  useCheckDismissals,
+  useDismissCheck,
+  useHistoryAttention,
+  useIncidentBoard,
+  useNetwork,
+  useOverview,
+  useServices,
+} from "@/lib/api";
 import {
   autoRestartLine,
   checksByServer,
@@ -25,6 +33,11 @@ import {
   lastIncidentLine,
   recentIncidents,
 } from "@/lib/incidents";
+import {
+  checkSuggestions,
+  hostingOf,
+  type CheckSuggestion,
+} from "@/lib/network";
 import { cn } from "@/lib/utils";
 import type { CheckRecord } from "@/types";
 
@@ -46,6 +59,11 @@ export function ChecksPage() {
   const attention = useHistoryAttention();
   const board = useIncidentBoard();
   const view = useCheckView();
+  const services = useServices();
+  const network = useNetwork().data;
+  const dismissals = useCheckDismissals().data?.dismissals;
+  const dismiss = useDismissCheck();
+  const [prefill, setPrefill] = useState<CheckSuggestion["check"] | null>(null);
   const [params, setParams] = useSearchParams();
   const [query, setQuery] = useState(() => params.get("q") ?? "");
   const filter = readFilter(params.get("status"));
@@ -63,11 +81,19 @@ export function ChecksPage() {
 
   const nodes = overview.data?.nodes ?? [];
   const dialog = (
-    <CheckDialog
-      open={params.get("add") === "1"}
-      onOpenChange={(open) => setParam("add", open ? "1" : null)}
-      nodes={nodes}
-    />
+    <>
+      <CheckDialog
+        open={params.get("add") === "1"}
+        onOpenChange={(open) => setParam("add", open ? "1" : null)}
+        nodes={nodes}
+      />
+      <CheckDialog
+        open={prefill !== null}
+        onOpenChange={(open) => !open && setPrefill(null)}
+        nodes={nodes}
+        prefill={prefill ?? undefined}
+      />
+    </>
   );
 
   if (!overview.data) {
@@ -86,7 +112,8 @@ export function ChecksPage() {
   const isDown = (check: CheckRecord) =>
     display(check) === "DOWN" && view.live(check).tone !== "work";
   const isOffline = (check: CheckRecord) =>
-    display(check) === "OFFLINE" && view.live(check).tone === "off";
+    display(check) === "UNTRUSTED" ||
+    (display(check) === "OFFLINE" && view.live(check).tone === "off");
   const isUp = (check: CheckRecord) => display(check) === "UP";
   const down = checks.filter(isDown);
   const offline = checks.filter(isOffline);
@@ -131,6 +158,56 @@ export function ChecksPage() {
       checks: group.checks.filter((check) => shown(check, group.node.name)),
     }))
     .filter((group) => group.checks.length > 0);
+  const suggestions =
+    network && dismissals && filter === "all" && !needle
+      ? checkSuggestions(
+          hostingOf(services.data?.nodes ?? [], nodes),
+          network,
+          checks,
+          dismissals,
+        )
+      : [];
+  const suggestionsFor = (nodeId: string) =>
+    suggestions.filter((suggestion) => suggestion.nodeId === nodeId);
+  const alone = nodes.filter(
+    (node) =>
+      suggestionsFor(node.id).length > 0 &&
+      !visible.some((group) => group.node.id === node.id),
+  );
+  const suggested = (nodeId: string) =>
+    suggestionsFor(nodeId).map((suggestion) => (
+      <li
+        key={`${suggestion.project}:${suggestion.check.target}`}
+        className="flex flex-wrap items-center gap-2 px-3 py-2.5 text-sm"
+      >
+        <span className="min-w-0 flex-1 break-words text-muted-foreground">
+          {suggestion.text}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-9 md:h-8"
+          disabled={dismiss.isPending}
+          onClick={() =>
+            dismiss.mutate({
+              nodeId: suggestion.nodeId,
+              project: suggestion.project,
+              reaches: suggestion.reaches,
+            })
+          }
+        >
+          Not Now
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 md:h-8"
+          onClick={() => setPrefill(suggestion.check)}
+        >
+          Add Check
+        </Button>
+      </li>
+    ));
   const lately = recentIncidents(incidents, view.now);
   const summary = board.data && last30Parts(board.data.last30);
   const more = (board.data?.last30.count ?? 0) > lately.length;
@@ -261,11 +338,30 @@ export function ChecksPage() {
                             />
                           );
                         })}
+                        {suggested(group.node.id)}
                       </ul>
                     </section>
                   );
                 })
               )}
+              {alone.map((node) => (
+                <section
+                  key={node.id}
+                  aria-label={node.name}
+                  className="divide-y rounded-lg border bg-card"
+                >
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2">
+                    <h2 className="text-sm font-medium">{node.name}</h2>
+                    <Link
+                      to={`/nodes/${node.id}`}
+                      className="ml-auto font-mono text-xs text-primary underline-offset-4 hover:underline"
+                    >
+                      Open Server →
+                    </Link>
+                  </div>
+                  <ul className="divide-y">{suggested(node.id)}</ul>
+                </section>
+              ))}
             </div>
             <aside aria-labelledby="recent-incidents">
               <h2

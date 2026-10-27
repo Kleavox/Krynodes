@@ -71,6 +71,11 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Moving…",
       done: "Moved into Krynodes",
     },
+    reach: {
+      verb: "Change Reach",
+      doing: "Changing the reach of…",
+      done: "Reach changed",
+    },
     apply: { verb: "Turn on", doing: "Turning on…", done: "Turned on" },
     undo: { verb: "Turn off", doing: "Turning off…", done: "Turned off" },
     lockdown: {
@@ -90,6 +95,62 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Removing Krynodes…",
       done: "Krynodes removed",
     },
+    signin: { verb: "Sign In", doing: "Signing in…", done: "Signed in" },
+    refresh: {
+      verb: "Check for Updates",
+      doing: "Checking for updates…",
+      done: "Checked",
+    },
+    find: { verb: "Search", doing: "Searching…", done: "Found" },
+    preview: { verb: "Try", doing: "Trying…", done: "Tried" },
+    upgrade: { verb: "Upgrade", doing: "Upgrading…", done: "Upgraded" },
+    hold: { verb: "Hold", doing: "Holding…", done: "Held" },
+    unhold: {
+      verb: "Release Hold",
+      doing: "Releasing the hold…",
+      done: "Released",
+    },
+    addrepo: {
+      verb: "Add Repository",
+      doing: "Adding the repository…",
+      done: "Added",
+    },
+    droprepo: {
+      verb: "Remove Repository",
+      doing: "Removing the repository…",
+      done: "Removed",
+    },
+    inspect: { verb: "Check", doing: "Checking…", done: "Checked" },
+    probe: {
+      verb: "Test Port",
+      doing: "Testing the port…",
+      done: "Tested the port",
+    },
+    test: { verb: "Test Link", doing: "Testing…", done: "Tested" },
+    prepare: {
+      verb: "Get Ready",
+      doing: "Getting ready for…",
+      done: "Ready",
+    },
+    unprepare: {
+      verb: "Undo Preparation",
+      doing: "Undoing the preparation for…",
+      done: "Undone",
+    },
+    rekey: {
+      verb: "Make New Key",
+      doing: "Making a new key for…",
+      done: "New key made",
+    },
+    accept: { verb: "Accept", doing: "Accepting…", done: "Accepted" },
+    block: { verb: "Block", doing: "Blocking…", done: "Blocked" },
+    unblock: { verb: "Unblock", doing: "Unblocking…", done: "Unblocked" },
+    drop: { verb: "Drop", doing: "Dropping…", done: "Dropped" },
+    tighten: { verb: "Tighten", doing: "Tightening…", done: "Tightened" },
+    policy: { verb: "Read", doing: "Reading…", done: "Read" },
+    save: { verb: "Save", doing: "Saving…", done: "Saved" },
+    key: { verb: "Make a Key", doing: "Making a key…", done: "Made a key" },
+    join: { verb: "Sign In", doing: "Signing in…", done: "Signed in" },
   };
 
 export const RECIPE_TITLES: Record<string, string> = {
@@ -130,7 +191,12 @@ export interface ServerGroup {
 
 export function displayName(kind: ActionKind, name: string): string {
   if (kind === "trust") return "Trusted Devices";
-  if (kind === "vault") return "the Cloudflare token";
+  if (kind === "vault") {
+    return name === "tailscale"
+      ? "the Tailscale credential"
+      : "the Cloudflare token";
+  }
+  if (kind === "network") return "the private network";
   if (kind === "host" && name === "docker") return "Docker";
   if (kind === "host") return RECIPE_TITLES[name]?.toLowerCase() ?? "server";
   return kind === "systemd" ? name.replace(/\.service$/u, "") : name;

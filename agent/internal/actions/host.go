@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -104,8 +105,22 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		return Result{ID: request.ID, OK: true, Output: "Krynodes leaves this server in 30 seconds; its apps keep running", FinishedAt: e.stamp()}, false
 	case request.Name == "reboot-window" && (request.Action == "apply" || request.Action == "undo"):
 		return e.rebootSetting(request), false
-	case (server && (request.Action == "lockdown" || request.Action == "unlock")) ||
+	case server && request.Action == "accept":
+		return e.accept(request), false
+	case request.Name == "tailscale" && request.Action == "block":
+		return e.blockTailnet(ctx, request), false
+	case request.Name == "tailscale" && request.Action == "unblock":
+		return e.unblockTailnet(ctx, request), false
+	case request.Name == "tailscale" && request.Action == "inspect":
+		return e.inspectTailnet(ctx, request), false
+	case server && request.Action == "lockdown":
+		if err := writeJSON(filepath.Join(e.StateDir, "host"), request.ID+".json", request, 0o600); err != nil {
+			return e.failed(request, err, ""), false
+		}
+		return Result{}, true
+	case (server && (request.Action == "unlock" || request.Action == "release")) ||
 		(request.Name == "docker" && request.Action == "install") ||
+		(request.Name == "tailscale" && (request.Action == "signin" || request.Action == "join")) ||
 		(!server && slices.Contains(Recipes, request.Name) && (request.Action == "apply" || request.Action == "undo")):
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
@@ -204,17 +219,28 @@ func (e Executor) HostApply(ctx context.Context) error {
 		if err := writeJSON(filepath.Join(e.StateDir, "results"), id+".json", result, 0o640); err != nil {
 			return err
 		}
+		os.Remove(filepath.Join(e.StateDir, "progress", id+".json"))
 		processed = true
 	}
 	if processed {
 		os.Remove(filepath.Join(e.StateDir, "security.json"))
+		e.retake(ctx, false)
 	}
 	return nil
 }
 
 func (e Executor) applyHost(ctx context.Context, request Request) Result {
+	if request.Kind == "apt" {
+		return e.applyApt(ctx, request)
+	}
+	if request.Kind == "network" {
+		return e.applyNetwork(ctx, request)
+	}
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
+	}
+	if request.Name == "server" && request.Action == "lockdown" {
+		return e.lockdown(ctx, request, e.recipeEnv())
 	}
 	command, err := e.authorize(request)
 	if err != nil {
@@ -233,9 +259,23 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		if _, on := state.Applied[request.Name]; on {
 			return e.refuse(request.ID, errors.New("already on; turn it off first"))
 		}
-		saved, err := recipes.Apply(ctx, env, request.Name, command.Args)
+		args := map[string]string{}
+		maps.Copy(args, command.Args)
+		delete(args, recipes.NetworkPort)
+		record := e.readNetwork()
+		opens := request.Name == "firewall" && record.Joined && record.Firewall == "" && record.Port != 0 && recipes.Detect(env).Family != recipes.RHEL
+		if opens {
+			args[recipes.NetworkPort] = strconv.Itoa(record.Port)
+		}
+		saved, err := recipes.Apply(ctx, env, request.Name, args)
 		if err != nil {
 			return e.refuse(request.ID, err)
+		}
+		if opens {
+			record.Firewall = "ufw"
+			if err := e.saveNetwork(record); err != nil {
+				log.Printf("remember the network's ufw rules: %v", err)
+			}
 		}
 		state.Applied[request.Name] = appliedRecipe{At: e.Now(), Saved: saved}
 		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
@@ -265,10 +305,14 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 			}
 		}
 		return Result{ID: request.ID, OK: true, Output: result.Message, FinishedAt: e.stamp()}
-	case "lockdown":
-		return e.lockdown(ctx, request, env)
+	case "release":
+		return e.release(ctx, request, command)
 	case "unlock":
 		return e.unlock(ctx, request, env)
+	case "signin":
+		return e.signIn(ctx, request, command)
+	case "join":
+		return e.joinTailnet(ctx, request)
 	}
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }

@@ -11,6 +11,7 @@ import { listAddresses, type AddressColumns } from "../lib/addresses";
 import { readReport, trusts, viewerPrints } from "../trust/fleet";
 import { confirmed } from "../trust/intent";
 import { manualStatement, unitOf } from "../actions/store";
+import { WARNING_KINDS } from "../quarantine/events";
 import {
   agentOrigin,
   findOwnedNode,
@@ -45,15 +46,31 @@ export function registerAdminRoutes(
                   AND status IN ('queued', 'sent')) THEN 'running'
               END AS deleting,
               ipv4, ipv4_at, ipv4_network, ipv4_owner,
-              ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report
-       FROM nodes WHERE owner_user_id = ? ORDER BY created_at DESC`,
+              ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report,
+              updates, tailscale,
+              (SELECT json_object('state', state, 'address', address, 'port', port)
+               FROM network_members WHERE node_id = nodes.id) AS network,
+              (SELECT json_object('at', at, 'why', why, 'tailnet',
+                 json(COALESCE(json_extract(timeline, '$.tailnet'), '[]')))
+               FROM quarantines
+               WHERE node_id = nodes.id AND released_at IS NULL) AS quarantine,
+              (SELECT json_group_array(json_object('id', id, 'kind', kind,
+                 'detail', json(detail), 'at', at, 'cutAt', cut_at))
+               FROM (SELECT * FROM warnings WHERE node_id = nodes.id AND answer IS NULL
+                 AND kind IN (SELECT value FROM json_each(?2)) ORDER BY at)) AS warnings
+       FROM nodes WHERE owner_user_id = ?1 ORDER BY created_at DESC`,
       )
-        .bind(ownerId)
+        .bind(ownerId, JSON.stringify(WARNING_KINDS))
         .all<
           AddressColumns & {
             id: string;
             interval_seconds: number;
             trust_report: string | null;
+            updates: string | null;
+            tailscale: string | null;
+            network: string | null;
+            quarantine: string | null;
+            warnings: string;
           }
         >(),
       context.env.DB.prepare(
@@ -89,7 +106,7 @@ export function registerAdminRoutes(
         .bind(ownerId)
         .all(),
       viewerPrints(context.env.DB, ownerId, email),
-      readPrivateRanges(context.env.DB),
+      readPrivateRanges(context.env.DB, ownerId),
     ]);
 
     const rows = nodes.results.map(
@@ -104,9 +121,21 @@ export function registerAdminRoutes(
         ipv6_owner,
         interfaces,
         trust_report,
+        updates,
+        tailscale,
+        network,
+        quarantine,
+        warnings,
         ...rest
       }) => ({
         ...rest,
+        network: network === null ? null : (JSON.parse(network) as unknown),
+        quarantine:
+          quarantine === null ? null : (JSON.parse(quarantine) as unknown),
+        warnings: JSON.parse(warnings) as unknown[],
+        updates: updates === null ? null : (JSON.parse(updates) as unknown),
+        tailscale:
+          tailscale === null ? null : (JSON.parse(tailscale) as unknown),
         addresses: trusts(readReport(trust_report), prints)
           ? listAddresses(
               {
@@ -129,10 +158,17 @@ export function registerAdminRoutes(
       rows.length > 0
         ? await fleetLive(context.env, ownerId)
         : { nodes: {}, mail: null };
+    const untrusted = new Set(
+      rows.filter((row) => row.quarantine !== null).map((row) => row.id),
+    );
     return context.json({
       nodes: mergeLive(rows, live === null ? null : live.nodes),
       mail: live?.mail ?? null,
-      checks: checks.results,
+      checks: checks.results.map((check) =>
+        untrusted.has(String(check.node_id))
+          ? { ...check, status: "UNTRUSTED" }
+          : check,
+      ),
       incidents: incidents.results,
       agentRelease: {
         ...(await readAgentRelease(context.env.DB)),
@@ -206,6 +242,8 @@ export function registerAdminRoutes(
   app.delete("/api/nodes/:id", requireAdmin, async (context) => {
     const node = await ownedNode(context);
     if (!node) return context.json({ code: "NOT_FOUND" }, 404);
+    const member = await networkMember(context.env.DB, node.id);
+    if (member) return member(context);
     const refused = await confirmed(context, "node.delete", node.id);
     if (refused) return refused;
     await context.env.DB.prepare("DELETE FROM nodes WHERE id = ?")
@@ -439,6 +477,26 @@ export function registerAdminRoutes(
     }
     return context.body(null, 204);
   });
+}
+
+export async function networkMember(db: D1Database, nodeId: string) {
+  const row = await db
+    .prepare(
+      `SELECT n.name FROM network_members m JOIN nodes n ON n.id = m.node_id
+       WHERE m.node_id = ? AND m.state = 'in'`,
+    )
+    .bind(nodeId)
+    .first<{ name: string }>();
+  return row
+    ? (context: KrynodesContext) =>
+        context.json(
+          {
+            code: "NETWORK_MEMBER",
+            message: `Remove ${row.name} from the private network first.`,
+          },
+          409,
+        )
+    : null;
 }
 
 async function agentTooOld(context: KrynodesContext, nodeId: string) {

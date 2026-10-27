@@ -99,6 +99,28 @@ describe("history", () => {
     ]);
   });
 
+  it("counts a private network change with the day's actions", () => {
+    const groups = dayGroups(
+      [
+        {
+          type: "network",
+          at: at(24, 9, 0),
+          change: {
+            id: "c1",
+            at: at(24, 9, 0),
+            change: "Add vps-3 to the private network",
+            detail: null,
+            requestedBy: "owner@example.test",
+            deviceId: null,
+          },
+        },
+        done("1", at(24, 8, 0)),
+      ],
+      new Date(2026, 9, 24, 15, 0).getTime(),
+    );
+    expect(groups.map((group) => group.counts)).toEqual(["2 actions"]);
+  });
+
   it("says an incident went down or recovered after how long", () => {
     expect(incidentText(incident("opened", "Pi-hole", at(24, 9, 52)))).toBe(
       "Pi-hole went down",
@@ -227,6 +249,12 @@ describe("a failed, not fixed card", () => {
     });
     expect(retryOf(action({ kind: "compose", action: "stop" }))).toBeNull();
     expect(retryOf(action({ kind: "host", action: "apply" }))).toBeNull();
+    for (const verb of ["upgrade", "install", "remove", "purge"] as const) {
+      expect(retryOf(action({ kind: "apt", action: verb }))).toEqual({
+        via: "packages",
+      });
+    }
+    expect(retryOf(action({ kind: "apt", action: "hold" }))).toBeNull();
   });
 
   it("shows the last lines of an output first", () => {
@@ -254,6 +282,37 @@ describe("what an action says", () => {
         action({ kind: "host", name: "server", action: "uninstall" }),
       ),
     ).toBe("Remove Krynodes from the server");
+  });
+
+  it("names the Tailscale steps, and the credential they use", () => {
+    expect(
+      historyText(action({ kind: "vault", name: "tailscale", action: "save" })),
+    ).toBe("Save Tailscale rules");
+    expect(
+      historyText(
+        action({ kind: "host", name: "tailscale", action: "join" }),
+        [],
+        "vps-2",
+      ),
+    ).toBe("Sign in vps-2 to Tailscale");
+    expect(
+      historyText(
+        action({ kind: "vault", name: "tailscale", action: "forget" }),
+      ),
+    ).toMatch(/ the Tailscale credential$/u);
+    expect(
+      historyText(
+        action({ kind: "vault", name: "cloudflare", action: "forget" }),
+      ),
+    ).toMatch(/ the Cloudflare token$/u);
+  });
+
+  it("names the stack whose reach a move changed, with its server beside it", () => {
+    const reach = action({ kind: "compose", name: "shop", action: "reach" });
+    expect(historyText(reach)).toBe("Change shop's reach");
+    expect(
+      failedLine({ ...reach, status: "failed" }, { name: "io" }, 0).text,
+    ).toBe("Change shop's reach on io");
   });
 });
 

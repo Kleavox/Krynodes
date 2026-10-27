@@ -259,6 +259,57 @@ func TestNoInstructionMeansNoUpdateRequest(t *testing.T) {
 type fakeActions struct {
 	queued    []reporter.ActionRequest
 	refreshes int
+	beat      *reporter.NetworkBeat
+	replies   []*reporter.NetworkReply
+	events    []reporter.Event
+	answers   []reporter.HeartbeatResponse
+}
+
+func (f *fakeActions) NetworkBeat() *reporter.NetworkBeat {
+	return f.beat
+}
+
+func (f *fakeActions) NetworkReply(reply *reporter.NetworkReply) error {
+	f.replies = append(f.replies, reply)
+	return nil
+}
+
+func TestTheNetworkRidesTheHeartbeatAndItsReplyReachesTheRelay(t *testing.T) {
+	reply := &reporter.NetworkReply{Endpoints: []reporter.NetworkEndpoint{{Key: "k", Endpoint: "141.95.0.21:51820"}}}
+	server := &fakeReporter{
+		config:    configWith(targetURL(t), "v1"),
+		heartbeat: reporter.HeartbeatResponse{OK: true, IntervalSeconds: 60, ConfigVersion: "v1", Network: reply},
+	}
+	relay := &fakeActions{beat: &reporter.NetworkBeat{Version: 3}}
+	if _, err := New(server, reporter.Host{}, nil, relay).Execute(context.Background(), "node-1"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if server.received.Network == nil || server.received.Network.Version != 3 || len(relay.replies) != 1 || relay.replies[0] != reply {
+		t.Fatalf("beat %#v replies %#v", server.received.Network, relay.replies)
+	}
+}
+
+func (f *fakeActions) Report(beat *reporter.Heartbeat) {
+	beat.Events = f.events
+}
+
+func (f *fakeActions) Answer(response reporter.HeartbeatResponse) error {
+	f.answers = append(f.answers, response)
+	return nil
+}
+
+func TestEventsRideTheHeartbeatAndTheAckReachesTheRelay(t *testing.T) {
+	server := &fakeReporter{
+		config:    configWith(targetURL(t), "v1"),
+		heartbeat: reporter.HeartbeatResponse{OK: true, IntervalSeconds: 60, ConfigVersion: "v1", Acked: []string{"port:aa"}, Quarantined: true},
+	}
+	relay := &fakeActions{events: []reporter.Event{{ID: "port:aa", Kind: "port", At: "2026-09-29T09:59:30Z"}}}
+	if _, err := New(server, reporter.Host{}, nil, relay).Execute(context.Background(), "node-1"); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if len(server.received.Events) != 1 || len(relay.answers) != 1 || relay.answers[0].Acked[0] != "port:aa" || !relay.answers[0].Quarantined {
+		t.Fatalf("beat %#v answers %#v", server.received.Events, relay.answers)
+	}
 }
 
 func (f *fakeActions) Enqueue(requests []reporter.ActionRequest) error {

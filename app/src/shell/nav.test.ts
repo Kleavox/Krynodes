@@ -6,7 +6,7 @@ import type {
   Overview,
   ServicesResponse,
 } from "../types";
-import { alsoActive, navCounts, PAGES, SECTIONS } from "./nav";
+import { alsoActive, navCounts, networkWarns, PAGES, SECTIONS } from "./nav";
 
 const incident = (status: Incident["status"]) => ({ status }) as Incident;
 const action = (status: ActionRecord["status"]) => ({ status }) as ActionRecord;
@@ -16,26 +16,36 @@ const servicesWith = (actions: ActionRecord[]) =>
   ({ actions }) as unknown as ServicesResponse;
 
 describe("the menu", () => {
-  it("is Fleet, Services, Checks, with History only among the pages", () => {
+  it("is Fleet, Services, Network, Checks, with History only among the pages", () => {
     expect(SECTIONS.map((section) => section.label)).toEqual([
       "Fleet",
       "Services",
+      "Network",
       "Checks",
     ]);
     expect(PAGES.map((section) => section.to)).toEqual([
       "/",
       "/services",
+      "/network",
       "/checks",
       "/history",
     ]);
   });
 
-  it("puts the open incidents on Checks", () => {
+  it("puts the open incidents on Checks and the broken links on Network", () => {
     const counts = navCounts(
       overviewWith([incident("OPEN"), incident("OPEN"), incident("RESOLVED")]),
       servicesWith([action("queued"), action("done")]),
+      1,
     );
-    expect(counts).toEqual({ "/checks": 2, "/services": 1 });
+    expect(counts).toEqual({ "/checks": 2, "/services": 1, "/network": 1 });
+  });
+
+  it("puts Tailscale alarms on Network in red, over the amber count", () => {
+    expect(navCounts(undefined, undefined, 1, 2)["/network"]).toBe(2);
+    expect(navCounts(undefined, undefined, 1, 0)["/network"]).toBe(1);
+    expect(networkWarns(2)).toBe(false);
+    expect(networkWarns(0)).toBe(true);
   });
 
   it("marks Checks while an incident is open on screen", () => {
@@ -48,6 +58,7 @@ describe("the menu", () => {
     expect(navCounts(undefined, undefined)).toEqual({
       "/checks": 0,
       "/services": 0,
+      "/network": 0,
     });
   });
 });

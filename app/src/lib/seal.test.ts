@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { b64url, fromB64url } from "./passkeys";
-import { seal } from "./seal";
+import { openSealed, seal, sealPair } from "./seal";
 
 const decoder = new TextDecoder();
 
@@ -88,5 +88,21 @@ describe("sealing for a server", () => {
 
   it("refuses a key that is not a server key", async () => {
     await expect(seal("short", "x")).rejects.toThrow();
+  });
+});
+
+describe("a one-time key in the browser", () => {
+  it("opens what was sealed to it, and nothing sealed to another", async () => {
+    const mine = await sealPair();
+    const sealed = await seal(
+      mine.public,
+      '{"url":"https://login.tailscale.com/a/1"}',
+    );
+    expect(await openSealed(mine, sealed)).toBe(
+      '{"url":"https://login.tailscale.com/a/1"}',
+    );
+    const other = await sealPair();
+    await expect(openSealed(other, sealed)).rejects.toThrow();
+    await expect(openSealed(mine, "not-sealed")).rejects.toThrow();
   });
 });

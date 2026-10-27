@@ -21,12 +21,14 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
+	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 )
 
 const (
-	maxRequestBytes = 256 << 10
+	maxRequestBytes = 1 << 20
 	maxOutputBytes  = 2 << 10
 	commandTimeout  = 2 * time.Minute
 	runBudget       = 20 * time.Minute
@@ -45,14 +47,20 @@ type Executor struct {
 	StateDir   string
 	Now        func() time.Time
 	Run        Runner
+	Stream     func(ctx context.Context, each func(string), name string, args ...string) error
 	Collect    func(context.Context, []string) (Snapshot, error)
 	Exists     func(string) bool
 	Free       func(string) (uint64, error)
 	Root       string
 	Audit      bool
+	ConfigPath string
 
 	CloudflareBase string
 	CloudflareHTTP *http.Client
+
+	TailscaleLocal tailscale.Local
+	TailscaleBase  string
+	TailscaleHTTP  *http.Client
 
 	HealthTimeout time.Duration
 	HealthEvery   time.Duration
@@ -114,6 +122,10 @@ run:
 					result = e.compose(ctx, item.request, snapshot)
 				case item.request.Kind == "vault":
 					result = e.vault(ctx, item.request)
+				case item.request.Kind == "apt":
+					result, forwarded = e.apt(ctx, item.request)
+				case item.request.Kind == "network":
+					result, forwarded = e.network(ctx, item.request)
 				case item.request.Kind == "host":
 					result, forwarded = e.host(ctx, item.request)
 					reboot = reboot || (result.OK && item.request.Action == "reboot")
@@ -157,10 +169,14 @@ run:
 		sealKey = seal.Public(key)
 	}
 	var security *reporter.SecurityReport
+	var packages *reporter.PackagesReport
+	var tailnet *reporter.TailscaleReport
 	if e.Audit {
 		security = e.security(ctx, scanned)
+		packages = e.packages(ctx)
+		tailnet = e.tailnet(ctx)
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport()}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport("cloudflare"), TailscaleVault: e.vaultReport("tailscale"), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot)}, e.Now())
 	if err != nil {
 		return err
 	}
@@ -346,13 +362,24 @@ func (e Executor) execute(ctx context.Context, request Request, services []Servi
 
 func (e Executor) stackEntries(snapshot Snapshot) []reporter.StackEntry {
 	entries := make([]reporter.StackEntry, 0, len(snapshot.Stacks))
+	_, own := e.ownAddress()
 	for _, stack := range snapshot.Stacks {
 		record, _ := readState[stackRecord](filepath.Join(e.StateDir, "stacks"), stack.Project+".json")
-		entries = append(entries, reporter.StackEntry{
+		entry := reporter.StackEntry{
 			Project: stack.Project, Directory: stack.Directory, Running: stack.Running, Total: stack.Total,
 			Compose: snapshot.Compose, Rollback: len(record.Previous) > 0,
 			Access: e.accessOf(stack.Directory), Public: stack.Public, Containers: stack.Containers,
-		})
+		}
+		if own != "" {
+			var meta stackMeta
+			if entry.Access == "contained" {
+				meta = e.metaOf(stack.Directory)
+			}
+			public, private := splitBindings(stack.Bindings, own)
+			entry.Public = public
+			entry.Network = &reporter.StackNetwork{Serves: append([]network.Serve{}, meta.Serves...), Reaches: append([]string{}, meta.Reaches...), Private: private}
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }

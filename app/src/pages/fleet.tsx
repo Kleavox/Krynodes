@@ -12,7 +12,7 @@ import { AddressesButton } from "@/components/server-addresses";
 import { systemLine } from "@/lib/node-facts";
 import { Sparkline } from "@/components/sparkline";
 import { NodeStatus, OperationText } from "@/components/node-status";
-import { StatusDot, nodeTone } from "@/components/status";
+import { StatusChip, StatusDot, nodeTone } from "@/components/status";
 import { ReportStrip } from "@/components/strips";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +54,7 @@ import {
   bySeverity,
   fleetSummary,
   nodeHealth,
+  serversTile,
   nodeUsage,
   type Severity,
 } from "@/lib/health";
@@ -64,6 +65,8 @@ import {
   workSpans,
   type ServerOperation,
 } from "@/lib/operations";
+import { busyText, namesServer, packageAttention } from "@/lib/packages";
+import { fleetQuarantine } from "@/lib/quarantine";
 import { isPending, runningText } from "@/lib/services";
 import { layoutReportSlots, overlaps, type WorkSpan } from "@/lib/series";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -150,6 +153,8 @@ interface Row {
   operation: ServerOperation | null;
   busy: ActionRecord | null;
   work: WorkSpan[];
+  raised: string[];
+  notes: string[];
 }
 
 export function FleetPage() {
@@ -220,7 +225,12 @@ export function FleetPage() {
     checks.filter((check) => check.node_id === id);
   const rows: Row[] = nodes
     .map((node) => {
-      const health = nodeHealth(node, checksFor(node.id), seen);
+      const own = packageAttention(
+        node,
+        services.data?.nodes.find((entry) => entry.id === node.id)?.security,
+        now,
+      );
+      const health = nodeHealth(node, checksFor(node.id), seen, own.reasons);
       return {
         node,
         name: node.name,
@@ -239,10 +249,14 @@ export function FleetPage() {
           services.data?.actions.find(
             (action) =>
               action.nodeId === node.id &&
-              action.kind !== "host" &&
-              action.action !== "logs" &&
+              (action.kind !== "host" || namesServer(action)) &&
+              !["logs", "find", "preview", "inspect", "probe"].includes(
+                action.action,
+              ) &&
               isPending(action),
           ) ?? null,
+        raised: own.reasons,
+        notes: own.notes,
         ...health,
       };
     })
@@ -258,6 +272,7 @@ export function FleetPage() {
         rows.find((row) => row.node.id === selected.id)?.operation ?? null
       }
       work={rows.find((row) => row.node.id === selected.id)?.work ?? []}
+      raised={rows.find((row) => row.node.id === selected.id)?.raised ?? []}
       checks={checksFor(selected.id)}
       recent={recent.data?.nodes[selected.id]}
       release={agentRelease}
@@ -566,6 +581,7 @@ function FleetSummary({
   seen: number;
 }) {
   const summary = fleetSummary(nodes, checks, seen);
+  const servers = serversTile(summary.nodes);
   const open = incidents.filter((incident) => incident.status === "OPEN");
   const usage = useUsage();
   const estimate = estimateDailyUse(nodes);
@@ -585,14 +601,16 @@ function FleetSummary({
     >
       <SummaryTile
         label="Servers Online"
-        value={`${summary.nodes.online}/${summary.nodes.total}`}
-        detail={
+        value={servers.value}
+        detail={servers.detail}
+        tone={servers.bad ? "bad" : "ok"}
+        to={
           summary.nodes.offline > 0
-            ? `${summary.nodes.offline} offline`
-            : "None Offline"
+            ? "/?filter=offline"
+            : summary.nodes.quarantined > 0
+              ? "/?filter=issues"
+              : undefined
         }
-        tone={summary.nodes.offline > 0 ? "bad" : "ok"}
-        to={summary.nodes.offline > 0 ? "/?filter=offline" : undefined}
       />
       <SummaryTile
         label="Checks Passing"
@@ -701,10 +719,11 @@ function NodeCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const { node, state, severity, reasons, operation, busy, work } = row;
+  const { node, state, severity, reasons, notes, operation, busy, work } = row;
   const devices = useDevices().data?.devices;
   const laid = laidSlots(node, recent, now, asOf, work);
   const live = state === "online" || state === "offline";
+  const quarantined = fleetQuarantine(node, now);
   return (
     <article
       className={cn(
@@ -730,11 +749,15 @@ function NodeCard({
             <DockerMark nodeId={node.id} />
             <SecurityMark nodeId={node.id} />
           </h2>
-          <NodeStatus
-            state={state}
-            operation={operation}
-            offlineDetail={timeAgo(node.last_seen_at, now)}
-          />
+          {quarantined ? (
+            <StatusChip tone="bad" label={quarantined.chip} />
+          ) : (
+            <NodeStatus
+              state={state}
+              operation={operation}
+              offlineDetail={timeAgo(node.last_seen_at, now)}
+            />
+          )}
         </div>
         {systemLine(node) && (
           <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
@@ -746,7 +769,7 @@ function NodeCard({
           <p className="mt-1 flex items-center gap-1.5 truncate font-mono text-[11px] text-warning">
             <StatusDot tone="warn" pulse />
             <span className="truncate">
-              {runningText(busy)} · {actorOf(busy, devices)}
+              {busyText(busy) ?? runningText(busy)} · {actorOf(busy, devices)}
             </span>
           </p>
         )}
@@ -754,12 +777,17 @@ function NodeCard({
       {state !== "offline" && (
         <Attention severity={severity} reasons={reasons} />
       )}
+      {state !== "offline" && notes.length > 0 && (
+        <p className="-mt-1.5 truncate text-xs text-muted-foreground">
+          {notes.join(" · ")}
+        </p>
+      )}
       {live ? (
         <>
           {state === "online" ? (
             <div>
               <p className="font-mono text-[10px] text-muted-foreground">
-                CPU · Last {spanOf(laid)}
+                {quarantined?.meters ?? `CPU · Last ${spanOf(laid)}`}
               </p>
               <Sparkline
                 values={laid.map((slot) => slot.sample?.cpu ?? null)}
@@ -795,7 +823,7 @@ function NodeCard({
       )}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t pt-2.5">
         <span className="font-mono text-[11px] whitespace-nowrap text-muted-foreground">
-          {checksLine(checks, state)}
+          {quarantined?.footer ?? checksLine(checks, state)}
         </span>
         <AgentVersion node={node} release={release} now={now} />
       </div>
@@ -879,7 +907,7 @@ function FleetTable({
                 <div className="flex min-w-0 items-center gap-2">
                   <StatusDot
                     tone={
-                      halted(operation)
+                      node.quarantine || halted(operation)
                         ? "bad"
                         : operation
                           ? "warn"
@@ -965,6 +993,7 @@ function NodePanel({
   node,
   operation,
   work,
+  raised,
   checks,
   recent,
   release,
@@ -977,6 +1006,7 @@ function NodePanel({
   node: NodeRecord;
   operation: ServerOperation | null;
   work: WorkSpan[];
+  raised: string[];
   checks: CheckRecord[];
   recent: RecentNode | undefined;
   release: AgentRelease;
@@ -988,7 +1018,8 @@ function NodePanel({
 }) {
   const state = nodeState(node, seen);
   const laid = laidSlots(node, recent, now, asOf, work);
-  const { severity, reasons } = nodeHealth(node, checks, seen);
+  const { severity, reasons } = nodeHealth(node, checks, seen, raised);
+  const quarantined = fleetQuarantine(node, now);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-2">
@@ -998,11 +1029,15 @@ function NodePanel({
               {node.name}
             </h2>
           )}
-          <NodeStatus
-            state={state}
-            operation={operation}
-            offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
-          />
+          {quarantined ? (
+            <StatusChip tone="bad" label={quarantined.chip} />
+          ) : (
+            <NodeStatus
+              state={state}
+              operation={operation}
+              offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
+            />
+          )}
           {systemLine(node) && (
             <p className="truncate font-mono text-[11px] text-muted-foreground">
               {systemLine(node)}
@@ -1052,7 +1087,7 @@ function NodePanel({
         </div>
       )}
       <div className="flex items-center justify-between gap-2 font-mono text-xs text-muted-foreground">
-        <span>{checksLine(checks, state)}</span>
+        <span>{quarantined?.footer ?? checksLine(checks, state)}</span>
         <AgentVersion node={node} release={release} now={now} />
       </div>
       <div className="flex flex-wrap gap-2">

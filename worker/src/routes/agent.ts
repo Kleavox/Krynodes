@@ -2,10 +2,11 @@ import { agentUpdatable, MIN_AGENT_VERSION } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 
 import type { AgentNode } from "../agent/ingest";
-import { hubFor, streamsOn } from "../fleet/client";
+import { hubFor, pokeSoon, streamsOn } from "../fleet/client";
 import { familyOf, readInterfaces, type Interface } from "../lib/addresses";
 import { randomToken, readBearerToken, sha256 } from "../lib/crypto";
 import { hostSchema } from "../schemas";
+import { changeStatement } from "./network";
 import {
   readJson,
   type KrynodesApp,
@@ -166,7 +167,61 @@ async function seenAddress(
       node.id,
     )
     .run();
+  if (family === 4 && node.owner_user_id) {
+    await movedEndpoint(context, node.id, node.owner_user_id, address);
+  }
   return context.json({ address, family });
+}
+
+async function movedEndpoint(
+  context: KrynodesContext,
+  nodeId: string,
+  owner: string,
+  address: string,
+) {
+  const db = context.env.DB;
+  const member = await db
+    .prepare(
+      `SELECT m.endpoint, m.port, n.name FROM network_members m JOIN nodes n ON n.id = m.node_id
+       WHERE m.node_id = ? AND m.state = 'in' AND m.nat = 0`,
+    )
+    .bind(nodeId)
+    .first<{ endpoint: string | null; port: number; name: string }>();
+  const endpoint = `${address}:${member?.port}`;
+  if (!member || member.endpoint === endpoint) return;
+  if (member.endpoint?.startsWith("[")) return;
+  const before = member.endpoint?.slice(0, member.endpoint.lastIndexOf(":"));
+  await db.batch([
+    db
+      .prepare("UPDATE network_members SET endpoint = ? WHERE node_id = ?")
+      .bind(endpoint, nodeId),
+    db
+      .prepare("UPDATE network SET stamp = ? WHERE owner_user_id = ?")
+      .bind(crypto.randomUUID(), owner),
+    changeStatement(db, {
+      owner,
+      at: new Date().toISOString(),
+      change: `Update the public address of ${member.name}`,
+      detail: before ? `${before} → ${address}` : address,
+      requestedBy: "Krynodes",
+      deviceId: null,
+      nodes: [nodeId],
+      joins: [],
+      leaves: [],
+    }),
+  ]);
+  const others = await db
+    .prepare(
+      `SELECT m.node_id FROM network_members m JOIN nodes n ON n.id = m.node_id
+       WHERE n.owner_user_id = ? AND m.state = 'in' AND m.node_id <> ?`,
+    )
+    .bind(owner, nodeId)
+    .all<{ node_id: string }>();
+  pokeSoon(
+    context,
+    owner,
+    others.results.map((row) => row.node_id),
+  );
 }
 
 const updateRequired = (context: KrynodesContext, status: 410 | 426) =>
@@ -183,12 +238,27 @@ async function authenticateAgent(
 ): Promise<AgentNode | null> {
   const token = readBearerToken(context.req.header("authorization"));
   if (!token) return null;
-  return context.env.DB.prepare(
-    `SELECT id, owner_user_id, interval_seconds
-     FROM nodes
-     WHERE agent_token_hash = ? AND enrolled_at IS NOT NULL
-       AND disabled_at IS NULL LIMIT 1`,
-  )
-    .bind(await sha256(token))
+  const db = context.env.DB;
+  const hash = await sha256(token);
+  const node = await db
+    .prepare(
+      `SELECT id, owner_user_id, interval_seconds
+       FROM nodes
+       WHERE agent_token_hash = ? AND enrolled_at IS NOT NULL
+         AND disabled_at IS NULL LIMIT 1`,
+    )
+    .bind(hash)
     .first<AgentNode>();
+  if (node) return node;
+  const released = await db
+    .prepare(
+      `UPDATE nodes SET agent_token_hash = ?1, release = NULL
+       WHERE json_extract(release, '$.released') = 1
+         AND json_extract(release, '$.token') = ?1
+         AND enrolled_at IS NOT NULL AND disabled_at IS NULL
+       RETURNING id, owner_user_id, interval_seconds`,
+    )
+    .bind(hash)
+    .first<AgentNode>();
+  return released ?? null;
 }

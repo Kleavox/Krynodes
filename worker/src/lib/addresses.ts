@@ -1,3 +1,5 @@
+import { NETWORK } from "@krynodes/protocol";
+
 import { canonicalAddress, inRanges } from "./ranges";
 
 const IPV4 =
@@ -124,7 +126,7 @@ export function listAddresses(
       family,
       address,
       router: false,
-      network: null,
+      network: name === NETWORK.interface ? "Private Network" : null,
       owner: null,
     }));
   return [...listed, ...vpn];

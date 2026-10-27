@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, Ellipsis } from "lucide-react";
+import { Link } from "react-router";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -21,11 +22,13 @@ import {
 import { agentState } from "@/lib/agent";
 import { agentCurrent, canRestartServer } from "@/lib/devices";
 import { serverOperation } from "@/lib/operations";
+import { actionsFor } from "@/lib/quarantine";
 import type { NodeRecord } from "@/types";
 
 import { DeleteNodeDialog } from "./delete-node-dialog";
 import { EditNodeDialog } from "./edit-node-dialog";
 import { InstallDockerDialog } from "./install-docker-dialog";
+import { ReleaseDialog } from "./release-dialog";
 
 type OpenDialog =
   | "add-check"
@@ -35,6 +38,7 @@ type OpenDialog =
   | "lockdown"
   | "unlock"
   | "docker"
+  | "release"
   | null;
 
 export function NodeActions({
@@ -55,6 +59,7 @@ export function NodeActions({
   const lock = useSignedAction(false);
   const refresh = useRefreshServices();
   const update = useRequestAgentUpdate();
+  const limited = actionsFor(node);
   const services = useServices();
   const release = useOverview().data?.agentRelease;
   const entry = services.data?.nodes.find((item) => item.id === node.id);
@@ -97,53 +102,98 @@ export function NodeActions({
             </Button>
           )}
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => refresh.mutate([node.id])}>
-            Refresh Services
-          </DropdownMenuItem>
-          {updatable && (
-            <DropdownMenuItem onSelect={() => update.mutate(node.id)}>
-              Update Agent to {release.version}
+        {limited ? (
+          <DropdownMenuContent align="end">
+            {limited.map((label) =>
+              label === "Refresh Services" ? (
+                <DropdownMenuItem
+                  key={label}
+                  onSelect={() => refresh.mutate([node.id])}
+                >
+                  {label}
+                </DropdownMenuItem>
+              ) : label === "Release Server" ? (
+                <DropdownMenuItem
+                  key={label}
+                  onSelect={() => setDialog("release")}
+                >
+                  {label}
+                </DropdownMenuItem>
+              ) : label === "Remove from Network" ? (
+                <DropdownMenuItem key={label} asChild>
+                  <Link to={`/network?remove=${node.id}`}>{label}</Link>
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  key={label}
+                  variant="destructive"
+                  onSelect={() => setDialog("delete")}
+                >
+                  {label}
+                </DropdownMenuItem>
+              ),
+            )}
+          </DropdownMenuContent>
+        ) : (
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => refresh.mutate([node.id])}>
+              Refresh Services
             </DropdownMenuItem>
-          )}
-          <DropdownMenuItem onSelect={() => setDialog("add-check")}>
-            Add Check
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setDialog("edit")}>
-            Rename Node
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          {installable && (
-            <DropdownMenuItem onSelect={() => setDialog("docker")}>
-              {entry?.docker === "no-compose"
-                ? "Add Compose"
-                : "Install Docker"}
+            <DropdownMenuItem asChild>
+              <Link to={`/nodes/${node.id}/packages`}>Packages</Link>
             </DropdownMenuItem>
-          )}
-          {lockable && (
-            <DropdownMenuItem
-              variant={locked ? "default" : "destructive"}
-              onSelect={() => setDialog(locked ? "unlock" : "lockdown")}
-            >
-              {locked ? "Unlock Server" : "Lock Down Server"}
+            {updatable && (
+              <DropdownMenuItem onSelect={() => update.mutate(node.id)}>
+                Update Agent to {release.version}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => setDialog("add-check")}>
+              Add Check
             </DropdownMenuItem>
-          )}
-          {restartable && (
+            <DropdownMenuItem onSelect={() => setDialog("edit")}>
+              Rename Node
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {installable && (
+              <DropdownMenuItem onSelect={() => setDialog("docker")}>
+                {entry?.docker === "no-compose"
+                  ? "Add Compose"
+                  : "Install Docker"}
+              </DropdownMenuItem>
+            )}
+            {lockable && (
+              <DropdownMenuItem
+                variant={locked ? "default" : "destructive"}
+                onSelect={() => setDialog(locked ? "unlock" : "lockdown")}
+              >
+                {locked ? "Unlock Server" : "Lock Down Server"}
+              </DropdownMenuItem>
+            )}
+            {restartable && (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setDialog("restart")}
+              >
+                Restart Server
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               variant="destructive"
-              onSelect={() => setDialog("restart")}
+              onSelect={() => setDialog("delete")}
             >
-              Restart Server
+              Delete Node
             </DropdownMenuItem>
-          )}
-          <DropdownMenuItem
-            variant="destructive"
-            onSelect={() => setDialog("delete")}
-          >
-            Delete Node
-          </DropdownMenuItem>
-        </DropdownMenuContent>
+          </DropdownMenuContent>
+        )}
       </DropdownMenu>
+
+      {limited && (
+        <ReleaseDialog
+          node={node}
+          open={dialog === "release"}
+          onOpenChange={(open) => setDialog(open ? "release" : null)}
+        />
+      )}
 
       <CheckDialog
         open={dialog === "add-check"}
@@ -159,7 +209,7 @@ export function NodeActions({
       />
 
       <ConfirmDialog
-        open={dialog === "restart" && canRestartServer(node, trust)}
+        open={dialog === "restart" && !limited && canRestartServer(node, trust)}
         onOpenChange={(open) => {
           setDialog(open ? "restart" : null);
           if (!open) onRestartClosed?.();

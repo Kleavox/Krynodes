@@ -1,0 +1,102 @@
+{
+  "packages": {
+    "apt": true,
+    "system": "Debian 12 bookworm",
+    "codename": "bookworm",
+    "readAt": "2026-10-26T09:00:00Z",
+    "checkedAt": "2026-10-26T08:57:00Z",
+    "installed": 412,
+    "packages": [
+      {
+        "name": "docker-ce",
+        "version": "5:27.3.1-1~debian.12~bookworm",
+        "from": "docker",
+        "by": "Krynodes",
+        "feature": "docker",
+        "more": 4,
+        "held": false
+      },
+      {
+        "name": "nodejs",
+        "version": "20.18.0-1nodesource1",
+        "from": "nodesource",
+        "by": "seld",
+        "feature": null,
+        "more": 0,
+        "held": true
+      },
+      {
+        "name": "libc6",
+        "version": "2.36-9+deb12u8",
+        "from": "debian",
+        "by": null,
+        "feature": null,
+        "more": 0,
+        "held": false
+      }
+    ],
+    "updates": [
+      {
+        "name": "openssl",
+        "from": "3.0.14-1~deb12u2",
+        "to": "3.0.15-1~deb12u1",
+        "source": "debian-security",
+        "security": true,
+        "held": false,
+        "back": null
+      },
+      {
+        "name": "docker-ce",
+        "from": "5:27.3.1-1~debian.12~bookworm",
+        "to": "5:27.4.0-1~debian.12~bookworm",
+        "source": "docker",
+        "security": false,
+        "held": false,
+        "back": { "adds": ["docker-ce-rootless-extras"], "removes": [] }
+      }
+    ],
+    "sources": [
+      {
+        "name": "debian",
+        "host": "deb.debian.org",
+        "suites": ["bookworm", "bookworm-updates"],
+        "key": null,
+        "krynodes": false,
+        "file": "/etc/apt/sources.list.d/debian.sources",
+        "system": true
+      },
+      {
+        "name": "tailscale",
+        "host": "pkgs.tailscale.com",
+        "suites": ["bookworm"],
+        "key": "2596 A99E AAB3 3821",
+        "krynodes": true,
+        "file": "/etc/apt/sources.list.d/tailscale.sources",
+        "system": false
+      }
+    ],
+    "security": { "on": true, "lastRan": "2026-10-26T06:12:00Z" },
+    "restart": {
+      "since": "2026-10-25T21:41:00Z",
+      "running": "6.1.0-26-amd64",
+      "newest": "6.1.0-27-amd64",
+      "file": true,
+      "services": ["ssh.service"]
+    }
+  },
+  "tailscale": {
+    "state": "running",
+    "addresses": ["100.101.7.12", "fd7a:115c:a1e0::1"],
+    "name": "vps-2.tail4d2a.ts.net",
+    "keyExpiry": "2027-04-24T00:00:00Z",
+    "id": "nVps2CNTRL",
+    "tailnet": "tail4d2a.ts.net",
+    "tags": [],
+    "peers": 8,
+    "reach": [
+      { "from": ["*"], "ports": ["*"] },
+      { "from": ["100.101.7.11"], "ports": ["53/udp", "8000-8100/tcp"] }
+    ],
+    "names": { "100.101.7.11": "io" }
+  }
+}

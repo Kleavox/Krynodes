@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/network"
 )
 
 const (
@@ -76,7 +78,19 @@ func composeArgs(stack Stack, rest ...string) []string {
 func (e Executor) docker(ctx context.Context, timeout time.Duration, step string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	output, code, err := e.Run(ctx, "docker", args...)
+	name := "docker"
+	if len(args) > 0 && args[0] == "compose" {
+		document, own := e.ownAddress()
+		if step == "up" {
+			if err := e.privateReady(ctx, document, own, args); err != nil {
+				return nil, stepError{step: step, output: []byte(err.Error()), code: -1}
+			}
+		}
+		if own != "" {
+			name, args = "env", append([]string{network.Variable + "=" + own, "docker"}, args...)
+		}
+	}
+	output, code, err := e.Run(ctx, name, args...)
 	if err != nil {
 		return output, stepError{step: step, output: output, code: code}
 	}
@@ -121,6 +135,15 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 			return e.refuse(request.ID, err)
 		}
 	}
+	result := e.composeVerb(ctx, request, command, stack)
+	if result.OK && slices.Contains(startVerbs, request.Action) {
+		e.unknock(ctx, stack.Project)
+		e.retake(ctx, false)
+	}
+	return result
+}
+
+func (e Executor) composeVerb(ctx context.Context, request Request, command Command, stack Stack) Result {
 	switch request.Action {
 	case "deploy":
 		return e.deploy(ctx, request, stack)
@@ -142,6 +165,8 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 		return e.expose(ctx, request, command, stack)
 	case "unexpose":
 		return e.unexpose(ctx, request, command)
+	case "reach":
+		return e.changeReach(ctx, request, command, stack)
 	}
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }

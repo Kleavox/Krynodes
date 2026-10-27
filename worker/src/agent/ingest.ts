@@ -26,6 +26,10 @@ export interface AgentNode {
   inventory_hash?: string | null;
   refresh_requested_at?: string | null;
   security?: string | null;
+  boot?: string | null;
+  reports?: number | null;
+  release?: string | null;
+  quarantined?: number;
 }
 
 export interface LiveCheck {
@@ -223,7 +227,9 @@ export function heartbeatStatements(
              update_requested_version = CASE WHEN ?
                THEN NULL ELSE update_requested_version END,
              update_attempts = CASE WHEN ? THEN 0 ELSE update_attempts END,
-             update_error = CASE WHEN ? THEN NULL ELSE update_error END
+             update_error = CASE WHEN ? THEN NULL ELSE update_error END,
+             links = COALESCE(?, links),
+             boot = COALESCE(?, boot), reports = COALESCE(?, reports)
          WHERE id = ?`,
       )
       .bind(
@@ -244,6 +250,11 @@ export function heartbeatStatements(
         updated ? 1 : 0,
         updated ? 1 : 0,
         updated ? 1 : 0,
+        heartbeat.network
+          ? JSON.stringify({ at: now, links: heartbeat.network.links })
+          : null,
+        heartbeat.boot?.id ?? null,
+        heartbeat.boot?.count ?? null,
         node.id,
       ),
   ];

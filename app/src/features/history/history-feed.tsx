@@ -1,10 +1,37 @@
 import { Link } from "react-router";
 
 import { ActionLine } from "@/features/services/action-line";
+import { useDevices } from "@/lib/api";
 import { clockTime } from "@/lib/format";
 import { incidentText, type dayGroups } from "@/lib/history";
+import { actorOf } from "@/lib/operations";
 import { cn } from "@/lib/utils";
-import type { HistoryEntry } from "@/types";
+import type { HistoryEntry, NetworkChange } from "@/types";
+
+function NetworkLine({ change }: { change: NetworkChange }) {
+  const devices = useDevices().data?.devices;
+  return (
+    <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-3 py-2.5 text-sm sm:grid-cols-[auto_minmax(0,1fr)_auto]">
+      <span className="font-mono text-xs leading-5 text-muted-foreground">
+        {clockTime(change.at)}
+      </span>
+      <span className="min-w-0 break-words">
+        <span aria-hidden className="mr-1 text-success">
+          ✓
+        </span>
+        {change.change}
+      </span>
+      <span className="col-start-2 font-mono text-xs text-muted-foreground sm:col-start-auto sm:text-right">
+        {actorOf(change, devices)}
+      </span>
+      {change.detail && (
+        <span className="col-start-2 font-mono text-xs break-words text-muted-foreground sm:col-span-2">
+          {change.detail}
+        </span>
+      )}
+    </li>
+  );
+}
 
 function IncidentLine({
   entry,
@@ -73,6 +100,11 @@ export function HistoryFeed({
               action={entry.action}
               nodeName={names.get(entry.action.nodeId) ?? ""}
               showServer={showServer}
+            />
+          ) : entry.type === "network" ? (
+            <NetworkLine
+              key={`network-${entry.change.id}`}
+              change={entry.change}
             />
           ) : (
             <IncidentLine

@@ -4,11 +4,21 @@ import { keysFor, liveUrl, retryDelay } from "./live";
 
 describe("live updates", () => {
   it("refreshes only what a change touches, and everything for all", () => {
-    expect(keysFor(["actions"])).toEqual([["services"], ["actions"]]);
+    expect(keysFor(["actions"])).toEqual([
+      ["services"],
+      ["actions"],
+      ["network"],
+    ]);
     expect(keysFor(["checks", "nodes"])).toEqual([
       ["overview"],
       ["checks", "results"],
       ["metrics", "recent"],
+      ["network"],
+    ]);
+    expect(keysFor(["services"])).toEqual([
+      ["services"],
+      ["packages"],
+      ["overview"],
     ]);
     expect(keysFor(["all"])).toBeNull();
     expect(keysFor(["unknown"])).toEqual([]);

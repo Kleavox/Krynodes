@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import { parseRange } from "../lib/ranges";
+import { liveRange, readNetwork } from "../network/document";
 import { invalidRequest, readJson } from "./shared";
 import type { KrynodesApp, KrynodesEnv } from "./shared";
 
@@ -12,9 +13,15 @@ const enrollDefaultsSchema = z.object({
   recommended: z.boolean(),
   docker: z.boolean(),
   hour: z.number().int().min(0).max(23),
+  network: z.boolean().default(false),
 });
 
-const ENROLL_DEFAULTS = { recommended: true, docker: true, hour: 3 };
+const ENROLL_DEFAULTS = {
+  recommended: true,
+  docker: true,
+  hour: 3,
+  network: false,
+};
 
 const readSetting = async (db: D1Database, key: string) =>
   (
@@ -33,11 +40,23 @@ const writeSetting = (db: D1Database, key: string, value: unknown) =>
     .bind(key, JSON.stringify(value), new Date().toISOString())
     .run();
 
-export async function readPrivateRanges(db: D1Database): Promise<string[]> {
+async function readTypedRanges(db: D1Database): Promise<string[]> {
   const parsed = z
     .array(z.string())
     .safeParse(JSON.parse((await readSetting(db, KEY)) ?? "[]"));
   return parsed.success ? parsed.data : [];
+}
+
+export async function readPrivateRanges(
+  db: D1Database,
+  owner: string,
+): Promise<string[]> {
+  const [typed, network] = await Promise.all([
+    readTypedRanges(db),
+    readNetwork(db, owner),
+  ]);
+  const range = liveRange(network);
+  return range && !typed.includes(range) ? [...typed, range] : typed;
 }
 
 export function registerSettingRoutes(
@@ -58,9 +77,13 @@ export function registerSettingRoutes(
     return context.json(body.data);
   });
 
-  app.get("/api/settings/private-ranges", requireOperator, async (context) =>
-    context.json({ ranges: await readPrivateRanges(context.env.DB) }),
-  );
+  app.get("/api/settings/private-ranges", requireOperator, async (context) => {
+    const [ranges, network] = await Promise.all([
+      readTypedRanges(context.env.DB),
+      readNetwork(context.env.DB, context.get("identity").id),
+    ]);
+    return context.json({ ranges, network: liveRange(network) });
+  });
 
   app.put("/api/settings/private-ranges", requireOperator, async (context) => {
     const body = z

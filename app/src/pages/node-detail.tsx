@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { DockerMark } from "@/components/docker-mark";
@@ -5,18 +6,28 @@ import { EmptyState } from "@/components/empty-state";
 import { NodeStatus } from "@/components/node-status";
 import { PageHeader } from "@/components/page-header";
 import { SecurityMark } from "@/components/security-mark";
+import { StatusChip } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MachineTiles, readRange } from "@/features/nodes/machine-tiles";
 import { NodeActions } from "@/features/nodes/node-actions";
+import {
+  ChangeThese,
+  QuarantineCard,
+  WarningStrips,
+  WhatHappened,
+} from "@/features/nodes/quarantine-panels";
+import { ReleaseDialog } from "@/features/nodes/release-dialog";
 import { SecurityPanel } from "@/features/nodes/security-panel";
 import { ThisServer } from "@/features/nodes/this-server";
 import { WhatRuns } from "@/features/nodes/what-runs";
 import { RecentActions } from "@/features/services/node-sections";
-import { useDevices, useOverview, useServices } from "@/lib/api";
+import { useDevices, useOverview, useQuarantine, useServices } from "@/lib/api";
 import { nodeState, timeAgo } from "@/lib/format";
 import { systemFacts } from "@/lib/node-facts";
 import { serverOperation } from "@/lib/operations";
+import { restartLine } from "@/lib/packages";
+import { REPORTED } from "@/lib/quarantine";
 import { useNow } from "@/lib/use-now";
 
 export function NodeDetailPage() {
@@ -28,6 +39,10 @@ export function NodeDetailPage() {
   const services = useServices();
   const devices = useDevices();
   const now = useNow(5_000);
+  const [releasing, setReleasing] = useState(false);
+  const quarantined = !!overview.data?.nodes.find((item) => item.id === id)
+    ?.quarantine;
+  const quarantine = useQuarantine(id, quarantined);
 
   const setParam = (key: string, value: string | null) =>
     setParams(
@@ -80,16 +95,23 @@ export function NodeDetailPage() {
         title={node.name}
         meta={
           <span className="flex items-center gap-2">
-            <NodeStatus
-              state={nodeState(node, seen)}
-              operation={serverOperation(
-                node,
-                services.data?.actions ?? [],
-                now,
-                devices.data?.devices,
-              )}
-              offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
-            />
+            {quarantined ? (
+              <StatusChip tone="bad" label="Quarantined" />
+            ) : (
+              <NodeStatus
+                state={nodeState(node, seen)}
+                operation={serverOperation(
+                  node,
+                  services.data?.actions ?? [],
+                  now,
+                  devices.data?.devices,
+                )}
+                offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
+              />
+            )}
+            {node.updates?.restart && (
+              <StatusChip tone="warn" label="restart needed" />
+            )}
             <DockerMark nodeId={node.id} />
             <SecurityMark nodeId={node.id} />
           </span>
@@ -106,10 +128,43 @@ export function NodeDetailPage() {
 
       <p className="-mt-3 mb-5 font-mono text-[11px] text-muted-foreground">
         {systemFacts(node)}
+        {quarantined && ` · ${REPORTED}`}
+        {node.updates?.restart && (
+          <span className="block">
+            {restartLine(
+              services.data?.nodes.find((item) => item.id === node.id)
+                ?.security,
+            )}
+          </span>
+        )}
       </p>
 
+      <WarningStrips node={node} now={now} />
+      <QuarantineCard
+        node={node}
+        now={now}
+        onRelease={() => setReleasing(true)}
+      />
+      {quarantined && (
+        <ReleaseDialog
+          node={node}
+          open={releasing}
+          onOpenChange={setReleasing}
+        />
+      )}
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+        <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
+          {quarantined && (
+            <>
+              <WhatHappened
+                view={quarantine.data}
+                nodeName={node.name}
+                now={now}
+              />
+              <ChangeThese node={node} view={quarantine.data} />
+            </>
+          )}
           <WhatRuns node={node} seen={seen} />
         </div>
         <aside className="min-w-0 space-y-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
@@ -117,6 +172,7 @@ export function NodeDetailPage() {
             node={node}
             range={range}
             onRange={(value) => setParam("range", value)}
+            reported={quarantined}
           />
           <SecurityPanel node={node} seen={seen} />
           <ThisServer

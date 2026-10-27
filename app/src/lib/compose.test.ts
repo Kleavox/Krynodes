@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { moveCompose, portsOf, servicesOf, summarize } from "./compose";
+import {
+  moveCompose,
+  portsOf,
+  publishedPorts,
+  publishedRanges,
+  servicesOf,
+  summarize,
+  usePrivateAddress,
+  usesPrivateIp,
+} from "./compose";
 
 const adguard = `services:
   adguard:
@@ -40,8 +49,88 @@ describe("reading a compose file", () => {
       privileged: ["dhcp"],
       builds: ["app"],
       docker: [],
+      private: [],
       error: null,
     });
+  });
+
+  it("tells ports on the private address from ports on the internet", () => {
+    const text = `services:
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports:
+      - "\${KRY_PRIVATE_IP}:3000:3000"
+      - "8080:80"
+      - target: 9090
+        published: 9090
+        host_ip: \${KRY_PRIVATE_IP}
+`;
+    const summary = summarize(text);
+    expect(summary.internet).toEqual(["8080/tcp"]);
+    expect(summary.private).toEqual(["3000/tcp", "9090/tcp"]);
+    expect(usesPrivateIp(text)).toBe(true);
+    expect(usesPrivateIp(adguard)).toBe(false);
+  });
+
+  it("lists the ports a file publishes with the service that publishes each", () => {
+    expect(publishedPorts(adguard)).toEqual([
+      { port: "53/udp", service: "adguard" },
+      { port: "53/tcp", service: "adguard" },
+      { port: "3000/tcp", service: "adguard" },
+      { port: "853/tcp", service: "adguard" },
+    ]);
+    expect(publishedPorts("services:\n  web:\n    ports: ['80']\n")).toEqual(
+      [],
+    );
+  });
+
+  it("lists published port ranges apart, since only single ports are served", () => {
+    const text = `services:
+  rtp:
+    ports:
+      - "10000-10010:10000-10010/udp"
+      - target: 8000
+        published: "8000-8002"
+      - "3000:3000"
+`;
+    expect(publishedRanges(text)).toEqual([
+      { port: "10000-10010/udp", service: "rtp" },
+      { port: "8000-8002/tcp", service: "rtp" },
+    ]);
+    expect(publishedPorts(text)).toEqual([
+      { port: "3000/tcp", service: "rtp" },
+    ]);
+  });
+
+  it("moves only ports with no host address to the private address", () => {
+    const text = `services:
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - 5353:5353/udp
+      - "127.0.0.1:9000:9000"
+      - "8080"
+    volumes:
+      - ./data:/var/lib/grafana
+`;
+    expect(usePrivateAddress(text)).toBe(`services:
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    ports:
+      - "\${KRY_PRIVATE_IP}:3000:3000"
+      - \${KRY_PRIVATE_IP}:5353:5353/udp
+      - "127.0.0.1:9000:9000"
+      - "8080"
+    volumes:
+      - ./data:/var/lib/grafana
+`);
+    expect(usePrivateAddress(usePrivateAddress(text))).toBe(
+      usePrivateAddress(text),
+    );
+    expect(usePrivateAddress("services: [")).toBe("services: [");
   });
 
   it("names a service that controls Docker, which is root on the server", () => {

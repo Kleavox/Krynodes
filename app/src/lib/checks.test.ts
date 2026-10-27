@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { checkDisplayStatus } from "./format";
+
 import type {
   ActionRecord,
   AttentionItem,
@@ -288,6 +290,16 @@ describe("a check's live status", () => {
   const opened = { started_at: before(36 * 60_000) } as Incident;
   const live = (values: Partial<Parameters<typeof checkLive>[0]>) =>
     checkLive({ check: check("HTTP"), display: "UP", now: NOW, ...values });
+
+  it("reads a quarantined server's check as Not Trusted, neither passing nor failing", () => {
+    expect(checkDisplayStatus("UNTRUSTED", "online")).toBe("UNTRUSTED");
+    expect(checkDisplayStatus("UNTRUSTED", "offline")).toBe("UNTRUSTED");
+    expect(checkDisplayStatus("UNTRUSTED", "online", 0)).toBe("PAUSED");
+    expect(live({ display: "UNTRUSTED", latest: latest(130) })).toEqual({
+      label: "Not Trusted",
+      tone: "off",
+    });
+  });
 
   it("says latency for HTTP and TCP, and how long a container or unit has run", () => {
     expect(live({ latest: latest(130) })).toEqual({

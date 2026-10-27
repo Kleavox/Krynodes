@@ -1,3 +1,4 @@
+import { Fingerprint } from "lucide-react";
 import { useState } from "react";
 
 import { Field } from "@/components/field";
@@ -11,8 +12,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { useUpdateNode } from "@/lib/api";
+import {
+  useNetworkKeys,
+  useSignChange,
+} from "@/features/network/use-network-sign";
+import { useNetwork, useUpdateNode } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
+import { networkText } from "@/lib/network";
 import type { NodeRecord } from "@/types";
 
 export function EditNodeDialog({
@@ -26,10 +32,17 @@ export function EditNodeDialog({
 }) {
   const [name, setName] = useState(node.name);
   const save = useUpdateNode();
+  const network = useNetwork().data;
+  const member = network?.members.find(
+    (entry) => entry.nodeId === node.id && entry.state === "in",
+  );
+  const told = useSignChange();
+  const keys = useNetworkKeys(network?.members ?? []);
   const close = (next: boolean) => {
     if (!next) {
       setName(node.name);
       save.reset();
+      told.reset();
     }
     onOpenChange(next);
   };
@@ -44,9 +57,19 @@ export function EditNodeDialog({
           className="space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
+            const tell = () =>
+              told.mutate(
+                {
+                  change: { kind: "rename", nodeId: node.id, name: trimmed },
+                  text: networkText.rename(member!.name, trimmed),
+                  signers: keys.signers,
+                },
+                { onSuccess: () => onOpenChange(false) },
+              );
+            if (save.isSuccess && member) return tell();
             save.mutate(
               { id: node.id, name: trimmed },
-              { onSuccess: () => onOpenChange(false) },
+              { onSuccess: () => (member ? tell() : onOpenChange(false)) },
             );
           }}
         >
@@ -54,6 +77,8 @@ export function EditNodeDialog({
             <DialogTitle>Rename {node.name}</DialogTitle>
             <DialogDescription>
               Every server reports once a minute.
+              {member &&
+                " It is in the private network, so your fingerprint tells the others its new name; containers take it at their next deploy."}
             </DialogDescription>
           </DialogHeader>
           <Field id="node-name" label="Name">
@@ -65,17 +90,31 @@ export function EditNodeDialog({
               required
             />
           </Field>
-          {save.error && (
+          {(save.error ?? told.error) && (
             <p role="alert" className="text-sm text-destructive">
-              {errorMessage(save.error)}
+              {errorMessage(save.error ?? told.error)}
             </p>
           )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => close(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={save.isPending || !changed}>
-              {save.isPending ? "Saving…" : "Save"}
+            <Button
+              type="submit"
+              disabled={
+                save.isPending ||
+                told.isPending ||
+                (!changed && !save.isSuccess)
+              }
+            >
+              {member && !save.isPending && !told.isPending && (
+                <Fingerprint aria-hidden="true" />
+              )}
+              {save.isPending
+                ? "Saving…"
+                : told.isPending
+                  ? "Waiting for the Fingerprint…"
+                  : "Save"}
             </Button>
           </DialogFooter>
         </form>

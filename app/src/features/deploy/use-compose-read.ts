@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useAction } from "@/lib/api";
+import type { Serve } from "@/lib/network";
 import { isPending } from "@/lib/services";
 
 import { useSignedAction } from "./use-signed-action";
@@ -9,6 +10,8 @@ export interface ComposeRead {
   compose: string;
   access: "contained" | "full" | "";
   hostPorts?: string[];
+  serves?: Serve[];
+  reaches?: string[];
   secrets?: string[];
   files: { name: string; size: number }[];
   images: Record<string, string>;

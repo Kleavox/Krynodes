@@ -107,6 +107,9 @@ func (e Executor) removedStack(ctx context.Context, request Request, snapshot Sn
 		return e.refuse(request.ID, err)
 	}
 	stack.Files = files
+	if err := e.syncRules(ctx, rulesFor(request.Name, entry.Directory, nil, e.metaOf(entry.Directory))); err != nil {
+		return e.failed(request, err, "")
+	}
 	if _, err := e.docker(ctx, pullTimeout, "up", composeArgs(stack, "up", "-d")...); err != nil {
 		return e.failed(request, err, e.states(ctx, stack))
 	}
@@ -219,6 +222,7 @@ func (e Executor) remove(ctx context.Context, request Request, stack Stack) Resu
 	if err := e.saveBin(bin); err != nil {
 		return e.failed(request, err, "")
 	}
+	e.syncRules(ctx)
 	return Result{ID: request.ID, OK: true, Output: output, FinishedAt: e.stamp()}
 }
 
@@ -228,7 +232,7 @@ func (e Executor) create(ctx context.Context, request Request, command Command, 
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	hostPorts, err := hostPortsFrom(command, access, nil)
+	meta, err := e.choicesFrom(command, access, stackMeta{})
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -267,7 +271,7 @@ func (e Executor) create(ctx context.Context, request Request, command Command, 
 	if err := writeWhole(directory, "compose.yaml", []byte(command.Compose), 0o640); err != nil {
 		return tidy(e.failed(request, err, ""))
 	}
-	result := e.launch(ctx, request, name, directory, access, hostPorts, "created")
+	result := e.launch(ctx, request, name, directory, meta, "created")
 	if !result.OK {
 		return tidy(result)
 	}
@@ -503,17 +507,6 @@ func vetService(name string, service map[string]any, directory string) error {
 		return fmt.Errorf("service %s uses %s, which a Contained stack does not allow; choose Full access to run it", name, key)
 	}
 	return nil
-}
-
-func localPorts(config map[string]any) {
-	services := asMap(config["services"])
-	for _, name := range sortedKeys(services) {
-		for _, raw := range asList(asMap(services[name])["ports"]) {
-			if port := asMap(raw); port != nil {
-				port["host_ip"] = "127.0.0.1"
-			}
-		}
-	}
 }
 
 func (e Executor) autoRestart(ctx context.Context, request Request, snapshot Snapshot, stopped []string) Result {

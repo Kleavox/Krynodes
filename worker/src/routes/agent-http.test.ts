@@ -81,8 +81,74 @@ async function setup() {
       ipv6_network: string | null;
       interfaces: string | null;
     };
-  return { call, fromNetwork, hub, row };
+  return { call, fromNetwork, hub, row, sqlite };
 }
+
+const OTHER = "22222222-2222-4222-8222-222222222222";
+
+function joinNetwork(sqlite: ReturnType<typeof createTestDb>["sqlite"]) {
+  seedNode(sqlite, { id: OTHER });
+  sqlite.exec(
+    `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+     VALUES ('standalone', '10.88.0.0/24', 51820, 1420, 2, '{}', 's1', 'now', 'owner');
+     INSERT INTO network_members (node_id, state, address, port, key, signer, endpoint, nat, since) VALUES
+     ('${NODE}', 'in', '10.88.0.1', 51821, 'k1', 's1', '141.95.0.21:51821', 0, 'now'),
+     ('${OTHER}', 'in', '10.88.0.2', 51820, 'k2', 's2', '141.95.0.22:51820', 0, 'now');`,
+  );
+}
+
+describe("a member's public address", () => {
+  const seen = (t: Awaited<ReturnType<typeof setup>>, ip: string) =>
+    t.call("GET", "/api/agent/address", { "cf-connecting-ip": ip });
+
+  it("moves its endpoint on the others by itself and says so once", async () => {
+    const t = await setup();
+    joinNetwork(t.sqlite);
+    await seen(t, "141.95.0.99");
+    await seen(t, "141.95.0.99");
+    await seen(t, "2001:db8:1:2::8f2a");
+    expect(
+      t.sqlite
+        .prepare("SELECT endpoint FROM network_members WHERE node_id = ?")
+        .get(NODE),
+    ).toEqual({ endpoint: "141.95.0.99:51821" });
+    expect(t.sqlite.prepare("SELECT stamp FROM network").get()).not.toEqual({
+      stamp: "s1",
+    });
+    expect(
+      t.sqlite
+        .prepare(
+          "SELECT change, detail, requested_by, device_id, nodes FROM network_changes",
+        )
+        .all(),
+    ).toEqual([
+      {
+        change: `Update the public address of ${NODE}`,
+        detail: "141.95.0.21 → 141.95.0.99",
+        requested_by: "Krynodes",
+        device_id: null,
+        nodes: JSON.stringify([NODE]),
+      },
+    ]);
+    const pokes = t.hub.filter(
+      (request) => new URL(request.url).pathname === "/poke",
+    );
+    expect(pokes).toHaveLength(1);
+    expect(await pokes[0]!.json()).toEqual({ nodeIds: [OTHER] });
+  });
+
+  it("leaves a server behind NAT alone", async () => {
+    const t = await setup();
+    joinNetwork(t.sqlite);
+    t.sqlite.exec(
+      `UPDATE network_members SET nat = 1, endpoint = NULL WHERE node_id = '${NODE}'`,
+    );
+    await seen(t, "141.95.0.99");
+    expect(
+      t.sqlite.prepare("SELECT count(*) AS n FROM network_changes").get(),
+    ).toEqual({ n: 0 });
+  });
+});
 
 describe("the server's own addresses", () => {
   it("are what Cloudflare saw the agent come from, one per family", async () => {

@@ -27,6 +27,7 @@ import {
 import {
   useHistoryAttention,
   useOverview,
+  useQuarantine,
   useRefreshServices,
   useServices,
 } from "@/lib/api";
@@ -45,7 +46,9 @@ import {
   whatRuns,
   type RunCard,
 } from "@/lib/what-runs";
-import type { NodeRecord } from "@/types";
+import type { NodeRecord, StoppedStack } from "@/types";
+
+import { StoppedStackNote } from "./quarantine-panels";
 
 const SECTION_TITLE = "text-xs font-medium text-muted-foreground";
 
@@ -112,6 +115,8 @@ function Card({
   card,
   list,
   problem,
+  stopped,
+  node,
   view,
   seen,
   locked,
@@ -119,6 +124,8 @@ function Card({
   onDeploy,
 }: {
   card: RunCard;
+  stopped: StoppedStack | undefined;
+  node: NodeRecord;
   list: ServerList;
   problem: ServiceProblem | undefined;
   view: CheckView;
@@ -172,6 +179,9 @@ function Card({
           onRequest={onRequest}
         />
       )}
+      {stopped && (
+        <StoppedStackNote node={node} stack={stopped} now={view.now} />
+      )}
       {problem && !locked && (
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t px-3 py-2">
           <p className="min-w-0 font-mono text-xs break-words text-destructive">
@@ -214,6 +224,7 @@ export function WhatRuns({ node, seen }: { node: NodeRecord; seen: number }) {
   const attention = useHistoryAttention();
   const refresh = useRefreshServices();
   const view = useCheckView();
+  const stopped = useQuarantine(node.id).data?.stopped ?? [];
   const [request, setRequest] = useState<ActionRequest | null>(null);
   const [deploy, setDeploy] = useState<DeployRequest | null>(null);
   const entry = services.data?.nodes.find((item) => item.id === node.id);
@@ -281,6 +292,12 @@ export function WhatRuns({ node, seen }: { node: NodeRecord; seen: number }) {
                   (each) =>
                     each.kind === card.kind && each.target.name === card.name,
                 )}
+                stopped={
+                  card.kind === "stack"
+                    ? stopped.find((each) => each.project === card.name)
+                    : undefined
+                }
+                node={node}
                 view={view}
                 seen={seen}
                 locked={locked}

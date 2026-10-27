@@ -327,7 +327,9 @@ func TestUninstallLeavesNothingOfKrynodesBehind(t *testing.T) {
 func TestSetupChecksItsFlagsBeforeAnythingElse(t *testing.T) {
 	for args, want := range map[string]string{
 		"--everything":                   "flag provided but not defined",
-		"":                               "choose --recommended, --docker or both",
+		"":                               "choose --recommended, --docker, --network or more",
+		"--network 10.0.0.0/24":          "--network takes a /24 of 10.88.0.0/16",
+		"--network 10.88.3.0/24":         "root",
 		"--recommended --reboot-hour 24": "--reboot-hour is 0 to 23",
 		"--docker extra":                 `unexpected argument "extra"`,
 		"--recommended --docker":         "root",
@@ -354,9 +356,10 @@ func TestUpdatesNeedTLS13(t *testing.T) {
 
 func TestResultsInheritTheAgentGroupWhoeverWritesThem(t *testing.T) {
 	modes := stateDirectoryModes()
-	results := modes[filepath.Join(actions.StateDir, "results")]
-	if results&os.ModeSetgid == 0 || results.Perm() != 0o750 {
-		t.Fatalf("results is %v; the root host unit writes there and the agent must read it", results)
+	for _, name := range []string{"results", "progress"} {
+		if mode := modes[filepath.Join(actions.StateDir, name)]; mode&os.ModeSetgid == 0 || mode.Perm() != 0o750 {
+			t.Fatalf("%s is %v; the root host unit writes there and the agent must read it", name, mode)
+		}
 	}
 	if state := modes[actions.StateDir]; state&os.ModeSetgid != 0 || state.Perm() != 0o750 {
 		t.Fatalf("state directory is %v", state)

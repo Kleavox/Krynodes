@@ -31,10 +31,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useScan, useServices } from "@/lib/api";
+import { useNetwork, useScan, useServices } from "@/lib/api";
 import { agentCurrent } from "@/lib/devices";
 import { timeAgo } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
+import { firewallRow, inside, networkHint } from "@/lib/network";
 import {
   findingTone,
   firewallPorts,
@@ -71,6 +72,7 @@ function RecipeDialog({
 }) {
   const run = useSignedAction(false);
   const services = useServices();
+  const view = useNetwork().data;
   const report = services.data?.nodes.find(
     (entry) => entry.id === node.id,
   )?.security;
@@ -78,9 +80,11 @@ function RecipeDialog({
   const [ticked, setTicked] = useState<string[] | null>(null);
   const [anyway, setAnyway] = useState(false);
   const platform = report?.platform;
-  const suggested = report
-    ? [...new Set([...firewallPorts(report), ...internet])]
-    : internet;
+  const member = view && inside(view).find((entry) => entry.nodeId === node.id);
+  const locked = member ? firewallRow(member) : null;
+  const suggested = (
+    report ? [...new Set([...firewallPorts(report), ...internet])] : internet
+  ).filter((port) => port !== locked?.port);
   const ports = ticked ?? suggested;
   if (!pending) return null;
   const recommend = "recommend" in pending ? pending.recommend : null;
@@ -165,7 +169,14 @@ function RecipeDialog({
             <legend className="text-sm font-medium">
               Keep these ports open too
             </legend>
-            {suggested.length === 0 ? (
+            {locked && (
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked disabled />
+                <span className="font-mono">{locked.port}</span>
+                <span className="text-muted-foreground">· {locked.detail}</span>
+              </label>
+            )}
+            {suggested.length === 0 && !locked ? (
               <p className="text-xs text-muted-foreground">
                 Only SSH stays open.
               </p>
@@ -192,6 +203,8 @@ function RecipeDialog({
             )}
             <p className="text-xs text-muted-foreground">
               SSH always stays open.
+              {locked &&
+                " So does everything your other servers send over kry0."}
             </p>
           </fieldset>
         )}
@@ -241,12 +254,17 @@ export function SecurityPanel({
   seen: number;
 }) {
   const services = useServices();
+  const view = useNetwork().data;
   const scan = useScan();
   const [pending, setPending] = useState<Pending | null>(null);
   const [listing, setListing] = useState(false);
   const entry = services.data?.nodes.find((item) => item.id === node.id);
   const report = entry?.security;
   if (!agentCurrent(node) || !report) return null;
+  const hint = networkHint(
+    entry?.stacks ?? [],
+    !!view && inside(view).some((member) => member.nodeId === node.id),
+  );
   const choices = recipeChoices(report);
   const steps = recommended(report);
   const internet = (entry?.stacks ?? []).flatMap((stack) =>
@@ -284,7 +302,12 @@ export function SecurityPanel({
                 </span>
                 <span className="min-w-0">
                   {finding.detail}
-                  {finding.id === "public-ports" && (
+                  {finding.id === "public-ports" && hint && (
+                    <span className="block text-xs text-muted-foreground">
+                      {hint}
+                    </span>
+                  )}
+                  {finding.id === "public-ports" && !hint && (
                     <span className="block text-xs text-muted-foreground">
                       Some of these on a private network? Add its range under{" "}
                       <Link

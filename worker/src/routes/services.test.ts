@@ -504,6 +504,26 @@ describe("cancel, refresh, history and retention", () => {
     );
   });
 
+  it("leaves a package search and a try out of a node's actions", async () => {
+    const { call, sqlite } = setup();
+    for (const [index, action] of ["find", "preview", "refresh"].entries()) {
+      sqlite
+        .prepare(
+          `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action, status, requested_by, requested_at)
+           VALUES (?, ?, 0, 'parallel', ?, 'apt', 'nginx', ?, 'done', 'o', ?)`,
+        )
+        .run(
+          crypto.randomUUID(),
+          crypto.randomUUID(),
+          A,
+          action,
+          new Date(Date.UTC(2026, 9, 26, 10, index)).toISOString(),
+        );
+    }
+    const body = await reply(call("GET", `/api/nodes/${A}/actions`));
+    expect(body.actions!.map((action) => action.action)).toEqual(["refresh"]);
+  });
+
   it("deleting a node removes its actions and services", async () => {
     const { call, restart, sqlite } = setup();
     await restart([{ nodeId: A }]);

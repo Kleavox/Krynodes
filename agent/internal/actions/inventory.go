@@ -1,6 +1,8 @@
 package actions
 
 import (
+	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -8,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -41,6 +44,7 @@ type Stack struct {
 	Running    int
 	Total      int
 	Public     []string
+	Bindings   []reporter.Listener
 	Containers []string
 }
 
@@ -62,17 +66,28 @@ type Inventory struct {
 	SealKey  string                   `json:"sealKey,omitempty"`
 	Security *reporter.SecurityReport `json:"security,omitempty"`
 	Vault    *reporter.VaultReport    `json:"vault,omitempty"`
+
+	TailscaleVault *reporter.VaultReport      `json:"tailscaleVault,omitempty"`
+	Packages       *reporter.PackagesReport   `json:"packages,omitempty"`
+	PackagesHash   string                     `json:"packagesHash,omitempty"`
+	Tailscale      *reporter.TailscaleReport  `json:"tailscale,omitempty"`
+	Network        *reporter.NetworkInventory `json:"network,omitempty"`
 }
 
 type Parts struct {
-	Services []Service
-	Stacks   []reporter.StackEntry
-	Trust    reporter.TrustReport
-	Docker   string
-	Removed  []reporter.RemovedStack
-	SealKey  string
-	Security *reporter.SecurityReport
-	Vault    *reporter.VaultReport
+	Services  []Service
+	Stacks    []reporter.StackEntry
+	Trust     reporter.TrustReport
+	Docker    string
+	Removed   []reporter.RemovedStack
+	SealKey   string
+	Security  *reporter.SecurityReport
+	Vault     *reporter.VaultReport
+	Packages  *reporter.PackagesReport
+	Tailscale *reporter.TailscaleReport
+	Network   *reporter.NetworkInventory
+
+	TailscaleVault *reporter.VaultReport
 }
 
 var unitStates = map[string]string{
@@ -234,6 +249,11 @@ func parseContainers(output string) ([]Service, []Stack) {
 				stack.Public = append(stack.Public, port)
 			}
 		}
+		for _, bound := range publicBindings(fieldAt(fields, 6)) {
+			if !slices.Contains(stack.Bindings, bound) {
+				stack.Bindings = append(stack.Bindings, bound)
+			}
+		}
 	}
 	var stacks []Stack
 	for project, stack := range found {
@@ -283,21 +303,35 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 	if trust.Access == nil {
 		trust.Access = []string{}
 	}
+	packagesHash := ""
+	if parts.Packages != nil {
+		encoded, err := json.Marshal(parts.Packages)
+		if err != nil {
+			return Inventory{}, err
+		}
+		sum := sha256.Sum256(encoded)
+		packagesHash = hex.EncodeToString(sum[:])
+	}
 	encoded, err := json.Marshal(struct {
-		Services []Service                `json:"services"`
-		Stacks   []reporter.StackEntry    `json:"stacks"`
-		Trust    reporter.TrustReport     `json:"trust"`
-		Docker   string                   `json:"docker"`
-		Removed  []reporter.RemovedStack  `json:"removed"`
-		SealKey  string                   `json:"sealKey"`
-		Security *reporter.SecurityReport `json:"security"`
-		Vault    *reporter.VaultReport    `json:"vault"`
-	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault})
+		Services  []Service                  `json:"services"`
+		Stacks    []reporter.StackEntry      `json:"stacks"`
+		Trust     reporter.TrustReport       `json:"trust"`
+		Docker    string                     `json:"docker"`
+		Removed   []reporter.RemovedStack    `json:"removed"`
+		SealKey   string                     `json:"sealKey"`
+		Security  *reporter.SecurityReport   `json:"security"`
+		Vault     *reporter.VaultReport      `json:"vault"`
+		Packages  string                     `json:"packages"`
+		Tailscale *reporter.TailscaleReport  `json:"tailscale"`
+		Network   *reporter.NetworkInventory `json:"network"`
+
+		TailscaleVault *reporter.VaultReport `json:"tailscaleVault,omitempty"`
+	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale, parts.Network, parts.TailscaleVault})
 	if err != nil {
 		return Inventory{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault}, nil
+	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale, Network: parts.Network, TailscaleVault: parts.TailscaleVault}, nil
 }
 
 func rank(service Service) int {
@@ -336,6 +370,42 @@ func Collect(ctx context.Context, run Runner, remembered []string) (Snapshot, er
 	return snapshot, nil
 }
 
+func splitLines(data []byte, atEOF bool) (int, []byte, error) {
+	if index := bytes.IndexAny(data, "\r\n"); index >= 0 {
+		return index + 1, data[:index], nil
+	}
+	if (atEOF && len(data) > 0) || len(data) >= 8<<10 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+func StreamCommand(ctx context.Context, each func(string), name string, args ...string) error {
+	command := exec.CommandContext(ctx, name, args...)
+	command.WaitDelay = 5 * time.Second
+	reader, writer := io.Pipe()
+	command.Stdout, command.Stderr = writer, writer
+	if err := command.Start(); err != nil {
+		return err
+	}
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 0, 4096), 16<<10)
+		scanner.Split(splitLines)
+		for scanner.Scan() {
+			if line := strings.TrimSpace(sanitize(scanner.Bytes())); line != "" {
+				each(line)
+			}
+		}
+		io.Copy(io.Discard, reader)
+	}()
+	err := command.Wait()
+	writer.Close()
+	<-read
+	return err
+}
 func RunCommand(ctx context.Context, name string, args ...string) ([]byte, int, error) {
 	command := exec.CommandContext(ctx, name, args...)
 	command.WaitDelay = 5 * time.Second

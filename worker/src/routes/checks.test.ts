@@ -66,6 +66,49 @@ describe("public check fields", () => {
   });
 });
 
+describe("a check suggestion put aside", () => {
+  it("keeps the list it was put aside for, one per stack", async () => {
+    const { env } = setup();
+    const send = (method: string, body?: unknown) =>
+      app.request(
+        "https://kry.example.test/api/checks/dismissals",
+        {
+          method,
+          headers: { "content-type": "application/json" },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+        env,
+      );
+    expect(await (await send("GET")).json()).toEqual({ dismissals: [] });
+    const first = ["10.88.0.2:5432/tcp"];
+    const both = [...first, "10.88.0.3:6379/tcp"];
+    expect(
+      (await send("PUT", { nodeId: NODE, project: "umami", reaches: first }))
+        .status,
+    ).toBe(204);
+    await send("PUT", { nodeId: NODE, project: "umami", reaches: both });
+    expect(await (await send("GET")).json()).toEqual({
+      dismissals: [{ nodeId: NODE, project: "umami", reaches: both }],
+    });
+    expect(
+      (
+        await send("PUT", {
+          nodeId: "33333333-3333-4333-8333-333333333333",
+          project: "umami",
+          reaches: first,
+        })
+      ).status,
+    ).toBe(404);
+    for (const body of [
+      { nodeId: NODE, project: "", reaches: first },
+      { nodeId: NODE, project: "umami", reaches: "10.88.0.2:5432/tcp" },
+      { nodeId: NODE, project: "umami", reaches: Array(65).fill("x") },
+    ]) {
+      expect((await send("PUT", body)).status).toBe(400);
+    }
+  });
+});
+
 describe("editing a check", () => {
   const OTHER = "33333333-3333-4333-8333-333333333333";
 

@@ -488,6 +488,26 @@ describe("restart automatically", () => {
   });
 });
 
+describe("words for private network work", () => {
+  it("says what a network job does while it runs", () => {
+    const job = (verb: ActionRecord["action"]) =>
+      runningText(
+        action({ kind: "network", name: "kry0", action: verb, status: "sent" }),
+        "vps-2",
+      );
+    expect(job("prepare")).toBe(
+      "Getting ready for the private network on vps-2",
+    );
+    expect(job("unprepare")).toBe(
+      "Undoing the preparation for the private network on vps-2",
+    );
+    expect(job("rekey")).toBe(
+      "Making a new key for the private network on vps-2",
+    );
+    expect(job("test")).toBe("Testing the private network on vps-2");
+  });
+});
+
 describe("words for host work", () => {
   it("names Docker and a protection, and keeps the server short", () => {
     const install = action({ kind: "host", name: "docker", action: "install" });

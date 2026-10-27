@@ -12,6 +12,7 @@ main() {
   trust_origin=""
   setup=""
   reboot_hour=""
+  network=""
   if [ "$mode" = "enroll" ] && [ $# -ge 2 ]; then
     shift 2
     if [ "${1:-}" = "--trust" ]; then
@@ -29,16 +30,16 @@ main() {
       shift
       index=$((index + 1))
       case "$arg" in
-        --setup | --reboot-hour)
+        --setup | --reboot-hour | --network)
           if [ "$index" -ge "$count" ]; then
             echo "$arg needs a value" >&2
             exit 1
           fi
-          if [ "$arg" = "--setup" ]; then
-            setup="$1"
-          else
-            reboot_hour="$1"
-          fi
+          case "$arg" in
+            --setup) setup="$1" ;;
+            --reboot-hour) reboot_hour="$1" ;;
+            *) network="$1" ;;
+          esac
           shift
           index=$((index + 1))
           ;;
@@ -82,6 +83,18 @@ main() {
         exit 1
         ;;
     esac
+  fi
+  if [ -n "$network" ]; then
+    third="${network#10.88.}"
+    third="${third%.0/24}"
+    case "$third" in
+      "" | *[!0-9]* | ????*) third="" ;;
+    esac
+    if [ -z "$third" ] || [ "$network" != "10.88.$third.0/24" ] || [ "$third" -gt 255 ]; then
+      echo "--network takes a /24 of 10.88.0.0/16" >&2
+      exit 1
+    fi
+    setup_flags="$setup_flags --network $network"
   fi
   base="${KRY_DOWNLOAD_BASE:-https://github.com/Kleavox/Krynodes/releases/latest/download}"
   bin="${KRY_BIN:-/usr/local/bin/kry}"
@@ -159,7 +172,7 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
   if [ -n "$trust_origin" ]; then
     "$bin" trust --initial --origin "$trust_origin" "$@"
   fi
-  if [ -n "$setup" ]; then
+  if [ -n "$setup" ] || [ -n "$network" ]; then
     if ! "$bin" setup $setup_flags; then
       echo "Setup did not finish; turn the rest on from the dashboard."
     fi

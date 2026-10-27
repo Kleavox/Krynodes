@@ -14,7 +14,10 @@ import {
   shortDate,
   stampTime,
 } from "./format";
+import { networkActionText } from "./network";
 import { actorOf } from "./operations";
+import { namesServer, outcomeOf, packageText } from "./packages";
+import { quarantineActionText } from "./quarantine";
 import {
   displayName,
   durationText,
@@ -23,6 +26,7 @@ import {
   verb,
 } from "./services";
 import { containersOf, stackOf } from "./stacks";
+import { tailnetActionText } from "./tailscale";
 
 type Stacks = Pick<StackEntry, "project" | "containers">[];
 
@@ -51,8 +55,10 @@ function dayCounts(entries: HistoryEntry[]): string {
     ),
   ).size;
   const broken = actions.filter(failed).length;
+  const changes =
+    actions.length + entries.filter((entry) => entry.type === "network").length;
   return [
-    actions.length > 0 ? plural(actions.length, "action") : null,
+    changes > 0 ? plural(changes, "action") : null,
     broken > 0 ? `${broken} failed` : null,
     incidents > 0 ? plural(incidents, "incident") : null,
   ]
@@ -147,7 +153,7 @@ export function logTargets(
 }
 
 export type Retry =
-  | { via: "deploy" | "rollback" }
+  | { via: "deploy" | "rollback" | "packages" }
   | { via: "run"; action: "start" | "restart" }
   | { via: "confirm"; action: "stop" | "remove" };
 
@@ -155,6 +161,12 @@ export function retryOf(
   action: Pick<ActionRecord, "kind" | "action">,
 ): Retry | null {
   const service = action.kind === "docker" || action.kind === "systemd";
+  if (
+    action.kind === "apt" &&
+    ["upgrade", "install", "remove", "purge"].includes(action.action)
+  ) {
+    return { via: "packages" };
+  }
   if (action.kind === "compose" && action.action === "deploy") {
     return { via: "deploy" };
   }
@@ -190,11 +202,22 @@ export function lastLines(
   };
 }
 
-export function historyText(action: ActionRecord, stacks: Stacks = []): string {
+export function historyText(
+  action: ActionRecord,
+  stacks: Stacks = [],
+  nodeName?: string,
+): string {
+  const packages =
+    packageText(action, nodeName) ??
+    tailnetActionText(action, nodeName) ??
+    networkActionText(action) ??
+    quarantineActionText(action);
+  if (packages) return packages;
   const stack =
     action.kind === "docker" ? stackOf(stacks, action.name) : undefined;
   const name = stack ?? displayName(action.kind, action.name);
   if (action.action === "uninstall") return "Remove Krynodes from the server";
+  if (action.action === "reach") return `Change ${action.name}'s reach`;
   if (action.action === "logs") return `Read logs of ${name}`;
   return `${verb(action.action)} ${stack ?? objectOf(action)}`;
 }
@@ -232,7 +255,10 @@ export function actionLine(
   const failure = failed(action)
     ? [
         action.exitCode === null ? null : `Exit ${action.exitCode}`,
-        errorLine(action.output),
+        errorLine(
+          (action.kind === "apt" ? outcomeOf(action)?.failed : undefined) ??
+            action.output,
+        ),
       ]
         .filter(Boolean)
         .join(" · ") || (action.status === "expired" ? "Expired" : "Failed")
@@ -243,8 +269,11 @@ export function actionLine(
         ? clockTime(action.requestedAt)
         : stampTime(action.requestedAt, options.now),
     mark: action.status === "done" ? "✓" : failed(action) ? "✕" : null,
-    text: historyText(action, options.stacks),
-    server: options.showServer ? (options.nodeName ?? null) : null,
+    text: historyText(action, options.stacks, options.nodeName),
+    server:
+      options.showServer && !namesServer(action)
+        ? (options.nodeName ?? null)
+        : null,
     device: actorOf(action, options.devices),
     duration: durationText(action),
     failure,

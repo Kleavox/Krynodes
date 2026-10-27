@@ -5,6 +5,7 @@ import {
   useQueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
+import type { QuarantineSettings } from "@krynodes/protocol";
 import { toast } from "sonner";
 
 import type {
@@ -27,9 +28,14 @@ import type {
   IncidentUpdate,
   IncidentUpdateStatus,
   MetricRange,
+  NetworkNext,
+  NetworkView,
   NodeMetrics,
   Overview,
+  PackagesResponse,
   ProposalRecord,
+  QuarantineView,
+  TailscaleResponse,
   RecentMetrics,
   ServicesResponse,
   SessionResponse,
@@ -133,6 +139,28 @@ export function useCheckResults() {
   });
 }
 
+export interface CheckDismissal {
+  nodeId: string;
+  project: string;
+  reaches: string[];
+}
+
+export function useCheckDismissals() {
+  return useQuery({
+    queryKey: queryKeys.checkDismissals,
+    queryFn: () =>
+      apiFetch<{ dismissals: CheckDismissal[] }>("/api/checks/dismissals"),
+  });
+}
+
+export const useDismissCheck = () =>
+  useApiMutation(
+    (dismissal: CheckDismissal) =>
+      apiFetch("/api/checks/dismissals", send("PUT", dismissal)),
+    [queryKeys.checkDismissals],
+    true,
+  );
+
 export function useApiMutation<TVariables, TData = unknown>(
   request: (variables: TVariables) => Promise<TData>,
   invalidate: readonly QueryKey[],
@@ -198,7 +226,9 @@ export function usePrivateRanges(enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.privateRanges,
     queryFn: () =>
-      apiFetch<{ ranges: string[] }>("/api/settings/private-ranges"),
+      apiFetch<{ ranges: string[]; network: string | null }>(
+        "/api/settings/private-ranges",
+      ),
     enabled,
   });
 }
@@ -207,6 +237,7 @@ export interface EnrollDefaults {
   recommended: boolean;
   docker: boolean;
   hour: number;
+  network: boolean;
 }
 
 export function useEnrollDefaults(enabled: boolean) {
@@ -225,6 +256,65 @@ export const useSaveEnrollDefaults = () =>
         send("PUT", defaults),
       ),
     [queryKeys.enrollDefaults],
+  );
+
+export function useQuarantineSettings() {
+  return useQuery({
+    queryKey: queryKeys.quarantineSettings,
+    queryFn: () =>
+      apiFetch<{ settings: QuarantineSettings }>("/api/settings/quarantine"),
+  });
+}
+
+export const useSaveQuarantineSettings = () =>
+  useApiMutation(
+    (settings: QuarantineSettings) =>
+      guardedFetch<{ settings: QuarantineSettings }>(
+        "/api/settings/quarantine",
+        send("PUT", settings),
+      ),
+    [queryKeys.quarantineSettings],
+  );
+
+export function useQuarantine(id: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.quarantine(id),
+    queryFn: () =>
+      apiFetch<QuarantineView>(
+        `/api/nodes/${encodeURIComponent(id)}/quarantine`,
+      ),
+    enabled,
+    refetchInterval: () => untilWindowSettles(Date.now()),
+  });
+}
+
+export const useCutOff = () =>
+  useApiMutation(
+    ({ nodeId, id }: { nodeId: string; id: string }) =>
+      apiFetch(
+        `/api/nodes/${encodeURIComponent(nodeId)}/warnings/${encodeURIComponent(id)}/cut`,
+        send("POST"),
+      ),
+    [queryKeys.overview, ["quarantine"], queryKeys.network],
+  );
+
+export const postItWasMe = (
+  nodeId: string,
+  id: string,
+  target?: SignedTarget & { action: ActionVerb },
+) =>
+  guardedFetch(
+    `/api/nodes/${encodeURIComponent(nodeId)}/warnings/${encodeURIComponent(id)}/me`,
+    send("POST", target ? { target } : {}),
+  );
+
+export const postRelease = (
+  nodeId: string,
+  body: { code: string; steps: (SignedTarget & { action: ActionVerb })[] },
+) =>
+  apiFetch<{ batchId: string; actions: { id: string }[] }>(
+    `/api/nodes/${encodeURIComponent(nodeId)}/release`,
+    send("POST", body),
   );
 
 export const useSavePrivateRanges = () =>
@@ -345,7 +435,13 @@ export const postActions = (body: {
   action: Exclude<ActionVerb, "trust" | "heal">;
   mode: BatchMode;
   targets: (
-    SignedTarget | { nodeId: string; kind: "systemd" | "host"; name: string }
+    | SignedTarget
+    | {
+        nodeId: string;
+        kind: "systemd" | "host" | "apt" | "network";
+        name: string;
+        args?: Record<string, string>;
+      }
   )[];
   then?: "delete";
 }) =>
@@ -366,15 +462,66 @@ export interface OperationStep {
 }
 
 export const postOperation = (body: {
-  kind: "move" | "expose" | "unexpose" | "split" | "reshare";
+  kind:
+    | "move"
+    | "expose"
+    | "unexpose"
+    | "split"
+    | "reshare"
+    | "tailnet"
+    | "disconnect";
   steps: OperationStep[];
   zone?: string;
+  tailscale?: { tailnet: string; clientId: string; webhookSecret?: string };
   deleteNode?: string;
 }) =>
   apiFetch<{ batchId: string; actions: { id: string }[] }>(
     "/api/operations",
     send("POST", body),
   );
+
+export function useTailscale(refetchInterval: number | false = false) {
+  return useQuery({
+    queryKey: queryKeys.tailscale,
+    queryFn: () => apiFetch<TailscaleResponse>("/api/tailscale"),
+    refetchInterval,
+  });
+}
+
+export function useNetwork(refetchInterval: number | false = false) {
+  return useQuery({
+    queryKey: queryKeys.network,
+    queryFn: () => apiFetch<NetworkView>("/api/network"),
+    refetchInterval,
+  });
+}
+
+export function useNetworkNext(nodes: string[], range?: string) {
+  return useQuery({
+    queryKey: queryKeys.networkNext(nodes, range),
+    queryFn: () =>
+      apiFetch<NetworkNext>(
+        `/api/network/next?${new URLSearchParams({
+          nodes: nodes.join(","),
+          ...(range ? { range } : {}),
+        })}`,
+      ),
+    enabled: nodes.length > 0,
+  });
+}
+
+export const postNetworkDocument = (body: {
+  signed: unknown;
+  change: string;
+  detail: string | null;
+}) =>
+  apiFetch<{ version: number }>("/api/network/document", send("POST", body));
+
+export const postNetworkTest = (body: {
+  change: string;
+  detail: string | null;
+  nodes: string[];
+}) => apiFetch("/api/network/tests", send("POST", body));
 
 export function useCloudflare() {
   return useQuery({
@@ -393,6 +540,51 @@ export const useScan = () =>
       }),
     [...ACTION_QUERIES, queryKeys.overview],
     true,
+  );
+
+export function usePackages(id: string) {
+  return useQuery({
+    queryKey: queryKeys.packages(id),
+    queryFn: () =>
+      apiFetch<PackagesResponse>(
+        `/api/nodes/${encodeURIComponent(id)}/packages`,
+      ),
+    refetchInterval: () => untilWindowSettles(Date.now()),
+  });
+}
+
+export function usePackageNames(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.packageNames,
+    queryFn: () =>
+      apiFetch<{ servers: { nodeId: string; names: string[] }[] }>(
+        "/api/packages",
+      ),
+    enabled,
+  });
+}
+
+export const useAskApt = () =>
+  useApiMutation(
+    (ask: {
+      nodeId: string;
+      action: "refresh" | "find" | "preview";
+      name: string;
+      args?: Record<string, string>;
+    }) =>
+      postActions({
+        action: ask.action,
+        mode: "parallel",
+        targets: [
+          {
+            nodeId: ask.nodeId,
+            kind: "apt",
+            name: ask.name,
+            ...(ask.args ? { args: ask.args } : {}),
+          },
+        ],
+      }),
+    ACTION_QUERIES,
   );
 
 export function useManualRestart() {

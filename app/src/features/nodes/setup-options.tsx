@@ -6,7 +6,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { EnrollDefaults } from "@/lib/api";
+import { useNetwork, type EnrollDefaults } from "@/lib/api";
 
 export function SetupOptions({
   value,
@@ -17,6 +17,7 @@ export function SetupOptions({
   onChange: (next: EnrollDefaults) => void;
   disabled?: boolean;
 }) {
+  const network = useNetwork().data?.network;
   return (
     <fieldset className="space-y-2" disabled={disabled}>
       <legend className="sr-only">Set the server up</legend>
@@ -75,6 +76,23 @@ export function SetupOptions({
           </span>
         </span>
       </label>
+      {network && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={value.network}
+            onChange={() => onChange({ ...value, network: !value.network })}
+          />
+          <span>
+            <span className="block font-medium">Join Private Network</span>
+            <span className="block text-xs text-muted-foreground">
+              Gets it ready while it enrolls. It joins once it shows up and you
+              allow it with your fingerprint.
+            </span>
+          </span>
+        </label>
+      )}
     </fieldset>
   );
 }

@@ -171,6 +171,14 @@ func (e Env) install(ctx context.Context, packages ...string) (string, error) {
 	return strings.Join(fresh, " "), e.apt(ctx, append([]string{"install", "-y", "-q"}, packages...)...)
 }
 
+func Install(ctx context.Context, env Env, packages ...string) (string, error) {
+	return env.install(ctx, packages...)
+}
+
+func Purge(ctx context.Context, env Env, packages ...string) error {
+	return env.purge(ctx, packages...)
+}
+
 func (e Env) purge(ctx context.Context, packages ...string) error {
 	if Detect(e).Family == RHEL {
 		return e.run(ctx, "dnf", append([]string{"remove", "-y", "-q"}, packages...)...)

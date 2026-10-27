@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { usePrivateRanges, useSavePrivateRanges } from "@/lib/api";
@@ -17,6 +18,17 @@ export function PrivateAddressesSettings() {
       title="Private Addresses"
       description="Listeners on addresses in these ranges, such as a VPN's, are not counted as public on any server. A server's addresses in these ranges show on Fleet under their interface name, such as tailscale0. One range per line, such as 10.8.0.0/24."
     >
+      {current.data?.network && (
+        <p className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+          <span className="font-mono">{current.data.network}</span>
+          <span className="text-muted-foreground">
+            Private Network · added by Krynodes, removed with the network ·{" "}
+            <Link to="/network" className="underline-offset-4 hover:underline">
+              Network ›
+            </Link>
+          </span>
+        </p>
+      )}
       {current.data ? (
         <RangesForm initial={current.data.ranges} />
       ) : (

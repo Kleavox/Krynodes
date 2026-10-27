@@ -51,6 +51,12 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 			removal.TurnedOff = append(removal.TurnedOff, turnedOff[name])
 		}
 	}
+	if record := e.readNetwork(); record.Joined || record.Key != "" {
+		removal.Problems = append(removal.Problems, e.takeDown(ctx, record)...)
+		if record.Joined {
+			removal.TurnedOff = append(removal.TurnedOff, "This server left the private network")
+		}
+	}
 	e.docker(ctx, upTimeout, "remove the tunnel", "rm", "-f", TunnelContainer)
 	e.docker(ctx, upTimeout, "remove the tunnel image", "image", "rm", cloudflaredImage)
 	for _, rule := range guardRules {

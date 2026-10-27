@@ -14,13 +14,15 @@ import {
   signCommand,
   signTargets,
   type CommandTarget,
+  type Session,
 } from "@/lib/passkeys";
+import { queryKeys } from "@/lib/query-client";
 import type { OperationTarget } from "@/lib/vault";
 import type { ActionVerb, BatchMode } from "@/types";
 
 import { useDeploySession } from "./use-deploy-session";
 
-const NO_SIGNER =
+export const NO_SIGNER =
   "None of your devices has access to every server here. Change access in Trusted devices.";
 
 export function useSignedAction(toastErrors = true) {
@@ -64,7 +66,53 @@ export function useSignedAction(toastErrors = true) {
   );
 }
 
-type OperationKind = "move" | "expose" | "unexpose" | "split" | "reshare";
+export type OperationKind =
+  | "move"
+  | "expose"
+  | "unexpose"
+  | "split"
+  | "reshare"
+  | "tailnet"
+  | "disconnect";
+
+export interface OperationInput {
+  kind: OperationKind;
+  zone?: string;
+  tailscale?: { tailnet: string; clientId: string; webhookSecret?: string };
+  deleteNode?: string;
+}
+
+export async function sendOperation(
+  session: Session,
+  input: OperationInput,
+  steps: OperationTarget[],
+) {
+  const signed: OperationStep[] = await Promise.all(
+    steps.map(async ({ attachFrom, attachKey, ...target }) => {
+      const id = crypto.randomUUID();
+      return {
+        id,
+        nodeId: target.nodeId,
+        kind: target.kind as OperationStep["kind"],
+        name: target.name,
+        action: target.action,
+        signed: await signCommand(
+          session,
+          actionCommand({ ...target, id }, session),
+        ),
+        ...(attachFrom === undefined ? {} : { attachFrom }),
+        ...(attachKey === undefined ? {} : { attachKey }),
+      };
+    }),
+  );
+  return postOperation({
+    kind: input.kind,
+    steps: signed,
+    ...(input.zone ? { zone: input.zone } : {}),
+    ...(input.tailscale ? { tailscale: input.tailscale } : {}),
+    ...(input.deleteNode ? { deleteNode: input.deleteNode } : {}),
+  });
+}
 
 export function useSignedOperation(toastErrors = true) {
   const devices = useDevices();
@@ -103,38 +151,18 @@ export function useSignedOperation(toastErrors = true) {
         const device = all.find(
           (item) => item.id === session.grant.credentialId,
         );
-        const steps = await build(device?.fingerprint ?? "");
-        const signed: OperationStep[] = await Promise.all(
-          steps.map(async ({ attachFrom, attachKey, ...target }) => {
-            const id = crypto.randomUUID();
-            return {
-              id,
-              nodeId: target.nodeId,
-              kind: target.kind as OperationStep["kind"],
-              name: target.name,
-              action: target.action,
-              signed: await signCommand(
-                session,
-                actionCommand({ ...target, id }, session),
-              ),
-              ...(attachFrom === undefined ? {} : { attachFrom }),
-              ...(attachKey === undefined ? {} : { attachKey }),
-            };
-          }),
+        return await sendOperation(
+          session,
+          { kind, zone, deleteNode },
+          await build(device?.fingerprint ?? ""),
         );
-        return await postOperation({
-          kind,
-          steps: signed,
-          ...(zone ? { zone } : {}),
-          ...(deleteNode ? { deleteNode } : {}),
-        });
       } catch (error) {
         throw error instanceof DOMException && error.name === "NotAllowedError"
           ? new Error(failure(error))
           : error;
       }
     },
-    [...ACTION_QUERIES, ["cloudflare"]],
+    [...ACTION_QUERIES, ["cloudflare"], queryKeys.tailscale],
     toastErrors,
   );
 }
