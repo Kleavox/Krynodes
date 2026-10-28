@@ -3,6 +3,7 @@ import { KeyRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { Busy, Waiting } from "@/components/busy";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { RowMenu } from "@/components/row-menu";
@@ -179,7 +180,7 @@ function SetUpForm({
       </div>
       <Button type="submit" className="h-9" disabled={setup.working}>
         <KeyRound aria-hidden="true" />
-        {setup.working ? "Waiting for the Passkey…" : label}
+        {setup.working ? <Waiting /> : label}
       </Button>
     </form>
   );
@@ -406,11 +407,11 @@ function ServerRow({
     destructive?: boolean;
   }[] = [];
   if (trusted && agentCurrent(server.node)) {
-    items.push({ label: "Devices", onSelect: onDevices });
+    items.push({ label: "Passkeys", onSelect: onDevices });
     if (kind === "behind") items.push({ label: "Sync", onSelect: onSync });
     if (reaching > 0) {
       items.push({
-        label: "Remove Every Device",
+        label: "Remove Every Passkey",
         onSelect: onRemoveAll,
         destructive: true,
       });
@@ -567,7 +568,7 @@ function RenameDialog({
                 Cancel
               </Button>
               <Button type="submit" disabled={rename.isPending}>
-                {rename.isPending ? "Saving…" : "Save"}
+                {rename.isPending ? <Busy>Saving</Busy> : "Save"}
               </Button>
             </DialogFooter>
           </form>
@@ -652,7 +653,7 @@ function FirstTrustDialog({
             disabled={trust.isPending || core.length === 0}
             onClick={send}
           >
-            {trust.isPending ? "Sending…" : "Trust"}
+            {trust.isPending ? <Busy>Sending</Busy> : "Trust"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

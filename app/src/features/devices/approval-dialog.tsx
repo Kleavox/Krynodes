@@ -2,6 +2,7 @@ import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -179,7 +180,7 @@ function Body({
             onClick={() => void submit()}
           >
             <KeyRound aria-hidden="true" />
-            {working ? "Waiting for the Passkey…" : "Approve with Passkey"}
+            {working ? <Waiting /> : "Approve with Passkey"}
           </Button>
         )}
       </DialogFooter>

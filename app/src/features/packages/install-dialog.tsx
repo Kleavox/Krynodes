@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 
+import { Busy } from "@/components/busy";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -100,7 +101,9 @@ export function InstallDialog({
           </Button>
         </form>
         {find.waiting && (
-          <p className="text-sm text-muted-foreground">Asking {node.name}…</p>
+          <p className="text-sm text-muted-foreground">
+            <Busy>{`Asking ${node.name}`}</Busy>
+          </p>
         )}
         <Said text={find.error} />
         {find.value && matches.length === 0 && (
@@ -151,7 +154,7 @@ export function InstallDialog({
             </h3>
             {preview.waiting ? (
               <p className="text-sm text-muted-foreground">
-                Trying {picked} on {node.name} without installing anything…
+                <Busy>{`Trying ${picked} on ${node.name} without installing anything`}</Busy>
               </p>
             ) : (
               <>

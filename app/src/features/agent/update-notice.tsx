@@ -1,5 +1,6 @@
 import { CircleArrowUp } from "lucide-react";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import { useCheckAgentRelease, useRequestAgentUpdate } from "@/lib/api";
 import { agentState } from "@/lib/agent";
@@ -93,7 +94,7 @@ export function LatestAgent({
         disabled={check.isPending}
         className="rounded-sm text-primary underline-offset-4 hover:underline disabled:opacity-50"
       >
-        {check.isPending ? "Checking…" : "Check"}
+        {check.isPending ? <Busy>Checking</Busy> : "Check"}
       </button>
     </span>
   );

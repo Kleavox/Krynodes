@@ -1,6 +1,7 @@
 import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -73,12 +74,14 @@ export function InstallDockerDialog({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <Button disabled={run.isPending} onClick={submit}>
-            {!run.isPending && <KeyRound aria-hidden="true" />}
-            {run.isPending
-              ? "Waiting for the Passkey…"
-              : composeOnly
-                ? "Add Compose"
-                : "Install Docker"}
+            <KeyRound aria-hidden="true" />
+            {run.isPending ? (
+              <Waiting />
+            ) : composeOnly ? (
+              "Add Compose"
+            ) : (
+              "Install Docker"
+            )}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

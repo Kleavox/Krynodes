@@ -3,6 +3,7 @@ import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -494,8 +495,8 @@ function MoveForm({
           }
           onClick={() => void move()}
         >
-          {!operate.isPending && <KeyRound aria-hidden="true" />}
-          {operate.isPending ? "Waiting for the Passkey…" : "Move"}
+          <KeyRound aria-hidden="true" />
+          {operate.isPending ? <Waiting /> : "Move"}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -552,7 +553,7 @@ export function AdoptDialog({
               )
             }
           >
-            {run.isPending ? "Waiting for the Passkey…" : "Move into Krynodes"}
+            {run.isPending ? <Waiting /> : "Move into Krynodes"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

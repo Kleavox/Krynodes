@@ -2,6 +2,7 @@ import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { Busy, Waiting } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -195,8 +196,8 @@ function DeployForm({
           disabled={working || signers.length === 0 || targets.length === 0}
           onClick={submit}
         >
-          {!working && <KeyRound aria-hidden="true" />}
-          {working ? (state ? "Sending…" : "Waiting for the Passkey…") : word}
+          {!(working && state) && <KeyRound aria-hidden="true" />}
+          {working ? state ? <Busy>Sending</Busy> : <Waiting /> : word}
         </Button>
       </AlertDialogFooter>
     </AlertDialogContent>

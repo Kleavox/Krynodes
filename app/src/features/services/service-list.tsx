@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { Elapsed } from "@/components/node-status";
 import { RowMenu } from "@/components/row-menu";
 import { SmallLabel, StatusDot } from "@/components/status";
@@ -109,7 +110,7 @@ export function PendingText({
   const devices = useDevices().data?.devices;
   return (
     <span className="font-mono text-xs text-warning">
-      {actionText(action, nodeName)} · {actorOf(action, devices)}
+      <Busy>{actionText(action, nodeName)}</Busy> · {actorOf(action, devices)}
       {action.status === "sent" && (
         <>
           {" · "}

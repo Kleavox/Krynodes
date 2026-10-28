@@ -2,6 +2,7 @@ import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Busy, Waiting } from "@/components/busy";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
@@ -73,7 +74,7 @@ export function Reading({
   ) : (
     <p className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
       <StatusDot tone="warn" pulse />
-      Reading the compose file from {server}…
+      <Busy>{`Reading the compose file from ${server}`}</Busy>
     </p>
   );
 }
@@ -287,8 +288,8 @@ function ComposeForm({
             disabled={!read || sealing || run.isPending || problem !== null}
             onClick={() => void save()}
           >
-            {!run.isPending && <KeyRound aria-hidden="true" />}
-            {run.isPending ? "Waiting for the Passkey…" : "Save"}
+            <KeyRound aria-hidden="true" />
+            {run.isPending ? <Waiting /> : "Save"}
           </Button>
         )}
       </DialogFooter>

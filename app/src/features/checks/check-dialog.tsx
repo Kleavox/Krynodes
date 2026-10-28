@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 
+import { Busy } from "@/components/busy";
 import { Field } from "@/components/field";
 import { Button } from "@/components/ui/button";
 import {
@@ -321,11 +322,13 @@ function CheckForm({
             Cancel
           </Button>
           <Button type="submit" disabled={mutation.isPending || !changed}>
-            {mutation.isPending
-              ? "Saving…"
-              : check
-                ? "Save Changes"
-                : "Add Check"}
+            {mutation.isPending ? (
+              <Busy>Saving</Busy>
+            ) : check ? (
+              "Save Changes"
+            ) : (
+              "Add Check"
+            )}
           </Button>
         </DialogFooter>
       </form>

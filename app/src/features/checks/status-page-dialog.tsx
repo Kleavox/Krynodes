@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { Field } from "@/components/field";
 import { Button } from "@/components/ui/button";
 import {
@@ -100,7 +101,7 @@ function StatusPageForm({
           Cancel
         </Button>
         <Button type="submit" disabled={save.isPending || !changed}>
-          {save.isPending ? "Saving…" : "Save"}
+          {save.isPending ? <Busy>Saving</Busy> : "Save"}
         </Button>
       </DialogFooter>
     </form>

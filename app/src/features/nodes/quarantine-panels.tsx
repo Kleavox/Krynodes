@@ -2,6 +2,7 @@ import { KeyRound } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
+import { Busy, Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useRemoveFromTailnet } from "@/features/network/use-tailscale";
@@ -74,11 +75,11 @@ export function WarningStrip({
           disabled={cutting || confirming}
           onClick={onCut}
         >
-          {cutting ? "Working…" : "Cut Off Now"}
+          {cutting ? <Busy>Working</Busy> : "Cut Off Now"}
         </Button>
         <Button size="sm" disabled={cutting || confirming} onClick={onMine}>
-          {!confirming && <KeyRound aria-hidden="true" />}
-          {confirming ? "Waiting for the Passkey…" : "It Was Me"}
+          <KeyRound aria-hidden="true" />
+          {confirming ? <Waiting /> : "It Was Me"}
         </Button>
       </div>
       {error && (
@@ -237,15 +238,15 @@ function ChangeAction({
         disabled={remove.isPending}
         onClick={() => remove.mutate(node.id)}
       >
-        {!remove.isPending && <KeyRound aria-hidden="true" />}
-        {remove.isPending ? "Waiting for the Passkey…" : row.action.label}
+        <KeyRound aria-hidden="true" />
+        {remove.isPending ? <Waiting /> : row.action.label}
       </Button>
     );
   }
   if (busy) {
     return (
       <span className="font-mono text-xs text-muted-foreground">
-        Resharing…
+        <Busy>Resharing</Busy>
       </span>
     );
   }
@@ -264,10 +265,8 @@ function ChangeAction({
       title={why ?? undefined}
       onClick={() => reshare.run(addresses)}
     >
-      {!reshare.operate.isPending && <KeyRound aria-hidden="true" />}
-      {reshare.operate.isPending
-        ? "Waiting for the Passkey…"
-        : row.action.label}
+      <KeyRound aria-hidden="true" />
+      {reshare.operate.isPending ? <Waiting /> : row.action.label}
     </Button>
   );
 }
@@ -392,8 +391,8 @@ export function StoppedStackNote({
               })
             }
           >
-            {!start.isPending && <KeyRound aria-hidden="true" />}
-            {start.isPending ? "Waiting for the Passkey…" : "Start"}
+            <KeyRound aria-hidden="true" />
+            {start.isPending ? <Waiting /> : "Start"}
           </Button>
         </div>
       </div>

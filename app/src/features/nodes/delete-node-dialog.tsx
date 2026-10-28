@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
+import { Busy, Waiting } from "@/components/busy";
 import { GuardIcon } from "@/components/confirm-dialog";
 import {
   AlertDialog,
@@ -419,7 +420,7 @@ export function DeleteNodeDialog({
               onClick={() => first(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
-              {remove.isPending ? "Working…" : "Delete Anyway"}
+              {remove.isPending ? <Busy>Working</Busy> : "Delete Anyway"}
             </Button>
           ) : holds && plan.ok ? (
             <Button
@@ -427,12 +428,14 @@ export function DeleteNodeDialog({
               disabled={busy}
               onClick={() => first(spread)}
             >
-              {!operate.isPending && <KeyRound aria-hidden="true" />}
-              {operate.isPending
-                ? "Waiting for the Passkey…"
-                : piece
-                  ? "Spread and Delete"
-                  : "Clean Up and Delete"}
+              <KeyRound aria-hidden="true" />
+              {operate.isPending ? (
+                <Waiting />
+              ) : piece ? (
+                "Spread and Delete"
+              ) : (
+                "Clean Up and Delete"
+              )}
             </Button>
           ) : leaving ? (
             <Button
@@ -440,8 +443,8 @@ export function DeleteNodeDialog({
               disabled={busy}
               onClick={() => first(removeAndDelete)}
             >
-              {!run.isPending && <KeyRound aria-hidden="true" />}
-              {run.isPending ? "Waiting for the Passkey…" : "Remove and Delete"}
+              <KeyRound aria-hidden="true" />
+              {run.isPending ? <Waiting /> : "Remove and Delete"}
             </Button>
           ) : (
             <Button
@@ -450,11 +453,13 @@ export function DeleteNodeDialog({
               onClick={() => first(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
-              {remove.isPending
-                ? "Working…"
-                : holds || stopped
-                  ? "Delete Anyway"
-                  : "Delete Node"}
+              {remove.isPending ? (
+                <Busy>Working</Busy>
+              ) : holds || stopped ? (
+                "Delete Anyway"
+              ) : (
+                "Delete Node"
+              )}
             </Button>
           )}
         </AlertDialogFooter>

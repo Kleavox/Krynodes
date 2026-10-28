@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -88,7 +89,7 @@ export function RemoveDialog({
         </div>
         {preview.waiting ? (
           <p className="text-sm text-muted-foreground">
-            Trying it on {node.name}…
+            <Busy>{`Trying it on ${node.name}`}</Busy>
           </p>
         ) : (
           <>

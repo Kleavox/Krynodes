@@ -191,7 +191,7 @@ const MONTHS = [
 ];
 
 export function updatesUntil(report: SecurityReport): string | null {
-  if (!report.platform) return null;
+  if (!report.platform?.id) return null;
   const [year, month, day] = report.platform.endOfLife?.split("-") ?? [];
   return year && month && day
     ? `Updates until ${Number(day)} ${MONTHS[Number(month) - 1]} ${year}`

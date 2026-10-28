@@ -4,6 +4,7 @@ import { CircleCheck } from "lucide-react";
 import { dnsName } from "@krynodes/protocol";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { Busy } from "@/components/busy";
 import { StatusDot } from "@/components/status";
 import { GuardIcon } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
@@ -135,7 +136,11 @@ export function EnrollDialog({
               </Button>
               <Button onClick={start} disabled={create.isPending} autoFocus>
                 {!create.isPending && <GuardIcon />}
-                {create.isPending ? "Creating…" : "Create Install Command"}
+                {create.isPending ? (
+                  <Busy>Creating</Busy>
+                ) : (
+                  "Create Install Command"
+                )}
               </Button>
             </DialogFooter>
           </>
@@ -166,7 +171,7 @@ export function EnrollDialog({
               className="flex items-center gap-2 text-sm text-muted-foreground"
             >
               <StatusDot tone="warn" className="motion-safe:animate-pulse" />
-              Waiting for the server to enroll…
+              <Busy>Waiting for the server to enroll</Busy>
             </p>
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)}>
@@ -193,9 +198,11 @@ export function EnrollDialog({
                 <span className="min-w-0 flex-1">
                   <span className="font-medium">Private Network</span>{" "}
                   <span className="font-mono text-xs text-muted-foreground">
-                    {waiting
-                      ? `Ready · gets ${gets ?? "--"} · ${dnsName(node.name)}.kry`
-                      : "Getting ready…"}
+                    {waiting ? (
+                      `Ready · gets ${gets ?? "--"} · ${dnsName(node.name)}.kry`
+                    ) : (
+                      <Busy>Getting ready</Busy>
+                    )}
                   </span>
                 </span>
                 {waiting && (

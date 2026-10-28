@@ -69,6 +69,39 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 8px;
+  --animate-busy-1: busy-1 1.2s steps(1, end) infinite;
+  --animate-busy-2: busy-2 1.2s steps(1, end) infinite;
+  --animate-busy-3: busy-3 1.2s steps(1, end) infinite;
+
+  @keyframes busy-1 {
+    0% {
+      opacity: 0;
+    }
+    25%,
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes busy-2 {
+    0%,
+    25% {
+      opacity: 0;
+    }
+    50%,
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes busy-3 {
+    0%,
+    50% {
+      opacity: 0;
+    }
+    75%,
+    100% {
+      opacity: 1;
+    }
+  }
 }
 
 @utility canvas-dots {

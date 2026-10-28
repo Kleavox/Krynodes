@@ -313,7 +313,11 @@ func reloadSSH(ctx context.Context, env Env) error {
 }
 
 func UnattendedOn(ctx context.Context, env Env) error {
-	if answer, _ := env.output(ctx, "apt-config", "shell", "UU", "APT::Periodic::Unattended-Upgrade"); !strings.Contains(answer, "UU='1'") {
+	answer, err := env.output(ctx, "apt-config", "shell", "UU", "APT::Periodic::Unattended-Upgrade")
+	if err != nil {
+		return errors.New("apt-config did not answer, so Krynodes cannot tell whether unattended upgrades run.")
+	}
+	if !strings.Contains(answer, "UU='1'") {
 		return errors.New("Another file in /etc/apt/apt.conf.d turns unattended upgrades off.")
 	}
 	if err := env.run(ctx, "systemctl", "is-enabled", "--quiet", "apt-daily-upgrade.timer"); err != nil {

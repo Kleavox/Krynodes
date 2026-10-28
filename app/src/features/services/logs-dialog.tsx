@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { StatusDot } from "@/components/status";
 import {
   AlertDialog,
@@ -113,7 +114,7 @@ function LogsView({ target }: { target: LogsTarget }) {
             {waiting ? (
               <>
                 <StatusDot tone="warn" pulse />
-                Fetching the last 300 lines from {target.nodeName}…
+                <Busy>{`Fetching the last 300 lines from ${target.nodeName}`}</Busy>
               </>
             ) : done && action?.finishedAt ? (
               `Last 300 Lines · Fetched ${clockTime(action.finishedAt)}`

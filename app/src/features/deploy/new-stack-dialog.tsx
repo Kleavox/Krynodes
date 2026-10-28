@@ -1,6 +1,7 @@
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
+import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -379,8 +380,8 @@ function NewStackForm({
           disabled={sealing || run.isPending || (touched && !ready)}
           onClick={() => void create()}
         >
-          {!run.isPending && <KeyRound aria-hidden="true" />}
-          {run.isPending ? "Waiting for the Passkey…" : "Create"}
+          <KeyRound aria-hidden="true" />
+          {run.isPending ? <Waiting /> : "Create"}
         </Button>
       </DialogFooter>
     </DialogContent>

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 
+import { Busy } from "@/components/busy";
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -251,7 +252,7 @@ export function UpdateForm({ detail }: { detail: IncidentDetail }) {
           className="h-9 shrink-0"
           disabled={text.length === 0 || post.isPending}
         >
-          {post.isPending ? "Posting…" : "Post Update"}
+          {post.isPending ? <Busy>Posting</Busy> : "Post Update"}
         </Button>
       </div>
       {post.error && (

@@ -2,6 +2,7 @@ import { agentHasFeatures } from "@krynodes/protocol/versions";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
+import { Waiting } from "@/components/busy";
 import { CopyCommand } from "@/components/copy-command";
 import {
   AlertDialog,
@@ -112,8 +113,8 @@ export function AdminUserForm({
           }
           onClick={onGet}
         >
-          {!pending && <KeyRound aria-hidden="true" />}
-          {pending ? "Waiting for the Passkey…" : "Get Command"}
+          <KeyRound aria-hidden="true" />
+          {pending ? <Waiting /> : "Get Command"}
         </Button>
       </div>
     </div>

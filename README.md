@@ -555,7 +555,7 @@ these:
 - With one or two trusted passkeys, one approval adds or removes a passkey.
   With more than two, two approvals from two different passkeys.
 - A passkey's ⋯ **Servers** chooses the servers it reaches; a server's ⋯
-  **Devices** shows who reaches it, and **Remove every device** takes them all
+  **Passkeys** shows who reaches it, and **Remove every passkey** takes them all
   away. A server is given to a passkey only by another passkey that already
   reaches it, never by the passkey itself; when nobody else reaches it, by one
   other trusted passkey (two when there are more than two). Servers enrolled
@@ -650,7 +650,7 @@ alone is kept on the server as it is, so its value never leaves the server and
 Cancel changes nothing. Removing every one empties the `.env`. A reinstalled agent has a new key: enter them again
 with Edit compose.
 
-**Web address.** A stack's ⋯ **Web address…** picks a service and its port and
+**Web address.** A stack's ⋯ **Web address** picks a service and its port and
 opens `<app>-<server>.<zone>` over a Cloudflare Tunnel, with HTTPS and no port
 opened on the server. Who can open it: **Only people I allow** (the same
 Cloudflare Access login as this dashboard), **Login only for a path** (such as
@@ -660,12 +660,12 @@ straight through one identity provider gives every address the same. Krynodes ma
 (`krynodes-<server id>`), runs `cloudflared` as a digest-pinned container on
 the stacks' own networks only, and touches only the DNS records, Access apps
 and tunnels it made. A hostname that already exists is refused. On a stack
-that has an address, **Web address…** opens with its settings: pick the
+that has an address, **Web address** opens with its settings: pick the
 address (or **New address**), change the service, port, or who can open it,
 and **Save** changes it in place; its name stays. The login
 comes first: the Access app is made (or updated in place) before the route and
 the DNS record, and an older login is removed last, so a protected address is
-never open, not even when a step fails. **Close web address…**, Remove and
+never open, not even when a step fails. **Close web address**, Remove and
 Delete permanently remove what it made, the login last.
 
 **Cloudflare token** (Settings → Cloudflare). Create one token with
@@ -697,7 +697,7 @@ text is vetted for the stack's access level and started, and the previous one
 stays as the Roll back target. Stacks started elsewhere can only be read until
 they move.
 
-**Move to server…** copies a stack to another server: tick the services that
+**Move to server** copies a stack to another server: tick the services that
 move (unticked ones leave `depends_on`, and values that still name them are
 flagged, like a test mailpit), review the compose file, and choose the access
 level there. Images are pinned to the digests that ran, secrets are sealed

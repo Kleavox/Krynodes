@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -376,12 +377,8 @@ function OpenForm({
           }
           onClick={submit}
         >
-          {!operate.isPending && <KeyRound aria-hidden="true" />}
-          {operate.isPending
-            ? "Waiting for the Passkey…"
-            : existing
-              ? "Save"
-              : "Open"}
+          <KeyRound aria-hidden="true" />
+          {operate.isPending ? <Waiting /> : existing ? "Save" : "Open"}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -527,13 +524,17 @@ function CloseForm({
           disabled={blocked !== null || operate.isPending}
           onClick={() => void close()}
         >
-          {operate.isPending
-            ? "Waiting for the Passkey…"
-            : disposal
-              ? disposal === "purge"
-                ? "Delete Permanently"
-                : "Remove"
-              : "Close Address"}
+          {operate.isPending ? (
+            <Waiting />
+          ) : disposal ? (
+            disposal === "purge" ? (
+              "Delete Permanently"
+            ) : (
+              "Remove"
+            )
+          ) : (
+            "Close Address"
+          )}
         </Button>
       </DialogFooter>
     </DialogContent>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { NetworkTest } from "@krynodes/protocol";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -222,7 +223,11 @@ export function TestDialog({
               <section key={key} className="space-y-2">
                 {!single && <PairName pair={pair} />}
                 <p className="text-sm text-muted-foreground">
-                  {current?.key === key ? "Testing…" : "Waiting its turn…"}
+                  {current?.key === key ? (
+                    <Busy>Testing</Busy>
+                  ) : (
+                    <Busy>Waiting its turn</Busy>
+                  )}
                 </p>
               </section>
             );
@@ -283,7 +288,7 @@ export function TestDialog({
               setRun((count) => count + 1);
             }}
           >
-            {running ? "Testing…" : "Test Again"}
+            {running ? <Busy>Testing</Busy> : "Test Again"}
           </Button>
         </DialogFooter>
       </DialogContent>

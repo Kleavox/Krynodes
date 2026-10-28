@@ -2,6 +2,7 @@ import { TAILSCALE } from "@krynodes/protocol";
 import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -220,9 +221,11 @@ export function ConnectTailscaleSheet({
         <Said text={connect.error?.message ?? null} />
         {connect.isPending && (
           <p role="status" className="text-sm text-muted-foreground">
-            {change
-              ? "Your servers are storing the pieces…"
-              : "Your servers are storing the pieces, then reading your policy file. This takes up to a minute."}
+            {change ? (
+              <Busy>Your servers are storing the pieces</Busy>
+            ) : (
+              "Your servers are storing the pieces, then reading your policy file. This takes up to a minute."
+            )}
           </p>
         )}
         <DialogFooter>

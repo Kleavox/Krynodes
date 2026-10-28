@@ -2,6 +2,7 @@ import { ChevronRight, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
@@ -272,14 +273,16 @@ export function WhatRuns({ node, seen }: { node: NodeRecord; seen: number }) {
             onClick={() => refresh.mutate([node.id])}
           >
             <RefreshCw aria-hidden="true" />
-            {refreshing ? "Refreshing…" : "Refresh"}
+            {refreshing ? <Busy>Refreshing</Busy> : "Refresh"}
           </Button>
         </div>
         {!reported || !list ? (
           <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-            {services.data
-              ? "Nothing reported yet. Stacks, containers and systemd units appear within five minutes of enrolling."
-              : "Loading…"}
+            {services.data ? (
+              "Nothing reported yet. Stacks, containers and systemd units appear within five minutes of enrolling."
+            ) : (
+              <Busy>Loading</Busy>
+            )}
           </p>
         ) : (
           <div className="space-y-2">

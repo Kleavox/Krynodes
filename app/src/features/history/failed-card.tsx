@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { RowMenu } from "@/components/row-menu";
 import { Button } from "@/components/ui/button";
 import type { DeployRequest } from "@/features/deploy/deploy-dialog";
@@ -61,7 +62,7 @@ function LogsTab({ target }: { target: LogsTarget }) {
     <div className="space-y-1">
       {waiting ? (
         <p className="font-mono text-xs text-muted-foreground">
-          Reading the last 300 lines from {target.nodeName}…
+          <Busy>{`Reading the last 300 lines from ${target.nodeName}`}</Busy>
         </p>
       ) : problem ? (
         <p role="alert" className="font-mono text-xs text-destructive">

@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -115,7 +116,7 @@ function StackActionForm({
             )
           }
         >
-          {run.isPending ? "Working…" : copy.confirm}
+          {run.isPending ? <Busy>Working</Busy> : copy.confirm}
         </Button>
       </AlertDialogFooter>
     </AlertDialogContent>

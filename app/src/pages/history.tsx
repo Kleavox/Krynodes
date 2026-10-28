@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { FilterChips } from "@/components/filter-chips";
 import { PageHeader } from "@/components/page-header";
 import { StatusDot } from "@/components/status";
@@ -164,11 +165,13 @@ export function HistoryPage() {
           </div>
           {groups.length === 0 ? (
             <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-              {history.isPending
-                ? "Loading History…"
-                : q
-                  ? `Nothing${where} matches ${q}. Search another word.`
-                  : `${EMPTY[show]}${where} in the last 90 days.`}
+              {history.isPending ? (
+                <Busy>Loading History</Busy>
+              ) : q ? (
+                `Nothing${where} matches ${q}. Search another word.`
+              ) : (
+                `${EMPTY[show]}${where} in the last 90 days.`
+              )}
             </p>
           ) : (
             <HistoryFeed
@@ -186,7 +189,11 @@ export function HistoryPage() {
                 disabled={history.isFetchingNextPage}
                 onClick={() => void history.fetchNextPage()}
               >
-                {history.isFetchingNextPage ? "Loading…" : "Load Older"}
+                {history.isFetchingNextPage ? (
+                  <Busy>Loading</Busy>
+                ) : (
+                  "Load Older"
+                )}
               </Button>
             </div>
           )}

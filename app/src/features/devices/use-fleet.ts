@@ -75,6 +75,6 @@ export function useFleet(poll = false): Fleet | null {
     open: proposals.data.proposals.filter(
       (proposal) => proposal.status === "open",
     ),
-    name: (id) => names.get(id) ?? "An unknown device",
+    name: (id) => names.get(id) ?? "An unknown passkey",
   };
 }

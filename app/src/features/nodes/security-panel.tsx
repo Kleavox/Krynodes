@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
 import {
@@ -213,14 +214,16 @@ function RecipeDialog({
             disabled={run.isPending}
             onClick={submit}
           >
-            {!run.isPending && <KeyRound aria-hidden="true" />}
-            {run.isPending
-              ? "Waiting for the Passkey…"
-              : recommend
-                ? "Apply"
-                : turnOn
-                  ? "Turn On"
-                  : "Turn Off"}
+            <KeyRound aria-hidden="true" />
+            {run.isPending ? (
+              <Waiting />
+            ) : recommend ? (
+              "Apply"
+            ) : turnOn ? (
+              "Turn On"
+            ) : (
+              "Turn Off"
+            )}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

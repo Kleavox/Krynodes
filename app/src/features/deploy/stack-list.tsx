@@ -195,16 +195,16 @@ function StackControls({
                   label: own ? "Edit Compose" : "View Compose",
                   onSelect: openPanel("compose"),
                 },
-                { label: "Web Address…", onSelect: openPanel("address") },
+                { label: "Web Address", onSelect: openPanel("address") },
                 ...(addresses.length > 0
                   ? [
                       {
-                        label: "Close Web Address…",
+                        label: "Close Web Address",
                         onSelect: openPanel("close"),
                       },
                     ]
                   : []),
-                { label: "Move to Server…", onSelect: openPanel("move") },
+                { label: "Move to Server", onSelect: openPanel("move") },
                 ...(own
                   ? []
                   : [

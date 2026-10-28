@@ -276,6 +276,14 @@ describe("protections on other systems", () => {
     expect(updatesUntil(report({ platform: rocky }))).toBe("Updates until --");
   });
 
+  it("says nothing about updates for an agent that does not name its system", () => {
+    expect(
+      updatesUntil(
+        report({ platform: { family: "debian", name: "Debian GNU/Linux 12" } }),
+      ),
+    ).toBeNull();
+  });
+
   it("names the firewall of the family", () => {
     expect(firewallName(report())).toBe("ufw");
     expect(firewallName(report({ platform: rocky }))).toBe("firewalld");

@@ -1,3 +1,4 @@
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -52,9 +53,11 @@ export function UpgradeDialog({
         <DialogHeader>
           <DialogTitle>Upgrade All · {node.name}</DialogTitle>
           <DialogDescription>
-            {preview.waiting
-              ? `Trying it on ${node.name} without changing anything…`
-              : (tried?.header ?? "")}
+            {preview.waiting ? (
+              <Busy>{`Trying it on ${node.name} without changing anything`}</Busy>
+            ) : (
+              (tried?.header ?? "")
+            )}
           </DialogDescription>
         </DialogHeader>
         <Said text={preview.error} />

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 
+import { Busy } from "@/components/busy";
 import { CopyCommand } from "@/components/copy-command";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -136,7 +137,7 @@ function BudgetForm({ budget }: { budget: UsageShare }) {
           size="sm"
           disabled={!valid || !changed || save.isPending}
         >
-          {save.isPending ? "Saving…" : "Save Share"}
+          {save.isPending ? <Busy>Saving</Busy> : "Save Share"}
         </Button>
       </div>
     </form>

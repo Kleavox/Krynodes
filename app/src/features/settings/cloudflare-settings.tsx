@@ -2,6 +2,7 @@ import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -265,9 +266,7 @@ export function CloudflareSettings() {
             }
             onClick={split}
           >
-            {operate.isPending
-              ? "Waiting for the Passkey…"
-              : "Split Across My Servers"}
+            {operate.isPending ? <Waiting /> : "Split Across My Servers"}
           </Button>
         </section>
       </div>

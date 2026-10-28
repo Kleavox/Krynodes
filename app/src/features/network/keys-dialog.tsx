@@ -1,3 +1,4 @@
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -51,7 +52,9 @@ export function KeysDialog({
             <Button variant="outline">Cancel</Button>
           </DialogClose>
           <SignButton
-            label={make.isPending ? "Making New Keys…" : "Make New Keys"}
+            label={
+              make.isPending ? <Busy>Making New Keys</Busy> : "Make New Keys"
+            }
             destructive
             pending={false}
             disabled={make.isPending || missing !== null}

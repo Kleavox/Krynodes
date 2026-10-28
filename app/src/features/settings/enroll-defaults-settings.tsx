@@ -1,6 +1,7 @@
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SetupOptions } from "@/features/nodes/setup-options";
@@ -34,7 +35,7 @@ export function EnrollDefaultsSettings() {
         <DefaultsForm initial={current.data} />
       ) : (
         <p className="text-sm text-muted-foreground">
-          {current.error ? errorMessage(current.error) : "Loading…"}
+          {current.error ? errorMessage(current.error) : <Busy>Loading</Busy>}
         </p>
       )}
     </SettingsSection>
@@ -229,7 +230,7 @@ function DefaultsForm({ initial }: { initial: EnrollDefaults }) {
           disabled={!changed || problem !== null || save.isPending}
         >
           {confirming && !save.isPending && <KeyRound aria-hidden="true" />}
-          {save.isPending ? "Saving…" : "Save"}
+          {save.isPending ? <Busy>Saving</Busy> : "Save"}
         </Button>
       </div>
     </form>

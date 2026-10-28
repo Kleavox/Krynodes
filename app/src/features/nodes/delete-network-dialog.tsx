@@ -1,6 +1,7 @@
 import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -43,8 +44,8 @@ export function DeleteNetworkActions({
           disabled={pending || !ok}
           onClick={onDelete}
         >
-          {!pending && <KeyRound aria-hidden="true" />}
-          {pending ? "Waiting for the Passkey…" : "Delete"}
+          <KeyRound aria-hidden="true" />
+          {pending ? <Waiting /> : "Delete"}
         </Button>
       </div>
     </>

@@ -28,7 +28,7 @@ describe("Test Link fixes per pair", () => {
   });
 
   it("waits and fails on its own pair", () => {
-    expect(line({ pending: true })).toContain("Waiting for the Passkey…");
+    expect(line({ pending: true })).toContain("Waiting for your passkey");
     expect(line({ error: "Signing was cancelled." })).toContain(
       "Signing was cancelled.",
     );

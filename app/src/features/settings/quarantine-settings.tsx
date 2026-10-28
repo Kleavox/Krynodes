@@ -1,6 +1,7 @@
 import type { QuarantineSettings as Settings } from "@krynodes/protocol";
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -31,11 +32,13 @@ export function QuarantineSettings() {
         />
       ) : (
         <p className="text-sm text-muted-foreground">
-          {current.error
-            ? errorMessage(current.error)
-            : network.error
-              ? errorMessage(network.error)
-              : "Loading…"}
+          {current.error ? (
+            errorMessage(current.error)
+          ) : network.error ? (
+            errorMessage(network.error)
+          ) : (
+            <Busy>Loading</Busy>
+          )}
         </p>
       )}
     </SettingsSection>
@@ -119,7 +122,7 @@ function QuarantineForm({
           </span>
         )}
         <Button type="submit" size="sm" disabled={!changed || save.isPending}>
-          {save.isPending ? "Saving…" : "Save"}
+          {save.isPending ? <Busy>Saving</Busy> : "Save"}
         </Button>
       </div>
     </form>

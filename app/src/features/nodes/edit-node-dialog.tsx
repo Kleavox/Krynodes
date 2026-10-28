@@ -1,6 +1,7 @@
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
+import { Busy, Waiting } from "@/components/busy";
 import { Field } from "@/components/field";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,11 +111,13 @@ export function EditNodeDialog({
               {member && !save.isPending && !told.isPending && (
                 <KeyRound aria-hidden="true" />
               )}
-              {save.isPending
-                ? "Saving…"
-                : told.isPending
-                  ? "Waiting for the Passkey…"
-                  : "Save"}
+              {save.isPending ? (
+                <Busy>Saving</Busy>
+              ) : told.isPending ? (
+                <Waiting />
+              ) : (
+                "Save"
+              )}
             </Button>
           </DialogFooter>
         </form>

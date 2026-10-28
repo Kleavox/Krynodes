@@ -3,6 +3,7 @@ import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -179,8 +180,8 @@ export function CreateNetworkForm({
           Cancel
         </Button>
         <Button disabled={pending || !name.ok || !subnet.ok} onClick={onCreate}>
-          {!pending && <KeyRound aria-hidden="true" />}
-          {pending ? "Waiting for the Passkey…" : "Create"}
+          <KeyRound aria-hidden="true" />
+          {pending ? <Waiting /> : "Create"}
         </Button>
       </div>
     </div>

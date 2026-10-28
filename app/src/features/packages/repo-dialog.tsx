@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -183,7 +184,7 @@ export function RepoDialog({
             disabled={!complete || preview.waiting}
             onClick={check}
           >
-            {preview.waiting ? "Checking…" : "Check"}
+            {preview.waiting ? <Busy>Checking</Busy> : "Check"}
           </Button>
         </div>
         {checked === current && !preview.waiting && (

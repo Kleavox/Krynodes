@@ -1,6 +1,7 @@
 import type { UseMutationResult } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 
+import { Busy } from "@/components/busy";
 import { useDevices } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 
@@ -72,7 +73,7 @@ export function ConfirmDialog<TData, TVariables>({
             }
           >
             {guarded && !mutation.isPending && <GuardIcon />}
-            {mutation.isPending ? "Working…" : confirmLabel}
+            {mutation.isPending ? <Busy>Working</Busy> : confirmLabel}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

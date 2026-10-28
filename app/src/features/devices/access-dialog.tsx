@@ -109,7 +109,7 @@ function Body({
     <DialogContent className={cn(SHEET, "sm:max-w-md")}>
       <DialogHeader>
         <DialogTitle>
-          {scope.device ? `Servers for ${name}` : `Devices on ${name}`}
+          {scope.device ? `Servers for ${name}` : `Passkeys on ${name}`}
         </DialogTitle>
         <DialogDescription>
           {scope.device

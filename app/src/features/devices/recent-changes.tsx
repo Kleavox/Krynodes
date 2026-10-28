@@ -1,3 +1,4 @@
+import { Busy } from "@/components/busy";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useChangeHistory, useServices } from "@/lib/api";
@@ -85,7 +86,7 @@ export function RecentChanges({ fleet }: { fleet: Fleet }) {
       </div>
       {changes.length === 0 ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">
-          {history.isPending ? "Loading changes…" : "No changes yet."}
+          {history.isPending ? <Busy>Loading changes</Busy> : "No changes yet."}
         </p>
       ) : (
         <ul className="divide-y">
@@ -104,7 +105,7 @@ export function RecentChanges({ fleet }: { fleet: Fleet }) {
             disabled={history.isFetchingNextPage}
             onClick={() => void history.fetchNextPage()}
           >
-            {history.isFetchingNextPage ? "Loading…" : "Show Older"}
+            {history.isFetchingNextPage ? <Busy>Loading</Busy> : "Show Older"}
           </Button>
         )}
       </div>

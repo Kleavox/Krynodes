@@ -122,7 +122,7 @@ export function registerDeviceRoutes(
       return {
         fleet,
         refused: context.json(
-          { code: "NOT_FOUND", message: "The device was not found." },
+          { code: "NOT_FOUND", message: "The passkey was not found." },
           404,
         ),
       };
@@ -211,7 +211,7 @@ export function registerDeviceRoutes(
       .run();
     if (result.meta.changes === 0) {
       return context.json(
-        { code: "NOT_FOUND", message: "The device was not found." },
+        { code: "NOT_FOUND", message: "The passkey was not found." },
         404,
       );
     }
@@ -239,7 +239,7 @@ export function registerDeviceRoutes(
       .run();
     if (result.meta.changes === 0) {
       return context.json(
-        { code: "NOT_FOUND", message: "The device was not found." },
+        { code: "NOT_FOUND", message: "The passkey was not found." },
         404,
       );
     }

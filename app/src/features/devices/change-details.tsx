@@ -34,7 +34,7 @@ export function ChangeDetails({
         return (
           <section
             key={key.id}
-            aria-label={`New device ${key.name}`}
+            aria-label={`New passkey ${key.name}`}
             className="rounded-md border bg-card p-3"
           >
             <p className="font-medium">

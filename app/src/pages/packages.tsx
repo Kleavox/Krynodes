@@ -7,6 +7,7 @@ import {
   useSearchParams,
 } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -152,7 +153,7 @@ export function PackagesPage() {
                   })
                 }
               >
-                {checking ? "Checking…" : "Check for Updates"}
+                {checking ? <Busy>Checking</Busy> : "Check for Updates"}
               </Button>
               <Button
                 size="sm"

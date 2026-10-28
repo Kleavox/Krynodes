@@ -1,5 +1,7 @@
 import { KeyRound } from "lucide-react";
+import type { ReactNode } from "react";
 
+import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import type { Line } from "@/lib/packages";
 import { cn } from "@/lib/utils";
@@ -14,7 +16,7 @@ export function SignButton({
   destructive = false,
   onClick,
 }: {
-  label: string;
+  label: ReactNode;
   pending: boolean;
   disabled?: boolean;
   destructive?: boolean;
@@ -26,8 +28,8 @@ export function SignButton({
       disabled={disabled || pending}
       onClick={onClick}
     >
-      {!pending && <KeyRound aria-hidden="true" />}
-      {pending ? "Waiting for the Passkey…" : label}
+      <KeyRound aria-hidden="true" />
+      {pending ? <Waiting /> : label}
     </Button>
   );
 }

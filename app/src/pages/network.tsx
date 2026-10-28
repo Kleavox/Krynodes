@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { Busy } from "@/components/busy";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -129,7 +130,7 @@ export function NetworkPage() {
               className="h-9 md:h-8"
               onClick={() => setOpen({ kind: "add" })}
             >
-              {job?.kind === "add" ? "Adding…" : "Add Server"}
+              {job?.kind === "add" ? <Busy>Adding</Busy> : "Add Server"}
             </Button>
           )
         }

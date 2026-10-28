@@ -108,6 +108,18 @@ func TestSecurityUpdatesStayOffWhenAnotherFileTurnsThemOff(t *testing.T) {
 	}
 }
 
+func TestSecurityUpdatesSayWhenAptConfigIsMissing(t *testing.T) {
+	env, run := newEnv(t)
+	run.failing[unattendedProbe] = true
+	_, err := Apply(context.Background(), env, "security-updates", nil)
+	if err == nil || err.Error() != "apt-config did not answer, so Krynodes cannot tell whether unattended upgrades run." {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades") {
+		t.Fatal("the drop-in is taken back")
+	}
+}
+
 func TestSecurityUpdatesNeedTheDailyUpgradeTimer(t *testing.T) {
 	env, run := newEnv(t)
 	run.respond[unattendedProbe] = "UU='1'\n"
