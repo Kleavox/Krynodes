@@ -109,7 +109,7 @@ function StackControls({
     project,
     sealKey: entry?.sealKey ?? null,
     reach: agentCurrent(member.node),
-    title: member.stack.title,
+    title: stackTitle(member.stack),
     names: member.stack.names,
     named: agentGap(member.node.agent_version, FEATURE_AGENT) === null,
     taken: (entry?.services ?? [])
@@ -119,6 +119,7 @@ function StackControls({
           !(member.stack.containers ?? []).includes(service.name),
       )
       .map((service) => service.name),
+    containers: member.stack.containers ?? [],
   };
   const modern =
     agentCurrent(member.node) && member.trusted && member.stack.compose;
@@ -129,6 +130,7 @@ function StackControls({
       : setConfirming({
           action,
           project,
+          title: target.title,
           node: member.node,
           directory: member.stack.directory,
         });
@@ -176,7 +178,7 @@ function StackControls({
   return (
     <div className="flex items-center justify-end gap-1">
       <RowMenu
-        label={`${project} on ${member.node.name} actions`}
+        label={`${target.title} on ${member.node.name} actions`}
         items={[
           { label: "Deploy", onSelect: deploy },
           ...(member.stack.rollback

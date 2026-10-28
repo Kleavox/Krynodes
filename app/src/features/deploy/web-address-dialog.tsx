@@ -220,7 +220,7 @@ function OpenForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          Web Address · {target.project} on {target.nodeName}
+          Web Address · {target.title} on {target.nodeName}
         </DialogTitle>
         <DialogDescription>
           Krynodes makes an HTTPS address through a Cloudflare Tunnel. No port
@@ -461,7 +461,7 @@ function CloseForm({
     }
     toast.success(
       disposal
-        ? `Closing the addresses of ${target.project}.`
+        ? `Closing the addresses of ${target.title}.`
         : `Closing ${hostname}.`,
     );
     onClose();
@@ -472,8 +472,8 @@ function CloseForm({
       <DialogHeader>
         <DialogTitle>
           {disposal
-            ? `${disposal === "purge" ? "Delete" : "Remove"} ${target.project} and close its web addresses`
-            : `Close a web address of ${target.project}`}
+            ? `${disposal === "purge" ? "Delete" : "Remove"} ${target.title} and close its web addresses`
+            : `Close a web address of ${target.title}`}
         </DialogTitle>
         <DialogDescription>
           {disposal

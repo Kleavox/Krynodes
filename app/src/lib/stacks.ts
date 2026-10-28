@@ -153,6 +153,7 @@ export function groupStacks(
       if (
         needle &&
         !stack.project.includes(needle) &&
+        !stack.title?.toLowerCase().includes(needle) &&
         !node.name.toLowerCase().includes(needle)
       ) {
         continue;
@@ -416,6 +417,7 @@ export function serverLists(
         (item) =>
           (serverMatch ||
             item.member.stack.project.includes(needle) ||
+            item.member.stack.title?.toLowerCase().includes(needle) ||
             item.containers.some(matches)) &&
           (!options.notRunning || unhealthy(item)),
       )

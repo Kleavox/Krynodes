@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ContainerNames, namesState } from "./container-names";
+import { ContainerNames, namesState, renameNote } from "./container-names";
 
 const one = "services:\n  adguard:\n    image: adguard/adguardhome\n";
 const three =
@@ -43,6 +43,46 @@ describe("Container Names under a stack's name", () => {
     expect(markup).toContain("1 to fix");
     expect(markup).toContain("io already runs a container named cloudflared.");
     expect(markup).toContain('aria-invalid="true"');
+  });
+
+  it("tells which containers a save renames and what they run as now", () => {
+    const names = namesState({
+      text: three,
+      project: "paperless",
+      saved: { db: "postgres" },
+      typed: {},
+      taken: [],
+      server: "io",
+      running: ["paperless-broker-1", "postgres", "paperless_webserver_1"],
+    });
+    expect(names.renamed).toBe(2);
+    const words = renderToStaticMarkup(
+      <ContainerNames names={{ ...names, type: () => {} }} />,
+    )
+      .replace(/<[^>]+>/gu, " ")
+      .replace(/\s+/gu, " ");
+    expect(words).toContain("2 to rename");
+    expect(words).toContain("Now running as paperless-broker-1");
+    expect(words).toContain("Now running as paperless_webserver_1");
+    expect(words).not.toContain("Now running as postgres");
+    expect(renameNote(names.renamed)).toBe(
+      "Saving renames 2 containers; they restart.",
+    );
+    expect(renameNote(1)).toBe("Saving renames 1 container; it restarts.");
+    expect(renameNote(0)).toBeNull();
+  });
+
+  it("renames nothing on a stack that runs nothing yet", () => {
+    expect(
+      namesState({
+        text: three,
+        project: "paperless",
+        typed: {},
+        taken: [],
+        server: "io",
+      }).renamed,
+    ).toBe(0);
+    expect(draw(three, "paperless")).not.toContain("running as");
   });
 
   it("sends every container's name to the server", () => {

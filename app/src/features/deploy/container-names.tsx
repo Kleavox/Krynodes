@@ -12,6 +12,7 @@ interface NamesInput {
   typed: Record<string, string>;
   taken: string[];
   server: string;
+  running?: string[];
 }
 
 export function namesState({
@@ -21,8 +22,16 @@ export function namesState({
   typed,
   taken,
   server,
+  running = [],
 }: NamesInput) {
-  const rows = containerNames(text, project, saved ?? {}, typed);
+  const rows = containerNames(text, project, saved ?? {}, typed).map((row) => {
+    const now = [
+      saved?.[row.service],
+      `${project}-${row.service}-1`,
+      `${project}_${row.service}_1`,
+    ].find((name) => name !== undefined && running.includes(name));
+    return { ...row, was: now === row.value ? undefined : now };
+  });
   const problems = rows.map((_, index) =>
     containerNameProblem(rows, index, taken, server),
   );
@@ -32,9 +41,17 @@ export function namesState({
     problems,
     project,
     problem: problems.find((problem) => problem !== null) ?? null,
+    renamed: rows.filter((row) => row.was !== undefined).length,
     arg: rows.map((row) => `${row.service}=${row.value}`).join(","),
   };
 }
+
+export const renameNote = (count: number) =>
+  count === 0
+    ? null
+    : count === 1
+      ? "Saving renames 1 container; it restarts."
+      : `Saving renames ${count} containers; they restart.`;
 
 export type NamesState = ReturnType<typeof namesState> & {
   type: (service: string, value: string) => void;
@@ -69,9 +86,11 @@ export function ContainerNames({ names }: { names: NamesState }) {
         >
           {wrong > 0
             ? `${wrong} to fix`
-            : names.rows.length === 1
-              ? names.rows[0]!.value
-              : `${names.rows.length} containers`}
+            : names.renamed > 0
+              ? `${names.renamed} to rename`
+              : names.rows.length === 1
+                ? names.rows[0]!.value
+                : `${names.rows.length} containers`}
         </span>
       </summary>
       <div className="space-y-2 border-t px-2.5 py-2">
@@ -108,6 +127,11 @@ export function ContainerNames({ names }: { names: NamesState }) {
                   className="text-xs text-destructive sm:col-start-2"
                 >
                   {problem}
+                </p>
+              )}
+              {row.was && (
+                <p className="text-xs text-muted-foreground sm:col-start-2">
+                  Now running as <span className="font-mono">{row.was}</span>
                 </p>
               )}
             </div>

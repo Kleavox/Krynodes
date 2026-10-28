@@ -585,6 +585,33 @@ describe("one list per server", () => {
     ).toEqual([["Callisto", [["shop", []]], []]]);
   });
 
+  it("finds a stack by its display name", () => {
+    const titled: ServicesResponse = {
+      ...data,
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          stacks: [
+            { ...data.nodes[0]!.stacks[0]!, title: "Weekly Newsletter" },
+            data.nodes[0]!.stacks[1]!,
+          ],
+        },
+        data.nodes[1]!,
+      ],
+    };
+    expect(
+      shape(serverLists(titled, nodes, { ...all, query: "weekly news" })),
+    ).toEqual([
+      ["Callisto", [["listmonk", ["listmonk-db-1", "listmonk_app"]]], []],
+    ]);
+    expect(
+      groupStacks(titled, nodes, "Weekly").map((group) => [
+        group.project,
+        group.members.length,
+      ]),
+    ).toEqual([["listmonk", 1]]);
+  });
+
   it("gives every server one box with its count, and folds system services until asked", () => {
     const unit = (
       name: string,

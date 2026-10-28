@@ -275,7 +275,7 @@ function MoveForm({
       },
       {
         onSuccess: () => {
-          toast.success(`Moving ${source.project}.`);
+          toast.success(`Moving ${source.title}.`);
           onClose();
         },
       },
@@ -286,7 +286,7 @@ function MoveForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          Move {source.project} from {source.nodeName}
+          Move {source.title} from {source.nodeName}
         </DialogTitle>
         <DialogDescription>
           The compose file, its secrets and small files beside it move; app data

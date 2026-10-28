@@ -22,6 +22,7 @@ import { useSignedAction } from "./use-signed-action";
 export interface StackActionRequest {
   action: "stop" | "remove" | "purge";
   project: string;
+  title?: string;
   node: NodeRecord;
   directory: string;
 }
@@ -76,13 +77,15 @@ function StackActionForm({
 }) {
   const run = useSignedAction(false);
   const [typed, setTyped] = useState("");
-  const { action, project, node, directory } = request;
+  const { action, project, title, node, directory } = request;
   const copy = COPY[action];
   const guarded = action === "purge";
   return (
     <AlertDialogContent className="max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0 max-sm:rounded-b-none">
       <AlertDialogHeader>
-        <AlertDialogTitle>{copy.title(project, node.name)}</AlertDialogTitle>
+        <AlertDialogTitle>
+          {copy.title(title ?? project, node.name)}
+        </AlertDialogTitle>
         <AlertDialogDescription>{copy.body(directory)}</AlertDialogDescription>
       </AlertDialogHeader>
       {guarded && (

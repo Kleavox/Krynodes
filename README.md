@@ -520,18 +520,21 @@ ports are bound to `127.0.0.1`; reach them through a Cloudflare Tunnel. Then
 it pulls, starts and health-checks the stack like a deploy. Do not paste
 passwords you use elsewhere: the text is kept with the action in History.
 
-**Stack and container names.** The Name is what Services shows, written as you
-like (`AdGuard Home`, up to 64 characters); its dashed form (`adguard-home`) is
-the folder and the Docker project. Once the compose file is pasted,
-**Container Names** under the Name lists what each container will be called:
-the dashed name for a stack of one service, `<stack>-<service>` for several
-(`paperless-db`), or the file's own `container_name`. Change any of them; an
-empty box takes the suggestion. A service that runs more than one copy keeps
-Docker's numbers. The names live in the stack's `krynodes.json` and are written
-into Krynodes' own compose files, never into the pasted text. Edit compose has
-the same Name and Container Names, so a stack made before gets the new names
-when saved: Docker checks on the old name follow, and a Web address keeps
-answering on the old name as an alias. Agent 0.7.1 or newer.
+**Stack and container names.** The Name is what Services, its dialogs and the
+command palette show, written as you like (`AdGuard Home`, up to 64 characters);
+its dashed form (`adguard-home`) is the folder and the Docker project. Once the
+compose file is pasted, **Container Names** under the Name lists what each
+container will be called: the dashed name for a stack of one service,
+`<stack>-<service>` for several (`paperless-db`), or the file's own
+`container_name`. Change any of them; an empty box takes the suggestion. A
+service that runs more than one copy keeps Docker's numbers. The names live in
+the stack's `krynodes.json` and are written into Krynodes' own compose files,
+never into the pasted text. Edit compose has the same Name and Container Names,
+so a stack made before gets the new names when saved. Before you save, Edit
+compose says how many running containers get a new name (they restart), and
+Container Names shows what each runs as now. Docker checks on the old name
+follow, and a Web address keeps answering on the old name as an alias. Agent
+0.7.1 or newer.
 
 Deploys, like start, stop and restart, need a trusted passkey. On
 **Passkeys** (account menu) you register a passkey on your laptop or phone; each

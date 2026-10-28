@@ -20,7 +20,11 @@ import { privateIpProblem } from "@/lib/network";
 import { seal } from "@/lib/seal";
 import { parseHostPorts, titleProblem } from "@/lib/stacks";
 
-import { ContainerNames, useContainerNames } from "./container-names";
+import {
+  ContainerNames,
+  renameNote,
+  useContainerNames,
+} from "./container-names";
 import {
   AccessChoice,
   FullAccessSummary,
@@ -50,10 +54,11 @@ export interface StackTarget {
   project: string;
   sealKey: string | null;
   reach: boolean;
-  title?: string | null;
+  title: string;
   names?: Record<string, string> | null;
   named?: boolean;
   taken?: string[];
+  containers?: string[];
 }
 
 const AREA =
@@ -131,7 +136,7 @@ function ComposeForm({
   const [title, setTitle] = useState<string | null>(null);
   const [sealing, setSealing] = useState(false);
   const current = text ?? read?.compose ?? "";
-  const shownTitle = title ?? target.title ?? target.project;
+  const shownTitle = title ?? target.title;
   const titleWrong = target.named ? titleProblem(shownTitle.trim()) : null;
   const names = useContainerNames({
     text: current,
@@ -139,7 +144,9 @@ function ComposeForm({
     saved: target.names,
     taken: target.taken ?? [],
     server: target.nodeName,
+    running: target.containers,
   });
+  const note = editable && target.named ? renameNote(names.renamed) : null;
   const chosen: Access =
     access ?? (read?.access === "full" ? "full" : "contained");
   const reaching = target.reach && chosen === "contained";
@@ -214,7 +221,7 @@ function ComposeForm({
       },
       {
         onSuccess: () => {
-          toast.success(`Updating ${target.project} on ${target.nodeName}.`);
+          toast.success(`Updating ${target.title} on ${target.nodeName}.`);
           onClose();
         },
       },
@@ -225,7 +232,7 @@ function ComposeForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          {editable ? "Edit Compose" : "Compose File"} · {target.project} on{" "}
+          {editable ? "Edit Compose" : "Compose File"} · {target.title} on{" "}
           {target.nodeName}
         </DialogTitle>
         <DialogDescription>
@@ -313,6 +320,7 @@ function ComposeForm({
           )}
         </div>
       )}
+      {note && <p className="text-sm text-muted-foreground">{note}</p>}
       {run.error && (
         <p role="alert" className="text-sm text-destructive">
           {errorMessage(run.error)}
