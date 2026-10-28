@@ -142,6 +142,7 @@ function ComposeForm({
     text: current,
     project: target.project,
     saved: target.names,
+    original: read?.compose,
     taken: target.taken ?? [],
     server: target.nodeName,
     running: target.containers,

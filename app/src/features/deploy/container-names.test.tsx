@@ -72,6 +72,22 @@ describe("Container Names under a stack's name", () => {
     expect(renameNote(0)).toBeNull();
   });
 
+  it("keeps the saved name over the file's unchanged own name", () => {
+    const own =
+      "services:\n  web:\n    image: nginx\n    container_name: site\n";
+    expect(
+      namesState({
+        text: own,
+        project: "blog",
+        saved: { web: "blog-web" },
+        original: own,
+        typed: {},
+        taken: [],
+        server: "io",
+      }).arg,
+    ).toBe("web=blog-web");
+  });
+
   it("renames nothing on a stack that runs nothing yet", () => {
     expect(
       namesState({

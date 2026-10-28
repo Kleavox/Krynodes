@@ -182,7 +182,9 @@ export function groupStacks(
   return sorted.sort(
     (a, b) =>
       Number(healthy(a)) - Number(healthy(b)) ||
-      a.project.localeCompare(b.project),
+      stackTitle(a.members[0]!.stack).localeCompare(
+        stackTitle(b.members[0]!.stack),
+      ),
   );
 }
 
@@ -321,15 +323,21 @@ export function containerNames(
   project: string,
   saved: Record<string, string> = {},
   typed: Record<string, string> = {},
+  original = "",
 ): ContainerName[] {
   const services = namingOf(text);
+  const before = new Map(
+    namingOf(original).map((entry) => [entry.service, entry.own]),
+  );
   return services
     .filter((entry) => entry.copies <= 1)
     .map(({ service, own }) => {
+      const fallback =
+        services.length === 1 ? project : `${project}-${service}`;
       const suggested =
-        own ??
-        saved[service] ??
-        (services.length === 1 ? project : `${project}-${service}`);
+        own !== (before.get(service) ?? null)
+          ? (own ?? fallback)
+          : (saved[service] ?? own ?? fallback);
       return { service, suggested, value: typed[service]?.trim() || suggested };
     });
 }
@@ -424,7 +432,7 @@ export function serverLists(
       .sort(
         (a, b) =>
           Number(unhealthy(b)) - Number(unhealthy(a)) ||
-          a.member.stack.project.localeCompare(b.member.stack.project),
+          stackTitle(a.member.stack).localeCompare(stackTitle(b.member.stack)),
       );
     for (const item of stacks) {
       item.containers.sort((a, b) =>

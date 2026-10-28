@@ -9,6 +9,7 @@ interface NamesInput {
   text: string;
   project: string;
   saved?: Record<string, string> | null;
+  original?: string;
   typed: Record<string, string>;
   taken: string[];
   server: string;
@@ -19,19 +20,22 @@ export function namesState({
   text,
   project,
   saved,
+  original,
   typed,
   taken,
   server,
   running = [],
 }: NamesInput) {
-  const rows = containerNames(text, project, saved ?? {}, typed).map((row) => {
-    const now = [
-      saved?.[row.service],
-      `${project}-${row.service}-1`,
-      `${project}_${row.service}_1`,
-    ].find((name) => name !== undefined && running.includes(name));
-    return { ...row, was: now === row.value ? undefined : now };
-  });
+  const rows = containerNames(text, project, saved ?? {}, typed, original).map(
+    (row) => {
+      const now = [
+        saved?.[row.service],
+        `${project}-${row.service}-1`,
+        `${project}_${row.service}_1`,
+      ].find((name) => name !== undefined && running.includes(name));
+      return { ...row, was: now === row.value ? undefined : now };
+    },
+  );
   const problems = rows.map((_, index) =>
     containerNameProblem(rows, index, taken, server),
   );

@@ -429,6 +429,28 @@ describe("stack and container names", () => {
     ]);
   });
 
+  it("keeps a name typed over the file's own until the file's own changes", () => {
+    const own =
+      "services:\n  web:\n    image: nginx\n    container_name: site\n";
+    const saved = { web: "blog-web" };
+    expect(containerNames(own, "blog", saved, {}, own)[0]!.value).toBe(
+      "blog-web",
+    );
+    expect(
+      containerNames(own.replace("site", "landing"), "blog", saved, {}, own)[0]!
+        .value,
+    ).toBe("landing");
+    expect(
+      containerNames(
+        "services:\n  web:\n    image: nginx\n",
+        "blog",
+        saved,
+        {},
+        own,
+      )[0]!.value,
+    ).toBe("blog");
+  });
+
   it("leaves a service with copies to Docker's numbers", () => {
     const copies = three.replace(
       "image: paperless\n",
@@ -610,6 +632,27 @@ describe("one list per server", () => {
         group.members.length,
       ]),
     ).toEqual([["listmonk", 1]]);
+  });
+
+  it("sorts stacks by their display name", () => {
+    const titled: ServicesResponse = {
+      ...data,
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          stacks: [stack("listmonk", { title: "Zine" }), stack("shop")],
+        },
+        data.nodes[1]!,
+      ],
+    };
+    expect(
+      serverLists(titled, nodes, all)[0]!.stacks.map(
+        (item) => item.member.stack.project,
+      ),
+    ).toEqual(["shop", "listmonk"]);
+    expect(
+      groupStacks(titled, nodes, "").map((group) => group.project),
+    ).toEqual(["shop", "listmonk"]);
   });
 
   it("gives every server one box with its count, and folds system services until asked", () => {
