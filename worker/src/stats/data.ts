@@ -238,11 +238,17 @@ export async function statusVersion(db: D1Database): Promise<string> {
   const row = await db
     .prepare(
       `SELECT COUNT(*) AS count, MAX(updated_at) AS changed,
-         (SELECT COUNT(*) || ':' || COALESCE(MAX(created_at), '') FROM incident_updates) AS said
+         (SELECT COUNT(*) || ':' || COALESCE(MAX(created_at), '') FROM incident_updates) AS said,
+         (SELECT COUNT(*) || ':' || COUNT(released_at) FROM quarantines) AS held
        FROM checks WHERE public = 1`,
     )
-    .first<{ count: number; changed: string | null; said: string | null }>();
-  return `${row?.count ?? 0}:${row?.changed ?? ""}:${row?.said ?? ""}`;
+    .first<{
+      count: number;
+      changed: string | null;
+      said: string | null;
+      held: string | null;
+    }>();
+  return `${row?.count ?? 0}:${row?.changed ?? ""}:${row?.said ?? ""}:${row?.held ?? ""}`;
 }
 
 export async function loadStatus(

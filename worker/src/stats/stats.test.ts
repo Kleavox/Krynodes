@@ -367,6 +367,25 @@ describe("loadStatus", () => {
     expect(await state()).toEqual(["up"]);
   });
 
+  it("changes the version when a server is quarantined or released", async () => {
+    const { db, sqlite } = fleet();
+    publish(sqlite, "a", { name: "Steady" });
+    const clean = await statusVersion(db);
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', ?, 'why', '2026-09-28T11:00:00.000Z', '{}')",
+      )
+      .run(NODE);
+    const quarantined = await statusVersion(db);
+    sqlite
+      .prepare("UPDATE quarantines SET released_at = ? WHERE id = 'q1'")
+      .run("2026-09-28T11:30:00.000Z");
+    const released = await statusVersion(db);
+
+    expect(quarantined).not.toBe(clean);
+    expect(released).not.toBe(quarantined);
+  });
+
   it("reads incidents through the public checks instead of scanning the table", async () => {
     const { db, sqlite } = fleet();
     const statements: string[] = [];
