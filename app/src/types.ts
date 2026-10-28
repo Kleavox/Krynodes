@@ -1,4 +1,5 @@
 import type {
+  BridgesReport,
   NetworkDocument,
   NetworkLink,
   PackagesReport,
@@ -372,7 +373,7 @@ export interface CheckResult {
 export interface QuietSpan {
   from: string;
   to: string | null;
-  why: "offline" | "routine";
+  why: "offline" | "routine" | "quarantined";
 }
 
 interface CheckHistory {
@@ -387,10 +388,18 @@ export interface CheckResults {
 }
 
 export type ServiceKind = "systemd" | "docker";
-export type ServiceState = "running" | "stopped" | "failed" | "starting";
+export type ServiceState =
+  "running" | "stopped" | "failed" | "starting" | "boot" | "unneeded";
 export type ServiceAction = "start" | "stop" | "restart";
 export type ActionKind =
-  ServiceKind | "compose" | "trust" | "host" | "vault" | "apt" | "network";
+  | ServiceKind
+  | "compose"
+  | "trust"
+  | "host"
+  | "vault"
+  | "apt"
+  | "network"
+  | "bridge";
 export type ActionVerb =
   | ServiceAction
   | "deploy"
@@ -446,7 +455,8 @@ export type ActionVerb =
   | "policy"
   | "save"
   | "key"
-  | "join";
+  | "join"
+  | "admin";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
@@ -549,6 +559,7 @@ interface ServiceNode {
   vault?: VaultReport | null;
   tailscaleVault?: VaultReport | null;
   webAddresses?: WebAddress[];
+  bridges?: BridgesReport | null;
 }
 
 export interface DeviceRecord {
@@ -659,6 +670,7 @@ export interface ActionRecord {
   output: string | null;
   deviceId: string | null;
   progress?: ActionStep | null;
+  peer?: string | null;
 }
 
 export interface ServicesResponse {

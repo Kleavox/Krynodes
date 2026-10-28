@@ -72,7 +72,9 @@ function warningWords(warning: NodeWarning, now: number) {
       };
     case "port":
       return {
-        title: `${value("port")} opened on a public address, not through Krynodes`,
+        title: value("port").includes("-")
+          ? `Temporary UDP ports ${value("port").replace(/\/udp$/u, "")} on a public address, not through Krynodes`
+          : `${value("port")} opened on a public address, not through Krynodes`,
         detail: `Process ${value("process")}`,
       };
     case "rule":

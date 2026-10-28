@@ -136,3 +136,46 @@ func TestPlacesAndServesAreReadFromTheirArgs(t *testing.T) {
 		t.Fatal("33 places were taken")
 	}
 }
+
+func TestPeersLetThroughOnlyTheChosenPairs(t *testing.T) {
+	rules := Peers([]PeerNetwork{
+		{Bridge: "krc0a1b2c3d4e5f", Allow: []PeerRule{{From: "172.24.0.2", To: "172.24.0.3", Proto: "tcp", Port: 5432}}},
+		{Bridge: "krc999999999999"},
+	})
+	want := []string{
+		"-A KRY-PEERS -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+		"-A KRY-PEERS -s 172.24.0.2/32 -d 172.24.0.3/32 -i krc0a1b2c3d4e5f -p tcp -m tcp --dport 5432 -j ACCEPT",
+		"-A KRY-PEERS -i krc0a1b2c3d4e5f -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
+		"-A KRY-PEERS -i krc0a1b2c3d4e5f -j DROP",
+		"-A KRY-PEERS -i krc999999999999 -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
+		"-A KRY-PEERS -i krc999999999999 -j DROP",
+	}
+	if !slices.Equal(rules, want) {
+		t.Fatalf("peers\n%s", strings.Join(rules, "\n"))
+	}
+	if text := PeersRestore(rules[:1]); text != "*filter\n:KRY-PEERS - [0:0]\n-A KRY-PEERS -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT\nCOMMIT\n" {
+		t.Fatalf("restore %q", text)
+	}
+	if jump := PeersJump("krc0a1b2c3d4e5f"); strings.Join(jump, " ") != "-i krc0a1b2c3d4e5f -o krc0a1b2c3d4e5f -j KRY-PEERS" {
+		t.Fatalf("jump %q", jump)
+	}
+}
+
+func TestPortsReturnOnlyEachStacksOwnServerPorts(t *testing.T) {
+	rules := Ports(map[string][]string{"krcbbbbbbbbbbbb": {"53/udp"}, "krcaaaaaaaaaaaa": {"3000/tcp", "53/udp"}})
+	var lines []string
+	for _, rule := range rules {
+		lines = append(lines, strings.Join(rule, " "))
+	}
+	want := []string{
+		"-i krcaaaaaaaaaaaa -p tcp -m conntrack --ctorigdstport 3000 -j RETURN",
+		"-i krcaaaaaaaaaaaa -p udp -m conntrack --ctorigdstport 53 -j RETURN",
+		"-i krcbbbbbbbbbbbb -p udp -m conntrack --ctorigdstport 53 -j RETURN",
+	}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("ports\n%s", strings.Join(lines, "\n"))
+	}
+	if strings.Join(PortsJump, " ") != "-i krc+ -m conntrack --ctstate DNAT --ctdir ORIGINAL -j KRY-PORTS" {
+		t.Fatalf("jump %q", PortsJump)
+	}
+}

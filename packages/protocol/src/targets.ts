@@ -1,11 +1,13 @@
 const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$/u;
 const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
+export const BRIDGE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/u;
 const APT_NAME = /^[a-z0-9][a-z0-9+.-]{0,127}$/u;
 
 export const RECIPES = [
   "security-updates",
   "reboot-window",
   "ssh-keys-only",
+  "no-root-login",
   "fail2ban",
   "firewall",
   "free-port-53",
@@ -51,6 +53,7 @@ export function isValidTarget(kind: string, name: string): boolean {
   if (kind === "vault") return name === "cloudflare" || name === "tailscale";
   if (kind === "apt") return APT_NAME.test(name);
   if (kind === "network") return name === "kry0";
+  if (kind === "bridge") return BRIDGE_NAME.test(name);
   if (!TARGET_NAME.test(name)) return false;
   if (kind === "systemd") return name.endsWith(".service");
   return kind === "docker";

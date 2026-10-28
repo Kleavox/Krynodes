@@ -112,7 +112,11 @@ export function checksByServer(
   nodes: NodeRecord[],
   seen: number,
 ): { node: NodeRecord; checks: CheckRecord[] }[] {
-  return nodes.flatMap((node) => {
+  const order = [
+    ...nodes.filter((node) => !node.quarantine),
+    ...nodes.filter((node) => node.quarantine),
+  ];
+  return order.flatMap((node) => {
     const state = nodeState(node, seen);
     const isDown = (check: CheckRecord) =>
       checkDisplayStatus(check.status, state, check.enabled) === "DOWN";
@@ -181,6 +185,18 @@ const RUNNING: Partial<Record<CheckKind, string>> = {
 };
 
 export type LiveTone = "ok" | "bad" | "warn" | "idle" | "off" | "info" | "work";
+
+export type CheckBucket = "down" | "offline" | "quarantined" | "up";
+
+export function checkBucket(
+  display: CheckDisplay,
+  tone: LiveTone,
+): CheckBucket | null {
+  if (display === "UNTRUSTED") return "quarantined";
+  if (display === "DOWN") return tone === "work" ? null : "down";
+  if (display === "OFFLINE") return tone === "off" ? "offline" : null;
+  return display === "UP" ? "up" : null;
+}
 
 const covers = (from: number, to: number, now: number) =>
   from <= now && now < to;

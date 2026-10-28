@@ -879,3 +879,17 @@ describe("quarantine on a connected tailnet", () => {
     expect(planUse(nodes, "t1", V1)).toEqual({ ok: false, reason });
   });
 });
+
+describe("temporary UDP ports", () => {
+  it("reads a port range as the temporary ports one process uses", () => {
+    const { title, detail } = warningStrip(
+      warning("port", { port: "32768-60999/udp", process: "tailscaled" }),
+      "vps-1",
+      NOW,
+    );
+    expect([title, detail]).toEqual([
+      "Temporary UDP ports 32768-60999 on a public address, not through Krynodes · 21:04",
+      "Process tailscaled",
+    ]);
+  });
+});

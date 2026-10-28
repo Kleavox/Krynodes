@@ -1,7 +1,11 @@
+import { ADMIN_NAME } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
+import { sha256 } from "../lib/crypto";
 import { parseRange } from "../lib/ranges";
+import { fingerprint, parseKeyLine } from "../lib/ssh";
+import { confirmed } from "../trust/intent";
 import { liveRange, readNetwork } from "../network/document";
 import { invalidRequest, readJson } from "./shared";
 import type { KrynodesApp, KrynodesEnv } from "./shared";
@@ -9,19 +13,57 @@ import type { KrynodesApp, KrynodesEnv } from "./shared";
 const KEY = "private_ranges";
 const ENROLL_KEY = "enroll_defaults";
 
+const adminSchema = z.object({
+  name: z
+    .string()
+    .regex(ADMIN_NAME)
+    .refine((name) => name !== "root"),
+  keys: z
+    .array(
+      z
+        .string()
+        .max(16384)
+        .refine((line) => parseKeyLine(line) !== null),
+    )
+    .min(1)
+    .max(4),
+});
+
+type EnrollAdmin = z.infer<typeof adminSchema>;
+
 const enrollDefaultsSchema = z.object({
   recommended: z.boolean(),
   docker: z.boolean(),
   hour: z.number().int().min(0).max(23),
   network: z.boolean().default(false),
+  admin: adminSchema.nullable().default(null),
 });
 
-const ENROLL_DEFAULTS = {
+type EnrollDefaults = z.infer<typeof enrollDefaultsSchema>;
+
+const ENROLL_DEFAULTS: EnrollDefaults = {
   recommended: true,
   docker: true,
   hour: 3,
   network: false,
+  admin: null,
 };
+
+const adminText = (admin: EnrollAdmin | null) =>
+  admin ? `${admin.name}\n${admin.keys.join("\n")}` : "";
+
+export async function readEnrollDefaults(
+  db: D1Database,
+): Promise<EnrollDefaults> {
+  try {
+    const parsed = enrollDefaultsSchema.safeParse(
+      JSON.parse((await readSetting(db, ENROLL_KEY)) ?? "null"),
+    );
+    return parsed.success ? parsed.data : ENROLL_DEFAULTS;
+  } catch {
+    return ENROLL_DEFAULTS;
+  }
+}
 
 const readSetting = async (db: D1Database, key: string) =>
   (
@@ -63,18 +105,43 @@ export function registerSettingRoutes(
   app: KrynodesApp,
   requireOperator: MiddlewareHandler<KrynodesEnv>,
 ): void {
-  app.get("/api/settings/enroll-defaults", requireOperator, async (context) => {
-    const parsed = enrollDefaultsSchema.safeParse(
-      JSON.parse((await readSetting(context.env.DB, ENROLL_KEY)) ?? "null"),
-    );
-    return context.json(parsed.success ? parsed.data : ENROLL_DEFAULTS);
+  const shown = async (defaults: EnrollDefaults) => ({
+    ...defaults,
+    admin: defaults.admin && {
+      name: defaults.admin.name,
+      keys: await Promise.all(
+        defaults.admin.keys.map(async (line, index) => {
+          const key = parseKeyLine(line, index)!;
+          return {
+            line,
+            type: key.type,
+            fingerprint: await fingerprint(key.blob),
+            label: key.label,
+          };
+        }),
+      ),
+    },
   });
+
+  app.get("/api/settings/enroll-defaults", requireOperator, async (context) =>
+    context.json(await shown(await readEnrollDefaults(context.env.DB))),
+  );
 
   app.put("/api/settings/enroll-defaults", requireOperator, async (context) => {
     const body = enrollDefaultsSchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
-    await writeSetting(context.env.DB, ENROLL_KEY, body.data);
-    return context.json(body.data);
+    const db = context.env.DB;
+    const wanted = adminText(body.data.admin);
+    if (wanted !== adminText((await readEnrollDefaults(db)).admin)) {
+      const refused = await confirmed(
+        context,
+        "enroll.admin",
+        await sha256(wanted),
+      );
+      if (refused) return refused;
+    }
+    await writeSetting(db, ENROLL_KEY, body.data);
+    return context.json(await shown(body.data));
   });
 
   app.get("/api/settings/private-ranges", requireOperator, async (context) => {

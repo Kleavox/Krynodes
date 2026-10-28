@@ -55,11 +55,44 @@ func (e Executor) watchNow(ctx context.Context) (watch.State, bool) {
 			state.Ports = append(state.Ports, item)
 		}
 	}
-	slices.Sort(state.Ports)
+	low, high := ephemeral(e.Root)
+	state.Ports = collapse(state.Ports, low, high)
 	return state, true
 }
 
+func ephemeral(root string) (int, int) {
+	raw, err := os.ReadFile(filepath.Join(root, "proc", "sys", "net", "ipv4", "ip_local_port_range"))
+	if fields := strings.Fields(string(raw)); err == nil && len(fields) == 2 {
+		low, lowErr := strconv.Atoi(fields[0])
+		high, highErr := strconv.Atoi(fields[1])
+		if lowErr == nil && highErr == nil && low >= 1 && low <= high && high <= 65535 {
+			return low, high
+		}
+	}
+	return 32768, 60999
+}
+
+func collapse(ports []string, low, high int) []string {
+	collapsed := []string{}
+	for _, item := range ports {
+		port, process, _ := strings.Cut(item, " ")
+		if number, ok := strings.CutSuffix(port, "/udp"); ok {
+			if value, err := strconv.Atoi(number); err == nil && value >= low && value <= high {
+				item = strings.TrimSpace(fmt.Sprintf("%d-%d/udp %s", low, high, process))
+			}
+		}
+		if !slices.Contains(collapsed, item) {
+			collapsed = append(collapsed, item)
+		}
+	}
+	slices.Sort(collapsed)
+	return collapsed
+}
+
 func (e Executor) watchServer(ctx context.Context) {
+	if e.watchHeld() {
+		return
+	}
 	now, ok := e.watchNow(ctx)
 	if !ok {
 		return
@@ -72,6 +105,8 @@ func (e Executor) watchServer(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	low, high := ephemeral(e.Root)
+	start.Ports = collapse(start.Ports, low, high)
 	journal, _ := e.output(ctx, "journalctl", "-t", "sshd", "-t", "sshd-session", "--since=@"+strconv.FormatInt(e.Now().Add(-network.KnockWindow).Unix(), 10), "-o", "short-unix", "--no-pager", "-q")
 	for _, change := range append(watch.Compare(start, now), watch.Logins(journal, start, now)...) {
 		parts := []string{change.Item}

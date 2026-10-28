@@ -14,7 +14,9 @@ import {
   pollServices,
   primaryAction,
   refreshPending,
+  resting,
   serviceForCheck,
+  STATE_LABEL,
   verb,
 } from "./services";
 
@@ -459,29 +461,29 @@ describe("restart automatically", () => {
 
   it("says why it cannot be turned on", () => {
     expect(
-      autoRestartBlocker(check, node("n1", "pivox", "0.6.14"), entry()),
+      autoRestartBlocker(check, node("n1", "pivox", "0.7.0"), entry()),
     ).toBeNull();
     expect(
       autoRestartBlocker(check, node("n1", "pivox", "0.4.1"), entry()),
-    ).toBe("Needs agent 0.6.14");
+    ).toBe("Needs agent 0.7.0");
     expect(
       autoRestartBlocker(
         { ...check, target: "ssh" },
-        node("n1", "pivox", "0.6.14"),
+        node("n1", "pivox", "0.7.0"),
         entry(),
       ),
     ).toBe("Krynodes never restarts this unit");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.6.14"),
+        node("n1", "pivox", "0.7.0"),
         entry({ services: [] }),
       ),
     ).toBe("The unit is not on this server");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.6.14"),
+        node("n1", "pivox", "0.7.0"),
         entry({ trust: null }),
       ),
     ).toBe("Not Trusted Yet");
@@ -568,5 +570,58 @@ describe("words for removing Krynodes and moving a stack into it", () => {
         "pivox",
       ),
     ).toBe("Waiting for pivox to move into Krynodes");
+  });
+});
+
+describe("states a unit rests in", () => {
+  it("labels boot and unneeded units and never counts them as trouble", () => {
+    expect(STATE_LABEL.boot).toBe("Ran at Boot");
+    expect(STATE_LABEL.unneeded).toBe("Not Needed Here");
+    expect(STATE_LABEL.stopped).toBe("Stopped");
+    expect(resting("boot") && resting("unneeded") && !resting("stopped")).toBe(
+      true,
+    );
+    expect(primaryAction("boot")).toBe("start");
+    const units: ServicesResponse = {
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          services: (["boot", "running", "stopped", "unneeded"] as const).map(
+            (state) => ({
+              kind: "systemd" as const,
+              name: `${state}.service`,
+              state,
+              since: null,
+              system: false,
+            }),
+          ),
+        },
+      ],
+      actions: [],
+    };
+    const names = (notRunning: boolean) =>
+      groupByServer(units, nodes, {
+        showSystem: true,
+        query: "",
+        notRunning,
+      })[0]!.members.map((member) => member.entry.name);
+    expect(names(false)).toEqual([
+      "stopped.service",
+      "running.service",
+      "boot.service",
+      "unneeded.service",
+    ]);
+    expect(names(true)).toEqual(["stopped.service"]);
+  });
+
+  it("words the admin user command and the new protection", () => {
+    expect(
+      historyText(
+        action({ kind: "host", name: "server", action: "admin" }),
+        [],
+        "io",
+      ),
+    ).toBe("Get an admin user command for io");
+    expect(displayName("host", "no-root-login")).toBe("no root login");
   });
 });

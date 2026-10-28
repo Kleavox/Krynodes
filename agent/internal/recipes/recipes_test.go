@@ -15,11 +15,15 @@ type fakeRun struct {
 	calls   []string
 	respond map[string]string
 	failing map[string]bool
+	effects map[string]func()
 }
 
 func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, int, error) {
 	call := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, call)
+	if effect := f.effects[call]; effect != nil {
+		effect()
+	}
 	if f.failing[call] {
 		return []byte("failed"), 1, errors.New("exit status 1")
 	}

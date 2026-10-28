@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useNetwork, useOverview, useServices } from "@/lib/api";
+import { moveLines } from "@/lib/bridges";
 import { moveCompose, servicesOf } from "@/lib/compose";
 import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
@@ -179,13 +180,24 @@ function MoveForm({
           hostingOf(services.data?.nodes ?? [], overview.data?.nodes ?? []),
         )
       : null;
+  const bridging = stack
+    ? moveLines(
+        stack,
+        {
+          name: source.nodeName,
+          bridges: entries.get(source.nodeId)?.bridges ?? null,
+          stacks: entries.get(source.nodeId)?.stacks ?? [],
+        },
+        { name: targetName, bridges: entries.get(chosen)?.bridges ?? null },
+      )
+    : { lines: [], refusal: null, creates: [] };
   const changes = (block?.changes ?? []).filter(
     (change) => !skipped.includes(`${change.nodeId}:${change.project}`),
   );
   const secretsWrong = secretsProblem(secrets);
   const privateWrong = privateIpProblem(text, targetName, there !== null);
   const tooMany = block && !block.red ? moveProblem(changes) : null;
-  const problem = secretsWrong ?? privateWrong ?? tooMany;
+  const problem = secretsWrong ?? privateWrong ?? tooMany ?? bridging.refusal;
   const carried = chosenAccess === "contained" ? (read?.hostPorts ?? []) : [];
   const blocked = moveBlocker(addresses, original);
   const targetKey = entries.get(chosen)?.sealKey ?? "";
@@ -235,6 +247,12 @@ function MoveForm({
             access: chosenAccess,
             ...(sealed ? { secrets: sealed } : {}),
             hostPorts: carried,
+            networks: bridging.creates,
+            offers: stack?.network?.offers?.join(",") ?? "",
+            peers:
+              chosenAccess === "contained"
+                ? (stack?.network?.peers?.join(",") ?? "")
+                : "",
             ...(block && !block.red
               ? {
                   serves: servesArg(
@@ -376,6 +394,28 @@ function MoveForm({
                   )}
                   {tooMany && <p className="text-destructive">{tooMany}</p>}
                 </>
+              )}
+            </div>
+          )}
+          {(bridging.lines.length > 0 || bridging.refusal) && (
+            <div
+              className={cn(
+                "space-y-2 rounded-md border p-3 text-xs",
+                bridging.refusal && "border-destructive/40 bg-destructive/5",
+              )}
+            >
+              <p className="text-sm font-medium">Docker Networks</p>
+              {bridging.refusal ? (
+                <p className="text-destructive">{bridging.refusal}</p>
+              ) : (
+                bridging.lines.map((line) => (
+                  <p
+                    key={line}
+                    className={line.startsWith("+") ? "" : "text-warning"}
+                  >
+                    {line}
+                  </p>
+                ))
               )}
             </div>
           )}

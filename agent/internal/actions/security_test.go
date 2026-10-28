@@ -89,7 +89,7 @@ func TestASecurityCheckNamesWhatIsWrong(t *testing.T) {
 		"ssh-password": "serious", "ssh-root": "serious", "ssh-no-keys": "warning", "os-eol": "serious",
 		"updates-off": "warning", "updates-pending": "warning", "reboot-pending": "warning", "risky-container": "serious",
 		"public-ports": "warning", "firewall-off": "note", "fail2ban-off": "note", "dns-stub": "note",
-		"os-unverified": "note",
+		"os-unverified": "note", "root-login": "note",
 	}
 	for id, severity := range want {
 		if found[id].Severity != severity {
@@ -151,7 +151,7 @@ func TestAHealthyServerHasOnlyNotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := findingsOf(t, executor)
-	if len(found) != 1 || found["ssh-keys"].Severity != "note" || found["ssh-keys"].Detail != "SSH keys for root" {
+	if len(found) != 2 || found["ssh-keys"].Severity != "note" || found["ssh-keys"].Detail != "SSH keys for root" || found["root-login"].Severity != "note" {
 		t.Fatalf("findings %#v", found)
 	}
 }
@@ -172,7 +172,7 @@ func TestFullAccessStacksMayHoldDockerButTheirPortsAreNamed(t *testing.T) {
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if found := findingsOf(t, executor); len(found) != 2 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (adguard-dns-1)" {
+	if found := findingsOf(t, executor); len(found) != 3 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (adguard-dns-1)" {
 		t.Fatalf("findings %#v", found)
 	}
 }

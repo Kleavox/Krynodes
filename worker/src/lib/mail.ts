@@ -421,8 +421,15 @@ function warningParts(mail: WarningMail): {
       };
     case "port":
       return {
-        heading: "a port was opened outside Krynodes",
-        what: `${value("port")} was opened on a public address and not through Krynodes. If you did not open it`,
+        ...(value("port").includes("-")
+          ? {
+              heading: "temporary UDP ports were opened outside Krynodes",
+              what: `${value("process")} uses temporary UDP ports (${value("port")}) on a public address and not through Krynodes. If you did not start it`,
+            }
+          : {
+              heading: "a port was opened outside Krynodes",
+              what: `${value("port")} was opened on a public address and not through Krynodes. If you did not open it`,
+            }),
         rows: [
           ["Port", value("port")],
           ["Process", value("process")],

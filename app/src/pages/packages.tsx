@@ -33,7 +33,7 @@ import { agentState } from "@/lib/agent";
 import { canRestartServer } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import {
-  featureNeeded,
+  agentNeeded,
   packagesBlocker,
   packagesHeader,
   runningPackages,
@@ -113,7 +113,7 @@ export function PackagesPage() {
     (jobs.length > 0 ? "Waits until the running job finishes" : null);
   const checking =
     refresh.isPending || jobs.some((job) => job.action === "refresh");
-  const needed = featureNeeded(node);
+  const needed = agentNeeded(node);
   const release = overview.data.agentRelease.version;
   const updatable =
     release !== null &&

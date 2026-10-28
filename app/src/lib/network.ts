@@ -1,7 +1,7 @@
 import {
-  agentHasFeatures,
+  agentSupported,
   dnsName,
-  FEATURE_AGENT,
+  MIN_AGENT_VERSION,
   NETWORK,
   networkDocumentSchema,
   networkPreparedSchema,
@@ -81,7 +81,7 @@ const span = (milliseconds: number) =>
     ? `${Math.max(1, Math.floor(milliseconds / 60_000))} min`
     : formatDuration(milliseconds);
 
-function bounds(cidr: string): [number, number] | null {
+export function bounds(cidr: string): [number, number] | null {
   const parts = /^(\d+)\.(\d+)\.(\d+)\.(\d+)(?:\/(\d+))?$/u.exec(cidr);
   if (!parts) return null;
   const [a, b, c, d] = parts.slice(1, 5).map(Number) as [
@@ -96,7 +96,7 @@ function bounds(cidr: string): [number, number] | null {
   return [start, start + size - 1];
 }
 
-const overlaps = (first: string, second: string) => {
+export const overlaps = (first: string, second: string) => {
   const one = bounds(first);
   const two = bounds(second);
   return one !== null && two !== null && one[0] <= two[1] && two[0] <= one[1];
@@ -105,7 +105,7 @@ const overlaps = (first: string, second: string) => {
 const ipOf = (value: number) =>
   [24, 16, 8, 0].map((shift) => Math.floor(value / 2 ** shift) % 256).join(".");
 
-function networkOf(cidr: string): string | null {
+export function networkOf(cidr: string): string | null {
   const found = bounds(cidr);
   return found && cidr.includes("/")
     ? `${ipOf(found[0])}/${cidr.split("/")[1]}`
@@ -370,9 +370,9 @@ export function candidateState(
   agentVersion: string | null,
   rows: Row[] | null,
 ): { text: string; details: boolean; joinable: boolean } {
-  if (!agentHasFeatures(agentVersion)) {
+  if (!agentSupported(agentVersion)) {
     return {
-      text: `Needs agent ${FEATURE_AGENT} or newer`,
+      text: `Needs agent ${MIN_AGENT_VERSION} or newer`,
       details: false,
       joinable: false,
     };
@@ -1492,9 +1492,18 @@ const ACTION_TEXT: Partial<Record<ActionRecord["action"], string>> = {
   rekey: "Make a new network key",
 };
 
-export const networkActionText = (
-  action: Pick<ActionRecord, "kind" | "action">,
-) => (action.kind === "network" ? (ACTION_TEXT[action.action] ?? null) : null);
+export function networkActionText(
+  action: Pick<ActionRecord, "kind" | "action" | "nodeId" | "peer">,
+  names: Record<string, string> = {},
+): string | null {
+  if (action.kind !== "network") return null;
+  const own = names[action.nodeId];
+  const peer = action.peer ? names[action.peer] : undefined;
+  if (action.action === "test" && own && peer) {
+    return `Test the link ${own} ↔ ${peer}`;
+  }
+  return ACTION_TEXT[action.action] ?? null;
+}
 
 export interface TestEnd {
   nodeId: string;

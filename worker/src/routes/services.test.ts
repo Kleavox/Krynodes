@@ -26,6 +26,7 @@ const signedFor = (target: {
   kind: string;
   name: string;
   action: string;
+  args?: Record<string, string>;
 }) => ({
   grant: {
     grant: "Z3JhbnQ",
@@ -53,10 +54,10 @@ const reply = async (response: Response | Promise<Response>) =>
 function setup() {
   const { db, sqlite } = createTestDb();
   for (const [id, version, owner] of [
-    [A, "0.6.14", undefined],
-    [B, "0.6.14", undefined],
-    [C, "0.6.14", undefined],
-    [FOREIGN, "0.6.14", "someone-else"],
+    [A, "0.7.0", undefined],
+    [B, "0.7.0", undefined],
+    [C, "0.7.0", undefined],
+    [FOREIGN, "0.7.0", "someone-else"],
   ] as const) {
     seedNode(sqlite, { id, owner });
     sqlite
@@ -442,7 +443,7 @@ describe("logs", () => {
   });
 });
 
-describe("agents before 0.6.14", () => {
+describe("agents before 0.7.0", () => {
   it("are refused every action, a plain restart too", async () => {
     const { restart, sqlite } = setup();
     sqlite
@@ -452,7 +453,7 @@ describe("agents before 0.6.14", () => {
     expect(old.status).toBe(422);
     expect(await reply(old)).toMatchObject({
       code: "AGENT_TOO_OLD",
-      message: expect.stringContaining("0.6.14"),
+      message: expect.stringContaining("0.7.0"),
     });
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM actions").get()).toEqual({
       n: 0,
@@ -564,7 +565,7 @@ describe("stack, container and auto-restart commands", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.6.14', docker = 'ready' WHERE id IN (?, ?)",
+        "UPDATE nodes SET agent_version = '0.7.1', docker = 'ready' WHERE id IN (?, ?)",
       )
       .run(A, B);
     t.sqlite.prepare("UPDATE nodes SET docker = 'missing' WHERE id = ?").run(B);
@@ -702,7 +703,7 @@ describe("removed stacks", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.6.14', docker = 'ready' WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.1', docker = 'ready' WHERE id = ?",
       )
       .run(A);
     t.sqlite
@@ -781,5 +782,209 @@ describe("removed stacks", () => {
     const taken = await t.send("create", "old");
     expect(taken.status).toBe(409);
     expect((await reply(taken)).code).toBe("STACK_EXISTS");
+  });
+});
+
+describe("shared networks and admin users of agent 0.7.1", () => {
+  const KEY =
+    "AAAAC3NzaC1lZDI1NTE5AAAAIN+aw2ekALRgy/qt38BoTs6eGn55s71g0oi0WM0vVl+z";
+
+  function current() {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE nodes SET agent_version = '0.7.1', docker = 'ready' WHERE id = ?",
+      )
+      .run(A);
+    const send = (
+      action: string,
+      target: { nodeId: string; kind: string; name: string },
+      args?: Record<string, string>,
+    ) => {
+      const id = crypto.randomUUID();
+      return t.call("POST", "/api/actions", {
+        action,
+        targets: [
+          {
+            ...target,
+            id,
+            signed: signedFor({
+              ...target,
+              id,
+              action,
+              ...(args ? { args } : {}),
+            }),
+          },
+        ],
+      });
+    };
+    return { ...t, send };
+  }
+
+  it("creates and deletes a network with signed arguments, on agent 0.7.1 only", async () => {
+    const t = current();
+    const network = { nodeId: A, kind: "bridge", name: "apps-inner" };
+    const created = await t.send("create", network, {
+      kind: "contained",
+      subnet: "172.24.0.0/24",
+    });
+    expect(created.status).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    for (const args of [
+      { kind: "open", subnet: "172.24.0.0/24" },
+      { kind: "contained", subnet: "172.24.0.0" },
+    ]) {
+      expect((await t.send("create", network, args)).status).toBe(400);
+    }
+    expect((await t.send("remove", network)).status).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    t.sqlite
+      .prepare(
+        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'kuma', '/var/lib/kry-exec/compose/kuma', 1, 1, 1, 0, datetime('now'))",
+      )
+      .run(A);
+    expect(
+      (
+        await t.send(
+          "create",
+          { ...network, name: "kuma" },
+          {
+            kind: "full",
+            subnet: "172.23.0.0/16",
+          },
+        )
+      ).status,
+    ).toBe(201);
+    const behind = await t.send(
+      "create",
+      { ...network, nodeId: B },
+      {
+        kind: "full",
+        subnet: "172.23.0.0/16",
+      },
+    );
+    expect(behind.status).toBe(422);
+    expect(await reply(behind)).toMatchObject({
+      code: "AGENT_TOO_OLD",
+      message: expect.stringContaining("0.7.1"),
+    });
+    const unsigned = await t.call("POST", "/api/actions", {
+      action: "create",
+      targets: [
+        { ...network, args: { kind: "full", subnet: "172.23.0.0/16" } },
+      ],
+    });
+    expect(unsigned.status).toBe(400);
+  });
+
+  it("asks a server for an admin user with signed name and keys", async () => {
+    const t = current();
+    const server = { nodeId: A, kind: "host", name: "server" };
+    expect(
+      (await t.send("admin", server, { name: "musyaf", keys: `${KEY}:laptop` }))
+        .status,
+    ).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    expect(
+      (await t.send("admin", server, { name: "root", keys: `${KEY}:laptop` }))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await t.send(
+          "admin",
+          { ...server, name: "docker" },
+          {
+            name: "musyaf",
+            keys: `${KEY}:laptop`,
+          },
+        )
+      ).status,
+    ).toBe(400);
+    const behind = await t.send(
+      "admin",
+      { ...server, nodeId: B },
+      { name: "musyaf", keys: `${KEY}:laptop` },
+    );
+    expect(behind.status).toBe(422);
+  });
+
+  it("gates a stack's offers and reaches on agent 0.7.1 and checks their form", async () => {
+    const t = current();
+    t.sqlite.prepare("UPDATE nodes SET docker = 'ready' WHERE id = ?").run(B);
+    const stack = { kind: "compose", name: "kuma" };
+    const offers = { offers: "apps-inner/web=3001/tcp", peers: "" };
+    expect(
+      (await t.send("create", { ...stack, nodeId: A }, offers)).status,
+    ).toBe(201);
+    expect(
+      (
+        await t.send(
+          "create",
+          { ...stack, nodeId: A, name: "uptime" },
+          {
+            peers: "apps-inner/postgres:5432",
+          },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (await t.send("create", { ...stack, nodeId: B }, offers)).status,
+    ).toBe(422);
+    expect(
+      (
+        await t.send(
+          "create",
+          { ...stack, nodeId: B },
+          {
+            offers: "",
+            peers: "",
+            hostPorts: "3000/tcp",
+          },
+        )
+      ).status,
+    ).toBe(201);
+  });
+
+  it("returns each server's networks and names the pair a link test ran on", async () => {
+    const t = current();
+    const bridges = {
+      networks: [],
+      taken: [{ range: "172.18.0.0/16", by: "kuma_default" }],
+      claimed: [],
+    };
+    t.sqlite
+      .prepare("UPDATE nodes SET bridges = ? WHERE id = ?")
+      .run(JSON.stringify(bridges), A);
+    const peer = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a77";
+    t.sqlite
+      .prepare(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+           status, requested_by, requested_at, attachment)
+         VALUES ('t1', 'b1', 0, 'rolling', ?, 'network', 'kry0', 'test', 'done', 'owner', ?, ?),
+                ('t2', 'b2', 0, 'rolling', ?, 'network', 'kry0', 'test', 'done', 'owner', ?, 'not-json')`,
+      )
+      .run(
+        A,
+        new Date().toISOString(),
+        b64({ peer, address: "10.88.0.1", mtu: "1420" }),
+        A,
+        new Date().toISOString(),
+      );
+    await t.send("restart", { nodeId: A, kind: "docker", name: "adguard" });
+    const body = (await (await t.call("GET", "/api/services")).json()) as {
+      nodes: { id: string; bridges: unknown }[];
+      actions: { id: string; kind: string; peer: string | null }[];
+    };
+    expect(body.nodes.find((node) => node.id === A)!.bridges).toEqual(bridges);
+    expect(body.nodes.find((node) => node.id === B)!.bridges).toBeNull();
+    expect(
+      Object.fromEntries(
+        body.actions.map((action) => [
+          action.kind === "docker" ? "docker" : action.id,
+          action.peer,
+        ]),
+      ),
+    ).toEqual({ t1: peer, t2: null, docker: null });
   });
 });

@@ -1,5 +1,5 @@
 import {
-  agentHasFeatures,
+  agentSupported,
   codeOf,
   looser,
   QUARANTINE,
@@ -642,7 +642,7 @@ export function registerQuarantineRoutes(
               .bind(identity.id)
               .all<{ node_id: string; agent_version: string | null }>()
           ).results
-            .filter((member) => agentHasFeatures(member.agent_version))
+            .filter((member) => agentSupported(member.agent_version))
             .map((member) => member.node_id)
         : [];
     if (members.length > 0) {

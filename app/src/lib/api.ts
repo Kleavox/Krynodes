@@ -42,6 +42,7 @@ import type {
   UsageResponse,
   UsageShare,
 } from "../types";
+import { adminDigest, type EnrollAdmin } from "./admin-user";
 import type { EnrollSetup } from "./enroll";
 import { pollEnrollment } from "./enrollment";
 import { historyPath } from "./history";
@@ -233,11 +234,20 @@ export function usePrivateRanges(enabled: boolean) {
   });
 }
 
+export interface SetupChoice {
+  recommended: boolean;
+  docker: boolean;
+  hour: number;
+  network: boolean;
+  adminUser?: boolean;
+}
+
 export interface EnrollDefaults {
   recommended: boolean;
   docker: boolean;
   hour: number;
   network: boolean;
+  admin: EnrollAdmin | null;
 }
 
 export function useEnrollDefaults(enabled: boolean) {
@@ -250,11 +260,17 @@ export function useEnrollDefaults(enabled: boolean) {
 
 export const useSaveEnrollDefaults = () =>
   useApiMutation(
-    (defaults: EnrollDefaults) =>
-      apiFetch<EnrollDefaults>(
+    async (defaults: EnrollDefaults) => {
+      const admin = defaults.admin && {
+        name: defaults.admin.name,
+        keys: defaults.admin.keys.map((key) => key.line),
+      };
+      return guardedFetch<EnrollDefaults>(
         "/api/settings/enroll-defaults",
-        send("PUT", defaults),
-      ),
+        send("PUT", { ...defaults, admin }),
+        { op: "enroll.admin", target: await adminDigest(admin) },
+      );
+    },
     [queryKeys.enrollDefaults],
   );
 

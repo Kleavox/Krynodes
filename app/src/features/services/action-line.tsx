@@ -1,5 +1,5 @@
 import { Lines } from "@/features/packages/lines";
-import { useDevices, useServices } from "@/lib/api";
+import { useDevices, useOverview, useServices } from "@/lib/api";
 import { actionLine } from "@/lib/history";
 import { aptOutput, historyLines } from "@/lib/packages";
 import { isPending } from "@/lib/services";
@@ -23,12 +23,16 @@ export function ActionLine({
   const stacks = useServices().data?.nodes.find(
     (node) => node.id === action.nodeId,
   )?.stacks;
+  const names = Object.fromEntries(
+    (useOverview().data?.nodes ?? []).map((node) => [node.id, node.name]),
+  );
   const line = actionLine(action, {
     nodeName,
     showServer,
     devices,
     stacks,
     now,
+    names,
   });
   const changed = historyLines(action, nodeName);
   const output = aptOutput(action);

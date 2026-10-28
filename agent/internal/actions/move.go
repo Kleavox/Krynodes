@@ -300,8 +300,20 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		return e.refuse(request.ID, errors.New("compose did not return a readable file"))
 	}
 	document, own := e.ownAddress()
+	kindOf := e.kindOf(ctx)
+	uses := sharedUses(config, kindOf)
+	if err := checkShared(config, uses, meta.Access == "full"); err != nil {
+		return e.refuse(request.ID, err)
+	}
+	if err := e.checkEntries(name, meta, uses); err != nil {
+		return e.refuse(request.ID, err)
+	}
+	pins, err := e.pinShared(name, uses)
+	if err != nil {
+		return e.refuse(request.ID, err)
+	}
 	if meta.Access == "contained" {
-		if err := vet(config, directory); err != nil {
+		if err := vet(config, directory, kindOf); err != nil {
 			return e.refuse(request.ID, err)
 		}
 		if err := e.checkRegistries(ctx, config); err != nil {
@@ -314,6 +326,7 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		if own != "" {
 			addHosts(config, document.Members)
 		}
+		applyPins(config, config, pins)
 		if err := writeJSON(directory, "compose.krynodes.json", config, 0o640); err != nil {
 			return e.failed(request, err, "")
 		}
@@ -323,8 +336,13 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		return e.failed(request, err, "")
 	}
 	hosts := filepath.Join(directory, hostsFile)
-	if meta.Access == "full" && own != "" {
-		if err := writeJSON(directory, hostsFile, hostsOverride(config, document.Members), 0o640); err != nil {
+	if meta.Access == "full" && (own != "" || len(pins) > 0) {
+		override := map[string]any{"services": map[string]any{}}
+		if own != "" {
+			override = hostsOverride(config, document.Members)
+		}
+		applyPins(override, config, pins)
+		if err := writeJSON(directory, hostsFile, override, 0o640); err != nil {
 			return e.failed(request, err, "")
 		}
 		stack.Files = append(stack.Files, hosts)
@@ -348,6 +366,7 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 	if states, err := e.healthy(ctx, stack); err != nil {
 		return e.failed(request, err, states)
 	}
+	meta.Networks = madeNetworks(config, name)
 	if err := writeJSON(directory, "krynodes.json", meta, 0o640); err != nil {
 		return e.failed(request, err, "")
 	}

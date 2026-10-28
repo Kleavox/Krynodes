@@ -7,12 +7,13 @@ import { SmallLabel, StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useCancelActions, useDevices } from "@/lib/api";
-import { capitalize, nodeState, parseTimestamp } from "@/lib/format";
+import { nodeState, parseTimestamp } from "@/lib/format";
 import { actorOf } from "@/lib/operations";
 import {
   actionText,
   displayName,
   isPending,
+  STATE_LABEL,
   toTarget,
   type ServiceMember,
 } from "@/lib/services";
@@ -33,6 +34,8 @@ const TONE: Record<ServiceState, "ok" | "bad" | "warn" | "idle"> = {
   starting: "warn",
   stopped: "idle",
   failed: "bad",
+  boot: "idle",
+  unneeded: "idle",
 };
 
 const KIND: Record<"stack" | ServiceKind, string> = {
@@ -222,7 +225,7 @@ export function ServiceRows({
               </span>
               {!branch && <KindLabel kind={member.entry.kind} />}
             </span>
-            <StateCell label={capitalize(member.entry.state)} />
+            <StateCell label={STATE_LABEL[member.entry.state]} />
             <span
               className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground empty:hidden md:col-span-1 md:empty:block"
               aria-live="polite"

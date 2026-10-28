@@ -3,10 +3,12 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { randomToken, sha256 } from "../lib/crypto";
+import { parseKeyLine } from "../lib/ssh";
 import { liveRange, readNetwork } from "../network/document";
 import { loadFleet, type Fleet } from "../trust/fleet";
 import { confirmed, confirmingDevice } from "../trust/intent";
 import { agentRateLimit } from "./agent";
+import { readEnrollDefaults } from "./settings";
 import {
   agentOrigin,
   invalidRequest,
@@ -22,9 +24,17 @@ const setupSchema = z.object({
   docker: z.boolean().default(false),
   rebootHour: z.number().int().min(0).max(23).nullable().default(null),
   network: z.boolean().default(false),
+  adminUser: z.boolean().default(false),
 });
 
-type Setup = z.infer<typeof setupSchema>;
+const storedSchema = setupSchema.extend({
+  admin: z
+    .object({ name: z.string(), keys: z.array(z.string()) })
+    .nullable()
+    .default(null),
+});
+
+type Setup = z.infer<typeof storedSchema>;
 
 const SHELL_SAFE = /^[A-Za-z0-9._:/,=+-]+$/u;
 const TAIL = /\nmain "\$@"\n$/u;
@@ -37,10 +47,10 @@ const commandFor = (env: Env, token: string) =>
 
 function readSetup(text: string | null): Setup {
   try {
-    const parsed = setupSchema.safeParse(JSON.parse(text ?? "{}"));
-    return parsed.success ? parsed.data : setupSchema.parse({});
+    const parsed = storedSchema.safeParse(JSON.parse(text ?? "{}"));
+    return parsed.success ? parsed.data : storedSchema.parse({});
   } catch {
-    return setupSchema.parse({});
+    return storedSchema.parse({});
   }
 }
 
@@ -76,6 +86,13 @@ function installArgs(
     }
   }
   if (setup.network && range) args.push("--network", range);
+  if (setup.adminUser && setup.admin) {
+    args.push("--admin", setup.admin.name);
+    setup.admin.keys.forEach((line, index) => {
+      const key = parseKeyLine(line, index);
+      if (key) args.push("--admin-key", `${key.blob}:${key.label}`);
+    });
+  }
   return args;
 }
 
@@ -110,7 +127,10 @@ export function registerEnrollmentRoutes(
         context.get("identity").id,
         await sha256(token),
         expiresAt,
-        JSON.stringify(setup.data),
+        JSON.stringify({
+          ...setup.data,
+          admin: (await readEnrollDefaults(context.env.DB)).admin,
+        }),
         confirmingDevice(context),
       )
       .run();
@@ -132,7 +152,8 @@ export function registerEnrollmentRoutes(
     const owner = context.get("identity").id;
     const result = await db
       .prepare(
-        `UPDATE enrollment_tokens SET setup = ?
+        `UPDATE enrollment_tokens
+         SET setup = json_set(?, '$.admin', json(json_extract(setup, '$.admin')))
          WHERE id = ? AND owner_user_id = ? AND used_at IS NULL AND expires_at > ?`,
       )
       .bind(

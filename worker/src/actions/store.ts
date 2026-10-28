@@ -22,7 +22,8 @@ export type ActionKind =
   | "host"
   | "vault"
   | "apt"
-  | "network";
+  | "network"
+  | "bridge";
 export type ActionVerb =
   | "start"
   | "stop"
@@ -80,7 +81,8 @@ export type ActionVerb =
   | "policy"
   | "save"
   | "key"
-  | "join";
+  | "join"
+  | "admin";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";

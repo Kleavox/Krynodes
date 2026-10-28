@@ -13,12 +13,14 @@ import type {
 import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
 import { agentCurrent } from "./devices";
-import { capitalize, nodeState, timeAgo } from "./format";
+import { nodeState, timeAgo } from "./format";
 import {
   displayName,
   failureText,
   groupByServer,
   isRead,
+  resting,
+  STATE_LABEL,
   toTarget,
   type ServerGroup,
   type ServiceMember,
@@ -293,7 +295,8 @@ export interface ServerList extends ServerGroup {
   stacks: ServerStack[];
 }
 
-const stopped = (member: ServiceMember) => member.entry.state !== "running";
+const stopped = (member: ServiceMember) =>
+  member.entry.state !== "running" && !resting(member.entry.state);
 
 const unhealthy = (item: ServerStack) =>
   item.member.stack.running < item.member.stack.total ||
@@ -483,8 +486,8 @@ const stateText = (
   now: number,
 ) =>
   entry.since
-    ? `${capitalize(entry.state)} ${timeAgo(entry.since, now)}`
-    : capitalize(entry.state);
+    ? `${STATE_LABEL[entry.state]} ${timeAgo(entry.since, now)}`
+    : STATE_LABEL[entry.state];
 
 export function servicesAttention(
   data: ServicesResponse,
@@ -560,7 +563,7 @@ export function servicesAttention(
         node,
         kind: entry.kind,
         name: displayName(entry.kind, entry.name),
-        state: capitalize(entry.state),
+        state: STATE_LABEL[entry.state],
         reason: failure ? failureText(failure, now) : stateText(entry, now),
         primary:
           entry.state === "running" || entry.state === "starting"

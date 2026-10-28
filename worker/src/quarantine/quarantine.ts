@@ -1,4 +1,4 @@
-import { agentHasFeatures, QUARANTINE } from "@krynodes/protocol";
+import { agentSupported, QUARANTINE } from "@krynodes/protocol";
 
 import { createBatch } from "../actions/store";
 import { toB64url } from "../lib/b64url";
@@ -170,9 +170,7 @@ export async function quarantine(
     );
   }
   timeline.tailnet = tailnetOf(suspect.tailscale);
-  const servers = others.filter((other) =>
-    agentHasFeatures(other.agent_version),
-  );
+  const servers = others.filter((other) => agentSupported(other.agent_version));
   if (timeline.tailnet.length > 0 && servers.length > 0) {
     queue(
       createBatch(db, {

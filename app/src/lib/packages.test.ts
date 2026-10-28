@@ -13,7 +13,7 @@ import {
   aptOutput,
   busyText,
   changedLines,
-  featureNeeded,
+  agentNeeded,
   finishedLines,
   historyLines,
   installLines,
@@ -197,13 +197,13 @@ const running: TailscaleReport = {
 
 describe("the 0.7.0 gate", () => {
   it("names the version a server runs", () => {
-    expect(featureNeeded({ agent_version: "0.6.14" })).toBe(
+    expect(agentNeeded({ agent_version: "0.6.14" })).toBe(
       "Needs agent 0.7.0 or newer · it runs 0.6.14",
     );
-    expect(featureNeeded({ agent_version: null })).toBe(
+    expect(agentNeeded({ agent_version: null })).toBe(
       "Needs agent 0.7.0 or newer · it runs --",
     );
-    expect(featureNeeded({ agent_version: "0.7.0" })).toBeNull();
+    expect(agentNeeded({ agent_version: "0.7.0" })).toBeNull();
   });
 
   it("says why a change waits", () => {

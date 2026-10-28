@@ -1,6 +1,7 @@
 import { Plus, X } from "lucide-react";
 import { useState } from "react";
 
+import { SmallLabel } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -10,7 +11,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useBridges } from "@/features/nodes/use-bridges";
 import { useNetwork } from "@/lib/api";
+import {
+  KIND_TAG,
+  networkBoxes,
+  stackNetworkArgs,
+  type NetworkBox,
+} from "@/lib/bridges";
 import {
   publishedPorts,
   publishedRanges,
@@ -43,7 +51,7 @@ const ACCESS: { value: Access; label: string; detail: string }[] = [
     value: "contained",
     label: "Contained",
     detail:
-      "For projects you are trying out. Ready images only, ports on the server itself, at most 1 CPU, 1 GB and 512 processes per service.",
+      "For apps that stay isolated. Ready images only, ports on the server itself, at most 1 CPU, 1 GB and 512 processes per service.",
   },
   {
     value: "full",
@@ -305,7 +313,7 @@ export function ReachField({
         )}
       >
         {problem ??
-          "Ports on this server the stack may open, such as 3000/tcp, separated by commas. Leave it empty to keep the server closed to it."}
+          "Ports on this server the stack may open, such as 3000/tcp, separated by commas. Ports other stacks publish count too. Leave it empty to keep the server closed to it."}
       </p>
     </div>
   );
@@ -551,6 +559,159 @@ export function NetworkSection({
           )}
         </p>
       </div>
+    </div>
+  );
+}
+
+export function useNetworkBoxes(
+  node: { id: string; name: string },
+  text: string,
+  project: string,
+  access: Access,
+) {
+  const { server } = useBridges(node);
+  const [offers, setOffers] = useState<Record<string, string>>({});
+  const [ticks, setTicks] = useState<Record<string, boolean>>({});
+  const boxes = networkBoxes(text, server, project, access);
+  const { args, problem } = stackNetworkArgs(boxes, offers, ticks);
+  return {
+    boxes,
+    offers,
+    onOffer: (key: string, value: string) =>
+      setOffers({ ...offers, [key]: value }),
+    ticks,
+    onTick: (key: string, value: boolean) =>
+      setTicks({ ...ticks, [key]: value }),
+    args,
+    problem,
+  };
+}
+
+function Box({
+  box,
+  offers,
+  onOffer,
+  ticks,
+  onTick,
+}: {
+  box: NetworkBox;
+  offers: Record<string, string>;
+  onOffer: (key: string, value: string) => void;
+  ticks: Record<string, boolean>;
+  onTick: (key: string, value: boolean) => void;
+}) {
+  if (box.refusal) {
+    return (
+      <p className="rounded-md border border-destructive/40 p-3 text-xs text-destructive">
+        {box.refusal}
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-3 rounded-md border p-3 text-sm">
+      <div>
+        <p className="flex flex-wrap items-center gap-2 font-medium">
+          <span className="font-mono">{box.name}</span>
+          {box.kind && <SmallLabel>{KIND_TAG[box.kind]}</SmallLabel>}
+          {box.guest && <SmallLabel>guest</SmallLabel>}
+        </p>
+        <p className="text-xs text-muted-foreground">{box.address}</p>
+      </div>
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium">Offers on This Network</p>
+        {box.offers.map((offer) => {
+          const key = `${box.name}/${offer.service}`;
+          return (
+            <div
+              key={key}
+              className="grid grid-cols-[minmax(64px,auto)_minmax(0,1fr)] items-center gap-2"
+            >
+              <label
+                htmlFor={`offer-${key}`}
+                className="truncate font-mono text-xs"
+              >
+                {offer.service}
+              </label>
+              <Input
+                id={`offer-${key}`}
+                className="font-mono"
+                placeholder="3001/tcp"
+                autoComplete="off"
+                spellCheck={false}
+                value={offers[key] ?? offer.value}
+                onChange={(event) => onOffer(key, event.target.value)}
+              />
+            </div>
+          );
+        })}
+        <p className="text-xs text-muted-foreground">
+          Ports other members may reach on it. Leave it empty to offer nothing.
+        </p>
+      </div>
+      {!box.guest && (
+        <fieldset className="space-y-1.5">
+          <legend className="text-xs font-medium">Reach Stack On</legend>
+          {box.reach.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No other stack offers a port on {box.name} yet.
+            </p>
+          ) : (
+            box.reach.map((each) => {
+              const key = `${box.name}/${each.entry}`;
+              return (
+                <label key={key} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-primary"
+                    checked={ticks[key] ?? each.ticked}
+                    onChange={(event) => onTick(key, event.target.checked)}
+                  />
+                  <span className="min-w-0 truncate font-mono text-xs">
+                    {each.entry}
+                  </span>
+                  {each.guest && <SmallLabel>guest</SmallLabel>}
+                  {each.gone && (
+                    <span className="text-xs text-muted-foreground">
+                      Not offered now
+                    </span>
+                  )}
+                </label>
+              );
+            })
+          )}
+          <p className="text-xs text-muted-foreground">
+            Reach a ticked one by that name, such as{" "}
+            {box.reach[0]?.entry.replace(/\/(tcp|udp)$/u, "") ??
+              "postgres.db:5432"}
+            . Everything else on {box.name} stays closed.
+          </p>
+        </fieldset>
+      )}
+    </div>
+  );
+}
+
+export function NetworkBoxes({
+  network,
+}: {
+  network: ReturnType<typeof useNetworkBoxes>;
+}) {
+  if (network.boxes.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {network.boxes.map((box) => (
+        <Box
+          key={box.name}
+          box={box}
+          offers={network.offers}
+          onOffer={network.onOffer}
+          ticks={network.ticks}
+          onTick={network.onTick}
+        />
+      ))}
+      {network.problem && !network.boxes.some((box) => box.refusal) && (
+        <p className="text-xs text-destructive">{network.problem}</p>
+      )}
     </div>
   );
 }

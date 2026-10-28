@@ -1,4 +1,4 @@
-import type { EnrollDefaults } from "./api";
+import type { SetupChoice } from "./api";
 import { toUtcHour } from "./security";
 
 export interface EnrollSetup {
@@ -6,10 +6,11 @@ export interface EnrollSetup {
   docker: boolean;
   rebootHour: number | null;
   network?: true;
+  adminUser?: true;
 }
 
 export const enrollSetup = (
-  choice: EnrollDefaults,
+  choice: SetupChoice,
   offset: number,
 ): EnrollSetup => ({
   recommended: choice.recommended,
@@ -18,4 +19,5 @@ export const enrollSetup = (
     ? Math.floor(toUtcHour(choice.hour, offset))
     : null,
   ...(choice.network ? { network: true as const } : {}),
+  ...(choice.adminUser ? { adminUser: true as const } : {}),
 });

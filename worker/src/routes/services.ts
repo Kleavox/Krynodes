@@ -17,6 +17,12 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import { requestRefresh } from "../actions/inventory";
+import {
+  adminArgsValid,
+  bridgeArgsValid,
+  hasStackNetworkArgs,
+  stackNetworkArgsValid,
+} from "../bridges/args";
 import { assertionUv } from "../lib/webauthn";
 import {
   cancelStatement,
@@ -85,6 +91,7 @@ const actionRequestSchema = z.object({
     "unprepare",
     "rekey",
     "unblock",
+    "admin",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -99,6 +106,7 @@ const actionRequestSchema = z.object({
           "host",
           "apt",
           "network",
+          "bridge",
         ]),
         name: z.string().min(1).max(128),
         signed: signedCommandSchema.optional(),
@@ -132,10 +140,25 @@ const askedAttachment = (args: Record<string, string> | undefined) => {
   return bytes.length > MAX_ASKED_BYTES ? null : toB64url(bytes);
 };
 
-const needsFeatures = (target: { kind: string; name: string }) =>
-  target.kind === "apt" ||
-  target.kind === "network" ||
-  (target.kind === "host" && target.name === "tailscale");
+const needsFeatures = (
+  target: { kind: string; name: string },
+  action: string,
+  args: Record<string, string>,
+) =>
+  target.kind === "bridge" ||
+  (target.kind === "host" && action === "admin") ||
+  (target.kind === "compose" && hasStackNetworkArgs(args));
+
+const signedArgsFit = (
+  kind: string,
+  action: string,
+  args: Record<string, string>,
+) =>
+  kind === "bridge"
+    ? bridgeArgsValid(action, args)
+    : kind === "host" && action === "admin"
+      ? adminArgsValid(args)
+      : kind !== "compose" || stackNetworkArgsValid(args);
 
 const askedFits = (
   kind: string,
@@ -152,11 +175,25 @@ const commandSchema = z.object({
   kind: z.string(),
   name: z.string(),
   action: z.string(),
+  args: z.record(z.string(), z.string()).optional(),
 });
 
 const refreshSchema = z.object({
   nodeIds: z.array(z.string().uuid()).max(100).optional(),
 });
+
+function peerOf(row: ActionRow): string | null {
+  if (row.kind !== "network" || row.action !== "test" || !row.attachment) {
+    return null;
+  }
+  try {
+    const peer = (decodeJson(row.attachment) as { peer?: unknown } | null)
+      ?.peer;
+    return typeof peer === "string" ? peer : null;
+  } catch {
+    return null;
+  }
+}
 
 export function toActionRecord(row: ActionRow) {
   if (SEALED_VERBS.includes(row.action)) row = { ...row, output: null };
@@ -179,6 +216,7 @@ export function toActionRecord(row: ActionRow) {
     output: row.output,
     deviceId: row.device_id,
     progress: parsed(row.progress ?? null),
+    peer: peerOf(row),
   };
 }
 
@@ -231,7 +269,7 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
-                  seal_key, security, vault, tailscale_vault
+                  seal_key, security, vault, tailscale_vault, bridges
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
@@ -245,6 +283,7 @@ export function registerServiceRoutes(
           security: string | null;
           vault: string | null;
           tailscale_vault: string | null;
+          bridges: string | null;
         }>(),
       db
         .prepare(
@@ -333,6 +372,7 @@ export function registerServiceRoutes(
         security: securityReport(node.security, ranges, network),
         vault: parsed(node.vault),
         tailscaleVault: parsed(node.tailscale_vault),
+        bridges: parsed(node.bridges),
         webAddresses: addresses.results
           .filter((address) => address.node_id === node.id)
           .map(({ node_id: _, ...address }) => address),
@@ -487,12 +527,16 @@ export function registerServiceRoutes(
     ) {
       return invalidRequest(context);
     }
+    const signedArgs = new Map<string, Record<string, string>>();
     if (
       !unsigned &&
       targets.some((target) => {
         const command = commandSchema.safeParse(
           decodeJson(target.signed!.command),
         );
+        if (command.success) {
+          signedArgs.set(targetKey(target), command.data.args ?? {});
+        }
         return (
           !command.success ||
           command.data.id !== target.id ||
@@ -510,6 +554,19 @@ export function registerServiceRoutes(
         },
         400,
       );
+    }
+    const argsOf = (target: { nodeId: string; kind: string; name: string }) =>
+      signedArgs.get(targetKey(target)) ?? {};
+    if (
+      targets.some(
+        (target) =>
+          (target.kind === "bridge" ||
+            (target.kind === "host" && action === "admin") ||
+            target.kind === "compose") &&
+          !signedArgsFit(target.kind, action, argsOf(target)),
+      )
+    ) {
+      return invalidRequest(context);
     }
     if (
       !unsigned &&
@@ -617,7 +674,7 @@ export function registerServiceRoutes(
     }
     const behind = targets.find(
       (target) =>
-        needsFeatures(target) &&
+        needsFeatures(target, action, argsOf(target)) &&
         !agentHasFeatures(byId.get(target.nodeId)!.agent_version),
     );
     if (behind) {
@@ -774,6 +831,7 @@ export function registerServiceRoutes(
           (target) =>
             target.kind !== "apt" &&
             target.kind !== "network" &&
+            target.kind !== "bridge" &&
             !present.has(targetKey(target)),
         )
       ) {

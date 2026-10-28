@@ -96,6 +96,8 @@ func run(args []string) error {
 		return setupCommand(args)
 	case "trust":
 		return trustDevices(args)
+	case "admin-user":
+		return adminUserCommand(args)
 	case "version":
 		fmt.Println(version)
 		return nil

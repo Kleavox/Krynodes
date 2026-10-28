@@ -4,7 +4,7 @@ import {
   type TailnetRule,
   type TailscaleReport,
 } from "@krynodes/protocol";
-import { FEATURE_AGENT } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
 import type {
   ActionRecord,
@@ -788,7 +788,7 @@ export async function connectSteps(input: {
   if (input.holders.length < 2) {
     return {
       ok: false as const,
-      reason: `Connect needs two servers with agent ${FEATURE_AGENT} that this device reaches; ${input.holders.length} is.`,
+      reason: `Connect needs two servers with agent ${MIN_AGENT_VERSION} that this device reaches; ${input.holders.length} is.`,
     };
   }
   return {

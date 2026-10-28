@@ -222,6 +222,9 @@ func (e Executor) remove(ctx context.Context, request Request, stack Stack) Resu
 	if err := e.saveBin(bin); err != nil {
 		return e.failed(request, err, "")
 	}
+	if err := e.unpin(stack.Project); err != nil {
+		return e.failed(request, err, "")
+	}
 	e.syncRules(ctx)
 	return Result{ID: request.ID, OK: true, Output: output, FinishedAt: e.stamp()}
 }
@@ -262,6 +265,7 @@ func (e Executor) create(ctx context.Context, request Request, command Command, 
 		ids, err := e.docker(ctx, collectTimeout, "inspect", "ps", "-a", "--no-trunc", "--filter", "label=com.docker.compose.project="+name, "--format", "{{.ID}}")
 		if err == nil && strings.TrimSpace(string(ids)) == "" {
 			os.RemoveAll(directory)
+			e.unpin(name)
 		}
 		return result
 	}
@@ -359,7 +363,7 @@ func unknownKey(values map[string]any, allowed []string) string {
 	return ""
 }
 
-func vet(config map[string]any, directory string) error {
+func vet(config map[string]any, directory string, kindOf func(string) string) error {
 	project := asText(config["name"])
 	if project == "" {
 		project = filepath.Base(directory)
@@ -368,7 +372,16 @@ func vet(config map[string]any, directory string) error {
 	for _, name := range sortedKeys(networks) {
 		network := asMap(networks[name])
 		if network["external"] == true {
-			return fmt.Errorf("network %s is external; a stack may only use its own networks", name)
+			shared := externalName(name, network)
+			switch kindOf(shared) {
+			case "contained":
+				continue
+			case "full":
+				return fmt.Errorf("A Contained stack cannot join %s, a Full Access network.", shared)
+			case "outside":
+				return fmt.Errorf("%s on this server was not made by Krynodes as a Contained network. Create one under Docker Networks.", shared)
+			}
+			return fmt.Errorf("%s is not on this server. Create it under Docker Networks first.", shared)
 		}
 		if own := asText(network["name"]); own != "" && own != project+"_"+name {
 			return fmt.Errorf("network %s is named %s; a Contained stack may only use its own networks", name, own)
@@ -649,7 +662,7 @@ func (e Executor) stillContained(ctx context.Context, directory string) error {
 	if err := readJSON(filepath.Join(directory, "compose.krynodes.json"), &config); err != nil {
 		return err
 	}
-	if err := vet(config, directory); err != nil {
+	if err := vet(config, directory, e.kindOf(ctx)); err != nil {
 		return fmt.Errorf("%w; it was made under older rules, so edit it or choose Full access", err)
 	}
 	return e.checkRegistries(ctx, config)

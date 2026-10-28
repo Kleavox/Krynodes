@@ -17,10 +17,11 @@ describe("agent versions", () => {
     expect(compareVersions("0.3.1", "0.3.1")).toBe(0);
   });
 
-  it("supports only agent 0.6.14 and later, and builds from source", () => {
-    expect(MIN_AGENT_VERSION).toBe("0.6.14");
-    expect(agentSupported("0.6.14")).toBe(true);
+  it("supports only agent 0.7.0 and later, and builds from source", () => {
+    expect(MIN_AGENT_VERSION).toBe("0.7.0");
     expect(agentSupported("0.7.0")).toBe(true);
+    expect(agentSupported("0.7.1")).toBe(true);
+    expect(agentSupported("0.6.14")).toBe(false);
     expect(agentSupported("0.10.0")).toBe(true);
     expect(agentSupported("0.6.13")).toBe(false);
     expect(agentSupported("0.6.0")).toBe(false);
@@ -40,11 +41,11 @@ describe("agent versions", () => {
     expect(agentUpdatable(undefined)).toBe(false);
   });
 
-  it("gates the new features on agent 0.7.0", () => {
-    expect(FEATURE_AGENT).toBe("0.7.0");
-    expect(agentHasFeatures("0.7.0")).toBe(true);
+  it("gates the new features on agent 0.7.1", () => {
+    expect(FEATURE_AGENT).toBe("0.7.1");
     expect(agentHasFeatures("0.7.1")).toBe(true);
-    expect(agentHasFeatures("0.6.14")).toBe(false);
+    expect(agentHasFeatures("0.7.2")).toBe(true);
+    expect(agentHasFeatures("0.7.0")).toBe(false);
     expect(agentHasFeatures("dev")).toBe(true);
     expect(agentHasFeatures(null)).toBe(false);
   });

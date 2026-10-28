@@ -191,6 +191,16 @@ describe("quarantine mail", () => {
         ["Port: 0.0.0.0:4444/tcp", "Process: nc"],
       ],
       [
+        "port",
+        { port: "32768-60999/udp", process: "tailscaled" },
+        "vps-1: temporary UDP ports were opened outside Krynodes",
+        [
+          "tailscaled uses temporary UDP ports (32768-60999/udp) on a public address and not through Krynodes. If you did not start it",
+          "Port: 32768-60999/udp",
+          "Process: tailscaled",
+        ],
+      ],
+      [
         "quiet",
         { lastReport: "2026-10-27T20:58:00.000Z", seenBy: "vps-2, vps-3" },
         "vps-1: the agent went quiet while the server is up",

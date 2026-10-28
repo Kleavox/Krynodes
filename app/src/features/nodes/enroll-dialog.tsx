@@ -22,18 +22,22 @@ import {
   useEnrollmentStatus,
   useNetwork,
   useNetworkNext,
+  useOverview,
   useUpdateEnrollment,
-  type EnrollDefaults,
+  type SetupChoice,
 } from "@/lib/api";
+import { loginLine } from "@/lib/admin-user";
 import { enrollSetup } from "@/lib/enroll";
 import { enrollmentStep } from "@/lib/enrollment";
 import { errorMessage } from "@/lib/http";
 import { queryKeys } from "@/lib/query-client";
 
+import { CopyCommand } from "@/components/copy-command";
+
 import { EnrollmentCommand } from "./enrollment-command";
 import { SetupOptions } from "./setup-options";
 
-const FALLBACK: EnrollDefaults = {
+const FALLBACK: SetupChoice = {
   recommended: true,
   docker: true,
   hour: 3,
@@ -51,8 +55,13 @@ export function EnrollDialog({
   const create = useCreateEnrollment();
   const update = useUpdateEnrollment();
   const defaults = useEnrollDefaults(open);
-  const [chosen, setChosen] = useState<EnrollDefaults | null>(null);
-  const setup = chosen ?? defaults.data ?? FALLBACK;
+  const [chosen, setChosen] = useState<SetupChoice | null>(null);
+  const admin = defaults.data?.admin ?? null;
+  const setup =
+    chosen ??
+    (defaults.data
+      ? { ...defaults.data, adminUser: (admin?.keys.length ?? 0) > 0 }
+      : FALLBACK);
   const deviceCount = useDevices().data?.devices.length ?? 0;
   const status = useEnrollmentStatus(open ? create.data?.id : undefined);
   const step = enrollmentStep(Boolean(create.data), status.data);
@@ -61,6 +70,17 @@ export function EnrollDialog({
   const waiting = network?.waiting.find((entry) => entry.nodeId === node?.id);
   const next = useNetworkNext(waiting ? [waiting.nodeId] : []);
   const gets = next.data?.addresses[0]?.address ?? null;
+  const overview = useOverview();
+  const login = admin
+    ? loginLine(
+        admin.name,
+        overview.data?.nodes
+          .find((entry) => entry.id === node?.id)
+          ?.addresses?.find(
+            (address) => address.family === 4 && !address.router,
+          )?.address ?? null,
+      )
+    : null;
 
   useEffect(() => {
     if (step === "connected") {
@@ -78,7 +98,7 @@ export function EnrollDialog({
   };
   const offset = () => new Date().getTimezoneOffset();
   const start = () => create.mutate(enrollSetup(setup, offset()));
-  const change = (next: EnrollDefaults) => {
+  const change = (next: SetupChoice) => {
     setChosen(next);
     if (create.data) {
       update.mutate({ id: create.data.id, setup: enrollSetup(next, offset()) });
@@ -103,7 +123,7 @@ export function EnrollDialog({
                   : "No trusted device yet. Set one up first (Trusted devices in the account menu) so this server trusts it from the start; until then it takes the first devices the dashboard sends."}
               </p>
             </DialogHeader>
-            <SetupOptions value={setup} onChange={change} />
+            <SetupOptions value={setup} onChange={change} admin={admin} />
             {create.error && (
               <p role="alert" className="text-sm text-destructive">
                 {errorMessage(create.error)}
@@ -134,6 +154,7 @@ export function EnrollDialog({
               enrollment={create.data}
               setup={setup}
               onSetupChange={change}
+              admin={admin}
             />
             {update.error && (
               <p role="alert" className="text-sm text-destructive">
@@ -186,6 +207,20 @@ export function EnrollDialog({
                       Join
                     </Link>
                   </Button>
+                )}
+              </div>
+            )}
+            {setup.adminUser && admin && node && (
+              <div className="space-y-2 rounded-lg border px-3.5 py-3 text-sm">
+                <p className="font-medium">Log In as {admin.name} Now</p>
+                <p className="text-xs text-muted-foreground">
+                  Root can no longer log in over SSH. Check this works before
+                  you close the root session.
+                </p>
+                {login ? (
+                  <CopyCommand command={login} />
+                ) : (
+                  <p className="font-mono text-xs text-muted-foreground">--</p>
                 )}
               </div>
             )}

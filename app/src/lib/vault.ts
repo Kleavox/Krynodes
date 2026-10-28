@@ -1,8 +1,4 @@
-import {
-  agentHasFeatures,
-  FEATURE_AGENT,
-  MIN_AGENT_VERSION,
-} from "@krynodes/protocol/versions";
+import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import type {
   ActionRecord,
   ActionVerb,
@@ -40,7 +36,7 @@ const WORDS = {
   tailscale: {
     thing: "the credential",
     again: "Change the credential to share it again.",
-    agent: FEATURE_AGENT,
+    agent: MIN_AGENT_VERSION,
   },
 } as const;
 
@@ -252,6 +248,9 @@ export function moveSteps(input: {
   serves?: string;
   reaches?: string;
   reach?: { nodeId: string; project: string; reaches: string[] }[];
+  networks?: { name: string; kind: string; subnet: string }[];
+  offers?: string;
+  peers?: string;
   original: "now" | "later" | "keep";
 }): OperationTarget[] {
   const args = Object.fromEntries(
@@ -259,6 +258,8 @@ export function moveSteps(input: {
       ["hostPorts", input.hostPorts?.join(",") ?? ""],
       ["serves", input.serves ?? ""],
       ["reaches", input.reaches ?? ""],
+      ["offers", input.offers ?? ""],
+      ["peers", input.peers ?? ""],
     ].filter(([, value]) => value !== ""),
   );
   return [
@@ -269,6 +270,13 @@ export function moveSteps(input: {
       action: "export",
       args: { to: input.target, key: input.targetKey },
     },
+    ...(input.networks ?? []).map((network) => ({
+      nodeId: input.target,
+      kind: "bridge" as const,
+      name: network.name,
+      action: "create" as const,
+      args: { kind: network.kind, subnet: network.subnet },
+    })),
     {
       nodeId: input.target,
       kind: "compose",
@@ -344,7 +352,7 @@ export const splitHolders = (
       (node) =>
         usable(node) &&
         node.sealKey &&
-        (name === "cloudflare" || agentHasFeatures(node.version)),
+        (name === "cloudflare" || agentSupported(node.version)),
     )
     .map((node) => ({ nodeId: node.id, sealKey: node.sealKey! }));
 

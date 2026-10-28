@@ -20,6 +20,9 @@ type SetupOptions struct {
 	RebootHour  *int
 	Network     string
 	Command     string
+	Admin       string
+	AdminKeys   []recipes.AdminKey
+	Terminal    recipes.Terminal
 }
 
 type Asker func(question string) (yes bool, asked bool)
@@ -92,6 +95,11 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	mark := func(sign, title, rest string) {
 		fmt.Fprintf(out, "%s %s%s\n", sign, title, rest)
 	}
+	defer e.holdWatch()()
+	admin := false
+	if options.Admin != "" {
+		_, admin = e.addAdmin(ctx, options.Admin, options.AdminKeys, options.Terminal, mark)
+	}
 	if options.Recommended {
 		state := e.readRecipes()
 		for _, step := range setupSteps {
@@ -153,6 +161,10 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			mark("✓", "Private network ready", " · it joins when you press Join on the dashboard")
 		}
 	}
+	if admin {
+		e.noRootLogin(ctx, options.Admin, mark)
+	}
+	e.retake(ctx, true)
 	os.Remove(filepath.Join(e.StateDir, "security.json"))
 	return nil
 }

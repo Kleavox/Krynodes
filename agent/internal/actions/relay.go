@@ -150,6 +150,7 @@ func (r *Relay) Poll(ctx context.Context) error {
 				report.Inventory.Security = inventory.Security
 				report.Inventory.Vault = &reporter.VaultSlot{Report: inventory.Vault}
 				report.Inventory.TailscaleVault = &reporter.VaultSlot{Report: inventory.TailscaleVault}
+				report.Inventory.Bridges = &reporter.BridgesSlot{Report: inventory.Bridges}
 				removed := inventory.Removed
 				report.Inventory.Removed = &removed
 				report.Inventory.Services = &services

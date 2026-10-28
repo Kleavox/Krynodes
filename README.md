@@ -46,9 +46,10 @@ pnpm check         # format, knip, lint scripts, typecheck, tests, build
 pnpm native:check  # go test, vet, build, deadcode
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same steps on every push to `main`, then
-its `deploy` job ships the Worker to `kry.kleavox.xyz` when the app or Worker
-changed. **Run workflow** on the Validate workflow deploys by hand.
+CI (`.github/workflows/ci.yml`) runs the same steps on every push to any
+branch. Only on `main` does its `deploy` job then ship the Worker to
+`kry.kleavox.xyz` when the app or Worker changed, and only `main` releases the
+agent. **Run workflow** on the Validate workflow deploys by hand.
 
 ## Production
 
@@ -351,7 +352,10 @@ min ago: port 53 is already allocated`), Logs and the button that fits (Roll
   `Open server →`) with compact rows; their ⋯ holds every action. Search and
   a kind picker replace the old tabs, system units fold into `+ 3 system
 services` until **System services** is on, and **Removed n** lists removed
-  stacks.
+  stacks. An enabled unit that is not running is **Ran at Boot** when it is a
+  one-shot that finished well, **Not Needed Here** when its condition is not met
+  on this server (agent 0.7.1), else **Stopped**; the first two are grey, sorted
+  last and left out of the counts and Needs attention.
 - **Checks** (incidents included): **Down** first, each with its reason, how
   long, failures in a row, its incident and its latest line, the newest of the
   last update and the last action on what the check watches (`09:58
@@ -617,7 +621,11 @@ stored data, not a live takeover.
   From agent 0.6.8 the rule is in place before the stack starts, so an app
   that calls the server as it starts finds the port open.
   The rules live in the `KRY-CONTAINED` chain, which INPUT enters for the
-  stacks' bridges.
+  stacks' bridges. From agent 0.7.1 the same list covers ports other stacks
+  publish on the server: a connection to the server's address that Docker
+  forwards to another stack is held by `KRY-PORTS` (`DOCKER-USER`) unless its
+  port is in Reach this server on, and each refused try is logged with
+  `kry-reach `.
 - **Full access**: public ports, host network, server folders, builds and
   devices. Before the fingerprint the dialog lists what the stack opens. It
   is root-equivalent; use it for stacks you trust like the server itself.
@@ -753,6 +761,11 @@ the ports you tick. The agent connects outward, so none of them can cut
 Krynodes off. Free port 53 is not a finding: it is offered only for a server
 that will run a DNS server.
 
+**No root login** (agent 0.7.1) writes `PermitRootLogin no` in its own drop-in
+and is offered only once a sudo user other than root logs in with a key. It is
+not part of Apply recommended, since root may be a server's only key login.
+While it is off, Security shows "Root can log in over SSH." as a note.
+
 **Lock down server** (server menu) stops containers that publish ports to the
 internet and the tunnel, and turns on SSH keys only when a key is set up.
 **Unlock server** brings back exactly what it changed. A lock down that fails
@@ -766,6 +779,48 @@ Docker's own repository and installs Docker with Compose, or only the Compose
 plugin when Docker is there. It refuses next to Podman. A repository the owner
 added already is used as it is. A Docker it installs keeps container logs small
 (Docker's `local` log driver, unless `/etc/docker/daemon.json` already exists).
+
+### Docker networks
+
+A server's page lists its Docker networks under What Runs (agent 0.7.1):
+the ones Krynodes made and, as **Outside Krynodes**, user-made bridges no
+compose project owns. **Create Network** makes one of two kinds:
+
+- **Contained**: for Contained stacks; a Full access stack joins only as a
+  guest, and not when it is privileged, adds `NET_ADMIN`, `NET_RAW` or `ALL`,
+  or sets `network_mode`. Nothing leaves through it (`--internal`), and members
+  reach each other only on the ports they **Offer on this network** and only
+  when a Contained stack ticks them under **Reach stack on** (rules in
+  `KRY-PEERS`, refused tries logged with `kry-reach `). A guest answers and
+  never starts a connection there. Each service gets a fixed address and the
+  name `<service>.<project>`, runs one copy and drops `NET_RAW`.
+- **Full access**: a plain bridge for Full access stacks; open between members.
+
+A network is Krynodes-made only while Docker's network ID matches the one the
+agent recorded, never by its name or label. The subnet is picked in the
+browser (a free `/24` in `172.24.0.0/13`) or typed, refused when it overlaps
+another Docker network, the private network, Tailscale or the server's own
+networks, and checked again by the agent. **Copy Compose Lines** gives the
+`external: true` lines to add; **Delete Network** waits until nothing uses it.
+Move creates the networks a stack uses on the target first, and says which
+reaches it loses.
+
+**Upgrading to 0.7.1:** a Contained stack that reached another stack's
+published port through the server's address stops reaching it unless that
+port is in its Reach this server on. Check those stacks before you update.
+
+### Admin user
+
+Enroll defaults hold an admin user name and up to 4 SSH public keys (changing
+them asks for your fingerprint). **Add Admin User** at enroll, or Actions →
+Add Admin User on a server (agent 0.7.1), makes a sudo user (`sudo` or
+`wheel`) that logs in with exactly those keys, then turns on SSH keys only and
+No root login once key login works for it. On an enrolled server the
+fingerprint gets a command, `sudo kry admin-user <name>`, to run within 30
+minutes. The server shows the keys before writing anything, and the password
+is typed into `passwd` on the server's own terminal: it never passes through
+Krynodes, the agent, an argument, the environment or a file. The changes it
+makes are taken as yours and do not warn.
 
 ### Packages
 
@@ -951,6 +1006,9 @@ agent 0.7.0.
 - **Settings, Quarantine** holds the four choices. A stricter one reaches the
   servers at once; a looser one asks for your fingerprint and travels in the
   next signed network document.
+- A quarantined server's checks are grouped last on Checks under
+  **Quarantined**, its windows are **Quarantined** (faded red) and not counted
+  against uptime, and the public status page shows No data for them.
 - Delete Node on a quarantined server first makes your servers stop blocking
   its Tailscale address; remove it from your tailnet before.
 - Every network document names the one before it, and an agent refuses one

@@ -5,11 +5,21 @@ import {
   networkInventorySchema,
   stackNetworkSchema,
 } from "./network";
+import { bridgesReportSchema } from "./bridges";
 import { eventSchema, releaseSchema } from "./quarantine";
 import { reachSchema } from "./tailscale";
 import { isValidTarget, RECIPES } from "./targets";
 
 export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
+export {
+  ADMIN_KEY_ARG,
+  ADMIN_NAME,
+  BRIDGE_NAME,
+  bridgesReportSchema,
+  OFFER_ENTRY,
+  PEER_ENTRY,
+  type BridgesReport,
+} from "./bridges";
 export {
   portSchema,
   reachSchema,
@@ -265,6 +275,7 @@ export const KIND_VERBS = {
     "unblock",
     "join",
     "inspect",
+    "admin",
   ],
   trust: ["trust"],
   vault: [
@@ -300,6 +311,7 @@ export const KIND_VERBS = {
     "drop",
     "tighten",
   ],
+  bridge: ["create", "remove"],
 } as const;
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
@@ -343,6 +355,7 @@ export const agentActionSchema = z
       "vault",
       "apt",
       "network",
+      "bridge",
     ]),
     name: z.string(),
     action: z.enum([
@@ -403,6 +416,7 @@ export const agentActionSchema = z
       "save",
       "key",
       "join",
+      "admin",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -462,7 +476,14 @@ export const serviceEntrySchema = z
   .strictObject({
     kind: serviceKindSchema,
     name: z.string(),
-    state: z.enum(["running", "stopped", "failed", "starting"]),
+    state: z.enum([
+      "running",
+      "stopped",
+      "failed",
+      "starting",
+      "boot",
+      "unneeded",
+    ]),
     since: z.string().datetime().nullable(),
     system: z.boolean(),
   })
@@ -675,6 +696,7 @@ export const agentActionsRequestSchema = z
         packages: packagesReportSchema.optional(),
         tailscale: tailscaleReportSchema.optional(),
         network: networkInventorySchema.optional(),
+        bridges: bridgesReportSchema.nullable().optional(),
       })
       .optional(),
     progress: z.array(progressSchema).max(10).optional(),

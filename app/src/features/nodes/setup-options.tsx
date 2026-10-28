@@ -6,18 +6,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useNetwork, type EnrollDefaults } from "@/lib/api";
+import { adminOption, type EnrollAdmin } from "@/lib/admin-user";
+import { useNetwork, type SetupChoice } from "@/lib/api";
 
-export function SetupOptions({
+export function SetupOptions<T extends SetupChoice>({
   value,
   onChange,
+  admin,
   disabled = false,
 }: {
-  value: EnrollDefaults;
-  onChange: (next: EnrollDefaults) => void;
+  value: T;
+  onChange: (next: T) => void;
+  admin?: EnrollAdmin | null;
   disabled?: boolean;
 }) {
   const network = useNetwork().data?.network;
+  const option = admin === undefined ? null : adminOption(admin);
   return (
     <fieldset className="space-y-2" disabled={disabled}>
       <legend className="sr-only">Set the server up</legend>
@@ -89,6 +93,23 @@ export function SetupOptions({
             <span className="block text-xs text-muted-foreground">
               Gets it ready while it enrolls. It joins once it shows up and you
               allow it with your fingerprint.
+            </span>
+          </span>
+        </label>
+      )}
+      {option && (
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1"
+            disabled={!option.available}
+            checked={option.available && value.adminUser === true}
+            onChange={() => onChange({ ...value, adminUser: !value.adminUser })}
+          />
+          <span>
+            <span className="block font-medium">Add Admin User</span>
+            <span className="block text-xs text-muted-foreground">
+              {option.text}
             </span>
           </span>
         </label>

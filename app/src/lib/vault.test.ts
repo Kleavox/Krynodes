@@ -307,6 +307,42 @@ describe("moving a stack", () => {
     expect(create()?.args).toBeUndefined();
   });
 
+  it("creates the stack's Krynodes networks on the new server before the stack", () => {
+    const steps = moveSteps({
+      source: A,
+      target: B,
+      targetKey: "KB",
+      project: "kuma",
+      compose: "x",
+      access: "contained",
+      original: "keep",
+      networks: [
+        { name: "apps-inner", kind: "contained", subnet: "172.24.0.0/24" },
+      ],
+      offers: "apps-inner/web=3001/tcp",
+      peers: "apps-inner/postgres.db:5432/tcp",
+    });
+    expect(steps.map((step) => `${step.kind} ${step.action}`)).toEqual([
+      "compose export",
+      "bridge create",
+      "compose create",
+    ]);
+    expect(steps[1]).toEqual({
+      nodeId: B,
+      kind: "bridge",
+      name: "apps-inner",
+      action: "create",
+      args: { kind: "contained", subnet: "172.24.0.0/24" },
+    });
+    expect(steps[2]).toMatchObject({
+      attachFrom: 0,
+      args: {
+        offers: "apps-inner/web=3001/tcp",
+        peers: "apps-inner/postgres.db:5432/tcp",
+      },
+    });
+  });
+
   it("carries what the stack serves and reaches, then changes the other stacks' reach", () => {
     const steps = moveSteps({
       source: A,
@@ -542,7 +578,7 @@ describe("removing a server that holds a piece", () => {
     ).toEqual({
       ok: false,
       reason:
-        "No other server with agent 0.6.14 that this device reaches can take the token.",
+        "No other server with agent 0.7.0 that this device reaches can take the token.",
     });
   });
 });

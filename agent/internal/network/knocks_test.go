@@ -46,11 +46,11 @@ func TestTenClosedPortsInOneMinuteAreAScan(t *testing.T) {
 	now := time.Unix(1793136300, 0)
 	knocks := knocking(now.Add(-10*time.Second), "10.88.0.1", false, "kry0", ports(5000, 9)...)
 	knocks = append(knocks, knocking(now.Add(-2*time.Minute), "10.88.0.1", false, "kry0", ports(6000, 5)...)...)
-	if seen := Scans(knocks, now, 10, nil); len(seen.Sources) != 0 {
+	if seen := Scans(knocks, now, 10, nil, nil); len(seen.Sources) != 0 {
 		t.Fatalf("nine in the minute %+v", seen)
 	}
 	knocks = append(knocks, knocking(now, "10.88.0.1", false, "kry0", "10.88.0.3:22/tcp")...)
-	seen := Scans(knocks, now, 10, nil)
+	seen := Scans(knocks, now, 10, nil, nil)
 	if len(seen.Sources) != 1 || seen.Sources[0].Who != "10.88.0.1" || seen.Sources[0].Count != 10 || len(seen.Sources[0].Sample) != 4 {
 		t.Fatalf("ten %+v", seen)
 	}
@@ -62,11 +62,11 @@ func TestAStackThatTriesPlacesItWasNotGivenIsNamedByItsBridge(t *testing.T) {
 	for host := 1; host <= 14; host++ {
 		targets = append(targets, fmt.Sprintf("10.88.0.%d:6379/tcp", host))
 	}
-	seen := Scans(knocking(now, "172.30.0.2", true, "krc111111111111", targets...), now, 10, map[string]string{"krc111111111111": "app"})
+	seen := Scans(knocking(now, "172.30.0.2", true, "krc111111111111", targets...), now, 10, map[string]string{"krc111111111111": "app"}, nil)
 	if len(seen.Stacks) != 1 || seen.Stacks[0].Who != "app" || seen.Stacks[0].Count != 14 || len(seen.Sources) != 0 {
 		t.Fatalf("stack %+v", seen)
 	}
-	if seen := Scans(knocking(now, "172.30.0.2", true, "krc999999999999", targets...), now, 10, map[string]string{}); len(seen.Stacks) != 0 {
+	if seen := Scans(knocking(now, "172.30.0.2", true, "krc999999999999", targets...), now, 10, map[string]string{}, nil); len(seen.Stacks) != 0 {
 		t.Fatalf("an unknown bridge %+v", seen)
 	}
 }
@@ -74,8 +74,24 @@ func TestAStackThatTriesPlacesItWasNotGivenIsNamedByItsBridge(t *testing.T) {
 func TestOneWrongPortKnockedAgainAndAgainIsNotAScan(t *testing.T) {
 	now := time.Unix(1793136300, 0)
 	target := "10.88.0.2:5433/tcp"
-	seen := Scans(knocking(now, "10.88.0.5", false, "kry0", strings.Split(strings.Repeat(target+",", 12), ",")[:12]...), now, 10, nil)
+	seen := Scans(knocking(now, "10.88.0.5", false, "kry0", strings.Split(strings.Repeat(target+",", 12), ",")[:12]...), now, 10, nil, nil)
 	if len(seen.Sources) != 0 || len(seen.Wrong) != 1 || seen.Wrong[0] != (Wrong{From: "10.88.0.5", Target: target}) {
 		t.Fatalf("wrong %+v", seen)
+	}
+}
+
+func TestAStackOnASharedBridgeIsKnownByItsAddress(t *testing.T) {
+	now := time.Unix(1793136300, 0)
+	targets := make([]string, 10)
+	for index := range targets {
+		targets[index] = fmt.Sprintf("172.24.0.%d:%d", 3+index, 5432)
+	}
+	addresses := map[string]string{"172.24.0.2": "kuma"}
+	seen := Scans(knocking(now, "172.24.0.2", true, "krc0a1b2c3d4e5f", targets...), now, 10, map[string]string{"krc111111111111": "app"}, addresses)
+	if len(seen.Stacks) != 1 || seen.Stacks[0].Who != "kuma" || seen.Stacks[0].Count != 10 {
+		t.Fatalf("seen %+v", seen)
+	}
+	if seen := Scans(knocking(now, "172.24.0.9", true, "krc0a1b2c3d4e5f", targets...), now, 10, nil, addresses); len(seen.Stacks) != 0 {
+		t.Fatalf("an unknown address is nobody's: %+v", seen)
 	}
 }

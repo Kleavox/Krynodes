@@ -46,6 +46,7 @@
     ["host", "security-updates"],
     ["host", "reboot-window"],
     ["host", "ssh-keys-only"],
+    ["host", "no-root-login"],
     ["host", "fail2ban"],
     ["host", "firewall"],
     ["host", "free-port-53"],
@@ -59,7 +60,10 @@
     ["apt", "g++"],
     ["apt", "linux-image-6.1.0-27-amd64"],
     ["apt", "tailscale"],
-    ["network", "kry0"]
+    ["network", "kry0"],
+    ["bridge", "apps-inner"],
+    ["bridge", "default-env_public"],
+    ["bridge", "Proxy.1"]
   ],
   "invalid": [
     ["systemd", "nginx"],
@@ -89,6 +93,10 @@
     ["apt", ""],
     ["network", "wg0"],
     ["network", "kry1"],
-    ["network", "Kry0"]
+    ["network", "Kry0"],
+    ["bridge", ""],
+    ["bridge", "-x"],
+    ["bridge", "a/b"],
+    ["bridge", "a b"]
   ]
 }

@@ -8,7 +8,7 @@ import type {
   ServicesResponse,
 } from "../types";
 import { formatDuration, parseTimestamp, shortDate } from "./format";
-import { displayName } from "./services";
+import { displayName, resting } from "./services";
 import { stackOf } from "./stacks";
 
 type ServiceNode = ServicesResponse["nodes"][number];
@@ -45,7 +45,9 @@ const cardOwner = (kind: CardKind, name: string): CheckOwner =>
       : { kind: "systemd", unit: name };
 
 const stopped = (entry: ServiceEntry) =>
-  entry.state !== "running" && entry.state !== "starting";
+  entry.state !== "running" &&
+  entry.state !== "starting" &&
+  !resting(entry.state);
 
 const newest = <T>(list: T[], at: (item: T) => string) =>
   list.reduce<T | null>(

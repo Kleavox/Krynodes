@@ -750,3 +750,65 @@ describe("migration 0036", () => {
     ).toEqual({ n: 0 });
   });
 });
+
+describe("migration 0037", () => {
+  it("keeps every service and action, takes boot states, networks and the admin verb", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0037");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'io', 'h1')",
+    );
+    const service = (name: string, state: string) =>
+      `INSERT INTO services (node_id, kind, name, state, since, system) VALUES ('n1', 'systemd', '${name}', '${state}', NULL, 1)`;
+    sqlite.exec(service("nginx.service", "running"));
+    sqlite.exec(action("a1", "compose", "kuma", "deploy", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(service("e2scrub_reap.service", "boot")),
+    ).toThrow();
+    expect(() =>
+      sqlite.exec(
+        action("a2", "bridge", "apps-inner", "create", "queued", "{}"),
+      ),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0037"));
+    expect(
+      sqlite.prepare("SELECT name, state, system FROM services").all(),
+    ).toEqual([{ name: "nginx.service", state: "running", system: 1 }]);
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(service("e2scrub_reap.service", "boot"));
+    sqlite.exec(service("sshd-keygen.service", "unneeded"));
+    expect(() => sqlite.exec(service("cron.service", "sleeping"))).toThrow();
+    expect(() => sqlite.exec(service("nginx.service", "stopped"))).toThrow(
+      /UNIQUE|PRIMARY/u,
+    );
+    sqlite.exec(action("a2", "bridge", "apps-inner", "create", "queued", "{}"));
+    sqlite.exec(action("a3", "host", "server", "admin", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("a4", "bridge", "apps-inner", "nap", "queued", "{}")),
+    ).toThrow();
+    expect(() =>
+      sqlite.exec(action("a5", "compose", "kuma", "deploy", "queued", "{}")),
+    ).toThrow(/UNIQUE/u);
+    sqlite.exec("UPDATE nodes SET bridges = '{}' WHERE id = 'n1'");
+    expect(
+      sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'actions' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all()
+        .map((row) => (row as { name: string }).name),
+    ).toEqual([
+      "idx_actions_batch",
+      "idx_actions_node_requested",
+      "idx_actions_one_pending",
+      "idx_actions_status_node",
+    ]);
+    sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
+    expect(sqlite.prepare("SELECT COUNT(*) AS n FROM services").get()).toEqual({
+      n: 0,
+    });
+  });
+});

@@ -256,7 +256,10 @@ export async function loadStatus(
   const [checks, incidents, results, updates] = await Promise.all([
     db
       .prepare(
-        `SELECT c.id, c.name, c.public_note, c.status, n.last_seen_at, c.created_at,
+        `SELECT c.id, c.name, c.public_note,
+                CASE WHEN EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = c.node_id AND q.released_at IS NULL)
+                  THEN 'UNTRUSTED' ELSE c.status END AS status,
+                n.last_seen_at, c.created_at,
                 n.interval_seconds
          FROM checks c LEFT JOIN nodes n ON n.id = c.node_id
          WHERE c.public = 1 AND c.enabled = 1 ORDER BY c.name`,

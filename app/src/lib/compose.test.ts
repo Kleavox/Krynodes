@@ -6,6 +6,7 @@ import {
   publishedPorts,
   publishedRanges,
   servicesOf,
+  sharedNetworksOf,
   summarize,
   usePrivateAddress,
   usesPrivateIp,
@@ -198,5 +199,35 @@ describe("moving a compose file", () => {
     expect(moved.flagged).toEqual([
       "app: LISTMONK_app__smtp_host still names mailpit",
     ]);
+  });
+});
+
+describe("networks a stack shares", () => {
+  it("lists only external networks, by Docker name, with the services on each", () => {
+    expect(
+      sharedNetworksOf(`services:
+  web:
+    image: x
+    networks: [inner, default]
+  worker:
+    image: y
+    networks:
+      inner:
+        aliases: [jobs]
+  cache:
+    image: z
+networks:
+  inner:
+    name: apps-inner
+    external: true
+  public:
+    external: true
+  default: {}
+`),
+    ).toEqual([
+      { key: "inner", name: "apps-inner", services: ["web", "worker"] },
+      { key: "public", name: "public", services: [] },
+    ]);
+    expect(sharedNetworksOf("services: [")).toEqual([]);
   });
 });

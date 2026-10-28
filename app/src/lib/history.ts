@@ -206,17 +206,24 @@ export function historyText(
   action: ActionRecord,
   stacks: Stacks = [],
   nodeName?: string,
+  names: Record<string, string> = {},
 ): string {
   const packages =
     packageText(action, nodeName) ??
     tailnetActionText(action, nodeName) ??
-    networkActionText(action) ??
+    networkActionText(action, names) ??
     quarantineActionText(action);
   if (packages) return packages;
   const stack =
     action.kind === "docker" ? stackOf(stacks, action.name) : undefined;
   const name = stack ?? displayName(action.kind, action.name);
+  if (action.kind === "bridge") {
+    return `${action.action === "remove" ? "Delete" : "Create"} network ${action.name}`;
+  }
   if (action.action === "uninstall") return "Remove Krynodes from the server";
+  if (action.action === "admin") {
+    return `Get an admin user command for ${nodeName ?? "the server"}`;
+  }
   if (action.action === "reach") return `Change ${action.name}'s reach`;
   if (action.action === "logs") return `Read logs of ${name}`;
   return `${verb(action.action)} ${stack ?? objectOf(action)}`;
@@ -250,6 +257,7 @@ export function actionLine(
     devices?: { id: string; name: string }[];
     stacks?: Stacks;
     now?: number;
+    names?: Record<string, string>;
   } = {},
 ) {
   const failure = failed(action)
@@ -269,7 +277,7 @@ export function actionLine(
         ? clockTime(action.requestedAt)
         : stampTime(action.requestedAt, options.now),
     mark: action.status === "done" ? "✓" : failed(action) ? "✕" : null,
-    text: historyText(action, options.stacks, options.nodeName),
+    text: historyText(action, options.stacks, options.nodeName, options.names),
     server:
       options.showServer && !namesServer(action)
         ? (options.nodeName ?? null)

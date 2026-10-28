@@ -180,6 +180,49 @@ export function usePrivateAddress(text: string): string {
   return changed ? doc.toString() : text;
 }
 
+const record = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+export function sharedNetworksOf(
+  text: string,
+): { key: string; name: string; services: string[] }[] {
+  const doc = parseDocument(text);
+  if (doc.errors.length > 0) return [];
+  const value = record(doc.toJS());
+  const services = record(value.services);
+  return Object.entries(record(value.networks)).flatMap(([key, network]) => {
+    const entry = record(network);
+    if (entry.external !== true) return [];
+    return [
+      {
+        key,
+        name: typeof entry.name === "string" ? entry.name : key,
+        services: Object.keys(services).filter((name) => {
+          const networks = record(services[name]).networks;
+          return Array.isArray(networks)
+            ? networks.includes(key)
+            : key in record(networks);
+        }),
+      },
+    ];
+  });
+}
+
+export function serviceShape(text: string, name: string) {
+  const service = record(load(text).services?.[name]);
+  const copies = Number(record(service.deploy).replicas ?? service.scale ?? 1);
+  return {
+    privileged: service.privileged === true,
+    caps: list(service.cap_add).map((cap) =>
+      String(cap).toUpperCase().replace(/^CAP_/u, ""),
+    ),
+    networkMode: service.network_mode !== undefined,
+    copies: Number.isFinite(copies) ? copies : 1,
+  };
+}
+
 export function servicesOf(text: string): string[] {
   return Object.keys(load(text).services ?? {});
 }

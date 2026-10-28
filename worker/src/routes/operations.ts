@@ -1,4 +1,5 @@
 import {
+  bridgesReportSchema,
   FEATURE_AGENT,
   MIN_AGENT_VERSION,
   NETWORK,
@@ -12,6 +13,11 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import { createBatch, sweepStatements } from "../actions/store";
+import {
+  bridgeArgsValid,
+  hasStackNetworkArgs,
+  stackNetworkArgsValid,
+} from "../bridges/args";
 import { pokeSoon } from "../fleet/client";
 import { decodeJson } from "../lib/b64url";
 import { assertionUv } from "../lib/webauthn";
@@ -33,7 +39,7 @@ const HOSTNAME =
 const stepSchema = z.object({
   id: uuid,
   nodeId: uuid,
-  kind: z.enum(["compose", "vault", "host"]),
+  kind: z.enum(["compose", "vault", "host", "bridge"]),
   name: z.string().min(1).max(128),
   action: z.enum([
     "export",
@@ -119,6 +125,17 @@ interface NodeRow {
   seal_key: string | null;
   vault: string | null;
   tailscale_vault: string | null;
+  bridges: string | null;
+}
+
+const MOVE_NETWORKS = 4;
+
+function decodeBridges(text: string | null): unknown {
+  try {
+    return JSON.parse(text ?? "null") as unknown;
+  } catch {
+    return null;
+  }
 }
 
 const is = (step: Step | undefined, kind: string, ...actions: string[]) =>
@@ -156,16 +173,29 @@ function shaped(kind: string, steps: Step[]): boolean {
   if (!plain) return false;
   switch (kind) {
     case "move": {
-      const removed = is(third, "compose", "remove", "purge");
-      const reaches = steps.slice(removed ? 3 : 2);
+      const networks = steps
+        .slice(1)
+        .findIndex((step) => step.kind !== "bridge");
+      if (networks < 0) return false;
+      const made = steps.slice(1, 1 + networks);
+      const [, created, gone] = [first, ...steps.slice(1 + networks)];
+      const removed = is(gone, "compose", "remove", "purge");
+      const reaches = steps.slice(1 + networks + (removed ? 2 : 1));
       return (
         is(first, "compose", "export") &&
-        is(second, "compose", "create") &&
-        second!.attachFrom === 0 &&
-        first!.nodeId !== second!.nodeId &&
-        first!.args.to === second!.nodeId &&
+        is(created, "compose", "create") &&
+        created!.attachFrom === 0 &&
+        first!.nodeId !== created!.nodeId &&
+        first!.args.to === created!.nodeId &&
+        made.every(
+          (step) =>
+            is(step, "bridge", "create") &&
+            step.attachFrom === undefined &&
+            step.nodeId === created!.nodeId &&
+            bridgeArgsValid("create", step.args),
+        ) &&
         (!removed ||
-          (third!.nodeId === first!.nodeId && third!.name === first!.name)) &&
+          (gone!.nodeId === first!.nodeId && gone!.name === first!.name)) &&
         reaches.length <= NETWORK.moveReaches &&
         reaches.every(
           (step) =>
@@ -341,8 +371,14 @@ export function registerOperationRoutes(
           400,
         );
       }
-      if (!isValidTarget(step.kind, step.name)) return invalidRequest(context);
-      steps.push({ ...step, args: command.data.args ?? {} });
+      const args = command.data.args ?? {};
+      if (
+        !isValidTarget(step.kind, step.name) ||
+        (step.kind === "compose" && !stackNetworkArgsValid(args))
+      ) {
+        return invalidRequest(context);
+      }
+      steps.push({ ...step, args });
     }
     const cleanup = steps.find((step) => step.action === "reshare")?.args
       .cleanup;
@@ -400,7 +436,7 @@ export function registerOperationRoutes(
     const wanted = [...new Set(steps.map((step) => step.nodeId))];
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker, seal_key, vault, tailscale_vault FROM nodes
+        `SELECT id, name, agent_version, docker, seal_key, vault, tailscale_vault, bridges FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
@@ -427,7 +463,8 @@ export function registerOperationRoutes(
     }
     const behind = steps.find(
       (step) =>
-        (step.action === "reach" || step.name === "tailscale") &&
+        (step.kind === "bridge" ||
+          (step.kind === "compose" && hasStackNetworkArgs(step.args))) &&
         !agentHasFeatures(byId.get(step.nodeId)!.agent_version),
     );
     if (behind) {
@@ -438,6 +475,36 @@ export function registerOperationRoutes(
         },
         422,
       );
+    }
+    const networks = steps.filter((step) => step.kind === "bridge");
+    if (networks.length > 0) {
+      const source = bridgesReportSchema.safeParse(
+        decodeBridges(byId.get(steps[0]!.nodeId)!.bridges),
+      );
+      const made = source.success
+        ? source.data.networks.filter((network) => network.kind !== "outside")
+        : [];
+      if (
+        networks.length > MOVE_NETWORKS ||
+        networks.some(
+          (step) =>
+            !made.some(
+              (network) =>
+                network.name === step.name &&
+                network.kind === step.args.kind &&
+                network.subnet === step.args.subnet,
+            ),
+        )
+      ) {
+        return context.json(
+          {
+            code: "INVALID_REQUEST",
+            message:
+              "The move creates a network the stack's server did not make.",
+          },
+          422,
+        );
+      }
     }
     for (const step of steps) {
       if (step.args.key !== undefined) {

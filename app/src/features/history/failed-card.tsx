@@ -112,6 +112,7 @@ export function FailedCard({
     showServer: true,
     devices,
     stacks: inventory?.stacks,
+    names: Object.fromEntries(nodes.map((entry) => [entry.id, entry.name])),
   });
   const logs =
     inventory && node && agentCurrent(node)

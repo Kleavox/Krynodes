@@ -349,6 +349,24 @@ describe("loadStatus", () => {
     ).toEqual(["nodata", "nodata"]);
   });
 
+  it("shows no data for a quarantined server's checks until it is released", async () => {
+    const { db, sqlite } = fleet();
+    publish(sqlite, "a", { name: "Steady" });
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', ?, 'why', '2026-09-28T11:00:00.000Z', '{}')",
+      )
+      .run(NODE);
+    const state = async () =>
+      (await loadStatus(db, NOW)).services.map((service) => service.state);
+
+    expect(await state()).toEqual(["nodata"]);
+    sqlite
+      .prepare("UPDATE quarantines SET released_at = ? WHERE id = 'q1'")
+      .run("2026-09-28T11:30:00.000Z");
+    expect(await state()).toEqual(["up"]);
+  });
+
   it("reads incidents through the public checks instead of scanning the table", async () => {
     const { db, sqlite } = fleet();
     const statements: string[] = [];

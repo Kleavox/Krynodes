@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -99,7 +102,7 @@ func TestCollectSurvivesAMissingDocker(t *testing.T) {
 	if err != nil || len(snapshot.Services) != 5 || snapshot.Compose || snapshot.Docker != "missing" {
 		t.Fatalf("collect: %#v, err %v", snapshot, err)
 	}
-	if calls[2] != "docker ps -a --no-trunc --format "+containerFormat || len(calls) != 3 {
+	if calls[2] != showCall+"shadowsocks-libev.service" || calls[3] != "docker ps -a --no-trunc --format "+containerFormat || len(calls) != 4 {
 		t.Fatalf("unexpected docker calls %q", calls[2:])
 	}
 }
@@ -326,5 +329,93 @@ func TestTheSealKeyIsPartOfTheInventory(t *testing.T) {
 	second, _ := NewInventory(Parts{SealKey: "second"}, executorNow)
 	if first.Hash == second.Hash || first.SealKey != "first" {
 		t.Fatalf("the seal key must be reported: %#v", first)
+	}
+}
+
+func readFixture(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestBootUnitsAreReadFromSystemd(t *testing.T) {
+	since := func(text string) *string { return &text }
+	debian := bootStates(readFixture(t, "systemctl-show-debian12.txt"))
+	want := map[string]Service{
+		"e2scrub_reap.service":             {State: "boot", Since: since("2026-10-27T13:10:02Z")},
+		"sshd-keygen.service":              {State: "unneeded"},
+		"shadowsocks-libev.service":        {State: "stopped"},
+		"regenerate_ssh_host_keys.service": {State: "unneeded"},
+	}
+	if !reflect.DeepEqual(debian, want) {
+		t.Fatalf("debian %#v", debian)
+	}
+	rhel := bootStates(readFixture(t, "systemctl-show-rhel9.txt"))
+	if rhel["sshd-keygen@rsa.service"].State != "unneeded" || rhel["dracut-shutdown.service"].State != "boot" || rhel["never-run.service"].State != "stopped" {
+		t.Fatalf("rhel %#v", rhel)
+	}
+}
+
+const bootList = `nginx.service loaded active running A high performance web server
+e2scrub_reap.service loaded inactive dead Remove Stale Online ext4 Metadata Check Snapshots
+sshd-keygen.service loaded inactive dead OpenSSH Server Key Generation
+shadowsocks-libev.service loaded inactive dead Shadowsocks-libev Default Server Service
+`
+
+const bootFiles = `nginx.service enabled enabled
+e2scrub_reap.service enabled enabled
+sshd-keygen.service enabled enabled
+shadowsocks-libev.service enabled enabled
+`
+
+const showCall = "systemctl show --property=Id,Type,Result,ConditionResult,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp --no-pager "
+
+func TestCollectAsksSystemdOnceAboutUnitsThatDoNotRun(t *testing.T) {
+	collect := func(units, show string, fail bool) ([]Service, []string) {
+		var calls []string
+		run := func(_ context.Context, name string, args ...string) ([]byte, int, error) {
+			call := name + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			switch {
+			case name == "docker":
+				return nil, -1, errors.New("executable file not found")
+			case args[0] == "list-units":
+				return []byte(units), 0, nil
+			case args[0] == "show" && fail:
+				return nil, 1, errors.New("exit status 1")
+			case args[0] == "show":
+				return []byte(show), 0, nil
+			}
+			return []byte(bootFiles), 0, nil
+		}
+		snapshot, err := Collect(context.Background(), run, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot.Services, calls
+	}
+	services, calls := collect(bootList, readFixture(t, "systemctl-show-debian12.txt"), false)
+	shows := slices.DeleteFunc(slices.Clone(calls), func(call string) bool { return !strings.HasPrefix(call, "systemctl show") })
+	if !slices.Equal(shows, []string{showCall + "e2scrub_reap.service sshd-keygen.service shadowsocks-libev.service"}) {
+		t.Fatalf("calls %q", calls)
+	}
+	states := map[string]string{}
+	for _, service := range services {
+		states[service.Name] = service.State
+	}
+	if !reflect.DeepEqual(states, map[string]string{"nginx.service": "running", "e2scrub_reap.service": "boot", "sshd-keygen.service": "unneeded", "shadowsocks-libev.service": "stopped"}) {
+		t.Fatalf("states %#v", states)
+	}
+	if _, calls := collect("nginx.service loaded active running web\n", "", false); slices.ContainsFunc(calls, func(call string) bool { return strings.HasPrefix(call, "systemctl show") }) {
+		t.Fatalf("nothing to ask: %q", calls)
+	}
+	services, _ = collect(bootList, "", true)
+	for _, service := range services {
+		if service.Name != "nginx.service" && service.State != "stopped" {
+			t.Fatalf("a failed show keeps stopped: %#v", service)
+		}
 	}
 }

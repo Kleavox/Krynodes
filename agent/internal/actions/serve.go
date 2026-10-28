@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,9 +47,22 @@ func (e Executor) choicesFrom(command Command, access string, current stackMeta)
 	if err != nil {
 		return stackMeta{}, err
 	}
-	meta := stackMeta{Access: access, HostPorts: hostPorts}
+	meta := stackMeta{Access: access, HostPorts: hostPorts, Offers: current.Offers}
 	if access == "contained" {
-		meta.Serves, meta.Reaches = current.Serves, current.Reaches
+		meta.Serves, meta.Reaches, meta.Peers = current.Serves, current.Reaches, current.Peers
+	}
+	if text, given := command.Args["offers"]; given {
+		if meta.Offers, err = sharedEntries(text, offerEntry, "%s is not an offer such as apps-inner/web=3001/tcp"); err != nil {
+			return stackMeta{}, err
+		}
+	}
+	if text, given := command.Args["peers"]; given {
+		if meta.Peers, err = sharedEntries(text, peerEntry, "%s is not a port of another stack such as apps-inner/postgres.db:5432/tcp"); err != nil {
+			return stackMeta{}, err
+		}
+		if len(meta.Peers) > 0 && access != "contained" {
+			return stackMeta{}, errors.New("reaching other stacks on a network is for Contained stacks; a Full access stack joins a Contained network as a guest and only answers")
+		}
 	}
 	serves, servesGiven := command.Args["serves"]
 	reaches, reachesGiven := command.Args["reaches"]
@@ -139,10 +153,44 @@ func addHosts(config map[string]any, members []network.Member) {
 	}
 }
 
+var (
+	offerEntry = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}/[A-Za-z0-9][A-Za-z0-9_.-]{0,62}=(\d{1,5})/(tcp|udp)$`)
+	peerEntry  = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9_.-]{0,62})/([A-Za-z0-9][A-Za-z0-9_.-]{0,62})\.([a-z0-9][a-z0-9_-]{0,62}):(\d{1,5})/(tcp|udp)$`)
+)
+
+const maxSharedEntries = 64
+
+func sharedEntries(text string, pattern *regexp.Regexp, wrong string) ([]string, error) {
+	var entries []string
+	for entry := range strings.SplitSeq(text, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		match := pattern.FindStringSubmatch(entry)
+		if match == nil {
+			return nil, fmt.Errorf(wrong, entry)
+		}
+		if number, _ := strconv.Atoi(match[len(match)-2]); number < 1 || number > 65535 {
+			return nil, fmt.Errorf("%s is not a port between 1 and 65535", entry)
+		}
+		if !slices.Contains(entries, entry) {
+			entries = append(entries, entry)
+		}
+	}
+	if len(entries) > maxSharedEntries {
+		return nil, fmt.Errorf("a stack may list at most %d ports on its networks", maxSharedEntries)
+	}
+	return entries, nil
+}
+
 func bridgesOf(config map[string]any) []string {
 	var bridges []string
 	networks := asMap(config["networks"])
 	for _, name := range sortedKeys(networks) {
+		if asMap(networks[name])["external"] == true {
+			continue
+		}
 		if bridge := asText(asMap(asMap(networks[name])["driver_opts"])["com.docker.network.bridge.name"]); strings.HasPrefix(bridge, "krc") {
 			bridges = append(bridges, bridge)
 		}
@@ -195,9 +243,10 @@ func (e Executor) listed(ctx context.Context, tool, name string) string {
 }
 
 func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) error {
+	peers := e.syncPeers(ctx)
 	document, own := e.ownAddress()
 	if own == "" {
-		return nil
+		return peers
 	}
 	serve, reach := network.Rules(own, document.Members, e.diskRules(pending))
 	tcp, udp := e.openPorts(ctx, own)
@@ -233,7 +282,7 @@ func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) 
 			return fmt.Errorf("send the private network through its rules: %w", err)
 		}
 	}
-	return nil
+	return peers
 }
 
 func (e Executor) droppedAddresses(document network.Document) []string {

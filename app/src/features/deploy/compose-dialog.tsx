@@ -22,10 +22,12 @@ import {
   AccessChoice,
   FullAccessSummary,
   HeldSecrets,
+  NetworkBoxes,
   NetworkSection,
   ReachField,
   SecretsEditor,
   heldProblem,
+  useNetworkBoxes,
   useStackNetwork,
   sealSecrets,
   secretChange,
@@ -129,6 +131,13 @@ function ComposeForm({
   );
   const network = useStackNetwork(target.nodeId, current, read ?? undefined);
   const serving = network.member !== null && chosen === "contained";
+  const boxes = useNetworkBoxes(
+    { id: target.nodeId, name: target.nodeName },
+    current,
+    target.project,
+    chosen,
+  );
+  const joining = boxes.boxes.length > 0;
   const privateWrong = privateIpProblem(
     current,
     target.nodeName,
@@ -141,7 +150,8 @@ function ComposeForm({
     secretsWrong ??
     hostPorts.problem ??
     privateWrong ??
-    (serving ? (network.placesProblem ?? network.servesProblem) : null);
+    (serving ? (network.placesProblem ?? network.servesProblem) : null) ??
+    boxes.problem;
 
   const sealed = async (sealKey: string) => {
     if (!before) return sealSecrets(sealKey, secrets);
@@ -172,13 +182,14 @@ function ComposeForm({
             compose: current,
             access: chosen,
             ...(locked ? { secrets: locked } : {}),
-            ...(reaching || serving
+            ...(reaching || serving || joining
               ? {
                   args: {
                     ...(reaching
                       ? { hostPorts: hostPorts.ports.join(",") }
                       : {}),
                     ...(serving ? network.args : {}),
+                    ...boxes.args,
                   },
                 }
               : {}),
@@ -244,6 +255,7 @@ function ComposeForm({
                 />
               )}
               {serving && <NetworkSection network={network} />}
+              <NetworkBoxes network={boxes} />
               <div className="space-y-1.5">
                 <Label>Secrets</Label>
                 {before && <HeldSecrets rows={held} onChange={setKept} />}

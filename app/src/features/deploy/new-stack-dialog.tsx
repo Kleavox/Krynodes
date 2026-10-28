@@ -35,11 +35,13 @@ import type { NodeRecord } from "@/types";
 import {
   AccessChoice,
   FullAccessSummary,
+  NetworkBoxes,
   NetworkSection,
   ReachField,
   SecretsEditor,
   sealSecrets,
   secretsProblem,
+  useNetworkBoxes,
   useStackNetwork,
   type Access,
   type SecretRow,
@@ -105,6 +107,13 @@ function NewStackForm({
   const hostPorts = parseHostPorts(reaching ? reach : "");
   const network = useStackNetwork(nodeId, text);
   const serving = reaching && network.member !== null;
+  const boxes = useNetworkBoxes(
+    { id: nodeId, name: chosen?.node.name ?? "This server" },
+    text,
+    name.trim(),
+    access,
+  );
+  const joining = modern && boxes.boxes.length > 0;
   const privateWrong = privateIpProblem(
     text,
     chosen?.node.name ?? "This server",
@@ -134,6 +143,7 @@ function NewStackForm({
     hostPorts.problem === null &&
     privateWrong === null &&
     networkWrong === null &&
+    (!joining || boxes.problem === null) &&
     (!modern || secretsProblem(secrets) === null);
 
   const create = async () => {
@@ -161,13 +171,14 @@ function NewStackForm({
             compose: text,
             ...(modern ? { access } : {}),
             ...(sealed ? { secrets: sealed } : {}),
-            ...(hostPorts.ports.length > 0 || serving
+            ...(hostPorts.ports.length > 0 || serving || joining
               ? {
                   args: {
                     ...(hostPorts.ports.length > 0
                       ? { hostPorts: hostPorts.ports.join(",") }
                       : {}),
                     ...(serving ? network.args : {}),
+                    ...(joining ? boxes.args : {}),
                   },
                 }
               : {}),
@@ -342,6 +353,7 @@ function NewStackForm({
               />
             )}
             {serving && <NetworkSection network={network} />}
+            <NetworkBoxes network={boxes} />
             <div className="space-y-1.5">
               <Label>Secrets</Label>
               <SecretsEditor rows={secrets} onChange={setSecrets} />

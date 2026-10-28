@@ -44,7 +44,14 @@ export function withGapBreaks<T extends { time: number }>(
 }
 
 export type SlotState =
-  "received" | "missed" | "pending" | "none" | "work" | "routine" | "offline";
+  | "received"
+  | "missed"
+  | "pending"
+  | "none"
+  | "work"
+  | "routine"
+  | "offline"
+  | "quarantined";
 
 export interface Span {
   from: number;
@@ -118,13 +125,15 @@ export function layoutReportSlots<T extends { t: string }>(
         : reference - start <
             (options.graceSeconds + (options.settleSeconds ?? 0)) * 1000
           ? "pending"
-          : overlaps(options.work ?? [], start, size)
-            ? "work"
-            : quietOverlaps(quiet, "offline", start, size)
-              ? "offline"
-              : quietOverlaps(quiet, "routine", start, size)
-                ? "routine"
-                : "missed";
+          : quietOverlaps(quiet, "quarantined", start, size)
+            ? "quarantined"
+            : overlaps(options.work ?? [], start, size)
+              ? "work"
+              : quietOverlaps(quiet, "offline", start, size)
+                ? "offline"
+                : quietOverlaps(quiet, "routine", start, size)
+                  ? "routine"
+                  : "missed";
     return { start, state, sample };
   };
   let last = current;
@@ -159,7 +168,15 @@ export function incidentDuring<
 }
 
 export type BarTone =
-  "up" | "down" | "brief" | "missed" | "work" | "routine" | "offline" | "empty";
+  | "up"
+  | "down"
+  | "brief"
+  | "missed"
+  | "work"
+  | "routine"
+  | "offline"
+  | "quarantined"
+  | "empty";
 
 export function barTone(
   state: SlotState,
@@ -175,6 +192,7 @@ export function barTone(
     state === "work" ||
     state === "routine" ||
     state === "offline" ||
+    state === "quarantined" ||
     state === "missed"
   ) {
     return state;
@@ -226,6 +244,7 @@ const SLOT_WORDS: Record<BarTone, string> = {
   work: "By You",
   routine: "Routine Restart",
   offline: "Offline",
+  quarantined: "Quarantined",
   missed: "No Result",
   empty: "Not Measured",
 };
@@ -258,6 +277,7 @@ export interface Uptime {
   offline: number;
   routine: number;
   work: number;
+  quarantined: number;
   since: number | null;
   lastDown: number | null;
 }
@@ -276,6 +296,7 @@ export function uptimeOf(slots: { start: number; tone: BarTone }[]): Uptime {
     offline,
     routine: count("routine"),
     work: count("work"),
+    quarantined: count("quarantined"),
     since:
       slots.find((slot) => slot.tone !== "empty" && slot.tone !== "missed")
         ?.start ?? null,
@@ -301,6 +322,9 @@ export function uptimeTip(
       ? `Routine Restart ${span(uptime.routine)}, not counted`
       : null,
     uptime.work > 0 ? `Restart by You ${span(uptime.work)}, not counted` : null,
+    uptime.quarantined > 0
+      ? `Quarantined ${span(uptime.quarantined)}, not counted`
+      : null,
     uptime.lastDown !== null
       ? `Last Down ${clock(uptime.lastDown)}`
       : uptime.offline === 0
@@ -313,7 +337,7 @@ export function uptimeTip(
 
 export function heartbeatSummary(uptime: Uptime, span: string): string {
   if (uptime.since === null) return `No results in the last ${span}`;
-  const skipped = uptime.routine + uptime.work;
+  const skipped = uptime.routine + uptime.work + uptime.quarantined;
   return [
     `${uptime.up} up`,
     `${uptime.down} down`,

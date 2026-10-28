@@ -620,14 +620,18 @@ function FleetSummary({
             ? `${summary.checks.down} down`
             : summary.checks.offline > 0
               ? `${summary.checks.offline} offline`
-              : summary.checks.stale > 0
-                ? `${summary.checks.stale} not reporting`
-                : summary.checks.total > 0
-                  ? "All Passing"
-                  : "No Checks Yet"
+              : summary.checks.quarantined > 0
+                ? `${summary.checks.quarantined} not trusted`
+                : summary.checks.stale > 0
+                  ? `${summary.checks.stale} not reporting`
+                  : summary.checks.total > 0
+                    ? "All Passing"
+                    : "No Checks Yet"
         }
         tone={
-          summary.checks.down > 0 || summary.checks.offline > 0
+          summary.checks.down > 0 ||
+          summary.checks.offline > 0 ||
+          summary.checks.quarantined > 0
             ? "bad"
             : summary.checks.stale > 0
               ? "warn"
@@ -640,7 +644,9 @@ function FleetSummary({
             ? "/checks?status=down"
             : summary.checks.offline > 0
               ? "/checks?status=offline"
-              : "/checks"
+              : summary.checks.quarantined > 0
+                ? "/checks?status=quarantined"
+                : "/checks"
         }
       />
       <SummaryTile

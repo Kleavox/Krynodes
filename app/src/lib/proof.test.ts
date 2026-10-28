@@ -56,6 +56,40 @@ describe("guardedFetch", () => {
     );
   });
 
+  it("refuses to sign what the dashboard did not ask to confirm", async () => {
+    const calls = replies([
+      403,
+      { ...NEEDED, op: "enroll.admin", target: "aa".repeat(32) },
+    ]);
+    await expect(
+      guardedFetch(
+        "/api/settings/enroll-defaults",
+        { method: "PUT" },
+        { op: "enroll.admin", target: "bb".repeat(32) },
+      ),
+    ).rejects.toThrow(
+      "Krynodes asked to confirm something else. Nothing was saved.",
+    );
+    expect(openSession).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(1);
+  });
+
+  it("signs what the dashboard expects", async () => {
+    const target = "aa".repeat(32);
+    const calls = replies(
+      [403, { ...NEEDED, op: "enroll.admin", target }],
+      [200, {}],
+    );
+    openSession.mockResolvedValue({ grant: {} });
+    signIntent.mockResolvedValue("signed-intent");
+    await guardedFetch(
+      "/api/settings/enroll-defaults",
+      { method: "PUT" },
+      { op: "enroll.admin", target },
+    );
+    expect(calls).toHaveLength(2);
+  });
+
   it("passes other refusals through without a prompt", async () => {
     const calls = replies([403, { code: "NOT_CORE", message: "No." }]);
     await expect(

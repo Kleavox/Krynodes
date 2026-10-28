@@ -72,6 +72,7 @@ type Inventory struct {
 	PackagesHash   string                     `json:"packagesHash,omitempty"`
 	Tailscale      *reporter.TailscaleReport  `json:"tailscale,omitempty"`
 	Network        *reporter.NetworkInventory `json:"network,omitempty"`
+	Bridges        *reporter.Bridges          `json:"bridges,omitempty"`
 }
 
 type Parts struct {
@@ -86,6 +87,7 @@ type Parts struct {
 	Packages  *reporter.PackagesReport
 	Tailscale *reporter.TailscaleReport
 	Network   *reporter.NetworkInventory
+	Bridges   *reporter.Bridges
 
 	TailscaleVault *reporter.VaultReport
 }
@@ -139,6 +141,34 @@ func parseUnits(units, files string, remembered []string) []Service {
 		services = append(services, Service{Kind: "systemd", Name: name, State: "stopped", System: systemUnit(name)})
 	}
 	return services
+}
+
+func bootStates(show string) map[string]Service {
+	states := map[string]Service{}
+	for block := range strings.SplitSeq(strings.ReplaceAll(show, "\r\n", "\n"), "\n\n") {
+		fields := map[string]string{}
+		for line := range strings.SplitSeq(block, "\n") {
+			if key, value, ok := strings.Cut(line, "="); ok {
+				fields[key] = value
+			}
+		}
+		if fields["Id"] == "" {
+			continue
+		}
+		state := Service{State: "stopped"}
+		switch {
+		case fields["ConditionResult"] == "no":
+			state.State = "unneeded"
+		case fields["Type"] == "oneshot" && fields["Result"] == "success" && fields["ExecMainCode"] == "1" && fields["ExecMainStatus"] == "0":
+			state.State = "boot"
+			if at, err := time.ParseInLocation("Mon 2006-01-02 15:04:05 MST", fields["ExecMainExitTimestamp"], time.Local); err == nil {
+				since := at.UTC().Format(time.RFC3339)
+				state.Since = &since
+			}
+		}
+		states[fields["Id"]] = state
+	}
+	return states
 }
 
 func unitFileExists(present map[string]bool, name string) bool {
@@ -326,12 +356,13 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 		Network   *reporter.NetworkInventory `json:"network"`
 
 		TailscaleVault *reporter.VaultReport `json:"tailscaleVault,omitempty"`
-	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale, parts.Network, parts.TailscaleVault})
+		Bridges        *reporter.Bridges     `json:"bridges"`
+	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale, parts.Network, parts.TailscaleVault, parts.Bridges})
 	if err != nil {
 		return Inventory{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale, Network: parts.Network, TailscaleVault: parts.TailscaleVault}, nil
+	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale, Network: parts.Network, TailscaleVault: parts.TailscaleVault, Bridges: parts.Bridges}, nil
 }
 
 func rank(service Service) int {
@@ -357,6 +388,22 @@ func Collect(ctx context.Context, run Runner, remembered []string) (Snapshot, er
 		return Snapshot{}, fmt.Errorf("list unit files: %w", err)
 	}
 	snapshot := Snapshot{Services: parseUnits(string(units), string(files), remembered), Docker: "missing"}
+	var stopped []string
+	for _, service := range snapshot.Services {
+		if service.State == "stopped" {
+			stopped = append(stopped, service.Name)
+		}
+	}
+	if len(stopped) > 0 {
+		if show, err := step("systemctl", append([]string{"show", "--property=Id,Type,Result,ConditionResult,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp", "--no-pager"}, stopped...)...); err == nil {
+			states := bootStates(string(show))
+			for index, service := range snapshot.Services {
+				if found, ok := states[service.Name]; ok && service.State == "stopped" {
+					snapshot.Services[index].State, snapshot.Services[index].Since = found.State, found.Since
+				}
+			}
+		}
+	}
 	if containers, err := step("docker", "ps", "-a", "--no-trunc", "--format", containerFormat); err == nil {
 		services, stacks := parseContainers(string(containers))
 		snapshot.Services = append(snapshot.Services, services...)

@@ -24,6 +24,7 @@ interface Needed {
 export async function guardedFetch<T = unknown>(
   path: string,
   init: RequestInit,
+  expected?: { op: string; target: string },
 ): Promise<T> {
   try {
     return await apiFetch<T>(path, init);
@@ -32,6 +33,14 @@ export async function guardedFetch<T = unknown>(
       throw error;
     }
     const needed = error.details as unknown as Needed;
+    if (
+      expected &&
+      (needed.op !== expected.op || needed.target !== expected.target)
+    ) {
+      throw new Error(
+        "Krynodes asked to confirm something else. Nothing was saved.",
+      );
+    }
     let proof: string;
     try {
       const session = await openSession(needed.core);

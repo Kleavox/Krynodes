@@ -476,4 +476,42 @@ describe("stacks and trust", () => {
       }),
     });
   });
+
+  it("stores the server's networks when given and keeps them when absent", async () => {
+    const { db, sqlite, node } = setup();
+    const bridges = {
+      networks: [
+        {
+          name: "apps-inner",
+          kind: "contained" as const,
+          subnet: "172.24.0.0/24",
+          members: [],
+        },
+      ],
+      taken: [{ range: "172.18.0.0/16", by: "kuma_default" }],
+      claimed: [],
+    };
+    const stored = () =>
+      (
+        sqlite.prepare("SELECT bridges FROM nodes WHERE id = ?").get(NODE) as {
+          bridges: string | null;
+        }
+      ).bridges;
+    await applyInventory(
+      db,
+      node(),
+      { hash: HASH_A, services: [], bridges },
+      NOW,
+    );
+    expect(JSON.parse(stored() ?? "null")).toEqual(bridges);
+    await applyInventory(db, node(), { hash: HASH_B, services: [] }, NOW + 1);
+    expect(JSON.parse(stored() ?? "null")).toEqual(bridges);
+    await applyInventory(
+      db,
+      node(),
+      { hash: HASH_A, services: [], bridges: null },
+      NOW + 2,
+    );
+    expect(stored()).toBeNull();
+  });
 });

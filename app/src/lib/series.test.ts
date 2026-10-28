@@ -376,6 +376,7 @@ describe("why a window has no good result", () => {
       offline: 1,
       routine: 1,
       work: 2,
+      quarantined: 0,
       since: 0,
       lastDown: 3 * 300_000,
     });
@@ -392,6 +393,45 @@ describe("why a window has no good result", () => {
     );
     expect(heartbeatSummary(uptime, "4 hours")).toBe(
       "2 up, 2 down, 1 offline, 3 not counted in the last 4 hours",
+    );
+  });
+
+  it("puts a quarantine over work and offline, but keeps a result it has", () => {
+    const slots = layoutReportSlots({
+      slots: [{ t: iso(20) }],
+      slotSeconds: 300,
+      graceSeconds: 120,
+      since: at(60),
+      now,
+      count: 4,
+      work: [{ from: at(21), to: at(5) }],
+      quiet: [
+        { from: iso(21), to: null, why: "quarantined" },
+        { from: iso(15), to: null, why: "offline" },
+      ],
+    });
+    expect(slots.map((slot) => slot.state)).toEqual([
+      "received",
+      "quarantined",
+      "quarantined",
+      "quarantined",
+    ]);
+    expect(barTone("quarantined", null, false)).toBe("quarantined");
+  });
+
+  it("leaves a quarantine out of uptime and names it in the tip", () => {
+    const uptime = uptimeOf(
+      (["up", "up", "quarantined", "quarantined"] as const).map(
+        (tone, index) => ({ start: index * 300_000, tone }),
+      ),
+    );
+    expect(uptime.percent).toBe(100);
+    expect(uptime.quarantined).toBe(2);
+    expect(uptimeTip(uptime, 300_000, String)).toContain(
+      "Quarantined 10m, not counted",
+    );
+    expect(heartbeatSummary(uptime, "4 hours")).toBe(
+      "2 up, 0 down, 2 not counted in the last 4 hours",
     );
   });
 

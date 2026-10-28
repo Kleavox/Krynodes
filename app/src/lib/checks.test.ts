@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import {
   autoRestartLine,
+  checkBucket,
   checkLive,
   checksByServer,
   checkTargetProblem,
@@ -188,6 +189,26 @@ describe("checks by server", () => {
       ["calisto", ["MinIO console", "postgresql"]],
       ["old", ["Old"]],
     ]);
+  });
+
+  it("puts a quarantined server last", () => {
+    const quarantined = {
+      ...server("pv", "pivox"),
+      quarantine: { at: before(60_000), why: "scan" },
+    };
+    expect(
+      checksByServer(checks, [quarantined, server("io", "io")], NOW).map(
+        (group) => group.node.name,
+      ),
+    ).toEqual(["io", "pivox"]);
+  });
+
+  it("files each check under one status filter", () => {
+    expect(checkBucket("UNTRUSTED", "off")).toBe("quarantined");
+    expect(checkBucket("OFFLINE", "off")).toBe("offline");
+    expect(checkBucket("DOWN", "work")).toBeNull();
+    expect(checkBucket("DOWN", "bad")).toBe("down");
+    expect(checkBucket("UP", "ok")).toBe("up");
   });
 
   it("heads each server with its count", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { quietSpans } from "./quiet";
+import { quietByNode, quietSpans } from "./quiet";
 
 const WINDOW = 300_000;
 const at = (time: string) => Date.parse(`2026-10-24T${time}:00.000Z`);
@@ -109,5 +109,52 @@ describe("when a server went quiet", () => {
         lastSeen: at("04:00") + 10_000,
       }),
     ).toEqual([{ from: iso("02:00"), to: iso("02:30"), why: "offline" }]);
+  });
+});
+
+describe("quarantined spans", () => {
+  const node = (quarantines?: string | null) => ({
+    id: "n1",
+    interval_seconds: 60,
+    last_seen_at: "2026-10-24 03:59:50",
+    security: null,
+    ...(quarantines === undefined ? {} : { quarantines }),
+  });
+  const windows = reported("02:00", "03:55").map((window) => ({
+    node_id: "n1",
+    window_start: new Date(window.start).toISOString(),
+    uptime_seconds: window.uptimeSeconds,
+  }));
+  const quiet = (quarantines?: string | null) =>
+    quietByNode(windows, [node(quarantines)], at("02:00"), at("04:00"))["n1"]!
+      .quiet;
+
+  it("runs from the start of the range while a quarantine opened before it is open", () => {
+    expect(
+      quiet(JSON.stringify([{ at: "2026-10-23 22:00:00", releasedAt: null }])),
+    ).toEqual([{ from: iso("02:00"), to: null, why: "quarantined" }]);
+  });
+
+  it("runs from its start to its release inside the range", () => {
+    expect(
+      quiet(
+        JSON.stringify([
+          { at: "2026-10-24 02:30:00", releasedAt: "2026-10-24 03:10:00" },
+        ]),
+      ),
+    ).toEqual([{ from: iso("02:30"), to: iso("03:10"), why: "quarantined" }]);
+  });
+
+  it("leaves out one released before the range, and a node without the column", () => {
+    expect(
+      quiet(
+        JSON.stringify([
+          { at: "2026-10-23 20:00:00", releasedAt: "2026-10-23 21:00:00" },
+        ]),
+      ),
+    ).toEqual([]);
+    expect(quiet()).toEqual([]);
+    expect(quiet(null)).toEqual([]);
+    expect(quiet("not json")).toEqual([]);
   });
 });

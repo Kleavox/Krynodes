@@ -107,6 +107,8 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		return e.rebootSetting(request), false
 	case server && request.Action == "accept":
 		return e.accept(request), false
+	case server && request.Action == "admin":
+		return e.adminExpect(request), false
 	case request.Name == "tailscale" && request.Action == "block":
 		return e.blockTailnet(ctx, request), false
 	case request.Name == "tailscale" && request.Action == "unblock":

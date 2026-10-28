@@ -57,7 +57,7 @@ describe("ports a Contained stack may reach on its server", () => {
   });
 });
 
-const node = (id: string, name: string, agent = "0.6.14") =>
+const node = (id: string, name: string, agent = "0.7.0") =>
   ({
     id,
     name,
@@ -206,7 +206,7 @@ describe("stacks", () => {
         ...listmonk!.members[0]!,
         node: node("n1", "Callisto", "0.4.1"),
       }),
-    ).toBe("Needs agent 0.6.14");
+    ).toBe("Needs agent 0.7.0");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
@@ -284,7 +284,7 @@ describe("stacks", () => {
 });
 
 describe("stack commands", () => {
-  const member = (running: number, total: number, agent = "0.6.14") => ({
+  const member = (running: number, total: number, agent = "0.7.0") => ({
     node: node("n1", "pivox", agent),
     stack: stack("kuma", { running, total }),
     trusted: true,
@@ -322,22 +322,22 @@ describe("stack commands", () => {
       docker,
     });
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("ready")),
+      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("ready")),
     ).toBeNull();
     expect(newStackBlocker(node("n1", "pivox", "0.4.1"), entry("ready"))).toBe(
-      "Needs agent 0.6.14",
+      "Needs agent 0.7.0",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("missing")),
+      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("missing")),
     ).toBe("No Docker");
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("no-compose")),
+      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("no-compose")),
     ).toBe("Docker without Compose");
-    expect(newStackBlocker(node("n1", "pivox", "0.6.14"), entry(null))).toBe(
+    expect(newStackBlocker(node("n1", "pivox", "0.7.0"), entry(null))).toBe(
       "Docker Not Reported Yet",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), {
+      newStackBlocker(node("n1", "pivox", "0.7.0"), {
         ...entry("ready"),
         trust: null,
       }),
@@ -632,9 +632,9 @@ describe("what needs attention on Services", () => {
     since: string | null = null,
   ) => ({ kind: "docker" as const, name, state, since, system: false });
   const servers = [
-    node("pv", "pivox", "0.6.14"),
-    node("io", "io", "0.6.14"),
-    node("cl", "calisto", "0.6.14"),
+    node("pv", "pivox", "0.7.0"),
+    node("io", "io", "0.7.0"),
+    node("cl", "calisto", "0.7.0"),
   ];
   const estate: ServicesResponse = {
     nodes: [
@@ -810,5 +810,48 @@ describe("deleting the original of a move at once", () => {
     expect(moveConfirmed("now", "", "listmonk")).toBe(false);
     expect(moveConfirmed("now", "listmon", "listmonk")).toBe(false);
     expect(moveConfirmed("now", "listmonk", "listmonk")).toBe(true);
+  });
+});
+
+describe("units that only run at boot", () => {
+  it("leaves them out of the server count and of what needs attention", () => {
+    const states = [
+      ...Array.from({ length: 14 }, () => "running" as const),
+      "stopped" as const,
+      "boot" as const,
+      "boot" as const,
+      "unneeded" as const,
+    ];
+    const resting: ServicesResponse = {
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          stacks: [],
+          services: states.map((state, index) => ({
+            kind: "systemd" as const,
+            name: `unit-${index}.service`,
+            state,
+            since: null,
+            system: false,
+          })),
+        },
+      ],
+      actions: [],
+    };
+    const options = { query: "", kind: "all" as const, showSystem: true };
+    const box = serverBoxes(resting, nodes, options)[0]!;
+    expect(box.count).toBe("14 running · 1 stopped");
+    expect(box.members.slice(-3).map((member) => member.entry.state)).toEqual([
+      "boot",
+      "boot",
+      "unneeded",
+    ]);
+    expect(
+      serverLists(resting, nodes, {
+        showSystem: true,
+        query: "",
+        notRunning: true,
+      })[0]!.members.map((member) => member.entry.state),
+    ).toEqual(["stopped"]);
   });
 });

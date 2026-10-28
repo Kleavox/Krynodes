@@ -25,6 +25,7 @@ import { serverOperation } from "@/lib/operations";
 import { actionsFor } from "@/lib/quarantine";
 import type { NodeRecord } from "@/types";
 
+import { AdminUserDialog } from "./admin-user-dialog";
 import { DeleteNodeDialog } from "./delete-node-dialog";
 import { EditNodeDialog } from "./edit-node-dialog";
 import { InstallDockerDialog } from "./install-docker-dialog";
@@ -39,6 +40,7 @@ type OpenDialog =
   | "unlock"
   | "docker"
   | "release"
+  | "admin"
   | null;
 
 export function NodeActions({
@@ -161,6 +163,11 @@ export function NodeActions({
                   : "Install Docker"}
               </DropdownMenuItem>
             )}
+            {trust !== null && !busy && (
+              <DropdownMenuItem onSelect={() => setDialog("admin")}>
+                Add Admin User
+              </DropdownMenuItem>
+            )}
             {lockable && (
               <DropdownMenuItem
                 variant={locked ? "default" : "destructive"}
@@ -195,6 +202,13 @@ export function NodeActions({
         />
       )}
 
+      {!limited && (
+        <AdminUserDialog
+          node={node}
+          open={dialog === "admin"}
+          onOpenChange={(open) => setDialog(open ? "admin" : null)}
+        />
+      )}
       <CheckDialog
         open={dialog === "add-check"}
         onOpenChange={(open) => setDialog(open ? "add-check" : null)}

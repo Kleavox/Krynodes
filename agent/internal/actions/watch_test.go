@@ -134,7 +134,7 @@ func TestAKrynodesActionTakesItsPortsIntoTheStartingPointButNotKeys(t *testing.T
 		t.Fatalf("result %+v", result)
 	}
 	start, _ := readState[watch.State](executor.StateDir, watchFile)
-	if !slices.Equal(start.Ports, []string{"41641/udp tailscaled", "8080/tcp nginx"}) || len(start.Keys) != 1 {
+	if !slices.Equal(start.Ports, []string{"32768-60999/udp tailscaled", "8080/tcp nginx"}) || len(start.Keys) != 1 {
 		t.Fatalf("start %+v", start)
 	}
 	executor.watchServer(context.Background())
@@ -200,5 +200,75 @@ func TestAMissingChainIsARebootNotARemovedRule(t *testing.T) {
 	}
 	if events := readEvents(t, executor); len(events) != 0 {
 		t.Fatalf("events %+v", events)
+	}
+}
+
+func udpListener(port int, process string) string {
+	return fmt.Sprintf("udp UNCONN 0 0 0.0.0.0:%d 0.0.0.0:* users:((\"%s\",pid=90,fd=3))\n", port, process)
+}
+
+func portEvents(t *testing.T, executor Executor) []string {
+	t.Helper()
+	var ports []string
+	for _, event := range readEvents(t, executor) {
+		if event.Kind == "port" {
+			ports = append(ports, event.Detail["port"]+" "+event.Detail["process"])
+		}
+	}
+	return ports
+}
+
+func TestTemporaryUDPPortsAreOneItemPerProcess(t *testing.T) {
+	executor, run := watchedServer(t)
+	executor.watchServer(context.Background())
+	run.respond["ss -H -tulnp"] = nginxListener + udpListener(42566, "tailscaled") + udpListener(55406, "tailscaled")
+	now, _ := executor.watchNow(context.Background())
+	if !slices.Equal(now.Ports, []string{"32768-60999/udp tailscaled", "8080/tcp nginx"}) {
+		t.Fatalf("ports %q", now.Ports)
+	}
+	for range 2 {
+		executor.watchServer(context.Background())
+	}
+	if ports := portEvents(t, executor); !slices.Equal(ports, []string{"32768-60999/udp tailscaled"}) {
+		t.Fatalf("events %q", ports)
+	}
+}
+
+func TestAPortAcceptedUnder070CountsAsTheRange(t *testing.T) {
+	executor, run := watchedServer(t)
+	executor.watchServer(context.Background())
+	start, _ := readState[watch.State](executor.StateDir, watchFile)
+	start.Ports = []string{"42566/udp tailscaled", "8080/tcp nginx"}
+	writeJSON(executor.StateDir, watchFile, start, 0o640)
+	run.respond["ss -H -tulnp"] = nginxListener + udpListener(33453, "tailscaled")
+	executor.watchServer(context.Background())
+	if events := readEvents(t, executor); len(events) != 0 {
+		t.Fatalf("an accepted temporary port warned again: %+v", events)
+	}
+}
+
+func TestOnlyUDPInTheKernelRangeCollapses(t *testing.T) {
+	executor, run := watchedServer(t)
+	executor.watchServer(context.Background())
+	run.respond["ss -H -tulnp"] = nginxListener + "tcp LISTEN 0 5 0.0.0.0:45000 0.0.0.0:* users:((\"nc\",pid=666,fd=3))\n" + udpListener(45000, "nc") + udpListener(5353, "avahi")
+	executor.watchServer(context.Background())
+	if ports := portEvents(t, executor); !slices.Equal(ports, []string{"32768-60999/udp nc", "45000/tcp nc", "5353/udp avahi"}) {
+		t.Fatalf("events %q", ports)
+	}
+}
+
+func TestTheRangeComesFromTheKernel(t *testing.T) {
+	root := t.TempDir()
+	if low, high := ephemeral(root); low != 32768 || high != 60999 {
+		t.Fatalf("default %d-%d", low, high)
+	}
+	path := filepath.Join(root, "proc", "sys", "net", "ipv4", "ip_local_port_range")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte("40000\t50000\n"), 0o644)
+	if low, high := ephemeral(root); low != 40000 || high != 50000 {
+		t.Fatalf("read %d-%d", low, high)
+	}
+	if ports := collapse([]string{"45000/udp nc", "39999/udp nc", "45000/tcp nc"}, 40000, 50000); !slices.Equal(ports, []string{"39999/udp nc", "40000-50000/udp nc", "45000/tcp nc"}) {
+		t.Fatalf("collapse %q", ports)
 	}
 }

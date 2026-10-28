@@ -29,19 +29,33 @@ func (e Executor) knocked(project string) bool {
 
 func (e Executor) watchKnocks(ctx context.Context) {
 	record := e.readNetwork()
-	if !record.Joined || record.Document == nil {
-		return
+	joined := record.Joined && record.Document != nil
+	document := network.Document{}
+	if joined {
+		document = *record.Document
 	}
-	settings := network.Effective(*record.Document, record.Tightened)
-	now := e.Now()
-	journal, _ := e.output(ctx, "journalctl", "-k", "--since=@"+strconv.FormatInt(now.Add(-network.KnockWindow).Unix(), 10), "-o", "short-unix", "--no-pager", "-q")
+	settings := network.Effective(document, record.Tightened)
 	bridges := map[string]string{}
 	for _, stack := range e.diskRules(nil) {
 		for _, bridge := range stack.Bridges {
 			bridges[bridge] = stack.Project
 		}
 	}
-	seen := network.Scans(network.ParseKnocks(journal), now, settings.Scan, bridges)
+	addresses := map[string]string{}
+	for _, shared := range e.readBridges() {
+		for key, address := range shared.Pins {
+			addresses[address], _, _ = strings.Cut(key, "/")
+		}
+	}
+	if !joined && len(bridges) == 0 && len(addresses) == 0 {
+		return
+	}
+	now := e.Now()
+	journal, _ := e.output(ctx, "journalctl", "-k", "--since=@"+strconv.FormatInt(now.Add(-network.KnockWindow).Unix(), 10), "-o", "short-unix", "--no-pager", "-q")
+	seen := network.Scans(network.ParseKnocks(journal), now, settings.Scan, bridges, addresses)
+	if !joined {
+		seen.Sources, seen.Wrong = nil, nil
+	}
 	minute, hour := strconv.FormatInt(now.Unix()/60, 10), strconv.FormatInt(now.Unix()/3600, 10)
 	dropped := false
 	for _, scan := range seen.Sources {

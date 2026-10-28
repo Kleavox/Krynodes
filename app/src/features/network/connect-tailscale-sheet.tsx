@@ -1,5 +1,5 @@
 import { TAILSCALE } from "@krynodes/protocol";
-import { FEATURE_AGENT } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -106,7 +106,7 @@ export function ConnectTailscaleSheet({
   const problem = !tailnet
     ? "No server is on a tailnet yet. Sign one in from its Packages page first."
     : holders.length < 2
-      ? `Connect needs two servers with agent ${FEATURE_AGENT} that this device reaches; ${holders.length} is.`
+      ? `Connect needs two servers with agent ${MIN_AGENT_VERSION} that this device reaches; ${holders.length} is.`
       : null;
   const ready =
     problem === null &&
@@ -213,7 +213,7 @@ export function ConnectTailscaleSheet({
           <p className="text-xs text-muted-foreground">
             {holders.length > 0
               ? `Your browser splits it into ${holders.length} pieces, one for each of ${listOf(names)}. Any two rebuild it, only for a change you sign with your fingerprint, and the server erases it after. Krynodes' Worker never sees it.`
-              : `No server with agent ${FEATURE_AGENT} that this device reaches can hold a piece yet.`}
+              : `No server with agent ${MIN_AGENT_VERSION} that this device reaches can hold a piece yet.`}
           </p>
         </div>
         <Said text={problem} />

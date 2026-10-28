@@ -204,11 +204,18 @@ describe("fleetSummary", () => {
     ];
     expect(fleetSummary(nodes, checks, NOW)).toEqual({
       nodes: { total: 3, online: 1, offline: 1, quarantined: 0 },
-      checks: { total: 4, up: 1, down: 1, offline: 1, stale: 1 },
+      checks: {
+        total: 4,
+        up: 1,
+        down: 1,
+        offline: 1,
+        quarantined: 0,
+        stale: 1,
+      },
     });
   });
 
-  it("counts a quarantined server apart, and its checks like an offline server's", () => {
+  it("counts a quarantined server and its checks apart", () => {
     const quarantine = { at: "2026-09-28T11:18:00Z", why: "why" };
     const nodes = [
       node(),
@@ -218,11 +225,20 @@ describe("fleetSummary", () => {
     const checks = [
       check("UP"),
       check("UNTRUSTED", { id: "c2", node_id: "n3" }),
+      check("UNTRUSTED", { id: "c3", node_id: "n3" }),
+      check("UP", { id: "c4", node_id: "n2" }),
     ];
     const summary = fleetSummary(nodes, checks, NOW);
     expect(summary).toEqual({
       nodes: { total: 3, online: 1, offline: 1, quarantined: 1 },
-      checks: { total: 2, up: 1, down: 0, offline: 1, stale: 0 },
+      checks: {
+        total: 4,
+        up: 1,
+        down: 0,
+        offline: 1,
+        quarantined: 2,
+        stale: 0,
+      },
     });
     expect(serversTile(summary.nodes)).toEqual({
       value: "1/3",

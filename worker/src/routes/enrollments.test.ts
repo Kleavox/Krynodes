@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { app } from "../app";
 import type { Env } from "../env";
+import { LAPTOP, PHONE } from "../test/keys";
 import { createTestDb } from "../test/sqlite-d1";
 
 const INSTALLER = readFileSync(
@@ -153,6 +154,55 @@ describe("enrollment tokens", () => {
         })
       ).status,
     ).toBe(409);
+  });
+
+  it("snapshots the admin user when the command is made and never lets a change replace it", async () => {
+    const { create, script, request } = fleet();
+    const blob = (line: string) => line.split(" ")[1];
+    expect(
+      (
+        await request("PUT", "/api/settings/enroll-defaults", {
+          recommended: true,
+          docker: true,
+          hour: 3,
+          admin: { name: "musyaf", keys: [LAPTOP, PHONE] },
+        })
+      ).status,
+    ).toBe(200);
+    const { id, token } = await create({ docker: true, adminUser: true });
+    const flags = `--admin musyaf --admin-key ${blob(LAPTOP)}:j5mus-laptop --admin-key ${blob(PHONE)}:phone`;
+    expect(tail((await script(token)).text)).toBe(
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker ${flags}'\n  main $kry_args\n}\n`,
+    );
+    await request("PUT", "/api/settings/enroll-defaults", {
+      recommended: true,
+      docker: true,
+      hour: 3,
+      admin: { name: "intruder", keys: [PHONE] },
+    });
+    expect(
+      (
+        await request("PATCH", `/api/enrollments/${id}`, {
+          docker: true,
+          adminUser: true,
+          admin: { name: "intruder", keys: [PHONE] },
+        })
+      ).status,
+    ).toBe(200);
+    expect(tail((await script(token)).text)).toContain(flags);
+    await request("PATCH", `/api/enrollments/${id}`, { docker: true });
+    expect(tail((await script(token)).text)).not.toContain("--admin");
+    await request("PATCH", `/api/enrollments/${id}`, {
+      docker: true,
+      adminUser: true,
+    });
+    expect(tail((await script(token)).text)).toContain(flags);
+  });
+
+  it("adds no admin user when Enroll Defaults has none", async () => {
+    const { create, script } = fleet();
+    const { token } = await create({ adminUser: true });
+    expect(tail((await script(token)).text)).not.toContain("--admin");
   });
 
   it("gets the server ready for the private network only while one exists", async () => {

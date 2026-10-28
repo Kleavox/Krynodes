@@ -96,17 +96,15 @@ describe("removing Krynodes from a server with Delete node", () => {
   });
   const trust = { version: 1, core: [], access: [laptop.fingerprint] };
 
-  it("needs an online server on agent 0.6.14 or newer that a device can sign for", () => {
-    expect(removalReady(server("0.6.14"), trust, [laptop], NOW)).toBe(true);
+  it("needs an online server on agent 0.7.0 or newer that a device can sign for", () => {
     expect(removalReady(server("0.7.0"), trust, [laptop], NOW)).toBe(true);
-    expect(removalReady(server("0.6.13"), trust, [laptop], NOW)).toBe(false);
+    expect(removalReady(server("0.7.1"), trust, [laptop], NOW)).toBe(true);
+    expect(removalReady(server("0.6.99"), trust, [laptop], NOW)).toBe(false);
     expect(removalReady(server("dev"), trust, [laptop], NOW)).toBe(true);
-    expect(removalReady(server("0.6.14", 10), trust, [laptop], NOW)).toBe(
-      false,
-    );
-    expect(removalReady(server("0.6.14"), null, [laptop], NOW)).toBe(false);
+    expect(removalReady(server("0.7.0", 10), trust, [laptop], NOW)).toBe(false);
+    expect(removalReady(server("0.7.0"), null, [laptop], NOW)).toBe(false);
     expect(
-      removalReady(server("0.6.14"), { ...trust, access: [] }, [laptop], NOW),
+      removalReady(server("0.7.0"), { ...trust, access: [] }, [laptop], NOW),
     ).toBe(false);
   });
 });

@@ -284,6 +284,23 @@ describe("what an action says", () => {
     ).toBe("Remove Krynodes from the server");
   });
 
+  it("names the shared Docker network it creates or deletes", () => {
+    expect(
+      historyText(
+        action({
+          kind: "bridge",
+          name: "default-env_public",
+          action: "create",
+        }),
+      ),
+    ).toBe("Create network default-env_public");
+    expect(
+      historyText(
+        action({ kind: "bridge", name: "apps-inner", action: "remove" }),
+      ),
+    ).toBe("Delete network apps-inner");
+  });
+
   it("names the Tailscale steps, and the credential they use", () => {
     expect(
       historyText(action({ kind: "vault", name: "tailscale", action: "save" })),

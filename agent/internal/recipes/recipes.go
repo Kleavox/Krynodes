@@ -27,6 +27,7 @@ type Env struct {
 const (
 	autoUpgrades = "/etc/apt/apt.conf.d/52krynodes-auto-upgrades"
 	sshDropIn    = "/etc/ssh/sshd_config.d/10-krynodes.conf"
+	rootDropIn   = "/etc/ssh/sshd_config.d/10-krynodes-root.conf"
 	jail         = "/etc/fail2ban/jail.d/krynodes.local"
 	stubDropIn   = "/etc/systemd/resolved.conf.d/krynodes-no-stub.conf"
 	resolvConf   = "/etc/resolv.conf"
@@ -343,22 +344,12 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		if len(SSHLogins(ctx, env)) == 0 {
 			return nil, errors.New("no SSH key lets root or a sudo user log in; add one before turning passwords off")
 		}
-		config, _ := os.ReadFile(env.path("/etc/ssh/sshd_config"))
-		if !includeConf.Match(config) {
-			return nil, errors.New("this server's SSH does not read /etc/ssh/sshd_config.d; change it by hand")
+		return nil, sshChange(ctx, env, sshDropIn, "PasswordAuthentication no\nKbdInteractiveAuthentication no\n")
+	case "no-root-login":
+		if !slices.ContainsFunc(SSHLogins(ctx, env), func(user string) bool { return user != "root" }) {
+			return nil, errors.New("no SSH key lets a sudo user other than root log in; add one before turning root login off")
 		}
-		if err := env.write(sshDropIn, "PasswordAuthentication no\nKbdInteractiveAuthentication no\n", 0o644); err != nil {
-			return nil, err
-		}
-		if err := env.run(ctx, "sshd", "-t"); err != nil {
-			env.remove(sshDropIn)
-			return nil, err
-		}
-		if err := reloadSSH(ctx, env); err != nil {
-			env.remove(sshDropIn)
-			return nil, err
-		}
-		return nil, nil
+		return nil, sshChange(ctx, env, rootDropIn, "PermitRootLogin no\n")
 	case "fail2ban":
 		var fresh string
 		var err error
@@ -389,6 +380,25 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 }
 
 const NetworkPort = "networkPort"
+
+func sshChange(ctx context.Context, env Env, file, body string) error {
+	config, _ := os.ReadFile(env.path("/etc/ssh/sshd_config"))
+	if !includeConf.Match(config) {
+		return errors.New("this server's SSH does not read /etc/ssh/sshd_config.d; change it by hand")
+	}
+	if err := env.write(file, body, 0o644); err != nil {
+		return err
+	}
+	if err := env.run(ctx, "sshd", "-t"); err != nil {
+		env.remove(file)
+		return err
+	}
+	if err := reloadSSH(ctx, env); err != nil {
+		env.remove(file)
+		return err
+	}
+	return nil
+}
 
 func firewall(ctx context.Context, env Env, chosen, networkPort string) (map[string]string, error) {
 	var extra []string
@@ -503,8 +513,12 @@ func undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 			return undoRHELUpdates(ctx, env)
 		}
 		return env.remove(autoUpgrades)
-	case "ssh-keys-only":
-		if err := env.remove(sshDropIn); err != nil {
+	case "ssh-keys-only", "no-root-login":
+		file := sshDropIn
+		if id == "no-root-login" {
+			file = rootDropIn
+		}
+		if err := env.remove(file); err != nil {
 			return err
 		}
 		if err := env.run(ctx, "sshd", "-t"); err != nil {

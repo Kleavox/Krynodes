@@ -1,7 +1,7 @@
 import {
-  agentHasFeatures,
+  agentSupported,
   dnsName,
-  FEATURE_AGENT,
+  MIN_AGENT_VERSION,
   signedDocumentSchema,
 } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
@@ -401,14 +401,14 @@ export function registerNetworkRoutes(
       return refusal(context, 404, "NOT_FOUND", "A server was not found.");
     }
     const old = nodes.results.find(
-      (node) => !agentHasFeatures(node.agent_version),
+      (node) => !agentSupported(node.agent_version),
     );
     if (old) {
       return refusal(
         context,
         422,
         "AGENT_TOO_OLD",
-        `Update the agent on ${old.name} to ${FEATURE_AGENT} or newer.`,
+        `Update the agent on ${old.name} to ${MIN_AGENT_VERSION} or newer.`,
       );
     }
     const creating = !row || row.deleted === 1;

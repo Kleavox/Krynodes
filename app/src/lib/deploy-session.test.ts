@@ -1,17 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   activeSession,
   alive,
   endSession,
   hidden,
+  openSession,
   prompting,
   SESSION_MS,
   start,
   startSession,
   visible,
 } from "./deploy-session";
-import type { Session } from "./passkeys";
+import { createSession, type Session } from "./passkeys";
+
+vi.mock("./passkeys", async (original) => ({
+  ...(await original<typeof import("./passkeys")>()),
+  createSession: vi.fn(),
+}));
 
 const T = Date.parse("2026-09-29T10:00:00.000Z");
 const MINUTE = 60_000;
@@ -56,5 +62,54 @@ describe("deploy session", () => {
     expect(activeSession(T + MINUTE)).toBe(session);
     endSession();
     expect(activeSession(T + MINUTE)).toBeNull();
+  });
+});
+
+describe("one Fingerprint prompt at a time", () => {
+  it("lets two callers share the session one prompt opens", async () => {
+    endSession();
+    vi.stubGlobal("window", { location: { hostname: "kry.example" } });
+    let finish: (session: Session) => void = () => {};
+    const made = {
+      grant: { credentialId: "laptop" },
+      expiresAt: Date.now() + SESSION_MS,
+    } as Session;
+    vi.mocked(createSession).mockReturnValueOnce(
+      new Promise<Session>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const first = openSession(["laptop", "phone"]);
+    const second = openSession(["laptop"]);
+    finish(made);
+    expect(await first).toBe(made);
+    expect(await second).toBe(made);
+    expect(createSession).toHaveBeenCalledTimes(1);
+    endSession();
+    vi.unstubAllGlobals();
+  });
+
+  it("asks again when the open prompt is for a device the second caller cannot use", async () => {
+    endSession();
+    vi.stubGlobal("window", { location: { hostname: "kry.example" } });
+    const laptop = {
+      grant: { credentialId: "laptop" },
+      expiresAt: Date.now() + SESSION_MS,
+    } as Session;
+    const phone = {
+      grant: { credentialId: "phone" },
+      expiresAt: Date.now() + SESSION_MS,
+    } as Session;
+    vi.mocked(createSession).mockClear();
+    vi.mocked(createSession)
+      .mockResolvedValueOnce(laptop)
+      .mockResolvedValueOnce(phone);
+    const first = openSession(["laptop"]);
+    const second = openSession(["phone"]);
+    expect(await first).toBe(laptop);
+    expect(await second).toBe(phone);
+    expect(createSession).toHaveBeenCalledTimes(2);
+    endSession();
+    vi.unstubAllGlobals();
   });
 });

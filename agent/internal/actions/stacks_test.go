@@ -453,7 +453,7 @@ func TestANewStackRefusesWhatCouldTakeOverTheServer(t *testing.T) {
 		{"build", func(_ string, s map[string]any, _ map[string]any) { s["build"] = map[string]any{"context": "."} }, "builds"},
 		{"external network", func(_ string, _ map[string]any, extra map[string]any) {
 			extra["networks"] = map[string]any{"lan": map[string]any{"name": "lan", "external": true}}
-		}, "network lan"},
+		}, "lan on this server was not made by Krynodes as a Contained network"},
 		{"macvlan", func(_ string, _ map[string]any, extra map[string]any) {
 			extra["networks"] = map[string]any{"lan": map[string]any{"driver": "macvlan"}}
 		}, "network lan"},

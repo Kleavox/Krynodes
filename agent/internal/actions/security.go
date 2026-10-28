@@ -89,6 +89,9 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		if passwords && settings["permitrootlogin"] == "yes" {
 			add("ssh-root", "serious", "Root can log in over SSH with a password")
 		}
+		if settings["permitrootlogin"] != "no" {
+			add("root-login", "note", "Root can log in over SSH.")
+		}
 	}
 	if users := recipes.SSHLogins(ctx, e.recipeEnv()); len(users) == 0 {
 		add("ssh-no-keys", "warning", "No SSH key lets root or a sudo user log in")

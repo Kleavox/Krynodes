@@ -103,9 +103,8 @@ export function fleetSummary(
       total: checks.length,
       up: shown.filter((status) => status === "UP").length,
       down: shown.filter((status) => status === "DOWN").length,
-      offline: shown.filter(
-        (status) => status === "OFFLINE" || status === "UNTRUSTED",
-      ).length,
+      offline: shown.filter((status) => status === "OFFLINE").length,
+      quarantined: shown.filter((status) => status === "UNTRUSTED").length,
       stale: shown.filter((status) => status === "STALE").length,
     },
   };

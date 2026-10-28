@@ -154,6 +154,8 @@ type StackNetwork struct {
 	Serves  []network.Serve `json:"serves"`
 	Reaches []string        `json:"reaches"`
 	Private []string        `json:"private"`
+	Offers  []string        `json:"offers"`
+	Peers   []string        `json:"peers"`
 }
 
 type TrustReport struct {
@@ -329,7 +331,43 @@ type InventoryReport struct {
 	Tailscale *TailscaleReport  `json:"tailscale,omitempty"`
 	Network   *NetworkInventory `json:"network,omitempty"`
 
-	TailscaleVault *VaultSlot `json:"tailscaleVault,omitempty"`
+	TailscaleVault *VaultSlot   `json:"tailscaleVault,omitempty"`
+	Bridges        *BridgesSlot `json:"bridges,omitempty"`
+}
+
+type Bridges struct {
+	Networks []BridgeNetwork `json:"networks"`
+	Taken    []Taken         `json:"taken"`
+	Claimed  []string        `json:"claimed"`
+}
+
+type BridgeNetwork struct {
+	Name    string         `json:"name"`
+	Kind    string         `json:"kind"`
+	Subnet  *string        `json:"subnet"`
+	Members []BridgeMember `json:"members"`
+}
+
+type BridgeMember struct {
+	Project string   `json:"project"`
+	Service string   `json:"service"`
+	Address *string  `json:"address"`
+	Offers  []string `json:"offers"`
+	Guest   bool     `json:"guest"`
+}
+
+type Taken struct {
+	Range string `json:"range"`
+	By    string `json:"by"`
+	Own   bool   `json:"own,omitempty"`
+}
+
+type BridgesSlot struct {
+	Report *Bridges
+}
+
+func (s BridgesSlot) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.Report)
 }
 
 type NetworkInventory struct {

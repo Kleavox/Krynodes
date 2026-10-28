@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { app } from "../app";
 import type { Env } from "../env";
+import { LAPTOP, LAPTOP_PRINT, PHONE } from "../test/keys";
 import { seedNode } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
 
@@ -62,7 +63,13 @@ describe("enroll defaults", () => {
     const { call } = setup();
     expect(
       await (await call("GET", "/api/settings/enroll-defaults")).json(),
-    ).toEqual({ recommended: true, docker: true, hour: 3, network: false });
+    ).toEqual({
+      recommended: true,
+      docker: true,
+      hour: 3,
+      network: false,
+      admin: null,
+    });
     const saved = await call("PUT", "/api/settings/enroll-defaults", {
       recommended: true,
       docker: false,
@@ -71,7 +78,13 @@ describe("enroll defaults", () => {
     expect(saved.status).toBe(200);
     expect(
       await (await call("GET", "/api/settings/enroll-defaults")).json(),
-    ).toEqual({ recommended: true, docker: false, hour: 22, network: false });
+    ).toEqual({
+      recommended: true,
+      docker: false,
+      hour: 22,
+      network: false,
+      admin: null,
+    });
   });
 
   it("refuses an hour outside the day", async () => {
@@ -85,6 +98,60 @@ describe("enroll defaults", () => {
             hour,
           })
         ).status,
+      ).toBe(400);
+    }
+  });
+});
+
+describe("the admin user in enroll defaults", () => {
+  const defaults = { recommended: true, docker: true, hour: 3, network: false };
+
+  it("keeps a name and its keys and shows each key's fingerprint", async () => {
+    const { call } = setup();
+    const saved = await call("PUT", "/api/settings/enroll-defaults", {
+      ...defaults,
+      admin: { name: "musyaf", keys: [LAPTOP, PHONE] },
+    });
+    expect(saved.status).toBe(200);
+    const read = (await (
+      await call("GET", "/api/settings/enroll-defaults")
+    ).json()) as { admin: { name: string; keys: unknown[] } };
+    expect(read.admin).toEqual({
+      name: "musyaf",
+      keys: [
+        {
+          line: LAPTOP,
+          type: "ssh-ed25519",
+          fingerprint: LAPTOP_PRINT,
+          label: "j5mus-laptop",
+        },
+        {
+          line: PHONE,
+          type: "ssh-ed25519",
+          fingerprint: "SHA256:8N+1D7dUMegVjJ9iFeI8fD+W16LUuALxq/zyJv66bQk",
+          label: "phone",
+        },
+      ],
+    });
+  });
+
+  it("refuses root, a bad name, a key it cannot read and more than four keys", async () => {
+    const { call } = setup();
+    for (const admin of [
+      { name: "root", keys: [LAPTOP] },
+      { name: "Musyaf", keys: [LAPTOP] },
+      { name: "musyaf", keys: [] },
+      { name: "musyaf", keys: ["ssh-ed25519 AAAA laptop"] },
+      { name: "musyaf", keys: Array(5).fill(LAPTOP) },
+    ]) {
+      expect(
+        (
+          await call("PUT", "/api/settings/enroll-defaults", {
+            ...defaults,
+            admin,
+          })
+        ).status,
+        JSON.stringify(admin.name),
       ).toBe(400);
     }
   });
