@@ -401,6 +401,42 @@ describe("stacks and trust", () => {
     expect(row()).toEqual({ title: null, names: null });
   });
 
+  it("keeps a stack's service names and the server's leftovers", async () => {
+    const { db, sqlite, node } = setup();
+    const services = () =>
+      sqlite.prepare("SELECT services FROM stacks WHERE node_id = ?").get(NODE);
+    const leftovers = () =>
+      sqlite.prepare("SELECT leftovers FROM nodes WHERE id = ?").get(NODE);
+    await applyInventory(
+      db,
+      node(),
+      {
+        hash: HASH_A,
+        services: [],
+        stacks: [{ ...stack("listmonk"), services: ["app", "db"] }],
+        leftovers: ["adguard-home"],
+      },
+      NOW,
+    );
+    expect(services()).toEqual({ services: '["app","db"]' });
+    expect(leftovers()).toEqual({ leftovers: '["adguard-home"]' });
+    await applyInventory(
+      db,
+      node(),
+      { hash: HASH_B, services: [], stacks: [stack("listmonk")] },
+      NOW + 1,
+    );
+    expect(services()).toEqual({ services: null });
+    expect(leftovers()).toEqual({ leftovers: '["adguard-home"]' });
+    await applyInventory(
+      db,
+      node(),
+      { hash: HASH_A, services: [], leftovers: [] },
+      NOW + 2,
+    );
+    expect(leftovers()).toEqual({ leftovers: null });
+  });
+
   it("moves container checks to a stack's new container names", async () => {
     const { db, sqlite, node } = setup();
     const OTHER = "22222222-2222-4222-8222-222222222222";

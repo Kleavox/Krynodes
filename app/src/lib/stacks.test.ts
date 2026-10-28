@@ -18,7 +18,9 @@ import {
   foldedText,
   groupStacks,
   moveBlocker,
+  moveClash,
   moveConfirmed,
+  nameOwner,
   newStackBlocker,
   ownFolder,
   removedStacks,
@@ -31,6 +33,7 @@ import {
   stackOf,
   stackSlug,
   stackState,
+  sameTitle,
 } from "./stacks";
 
 describe("ports a Contained stack may reach on its server", () => {
@@ -472,17 +475,114 @@ describe("stack and container names", () => {
         webserver: "my web",
       },
     );
-    expect(containerNameProblem(rows, 0, [], "io")).toBe(
-      "Another container in this stack has this name.",
-    );
-    expect(containerNameProblem(rows, 2, [], "io")).toBe(
+    expect(containerNameProblem(rows, 2, () => null)).toBe(
       "Use letters, digits, dashes, dots and underscores, starting with a letter or digit.",
     );
     const fine = containerNames(three, "paperless");
-    expect(containerNameProblem(fine, 0, [], "io")).toBeNull();
-    expect(containerNameProblem(fine, 1, ["paperless-db"], "io")).toBe(
-      "io already runs a container named paperless-db.",
+    const free = () => null;
+    expect(containerNameProblem(rows, 0, free)).toBe(
+      "Another container in this stack has this name.",
     );
+    expect(containerNameProblem(fine, 0, free)).toBeNull();
+    expect(
+      containerNameProblem(fine, 1, (name) =>
+        name === "paperless-db" ? "taken" : null,
+      ),
+    ).toBe("taken");
+  });
+
+  const io = {
+    stacks: [
+      stack("monitoring", {
+        title: "Monitoring",
+        containers: ["status"],
+        services: ["uptime-kuma", "db"],
+      }),
+      stack("blog", { services: ["web"] }),
+      stack("paperless", { containers: ["paperless-db"], services: ["db"] }),
+    ],
+    services: [
+      {
+        kind: "docker" as const,
+        name: "status",
+        state: "running" as const,
+        since: null,
+        system: false,
+      },
+      {
+        kind: "docker" as const,
+        name: "blog-web-1",
+        state: "running" as const,
+        since: null,
+        system: false,
+      },
+      {
+        kind: "docker" as const,
+        name: "portainer",
+        state: "running" as const,
+        since: null,
+        system: false,
+      },
+    ],
+  };
+
+  it("names the stack that owns a container name on the server", () => {
+    const owner = nameOwner(io, "paperless", "io");
+    expect(owner("uptime-kuma")).toBe(
+      "uptime-kuma is a service of Monitoring on io.",
+    );
+    expect(owner("status")).toBe("status is a container of Monitoring on io.");
+    expect(owner("blog-web-1")).toBe(
+      "blog-web-1 is a container of blog on io.",
+    );
+    expect(owner("portainer")).toBe(
+      "io already runs a container named portainer.",
+    );
+    expect(owner("web.monitoring")).toBe(
+      "Names ending in .monitoring are kept for the services of Monitoring.",
+    );
+    expect(owner("db.paperless")).toBe(
+      "Names ending in .paperless are kept for the services of this stack.",
+    );
+    expect(owner("paperless-db")).toBeNull();
+    expect(owner("db")).toBe("db is a service of Monitoring on io.");
+    expect(nameOwner(undefined, "paperless", "io")("anything")).toBeNull();
+  });
+
+  it("refuses a display name another stack on the server has", () => {
+    expect(sameTitle("monitoring", io.stacks, "io")).toBe(
+      "Another stack on io is called Monitoring.",
+    );
+    expect(sameTitle("Blog", io.stacks, "io")).toBe(
+      "Another stack on io is called blog.",
+    );
+    expect(sameTitle("Monitoring", io.stacks, "io", "monitoring")).toBeNull();
+    expect(sameTitle("Status", io.stacks, "io")).toBeNull();
+  });
+
+  it("says why a server cannot take a stack that moves", () => {
+    const moving = stack("kuma", {
+      title: "Uptime Kuma",
+      names: { web: "uptime-kuma" },
+    });
+    expect(moveClash(moving, { ...io, leftovers: ["kuma"] }, "io")).toBe(
+      "Files left from an earlier kuma are still on io. Delete them there first.",
+    );
+    expect(moveClash(moving, io, "io")).toBe(
+      "uptime-kuma is a service of Monitoring on io.",
+    );
+    expect(
+      moveClash(
+        { ...moving, names: {} },
+        {
+          ...io,
+          stacks: [...io.stacks, stack("kuma-2", { title: "Uptime Kuma" })],
+        },
+        "io",
+      ),
+    ).toBe("Another stack on io is called Uptime Kuma.");
+    expect(moveClash({ ...moving, names: {} }, io, "io")).toBeNull();
+    expect(moveClash(moving, undefined, "io")).toBeNull();
   });
 });
 

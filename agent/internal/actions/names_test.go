@@ -88,8 +88,12 @@ func TestNamesSkipServicesWithCopiesAndServicesThatAreGone(t *testing.T) {
 	if result := createKuma(t, executor, "full", map[string]string{"names": "web=uptime-kuma,old=old-kuma"}); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
-	if !slices.Contains(run.calls, composeCall(dir, "compose.yaml", "up -d")) {
-		t.Fatalf("a service with copies keeps Docker's numbers: %q", run.calls)
+	var override map[string]any
+	if err := readJSON(filepath.Join(dir, hostsFile), &override); err != nil {
+		t.Fatal(err)
+	}
+	if web := asMap(asMap(override["services"])["web"]); web["container_name"] != nil {
+		t.Fatalf("a service with copies keeps Docker's numbers: %#v", override)
 	}
 	if names := executor.metaOf(dir).Names; len(names) != 0 {
 		t.Fatalf("names %#v", names)
@@ -119,14 +123,14 @@ func TestARenamedServiceKeepsTheNameItsWebAddressUses(t *testing.T) {
 			}
 			web := written["services"].(map[string]any)["web"].(map[string]any)
 			network := asMap(asMap(web["networks"])["default"])
-			if !reflect.DeepEqual(network["aliases"], []any{"kuma-web-1"}) {
+			if !reflect.DeepEqual(network["aliases"], []any{"kuma-web-1", "web.kuma"}) {
 				t.Fatalf("web %#v", web)
 			}
 		})
 	}
 }
 
-func TestAServiceThatKeepsItsNameGetsNoAlias(t *testing.T) {
+func TestAServiceThatKeepsItsNameGetsNoOldNameAlias(t *testing.T) {
 	executor, run := stackExecutor(t)
 	dir := namedKuma(t, executor, run, nil)
 	addresses := map[string]webAddress{"kuma.example.com": {Project: "kuma", Service: "web", Container: "uptime-kuma", Network: "kuma_default"}}
@@ -137,7 +141,7 @@ func TestAServiceThatKeepsItsNameGetsNoAlias(t *testing.T) {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	web := krynodesConfig(t, dir)["services"].(map[string]any)["web"].(map[string]any)
-	if aliases := asMap(asMap(web["networks"])["default"])["aliases"]; aliases != nil {
+	if aliases := asMap(asMap(web["networks"])["default"])["aliases"]; !reflect.DeepEqual(aliases, []any{"web.kuma"}) {
 		t.Fatalf("aliases %#v", aliases)
 	}
 }

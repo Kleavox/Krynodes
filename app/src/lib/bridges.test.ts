@@ -297,11 +297,24 @@ describe("network boxes in the stack dialog", () => {
     ]);
   });
 
+  it("refuses a service whose name another stack already has on the network", () => {
+    expect(
+      networkBoxes(
+        joining("apps-inner", "adguard"),
+        io,
+        "pihole",
+        "contained",
+      )[0]!.refusal,
+    ).toBe(
+      "apps-inner already has a service named adguard, from adns. Rename this one in the compose file.",
+    );
+  });
+
   it("tells a new service where its address comes from", () => {
     expect(
-      networkBoxes(joining("apps-inner"), io, "status", "contained")[0]!
+      networkBoxes(joining("apps-inner", "app"), io, "status", "contained")[0]!
         .address,
-    ).toBe("web gets an address from 172.24.0.0/24 when it starts.");
+    ).toBe("app gets an address from 172.24.0.0/24 when it starts.");
   });
 
   it("refuses what a stack cannot join", () => {
@@ -338,9 +351,9 @@ describe("network boxes in the stack dialog", () => {
       "postgres adds NET_ADMIN, so it cannot join apps-inner, a Contained network.",
     ]);
     expect(
-      refusal(joining("apps-inner", "web", "    deploy:\n      replicas: 2")),
+      refusal(joining("apps-inner", "app", "    deploy:\n      replicas: 2")),
     ).toEqual([
-      "web runs 2 copies; a service on a Contained network runs one, so its address stays fixed.",
+      "app runs 2 copies; a service on a Contained network runs one, so its address stays fixed.",
     ]);
     expect(
       networkBoxes(joining("default-env_public"), io, "grafana", "full"),
@@ -449,6 +462,27 @@ describe("moving a stack that uses Krynodes networks", () => {
         { name: "apps-inner", kind: "contained", subnet: "172.24.0.0/24" },
       ],
     });
+  });
+
+  it("refuses a target whose network already has a service of that name", () => {
+    expect(
+      moveLines(kumaMoving, from, {
+        name: "vps-2",
+        bridges: {
+          ...empty,
+          networks: [
+            {
+              ...report.networks[0]!,
+              members: [
+                { ...report.networks[0]!.members[0]!, project: "status" },
+              ],
+            },
+          ],
+        },
+      }).refusal,
+    ).toBe(
+      "apps-inner on vps-2 already has a service named web, from status. Move is off.",
+    );
   });
 
   it("refuses a target whose subnet or name is taken", () => {

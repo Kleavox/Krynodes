@@ -7,6 +7,11 @@ const one = "services:\n  adguard:\n    image: adguard/adguardhome\n";
 const three =
   "services:\n  broker:\n    image: redis:7\n  db:\n    image: postgres:17\n  webserver:\n    image: paperless\n";
 
+const owner =
+  (taken: string[] = []) =>
+  (name: string) =>
+    taken.includes(name) ? `io already runs a container named ${name}.` : null;
+
 const draw = (
   text: string,
   project: string,
@@ -16,7 +21,7 @@ const draw = (
   renderToStaticMarkup(
     <ContainerNames
       names={{
-        ...namesState({ text, project, typed, taken, server: "io" }),
+        ...namesState({ text, project, typed, owner: owner(taken) }),
         type: () => {},
       }}
     />,
@@ -51,8 +56,7 @@ describe("Container Names under a stack's name", () => {
       project: "paperless",
       saved: { db: "postgres" },
       typed: {},
-      taken: [],
-      server: "io",
+      owner: owner(),
       running: ["paperless-broker-1", "postgres", "paperless_webserver_1"],
     });
     expect(names.renamed).toBe(2);
@@ -82,8 +86,7 @@ describe("Container Names under a stack's name", () => {
         saved: { web: "blog-web" },
         original: own,
         typed: {},
-        taken: [],
-        server: "io",
+        owner: owner(),
       }).arg,
     ).toBe("web=blog-web");
   });
@@ -94,8 +97,7 @@ describe("Container Names under a stack's name", () => {
         text: three,
         project: "paperless",
         typed: {},
-        taken: [],
-        server: "io",
+        owner: owner(),
       }).renamed,
     ).toBe(0);
     expect(draw(three, "paperless")).not.toContain("running as");
@@ -107,8 +109,7 @@ describe("Container Names under a stack's name", () => {
         text: three,
         project: "paperless",
         typed: { webserver: "paperless" },
-        taken: [],
-        server: "io",
+        owner: owner(),
       }).arg,
     ).toBe("broker=paperless-broker,db=paperless-db,webserver=paperless");
   });

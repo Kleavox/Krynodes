@@ -20,7 +20,7 @@ import type { NodeRecord } from "@/types";
 import { useSignedAction } from "./use-signed-action";
 
 export interface StackActionRequest {
-  action: "stop" | "remove" | "purge";
+  action: "stop" | "remove" | "purge" | "leftovers";
   project: string;
   title?: string;
   node: NodeRecord;
@@ -48,6 +48,13 @@ const COPY = {
         ? "Its containers, networks and volumes are deleted, and so is the folder Krynodes made for it. This cannot be undone."
         : `Its containers, networks and volumes are deleted. Its folder ${directory} stays. This cannot be undone.`,
     confirm: "Delete Permanently",
+  },
+  leftovers: {
+    title: (project: string, server: string) =>
+      `Delete what is left of ${project} on ${server}?`,
+    body: () =>
+      "Its old folder and volumes are deleted, so the name is free again. This cannot be undone.",
+    confirm: "Delete Leftovers",
   },
 };
 
@@ -79,7 +86,7 @@ function StackActionForm({
   const [typed, setTyped] = useState("");
   const { action, project, title, node, directory } = request;
   const copy = COPY[action];
-  const guarded = action === "purge";
+  const guarded = action === "purge" || action === "leftovers";
   return (
     <AlertDialogContent className="max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0 max-sm:rounded-b-none">
       <AlertDialogHeader>
@@ -112,7 +119,7 @@ function StackActionForm({
           onClick={() =>
             run.mutate(
               {
-                action,
+                action: action === "leftovers" ? "purge" : action,
                 targets: [{ nodeId: node.id, kind: "compose", name: project }],
               },
               { onSuccess: onClose },

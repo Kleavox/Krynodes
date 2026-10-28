@@ -108,6 +108,13 @@ func (e Executor) compose(ctx context.Context, request Request, snapshot Snapsho
 	if slices.Contains(startVerbs, request.Action) && e.lockedDown() {
 		return e.refuse(request.ID, errLockedDown)
 	}
+	if request.Action == "create" || request.Action == "edit" {
+		if names, err := namesFrom(command, nil); err == nil {
+			if err := namesClash(snapshot, request.Name, names); err != nil {
+				return e.refuse(request.ID, err)
+			}
+		}
+	}
 	if request.Action == "create" {
 		return e.create(ctx, request, command, snapshot)
 	}

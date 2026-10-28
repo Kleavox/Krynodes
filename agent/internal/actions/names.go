@@ -3,7 +3,6 @@ package actions
 import (
 	"errors"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -80,7 +79,7 @@ func (e Executor) formerNames(project string, config map[string]any, names map[s
 	for _, address := range e.addresses() {
 		name, renamed := names[address.Service]
 		key, joined := keys[address.Network]
-		if address.Project != project || !renamed || name == address.Container || !joined {
+		if address.Project != project || !renamed || name == address.Container || !joined || address.Host == relation(address.Service, address.Project) {
 			continue
 		}
 		if former[address.Service] == nil {
@@ -105,15 +104,7 @@ func applyNames(target, base map[string]any, names map[string]string, former map
 		}
 		entry["container_name"] = name
 		for key, old := range former[service] {
-			settings := serviceNetwork(entry, key)
-			aliases := asList(settings["aliases"])
-			if aliases == nil {
-				aliases = asList(asMap(asMap(asMap(asMap(base["services"])[service])["networks"])[key])["aliases"])
-			}
-			if !slices.Contains(aliases, any(old)) {
-				aliases = append(slices.Clone(aliases), old)
-			}
-			settings["aliases"] = aliases
+			addAlias(target, base, service, key, old)
 		}
 	}
 }

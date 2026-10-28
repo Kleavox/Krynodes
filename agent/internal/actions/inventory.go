@@ -35,7 +35,7 @@ var copyTimeout = 15 * time.Minute
 
 const createdLayout = "2006-01-02 15:04:05 -0700"
 
-const containerFormat = "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}\t{{.CreatedAt}}\t{{.Ports}}"
+const containerFormat = "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}\t{{.CreatedAt}}\t{{.Ports}}\t{{.Label \"com.docker.compose.service\"}}"
 
 type Stack struct {
 	Project    string
@@ -46,6 +46,7 @@ type Stack struct {
 	Public     []string
 	Bindings   []reporter.Listener
 	Containers []string
+	Services   []string
 }
 
 type Snapshot struct {
@@ -56,16 +57,17 @@ type Snapshot struct {
 }
 
 type Inventory struct {
-	Hash     string                   `json:"hash"`
-	TakenAt  string                   `json:"takenAt"`
-	Services []Service                `json:"services"`
-	Stacks   []reporter.StackEntry    `json:"stacks"`
-	Trust    reporter.TrustReport     `json:"trust"`
-	Docker   string                   `json:"docker,omitempty"`
-	Removed  []reporter.RemovedStack  `json:"removed"`
-	SealKey  string                   `json:"sealKey,omitempty"`
-	Security *reporter.SecurityReport `json:"security,omitempty"`
-	Vault    *reporter.VaultReport    `json:"vault,omitempty"`
+	Hash      string                   `json:"hash"`
+	TakenAt   string                   `json:"takenAt"`
+	Services  []Service                `json:"services"`
+	Stacks    []reporter.StackEntry    `json:"stacks"`
+	Trust     reporter.TrustReport     `json:"trust"`
+	Docker    string                   `json:"docker,omitempty"`
+	Removed   []reporter.RemovedStack  `json:"removed"`
+	Leftovers []string                 `json:"leftovers"`
+	SealKey   string                   `json:"sealKey,omitempty"`
+	Security  *reporter.SecurityReport `json:"security,omitempty"`
+	Vault     *reporter.VaultReport    `json:"vault,omitempty"`
 
 	TailscaleVault *reporter.VaultReport      `json:"tailscaleVault,omitempty"`
 	Packages       *reporter.PackagesReport   `json:"packages,omitempty"`
@@ -81,6 +83,7 @@ type Parts struct {
 	Trust     reporter.TrustReport
 	Docker    string
 	Removed   []reporter.RemovedStack
+	Leftovers []string
 	SealKey   string
 	Security  *reporter.SecurityReport
 	Vault     *reporter.VaultReport
@@ -271,6 +274,9 @@ func parseContainers(output string) ([]Service, []Stack) {
 		}
 		stack.Total++
 		stack.Containers = append(stack.Containers, name)
+		if service := fieldAt(fields, 7); ValidTarget("docker", service) && !slices.Contains(stack.Services, service) {
+			stack.Services = append(stack.Services, service)
+		}
 		if state == "running" {
 			stack.Running++
 		}
@@ -291,6 +297,7 @@ func parseContainers(output string) ([]Service, []Stack) {
 			continue
 		}
 		slices.Sort(stack.Containers)
+		slices.Sort(stack.Services)
 		stacks = append(stacks, *stack)
 	}
 	slices.SortFunc(stacks, func(a, b Stack) int { return cmp.Compare(a.Project, b.Project) })
@@ -308,6 +315,10 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 	})
 	if len(removed) > maxStacks {
 		removed = removed[:maxStacks]
+	}
+	leftovers := slices.Clone(parts.Leftovers)
+	if leftovers == nil {
+		leftovers = []string{}
 	}
 	sorted := slices.Clone(services)
 	if sorted == nil {
@@ -348,6 +359,7 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 		Trust     reporter.TrustReport       `json:"trust"`
 		Docker    string                     `json:"docker"`
 		Removed   []reporter.RemovedStack    `json:"removed"`
+		Leftovers []string                   `json:"leftovers"`
 		SealKey   string                     `json:"sealKey"`
 		Security  *reporter.SecurityReport   `json:"security"`
 		Vault     *reporter.VaultReport      `json:"vault"`
@@ -357,12 +369,12 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 
 		TailscaleVault *reporter.VaultReport `json:"tailscaleVault,omitempty"`
 		Bridges        *reporter.Bridges     `json:"bridges"`
-	}{sorted, listed, trust, docker, removed, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale, parts.Network, parts.TailscaleVault, parts.Bridges})
+	}{sorted, listed, trust, docker, removed, leftovers, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale, parts.Network, parts.TailscaleVault, parts.Bridges})
 	if err != nil {
 		return Inventory{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale, Network: parts.Network, TailscaleVault: parts.TailscaleVault, Bridges: parts.Bridges}, nil
+	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, Leftovers: leftovers, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale, Network: parts.Network, TailscaleVault: parts.TailscaleVault, Bridges: parts.Bridges}, nil
 }
 
 func rank(service Service) int {

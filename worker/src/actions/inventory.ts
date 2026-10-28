@@ -46,6 +46,7 @@ interface StackRow {
   network: string | null;
   title: string | null;
   names: string | null;
+  services: string | null;
 }
 
 const publicOf = (entry: StackEntry) =>
@@ -62,6 +63,11 @@ const networkOf = (entry: StackEntry) =>
 const namesOf = (entry: StackEntry) =>
   entry.names && Object.keys(entry.names).length > 0
     ? JSON.stringify(entry.names)
+    : null;
+
+const servicesOf = (entry: StackEntry) =>
+  entry.services && entry.services.length > 0
+    ? JSON.stringify(entry.services)
     : null;
 
 function renames(row: StackRow | undefined, entry: StackEntry) {
@@ -93,7 +99,8 @@ function stackChanged(row: StackRow | undefined, entry: StackEntry): boolean {
     row.containers !== containersOf(entry) ||
     row.network !== networkOf(entry) ||
     row.title !== (entry.title ?? null) ||
-    row.names !== namesOf(entry)
+    row.names !== namesOf(entry) ||
+    row.services !== servicesOf(entry)
   );
 }
 
@@ -105,7 +112,7 @@ async function stackStatements(
 ): Promise<D1PreparedStatement[]> {
   const existing = await db
     .prepare(
-      "SELECT project, directory, running, total, compose, rollback, access, public, containers, network, title, names FROM stacks WHERE node_id = ?",
+      "SELECT project, directory, running, total, compose, rollback, access, public, containers, network, title, names, services FROM stacks WHERE node_id = ?",
     )
     .bind(nodeId)
     .all<StackRow>();
@@ -123,6 +130,7 @@ async function stackStatements(
       network: networkOf(stack),
       title: stack.title ?? null,
       names: namesOf(stack),
+      services: servicesOf(stack),
     }));
   const moves = stacks.flatMap((stack) =>
     renames(before.get(stack.project), stack),
@@ -135,13 +143,14 @@ async function stackStatements(
       ? [
           db
             .prepare(
-              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, public, containers, network, title, names)
+              `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, access, public, containers, network, title, names, services)
                SELECT ?1, json_extract(value, '$.project'), json_extract(value, '$.directory'),
                       json_extract(value, '$.running'), json_extract(value, '$.total'),
                       json_extract(value, '$.compose'), json_extract(value, '$.rollback'), ?2,
                       json_extract(value, '$.access'), json_extract(value, '$.public'),
                       json_extract(value, '$.containers'), json_extract(value, '$.network'),
-                      json_extract(value, '$.title'), json_extract(value, '$.names')
+                      json_extract(value, '$.title'), json_extract(value, '$.names'),
+                      json_extract(value, '$.services')
                FROM json_each(?3) WHERE true
                ON CONFLICT (node_id, project) DO UPDATE SET
                  directory = excluded.directory, running = excluded.running,
@@ -149,7 +158,8 @@ async function stackStatements(
                  rollback = excluded.rollback, updated_at = excluded.updated_at,
                  access = excluded.access, public = excluded.public,
                  containers = excluded.containers, network = excluded.network,
-                 title = excluded.title, names = excluded.names`,
+                 title = excluded.title, names = excluded.names,
+                 services = excluded.services`,
             )
             .bind(nodeId, at, JSON.stringify(upserts)),
         ]
@@ -333,7 +343,8 @@ export async function applyInventory(
            updates = CASE WHEN ?9 = 1 THEN ?10 ELSE updates END,
            tailscale = ?11,
            tailscale_vault = CASE WHEN ?12 = 1 THEN ?13 ELSE tailscale_vault END,
-           bridges = CASE WHEN ?14 = 1 THEN ?15 ELSE bridges END
+           bridges = CASE WHEN ?14 = 1 THEN ?15 ELSE bridges END,
+           leftovers = CASE WHEN ?16 = 1 THEN ?17 ELSE leftovers END
          WHERE id = ?8`,
       )
       .bind(
@@ -354,6 +365,10 @@ export async function applyInventory(
           : null,
         inventory.bridges === undefined ? 0 : 1,
         inventory.bridges ? JSON.stringify(inventory.bridges) : null,
+        inventory.leftovers === undefined ? 0 : 1,
+        inventory.leftovers && inventory.leftovers.length > 0
+          ? JSON.stringify(inventory.leftovers)
+          : null,
       ),
   ]);
   await applyNetworkInventory(db, node.id, inventory.network ?? null, at);

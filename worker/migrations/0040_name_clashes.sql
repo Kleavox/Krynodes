@@ -1,0 +1,2 @@
+ALTER TABLE stacks ADD COLUMN services TEXT;
+ALTER TABLE nodes ADD COLUMN leftovers TEXT;

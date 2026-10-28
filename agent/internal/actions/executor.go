@@ -174,7 +174,9 @@ run:
 	var packages *reporter.PackagesReport
 	var tailnet *reporter.TailscaleReport
 	var bridges *reporter.Bridges
+	var leftovers []string
 	if e.Audit {
+		leftovers = e.leftovers(ctx, snapshot)
 		security = e.security(ctx, scanned)
 		packages = e.packages(ctx)
 		tailnet = e.tailnet(ctx)
@@ -182,7 +184,7 @@ run:
 			bridges = e.bridgesReport(ctx)
 		}
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport("cloudflare"), TailscaleVault: e.vaultReport("tailscale"), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot), Bridges: bridges}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, Leftovers: leftovers, SealKey: sealKey, Security: security, Vault: e.vaultReport("cloudflare"), TailscaleVault: e.vaultReport("tailscale"), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot), Bridges: bridges}, e.Now())
 	if err != nil {
 		return err
 	}
@@ -375,6 +377,7 @@ func (e Executor) stackEntries(snapshot Snapshot) []reporter.StackEntry {
 			Project: stack.Project, Directory: stack.Directory, Running: stack.Running, Total: stack.Total,
 			Compose: snapshot.Compose, Rollback: len(record.Previous) > 0,
 			Access: e.accessOf(stack.Directory), Public: stack.Public, Containers: stack.Containers,
+			Services: stack.Services,
 		}
 		var stored stackMeta
 		if e.ownStack(stack.Directory) {

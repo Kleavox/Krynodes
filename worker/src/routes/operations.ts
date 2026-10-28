@@ -29,6 +29,8 @@ import { ownersRefusal } from "../trust/approval";
 import { loadFleet } from "../trust/fleet";
 import {
   invalidRequest,
+  leftoversOf,
+  leftoversRefusal,
   readJson,
   type KrynodesApp,
   type KrynodesEnv,
@@ -128,6 +130,7 @@ interface NodeRow {
   vault: string | null;
   tailscale_vault: string | null;
   bridges: string | null;
+  leftovers: string | null;
 }
 
 const MOVE_NETWORKS = 4;
@@ -440,7 +443,7 @@ export function registerOperationRoutes(
     const wanted = [...new Set(steps.map((step) => step.nodeId))];
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker, seal_key, vault, tailscale_vault, bridges FROM nodes
+        `SELECT id, name, agent_version, docker, seal_key, vault, tailscale_vault, bridges, leftovers FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
@@ -621,6 +624,12 @@ export function registerOperationRoutes(
                 code: "STACK_EXISTS",
                 message: `${byId.get(step.nodeId)!.name} already has a stack named ${step.name}.`,
               },
+              409,
+            );
+          }
+          if (leftoversOf(byId.get(step.nodeId)!).includes(step.name)) {
+            return context.json(
+              leftoversRefusal(step.name, byId.get(step.nodeId)!.name),
               409,
             );
           }
