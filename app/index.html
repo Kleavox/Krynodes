@@ -7,8 +7,9 @@
       name="description"
       content="Krynodes: monitoring for your servers, checks and incidents."
     />
-    <meta name="theme-color" content="#0c0c0e" />
+    <meta name="theme-color" content="#0c0c10" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Krynodes</title>
   </head>
   <body>
@@ -19,8 +20,8 @@
           display: grid;
           place-items: center;
           padding: 24px;
-          background: #0c0c0e;
-          color: #ededf0;
+          background: #0c0c10;
+          color: #ececf1;
           font-family: system-ui, sans-serif;
         "
       >
@@ -28,16 +29,30 @@
           <p
             style="
               margin: 0 0 14px;
-              color: #8b7bff;
-              font-family: monospace;
-              font-size: 0.7rem;
-              letter-spacing: 0.14em;
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              color: #ececf1;
+              font-size: 14px;
+              font-weight: 600;
             "
           >
-            KRYNODES
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M6 3.75v16.5M6 12 17.75 5M6 12l11.75 7"
+                fill="none"
+                stroke="#8b7bff"
+                stroke-width="3"
+                stroke-linecap="round"
+              />
+              <circle cx="6" cy="12" r="3.1" fill="#bab8ff" />
+              <circle cx="17.75" cy="5" r="2.75" fill="#bab8ff" />
+              <circle cx="17.75" cy="19" r="2.75" fill="#bab8ff" />
+            </svg>
+            Krynodes
           </p>
           <h1 style="margin: 0; font-size: 1.8rem">JavaScript is off.</h1>
-          <p style="color: #8a8a94; line-height: 1.7">
+          <p style="color: #92929f; line-height: 1.7">
             Krynodes needs JavaScript to run. Enable it in your browser and
             reload the page.
           </p>

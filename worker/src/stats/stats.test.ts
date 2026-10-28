@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { seedCheck, seedNode, seedResult } from "../test/seed";
@@ -638,9 +639,18 @@ describe("serveStats", () => {
     expect(html).toContain("Main website");
     expect(html).toContain('content="600;url=/?r=1"');
     expect(html).not.toContain("Updates paused");
-    expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
     expect(html).toContain(
-      '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,',
+      "--bg:#0c0c10;--card:#14141a;--border:#282831;--fg:#ececf1;--muted:#92929f;--up:#5dcb9a;--partial:#ebba62;--down:#ed7477",
+    );
+    expect(html).not.toMatch(/52,211,153|240,97,109/u);
+    expect(html).toContain(".bar-up{background:rgba(93,203,154,.85)}");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
+    const favicon = readFileSync(
+      new URL("../../../tooling/vite-config/favicon.svg", import.meta.url),
+      "utf8",
+    ).trim();
+    expect(html).toContain(
+      `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(favicon)}">`,
     );
     expect(html).toContain("100.00% uptime");
     expect(html).toContain(

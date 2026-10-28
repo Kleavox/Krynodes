@@ -10,6 +10,7 @@ import {
   layoutReportSlots,
   seriesSummary,
   slotTip,
+  sparklineArea,
   sparklineSegments,
   untilWindowSettles,
   uptimeOf,
@@ -284,6 +285,26 @@ describe("sparklineSegments", () => {
   it("clamps out-of-range values and handles an empty series", () => {
     expect(sparklineSegments([], 100)).toEqual([]);
     expect(sparklineSegments([150, -5], 100, 100, 28)).toEqual(["0,0 100,28"]);
+  });
+});
+
+describe("sparklineArea", () => {
+  it("closes a segment down to the baseline", () => {
+    expect(sparklineArea("0,28 25,0")).toBe("0,28 0,28 25,0 25,28");
+  });
+
+  it("keeps each side of a gap apart", () => {
+    expect(
+      sparklineSegments([0, 100, null, 50, 50], 100).map((segment) =>
+        sparklineArea(segment),
+      ),
+    ).toEqual(["0,28 0,28 25,0 25,28", "75,28 75,14 100,14 100,28"]);
+  });
+
+  it("gives a lone point no width", () => {
+    expect(sparklineArea("50,16.8 50,16.8")).toBe(
+      "50,28 50,16.8 50,16.8 50,28",
+    );
   });
 });
 

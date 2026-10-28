@@ -735,7 +735,7 @@ function NodeCard({
       className={cn(
         "relative flex flex-col gap-3 rounded-lg border bg-card p-3.5 transition-colors hover:border-border-strong hover:bg-card-hover",
         SEVERITY_BORDER[severity],
-        selected && "border-primary ring-3 ring-primary/20",
+        selected && "border-primary-line ring-3 ring-primary/20",
       )}
     >
       <div>

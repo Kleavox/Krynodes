@@ -9,14 +9,14 @@ interface CheckChange {
 }
 
 const COLOR = {
-  bg: "#0c0c0e",
-  card: "#141417",
-  border: "#27272d",
-  fg: "#ededf0",
-  muted: "#8a8a94",
+  bg: "#0c0c10",
+  card: "#14141a",
+  border: "#282831",
+  fg: "#ececf1",
+  muted: "#92929f",
   primary: "#8b7bff",
-  destructive: "#f0616d",
-  warning: "#f5b544",
+  destructive: "#ed7477",
+  warning: "#ebba62",
 };
 
 const SANS =
@@ -80,7 +80,7 @@ function render(layout: Layout, origin: string): string {
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px">
             <tr>
               <td style="padding:0 4px 20px;${SANS};font-size:15px;font-weight:600;color:${COLOR.fg}">
-                <span style="display:inline-block;width:10px;height:10px;margin-right:8px;border-radius:3px;background:${COLOR.primary};vertical-align:middle"></span>Krynodes
+                Krynodes
               </td>
             </tr>
             <tr>

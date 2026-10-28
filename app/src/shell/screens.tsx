@@ -5,9 +5,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function Mark() {
   return (
-    <span className="flex items-center gap-2 text-xs font-semibold tracking-[0.08em]">
-      <span aria-hidden="true" className="size-3.5 rounded-[4px] bg-primary" />
-      KRYNODES
+    <span className="flex items-center gap-2 text-sm font-semibold tracking-tight">
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        className="size-5 shrink-0 text-primary"
+      >
+        <path
+          d="M6 3.75v16.5M6 12 17.75 5M6 12l11.75 7"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+        <circle cx="6" cy="12" r="3.1" fill="var(--primary-text)" />
+        <circle cx="17.75" cy="5" r="2.75" fill="var(--primary-text)" />
+        <circle cx="17.75" cy="19" r="2.75" fill="var(--primary-text)" />
+      </svg>
+      Krynodes
     </span>
   );
 }

@@ -108,7 +108,7 @@ export function AppShell({
                 cn(
                   "rounded-md px-2.5 py-1.5 text-sm text-muted-foreground hover:text-foreground",
                   (isActive || alsoActive(section.to, pathname)) &&
-                    "bg-accent text-foreground",
+                    "bg-primary-subtle text-primary-text hover:text-primary-text",
                 )
               }
             >
@@ -156,7 +156,7 @@ export function AppShell({
               cn(
                 "relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] text-muted-foreground",
                 (isActive || alsoActive(section.to, pathname)) &&
-                  "text-foreground",
+                  "text-primary-text",
               )
             }
           >

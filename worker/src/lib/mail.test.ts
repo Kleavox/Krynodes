@@ -147,7 +147,11 @@ describe("quarantine mail", () => {
     ]) {
       expect(text).toContain(line);
     }
-    expect(html).toContain("#f5b544");
+    expect(html).toContain("#ebba62");
+    expect(html).toMatch(
+      /font-weight:600;color:#ececf1">\s*Krynodes\s*<\/td>/u,
+    );
+    expect(html).not.toContain("width:10px;height:10px");
     expect(html).toContain("Warning</span>");
     expect(buttons(html)).toBe(1);
     expect(html).not.toContain("uppercase");
@@ -244,7 +248,7 @@ describe("quarantine mail", () => {
       expect(text).toContain(line);
     }
     expect(html).toContain("Quarantined</span>");
-    expect(html).toContain("#f0616d");
+    expect(html).toContain("#ed7477");
     expect(buttons(html)).toBe(1);
   });
 

@@ -394,6 +394,12 @@ export function sparklineSegments(
   return segments;
 }
 
+export function sparklineArea(segment: string, height = 28): string {
+  const points = segment.split(" ");
+  const x = (point: string) => point.split(",")[0];
+  return `${x(points[0]!)},${height} ${segment} ${x(points.at(-1)!)},${height}`;
+}
+
 export function isLonePoint(values: (number | null)[], index: number): boolean {
   const measured = (at: number) =>
     values[at] !== null &&
