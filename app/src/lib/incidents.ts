@@ -13,6 +13,7 @@ import {
   clockTime,
   dayLabel,
   formatDuration,
+  incidentReason,
   parseTimestamp,
   shortDate,
   stampTime,
@@ -127,7 +128,11 @@ export function timeline(detail: IncidentDetail): TimelineEvent[] {
       at: update.createdAt,
       update,
     })),
-    { type: "opened", at: incident.started_at, summary: incident.summary },
+    {
+      type: "opened",
+      at: incident.started_at,
+      summary: incidentReason(incident.summary),
+    },
     ...(detail.actions ?? []).map((action) => ({
       type: "action" as const,
       at: action.requestedAt,
@@ -195,6 +200,7 @@ export function incidentStrip(
   slotSeconds: number;
   count: number;
   results: CheckResult[];
+  gone: boolean;
 } {
   const since = parseTimestamp(incident.started_at) - STRIP_BEFORE_MS;
   const until = incident.resolved_at
@@ -214,6 +220,7 @@ export function incidentStrip(
     results: [...results].sort(
       (a, b) => Number(a.status === "DOWN") - Number(b.status === "DOWN"),
     ),
+    gone: incident.resolved_at !== null && results.length === 0,
   };
 }
 
@@ -265,6 +272,16 @@ export const recentIncidents = (incidents: Incident[], now: number) =>
       (a, b) => parseTimestamp(b.started_at) - parseTimestamp(a.started_at),
     );
 
+export function incidentsByCheck(newestFirst: Incident[]) {
+  const rows = new Map<string, { incident: Incident; count: number }>();
+  for (const incident of newestFirst) {
+    const row = rows.get(incident.check_id);
+    if (row) row.count += 1;
+    else rows.set(incident.check_id, { incident, count: 1 });
+  }
+  return [...rows.values()];
+}
+
 const lasted = (incident: Incident) =>
   formatDuration(
     parseTimestamp(incident.resolved_at!) - parseTimestamp(incident.started_at),
@@ -276,7 +293,9 @@ export function incidentRowLine(incident: Incident, now: number): string {
   if (!incident.resolved_at) {
     return `${when} · open · ${formatDuration(now - start)}`;
   }
-  return [when, lasted(incident), incident.summary].filter(Boolean).join(" · ");
+  return [when, lasted(incident), incidentReason(incident.summary)]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function lastIncidentLine(
@@ -292,7 +311,7 @@ export function lastIncidentLine(
   return [
     `Last incident ${shortDate(last.started_at)}`,
     lasted(last),
-    last.summary,
+    incidentReason(last.summary),
   ]
     .filter(Boolean)
     .join(" · ");

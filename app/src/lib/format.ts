@@ -195,3 +195,9 @@ export function displayHandle(
   const local = email?.split("@")[0];
   return local || "Account";
 }
+
+export const incidentReason = (summary: string | null): string | null => {
+  if (summary === null) return null;
+  const down = /^.+? is down(?:: |$)/u.exec(summary);
+  return down ? summary.slice(down[0].length) || null : summary;
+};

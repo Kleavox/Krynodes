@@ -17,7 +17,8 @@ import {
   verb,
   type ActionTarget,
 } from "@/lib/services";
-import { usePackageNames } from "@/lib/api";
+import { useOverview, usePackageNames } from "@/lib/api";
+import { checkCommands } from "@/lib/checks";
 import { canRestartServer } from "@/lib/devices";
 import { packageCommands } from "@/lib/packages";
 import { deployBlocker, groupStacks, stackTitle } from "@/lib/stacks";
@@ -50,6 +51,7 @@ export function CommandPalette({
     void navigate(to);
   };
   const packages = packageCommands(nodes, names.data?.servers ?? [], search);
+  const checks = checkCommands(useOverview().data?.checks ?? [], nodes);
   const groups = services
     ? groupByServer(services, nodes, {
         showSystem: false,
@@ -71,9 +73,10 @@ export function CommandPalette({
       onOpenChange={close}
       title="Search and Commands"
       description="Jump to a page or a server, or run an action."
+      className="top-[12vh] translate-y-0"
     >
       <CommandInput
-        placeholder="Search pages, nodes, packages and actions"
+        placeholder="Search pages, servers, checks, packages and actions"
         value={search}
         onValueChange={setSearch}
       />
@@ -87,6 +90,15 @@ export function CommandPalette({
           <CommandItem onSelect={() => go("/checks?add=1")}>
             Add Check
           </CommandItem>
+          {restartable.map((node) => (
+            <CommandItem
+              key={`restart|${node.id}`}
+              value={`restart server reboot ${node.name}`}
+              onSelect={() => go(`/nodes/${node.id}?restart=1`)}
+            >
+              Restart Server · {node.name}
+            </CommandItem>
+          ))}
         </CommandGroup>
         <CommandGroup heading="Pages">
           {PAGES.map((section) => (
@@ -96,25 +108,12 @@ export function CommandPalette({
             </CommandItem>
           ))}
         </CommandGroup>
-        {restartable.length > 0 && (
-          <CommandGroup heading="Servers">
-            {restartable.map((node) => (
-              <CommandItem
-                key={`restart|${node.id}`}
-                value={`restart server reboot ${node.name}`}
-                onSelect={() => go(`/nodes/${node.id}?restart=1`)}
-              >
-                Restart server · {node.name}
-              </CommandItem>
-            ))}
-          </CommandGroup>
-        )}
         {nodes.length > 0 && (
           <CommandGroup heading="Servers">
             {nodes.map((node) => (
               <CommandItem
                 key={node.id}
-                value={`node ${node.name} ${node.hostname ?? ""} ${node.id}`}
+                value={`${node.name} server ${node.hostname ?? ""} ${node.id}`}
                 onSelect={() => go(`/nodes/${node.id}`)}
               >
                 <span className="truncate">{node.name}</span>
@@ -123,6 +122,19 @@ export function CommandPalette({
                     {node.hostname}
                   </span>
                 )}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+        {checks.length > 0 && (
+          <CommandGroup heading="Checks">
+            {checks.map((entry) => (
+              <CommandItem
+                key={entry.key}
+                value={entry.value}
+                onSelect={() => go(entry.to)}
+              >
+                {entry.label}
               </CommandItem>
             ))}
           </CommandGroup>

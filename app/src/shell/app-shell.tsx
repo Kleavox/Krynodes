@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router";
+import {
+  Link,
+  NavLink,
+  Outlet,
+  useLocation,
+  useNavigationType,
+} from "react-router";
 import { ChevronDown, Search, User } from "lucide-react";
 import { displayHandle } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
@@ -54,6 +60,12 @@ export function AppShell({
   const now = useNow(30_000);
   const runAction = useSignedAction();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const { pathname } = useLocation();
+  const navigation = useNavigationType();
+
+  useEffect(() => {
+    if (navigation !== "POP") window.scrollTo(0, 0);
+  }, [pathname, navigation]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -83,7 +95,6 @@ export function AppShell({
       : 0,
     alarms,
   );
-  const { pathname } = useLocation();
 
   return (
     <div className="min-h-dvh pb-16 md:pb-0">

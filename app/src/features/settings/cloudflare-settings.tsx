@@ -208,12 +208,6 @@ export function CloudflareSettings() {
             In Cloudflare, make an API token with only these permissions and an
             end date a year from now:
           </p>
-          {setId && (
-            <p className="text-sm text-muted-foreground">
-              Once the new token is split, delete the old one in Cloudflare:
-              servers that were offline still hold pieces of it.
-            </p>
-          )}
           <ul className="list-disc space-y-1 pl-5 font-mono text-xs">
             {PERMISSIONS.map((permission) => (
               <li key={permission}>{permission}</li>
@@ -221,13 +215,19 @@ export function CloudflareSettings() {
             <li>Zone · DNS · Edit, for {chosenZone || "your zone"} only</li>
           </ul>
           <a
-            className="text-sm underline underline-offset-4"
+            className="block w-fit text-sm underline underline-offset-4"
             href="https://dash.cloudflare.com/profile/api-tokens"
             target="_blank"
             rel="noreferrer"
           >
-            Open Cloudflare API tokens
+            Open Cloudflare API Tokens
           </a>
+          {setId && (
+            <p className="text-sm text-muted-foreground">
+              Once the new token is split, delete the old one in Cloudflare:
+              servers that were offline still hold pieces of it.
+            </p>
+          )}
           <div className="space-y-2">
             <Label htmlFor="cloudflare-zone">Zone</Label>
             <Input

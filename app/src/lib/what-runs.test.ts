@@ -7,7 +7,12 @@ import type {
   Incident,
   ServicesResponse,
 } from "../types";
-import { foldedUnitsText, incidentNote, whatRuns } from "./what-runs";
+import {
+  foldedStatesText,
+  foldedUnitsText,
+  incidentNote,
+  whatRuns,
+} from "./what-runs";
 
 type ServiceNode = ServicesResponse["nodes"][number];
 
@@ -253,11 +258,29 @@ describe("what runs on a server", () => {
     expect(cards.at(-1)!.units.length).toBe(3);
   });
 
-  it("gives a stopped unit its own card among the problems", () => {
+  it("gives a stopped unit its own card among the problems, grey unless it failed", () => {
     expect(card("systemd", "backup.service")).toMatchObject({
       problem: true,
+      alarm: false,
       units: [],
     });
+    const failedUnit = whatRuns(
+      {
+        ...io,
+        services: io.services.map((service) =>
+          service.name === "backup.service"
+            ? { ...service, state: "failed" as const }
+            : service,
+        ),
+      },
+      checks,
+      incidents,
+      items,
+    );
+    expect(
+      failedUnit.cards.find((each) => each.name === "backup.service"),
+    ).toMatchObject({ problem: true, alarm: true });
+    expect(cards[0]).toMatchObject({ name: "umami", alarm: true });
     expect(cards.slice(0, 2).map((each) => each.name)).toEqual([
       "umami",
       "backup.service",
@@ -277,7 +300,7 @@ describe("what runs on a server", () => {
     );
     expect(
       down.cards.find((each) => each.name === "nginx.service"),
-    ).toMatchObject({ problem: true, incident: { id: "i9" } });
+    ).toMatchObject({ problem: true, alarm: true, incident: { id: "i9" } });
     expect(down.cards.find((each) => each.name === "")!.units).toEqual([
       "docker.service",
       "ssh.service",
@@ -320,11 +343,19 @@ describe("a card's words", () => {
     ).toBe("a · b · c · d + 3 more");
   });
 
+  it("says what the folded units are doing, never All Running over units that ran at boot", () => {
+    expect(foldedStatesText(["running", "running"])).toBe("All Running");
+    expect(foldedStatesText(["boot", "running", "boot", "unneeded"])).toBe(
+      "1 Running · 2 Ran at Boot · 1 Not Needed Here",
+    );
+    expect(foldedStatesText(["boot", "boot"])).toBe("2 Ran at Boot");
+  });
+
   it("says an open incident's length and the last resolved one's day", () => {
     const now = Date.parse("2026-10-24T03:28:00.000Z");
     expect(incidentNote(incidents[0]!, now)).toBe("Incident Open · Down 1h 2m");
     expect(incidentNote(incidents[1]!, now)).toMatch(
-      /^Last Incident 21 Oct, 12m$/u,
+      /^Last Incident 21 Oct · 12m$/u,
     );
   });
 });

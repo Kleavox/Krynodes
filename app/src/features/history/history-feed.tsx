@@ -2,7 +2,7 @@ import { Link } from "react-router";
 
 import { ActionLine } from "@/features/services/action-line";
 import { useDevices } from "@/lib/api";
-import { clockTime } from "@/lib/format";
+import { clockTime, incidentReason } from "@/lib/format";
 import { incidentText, type dayGroups } from "@/lib/history";
 import { actorOf } from "@/lib/operations";
 import { cn } from "@/lib/utils";
@@ -65,9 +65,9 @@ function IncidentLine({
       >
         Incident →
       </Link>
-      {incident.summary && (
+      {incidentReason(incident.summary) && (
         <span className="col-start-2 font-mono text-xs break-words text-muted-foreground sm:col-span-2">
-          {incident.summary}
+          {incidentReason(incident.summary)}
         </span>
       )}
     </li>

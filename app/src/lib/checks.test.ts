@@ -13,6 +13,7 @@ import type {
 import {
   autoRestartLine,
   checkBucket,
+  checkCommands,
   checkLive,
   checksByServer,
   checkTargetProblem,
@@ -430,5 +431,21 @@ describe("dockerKindBlocker", () => {
     );
     expect(dockerKindBlocker("n1", io("0.7.1"), "no-compose")).toBeNull();
     expect(dockerKindBlocker("n1", io("0.7.1"), null)).toBeNull();
+  });
+});
+
+describe("checks in search", () => {
+  it("finds a check by its name, its target or its server and opens it on Checks", () => {
+    const nodes = [{ id: "n1", name: "Pivox" }] as NodeRecord[];
+    const [found] = checkCommands(
+      [check("TCP", { name: "Mesh", target: "10.66.0.2:22" })],
+      nodes,
+    );
+    expect(found).toEqual({
+      key: "c1",
+      value: "Mesh check 10.66.0.2:22 Pivox",
+      label: "Mesh · Pivox",
+      to: "/checks?q=Mesh",
+    });
   });
 });

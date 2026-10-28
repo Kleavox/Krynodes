@@ -49,7 +49,9 @@ type Relay struct {
 	Now        func() time.Time
 	Dir        string
 	Boot       func() string
+	Released   chan struct{}
 
+	release   string
 	mu        sync.Mutex
 	acked     string
 	sentList  string
@@ -347,9 +349,22 @@ func (r *Relay) Watch(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			r.noticeRelease()
 			if err := r.Poll(ctx); err != nil {
 				log.Printf("report service actions: %v", err)
 			}
 		}
+	}
+}
+
+func (r *Relay) noticeRelease() {
+	var release reporter.Release
+	if readJSON(filepath.Join(r.StateDir, releaseFile), &release) != nil || release.Token == r.release {
+		return
+	}
+	r.release = release.Token
+	select {
+	case r.Released <- struct{}{}:
+	default:
 	}
 }

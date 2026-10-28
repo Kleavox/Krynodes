@@ -130,38 +130,44 @@ export function IncidentDetailPage() {
             </>
           )}
         </p>
-        <div className="space-y-1">
-          <HeartbeatStrip
-            slots={heartbeatSlots({
-              slots: strip.results,
-              incidents: [incident],
-              since: strip.measuredFrom,
-              slotSeconds: strip.slotSeconds,
-              graceSeconds: open ? graceSeconds(interval) : 0,
-              settleSeconds: open ? windowSeconds : 0,
-              now: strip.until,
-              asOf: open ? detail.dataUpdatedAt : strip.until,
-              count: strip.count,
-              work: workSpans(
-                detail.data.actions ?? [],
-                incident.node_id,
-                { kind: incident.check_kind, target: incident.check_target },
-                server,
-              ),
-              quiet: detail.data.quiet ?? [],
-            })}
-            windowSeconds={strip.slotSeconds}
-          />
-          <p className="flex justify-between gap-2 font-mono text-[11px] text-muted-foreground">
-            <span>{stampTime(strip.since, now)}</span>
-            <span>{stampTime(incident.started_at, strip.since)} Opened</span>
-            <span>
-              {incident.resolved_at
-                ? `${stampTime(incident.resolved_at, strip.since)} Resolved`
-                : "Now"}
-            </span>
+        {strip.gone ? (
+          <p className="font-mono text-[11px] text-muted-foreground">
+            Check results are kept for 8 days; this incident is older.
           </p>
-        </div>
+        ) : (
+          <div className="space-y-1">
+            <HeartbeatStrip
+              slots={heartbeatSlots({
+                slots: strip.results,
+                incidents: [incident],
+                since: strip.measuredFrom,
+                slotSeconds: strip.slotSeconds,
+                graceSeconds: open ? graceSeconds(interval) : 0,
+                settleSeconds: open ? windowSeconds : 0,
+                now: strip.until,
+                asOf: open ? detail.dataUpdatedAt : strip.until,
+                count: strip.count,
+                work: workSpans(
+                  detail.data.actions ?? [],
+                  incident.node_id,
+                  { kind: incident.check_kind, target: incident.check_target },
+                  server,
+                ),
+                quiet: detail.data.quiet ?? [],
+              })}
+              windowSeconds={strip.slotSeconds}
+            />
+            <p className="flex justify-between gap-2 font-mono text-[11px] text-muted-foreground">
+              <span>{stampTime(strip.since, now)}</span>
+              <span>{stampTime(incident.started_at, strip.since)} Opened</span>
+              <span>
+                {incident.resolved_at
+                  ? `${stampTime(incident.resolved_at, strip.since)} Resolved`
+                  : "Now"}
+              </span>
+            </p>
+          </div>
+        )}
         {open && <UpdateForm detail={detail.data} />}
         <IncidentTimeline detail={detail.data} />
       </div>

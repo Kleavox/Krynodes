@@ -62,7 +62,7 @@ func (e Executor) ReleaseCode(mark string) (string, error) {
 		return "", err
 	}
 	pending := reporter.Release{Key: keys.Public, Signer: keys.Signer, Seal: seal.Public(key), Token: tokenHash(token), Expires: e.Now().UTC().Add(releaseFor).Format(releaseTime)}
-	if err := writeJSON(e.StateDir, releaseFile, pending, 0o640); err != nil {
+	if err := writeJSON(e.StateDir, releaseFile, pending, 0o644); err != nil {
 		return "", err
 	}
 	return releaseCode(pending), nil

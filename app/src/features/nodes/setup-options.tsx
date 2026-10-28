@@ -47,7 +47,7 @@ export function SetupOptions<T extends SetupChoice>({
       {value.recommended && (
         <div className="flex items-center gap-2 pl-6">
           <Label htmlFor="setup-hour" className="text-xs">
-            Restart hour (your time)
+            Restart Hour (Your Time)
           </Label>
           <Select
             value={String(value.hour)}

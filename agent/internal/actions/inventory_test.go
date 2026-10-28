@@ -31,6 +31,7 @@ backup.service                loaded    activating start Nightly backup
 
 const enabledList = `nginx.service enabled enabled
 shadowsocks-libev.service enabled enabled
+keyboard-setup.service enabled enabled
 `
 
 func TestUnitsBecomeServices(t *testing.T) {
@@ -363,6 +364,16 @@ const bootList = `nginx.service loaded active running A high performance web ser
 e2scrub_reap.service loaded inactive dead Remove Stale Online ext4 Metadata Check Snapshots
 sshd-keygen.service loaded inactive dead OpenSSH Server Key Generation
 shadowsocks-libev.service loaded inactive dead Shadowsocks-libev Default Server Service
+keyboard-setup.service loaded active exited Set the console keyboard layout
+`
+
+const keyboardShow = `Type=oneshot
+Result=success
+ExecMainExitTimestamp=Mon 2026-10-27 13:09:58 UTC
+ExecMainCode=1
+ExecMainStatus=0
+Id=keyboard-setup.service
+ConditionResult=yes
 `
 
 const bootFiles = `nginx.service enabled enabled
@@ -397,16 +408,19 @@ func TestCollectAsksSystemdOnceAboutUnitsThatDoNotRun(t *testing.T) {
 		}
 		return snapshot.Services, calls
 	}
-	services, calls := collect(bootList, readFixture(t, "systemctl-show-debian12.txt"), false)
+	services, calls := collect(bootList, readFixture(t, "systemctl-show-debian12.txt")+"\n"+keyboardShow, false)
 	shows := slices.DeleteFunc(slices.Clone(calls), func(call string) bool { return !strings.HasPrefix(call, "systemctl show") })
-	if !slices.Equal(shows, []string{showCall + "e2scrub_reap.service sshd-keygen.service shadowsocks-libev.service"}) {
+	if !slices.Equal(shows, []string{showCall + "e2scrub_reap.service sshd-keygen.service shadowsocks-libev.service keyboard-setup.service"}) {
 		t.Fatalf("calls %q", calls)
 	}
 	states := map[string]string{}
 	for _, service := range services {
 		states[service.Name] = service.State
+		if service.Name == "keyboard-setup.service" && (service.Since == nil || *service.Since != "2026-10-27T13:09:58Z") {
+			t.Fatalf("a unit that ran at boot and stays active keeps its time: %#v", service)
+		}
 	}
-	if !reflect.DeepEqual(states, map[string]string{"nginx.service": "running", "e2scrub_reap.service": "boot", "sshd-keygen.service": "unneeded", "shadowsocks-libev.service": "stopped"}) {
+	if !reflect.DeepEqual(states, map[string]string{"nginx.service": "running", "e2scrub_reap.service": "boot", "sshd-keygen.service": "unneeded", "shadowsocks-libev.service": "stopped", "keyboard-setup.service": "boot"}) {
 		t.Fatalf("states %#v", states)
 	}
 	if _, calls := collect("nginx.service loaded active running web\n", "", false); slices.ContainsFunc(calls, func(call string) bool { return strings.HasPrefix(call, "systemctl show") }) {
@@ -414,7 +428,10 @@ func TestCollectAsksSystemdOnceAboutUnitsThatDoNotRun(t *testing.T) {
 	}
 	services, _ = collect(bootList, "", true)
 	for _, service := range services {
-		if service.Name != "nginx.service" && service.State != "stopped" {
+		if service.Name == "keyboard-setup.service" && service.State != "boot" {
+			t.Fatalf("an active unit that exited reads as boot without its time: %#v", service)
+		}
+		if service.Name != "nginx.service" && service.Name != "keyboard-setup.service" && service.State != "stopped" {
 			t.Fatalf("a failed show keeps stopped: %#v", service)
 		}
 	}

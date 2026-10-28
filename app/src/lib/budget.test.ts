@@ -75,7 +75,7 @@ describe("budget presentation", () => {
     expect(formatThousands(24_480)).toBe("24.5k");
     expect(formatThousands(30_000)).toBe("30k");
     expect(formatThousands(950)).toBe("950");
-    expect(formatThousands(1_200_000)).toBe("1.2m");
+    expect(formatThousands(1_200_000)).toBe("1.2M");
   });
 });
 
@@ -91,7 +91,7 @@ describe("quotaLine", () => {
     });
     expect(
       quotaLine({ writes: 6_000, requests: 1_000, reads: 950_000 }, SHARE),
-    ).toEqual({ percent: 95, detail: "950k of 1m reads" });
+    ).toEqual({ percent: 95, detail: "950k of 1M reads" });
   });
 });
 

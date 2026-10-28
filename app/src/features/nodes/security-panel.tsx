@@ -143,7 +143,7 @@ function RecipeDialog({
         </AlertDialogHeader>
         {needsHour && (
           <div className="space-y-1.5">
-            <Label htmlFor="reboot-hour">Restart hour (your time)</Label>
+            <Label htmlFor="reboot-hour">Restart Hour (Your Time)</Label>
             <Select value={hour} onValueChange={setHour}>
               <SelectTrigger id="reboot-hour" className="w-full">
                 <SelectValue />

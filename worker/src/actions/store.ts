@@ -263,6 +263,35 @@ export async function workingChecks(
   now: number,
 ): Promise<Set<string>> {
   const work = await workUnderway(db, node.id, now, node.connectedAt);
+  return touchedChecks(db, node, checks, work);
+}
+
+export async function stoppedChecks(
+  db: D1Database,
+  node: { id: string; ownerId: string },
+  checks: { id: string; kind: string; target: string }[],
+): Promise<Set<string>> {
+  const stopped = await db
+    .prepare(
+      `SELECT kind, name, action FROM (
+         SELECT kind, name, action,
+           ROW_NUMBER() OVER (PARTITION BY kind, name ORDER BY requested_at DESC) AS n
+         FROM actions
+         WHERE node_id = ? AND status = 'done'
+           AND action NOT IN (SELECT value FROM json_each(?)))
+       WHERE n = 1 AND action = 'stop'`,
+    )
+    .bind(node.id, JSON.stringify(NOT_WORK))
+    .all<{ kind: string; name: string; action: string }>();
+  return touchedChecks(db, node, checks, stopped.results);
+}
+
+async function touchedChecks(
+  db: D1Database,
+  node: { id: string; ownerId: string },
+  checks: { id: string; kind: string; target: string }[],
+  work: { kind: string; name: string; action: string }[],
+): Promise<Set<string>> {
   if (work.length === 0) return new Set();
   const server = (await loadEstate(db, node.ownerId)).server(node.id);
   return new Set(

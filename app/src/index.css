@@ -121,6 +121,7 @@
   }
   html {
     color-scheme: dark;
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background font-sans text-foreground antialiased;

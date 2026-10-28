@@ -19,12 +19,38 @@ const MAKES_IT = new Set(["create", "restore"]);
 const LISTED = new Set(["compose", "docker", "systemd"]);
 const KEPT_MS = 90 * 86_400_000;
 
+export const LATER_DONE_SQL = `SELECT DISTINCT d.id, d.node_id, d.kind, d.name, d.action, d.status,
+    d.requested_at
+  FROM actions f CROSS JOIN actions d
+    ON d.node_id = f.node_id AND d.kind = f.kind AND d.name = f.name
+      AND d.requested_at > f.requested_at
+  WHERE f.node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?1)
+    AND f.status IN ('failed', 'expired') AND f.hidden_at IS NULL
+    AND f.requested_at >= ?2 AND d.status = 'done'`;
+
+type LaterRow = Pick<
+  ActionRow,
+  "id" | "node_id" | "kind" | "name" | "action" | "status" | "requested_at"
+>;
+
+export async function laterDone(
+  db: D1Database,
+  owner: string,
+  now: number,
+): Promise<LaterRow[]> {
+  const rows = await db
+    .prepare(LATER_DONE_SQL)
+    .bind(owner, new Date(now - KEPT_MS).toISOString())
+    .all<LaterRow>();
+  return rows.results;
+}
+
 const targetOf = (row: { node_id: string; kind: string; name: string }) =>
   `${row.node_id}|${row.kind}|${row.name}`;
 
 export function notFixed(
   rows: ActionRow[],
-  later: ActionRow[],
+  later: LaterRow[],
   health: Health,
   now: number,
 ): ActionRow[] {
@@ -116,7 +142,10 @@ export async function loadEstate(db: D1Database, owner: string) {
       kind: service.kind,
       name: service.name,
     });
-    health.set(targetOf(service), service.state === "running");
+    health.set(
+      targetOf(service),
+      service.state === "running" || service.state === "boot",
+    );
   }
   for (const address of addresses.results) {
     server(address.node_id).webAddresses.push({

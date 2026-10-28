@@ -27,7 +27,7 @@ import { useDevices, useOverview, useQuarantine, useServices } from "@/lib/api";
 import { nodeState, timeAgo } from "@/lib/format";
 import { systemFacts } from "@/lib/node-facts";
 import { serverOperation } from "@/lib/operations";
-import { restartLine } from "@/lib/packages";
+import { restartLine, restartOnYou } from "@/lib/packages";
 import { REPORTED } from "@/lib/quarantine";
 import { useNow } from "@/lib/use-now";
 
@@ -44,6 +44,9 @@ export function NodeDetailPage() {
   const quarantined = !!overview.data?.nodes.find((item) => item.id === id)
     ?.quarantine;
   const quarantine = useQuarantine(id, quarantined);
+  const security = services.data?.nodes.find(
+    (item) => item.id === id,
+  )?.security;
 
   const setParam = (key: string, value: string | null) =>
     setParams(
@@ -110,8 +113,8 @@ export function NodeDetailPage() {
                 offlineDetail={`Reported ${timeAgo(node.last_seen_at, now)}`}
               />
             )}
-            {node.updates?.restart && (
-              <StatusChip tone="warn" label="restart needed" />
+            {node.updates?.restart && restartOnYou(security) && (
+              <StatusChip tone="warn" label="Restart Needed" />
             )}
             <DockerMark nodeId={node.id} />
             <SecurityMark nodeId={node.id} />
@@ -131,12 +134,7 @@ export function NodeDetailPage() {
         {systemFacts(node)}
         {quarantined && ` · ${REPORTED}`}
         {node.updates?.restart && (
-          <span className="block">
-            {restartLine(
-              services.data?.nodes.find((item) => item.id === node.id)
-                ?.security,
-            )}
-          </span>
+          <span className="block">{restartLine(security)}</span>
         )}
       </p>
 
@@ -154,7 +152,7 @@ export function NodeDetailPage() {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-[auto_1fr] lg:items-start">
         <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
           {quarantined && (
             <>

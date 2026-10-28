@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { incidentReason } from "./format";
+
 import type {
   ActionRecord,
   CheckResult,
@@ -17,6 +19,7 @@ import {
   lastIncidentLine,
   latestLine,
   ownerLink,
+  incidentsByCheck,
   recentIncidents,
   runText,
   timeline,
@@ -230,6 +233,29 @@ describe("an incident's strip", () => {
     expect(strip.count).toBe(37);
   });
 
+  it("says its results are gone once a resolved incident has none left", () => {
+    const resolved = { started_at: at(9, 0), resolved_at: at(14, 0) };
+    expect(incidentStrip(resolved, [], 300, Date.parse(at(18, 0))).gone).toBe(
+      true,
+    );
+    expect(
+      incidentStrip(
+        resolved,
+        [result(9, 30, "DOWN")],
+        300,
+        Date.parse(at(18, 0)),
+      ).gone,
+    ).toBe(false);
+    expect(
+      incidentStrip(
+        { started_at: at(9, 26), resolved_at: null },
+        [],
+        300,
+        Date.parse(at(10, 28)),
+      ).gone,
+    ).toBe(false);
+  });
+
   it("lets a down result win a slot it shares with an up one", () => {
     const strip = incidentStrip(
       { started_at: at(9, 26), resolved_at: null },
@@ -386,6 +412,24 @@ describe("incidents on the Checks page", () => {
     ]);
   });
 
+  it("lists each check once, at its newest incident, with how many it had", () => {
+    const list = recentIncidents(
+      [
+        incident("m1", "mesh", on(20, 9, 0), MINUTE, null),
+        incident("b1", "blog", on(24, 9, 0), MINUTE, null),
+        incident("m2", "mesh", on(25, 9, 0), MINUTE, null),
+        incident("m3", "mesh", on(22, 9, 0), MINUTE, null),
+      ],
+      now,
+    );
+    expect(
+      incidentsByCheck(list).map(({ incident, count }) => [incident.id, count]),
+    ).toEqual([
+      ["m2", 3],
+      ["b1", 1],
+    ]);
+  });
+
   it("sums up the last 30 days", () => {
     expect(last30Parts({ count: 5, downMs: 145 * MINUTE })).toEqual({
       count: "5",
@@ -443,5 +487,17 @@ describe("incidents on the Checks page", () => {
     expect(incidentsRedirect("?status=open")).toBe("/checks?status=down");
     expect(incidentsRedirect("?status=resolved")).toBe("/checks");
     expect(incidentsRedirect("")).toBe("/checks");
+  });
+});
+
+describe("an incident's reason", () => {
+  it("drops the check name the summary was stored with, which may be an old one", () => {
+    expect(incidentReason("Q is down: HTTP 502")).toBe("HTTP 502");
+    expect(
+      incidentReason("Mesh is down: dial tcp 10.66.0.2:22: connection refused"),
+    ).toBe("dial tcp 10.66.0.2:22: connection refused");
+    expect(incidentReason("Umami is down")).toBeNull();
+    expect(incidentReason(null)).toBeNull();
+    expect(incidentReason("Restarted by hand")).toBe("Restarted by hand");
   });
 });
