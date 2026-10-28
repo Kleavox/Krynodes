@@ -35,6 +35,8 @@ type stackMeta struct {
 	Offers    []string          `json:"offers,omitempty"`
 	Peers     []string          `json:"peers,omitempty"`
 	Networks  map[string]string `json:"networks,omitempty"`
+	Title     string            `json:"title,omitempty"`
+	Names     map[string]string `json:"names,omitempty"`
 }
 
 const maxHostPorts = 16

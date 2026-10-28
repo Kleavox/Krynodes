@@ -63,6 +63,8 @@ type webAddress struct {
 	Domain    string `json:"domain"`
 	Tunnel    string `json:"tunnel"`
 	Account   string `json:"account"`
+	Host      string `json:"host,omitempty"`
+	Port      int    `json:"port,omitempty"`
 }
 
 func vaultName(name string) string {
@@ -263,8 +265,7 @@ func (e Executor) expose(ctx context.Context, request Request, command Command, 
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	names, err := e.docker(ctx, collectTimeout, "find", "ps", "--filter", "label=com.docker.compose.project="+stack.Project, "--filter", "label=com.docker.compose.service="+args["service"], "--format", "{{.Names}}")
-	container := strings.TrimSpace(strings.Split(string(names), "\n")[0])
+	container, err := e.containerOf(ctx, stack.Project, args["service"])
 	if err != nil || container == "" {
 		return e.refuse(request.ID, fmt.Errorf("service %s is not running", args["service"]))
 	}
@@ -301,7 +302,11 @@ func (e Executor) expose(ctx context.Context, request Request, command Command, 
 			return e.failed(request, err, "")
 		}
 	}
-	if err := cf.Route(ctx, zone.AccountID, tunnel, hostname, fmt.Sprintf("http://%s:%d", container, port)); err != nil {
+	host := container
+	if name := relation(args["service"], stack.Project); e.answersTo(ctx, container, network, name) {
+		host = name
+	}
+	if err := cf.Route(ctx, zone.AccountID, tunnel, hostname, fmt.Sprintf("http://%s:%d", host, port)); err != nil {
 		return e.failed(request, err, "")
 	}
 	if err := cf.Point(ctx, zone.ID, hostname, tunnel); err != nil {
@@ -322,7 +327,8 @@ func (e Executor) expose(ctx context.Context, request Request, command Command, 
 	if !slices.ContainsFunc(mapValues(addresses), func(address webAddress) bool { return address.Network == network }) {
 		e.docker(ctx, collectTimeout, "connect", "network", "connect", network, TunnelContainer)
 	}
-	addresses[hostname] = webAddress{Project: stack.Project, Service: args["service"], Container: container, Network: network, Domain: domain, Tunnel: tunnel, Account: zone.AccountID}
+	addresses[hostname] = webAddress{Project: stack.Project, Service: args["service"], Container: container, Network: network, Domain: domain, Tunnel: tunnel, Account: zone.AccountID, Host: host, Port: port}
+	e.rehost(ctx, cf, addresses)
 	if err := writeJSON(e.StateDir, "addresses.json", addresses, 0o640); err != nil {
 		return e.failed(request, err, "")
 	}
@@ -426,6 +432,7 @@ func (e Executor) unexpose(ctx context.Context, request Request, command Command
 		e.docker(ctx, collectTimeout, "remove", "rm", "-f", TunnelContainer)
 		os.Remove(filepath.Join(e.StateDir, "tunnel.env"))
 	}
+	e.rehost(ctx, cf, addresses)
 	if err := writeJSON(e.StateDir, "addresses.json", addresses, 0o640); err != nil {
 		return e.failed(request, err, "")
 	}

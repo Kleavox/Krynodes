@@ -376,6 +376,104 @@ describe("stacks and trust", () => {
     expect(containers()).toEqual({ containers: null });
   });
 
+  it("keeps a stack's display name and container names", async () => {
+    const { db, sqlite, node } = setup();
+    const row = () =>
+      sqlite
+        .prepare("SELECT title, names FROM stacks WHERE node_id = ?")
+        .get(NODE);
+    const apply = (hash: string, extra: Record<string, unknown>) =>
+      applyInventory(
+        db,
+        node(),
+        { hash, services: [], stacks: [{ ...stack("listmonk"), ...extra }] },
+        NOW,
+      );
+    await apply(HASH_A, {
+      title: "Listmonk",
+      names: { app: "listmonk", db: "listmonk-db" },
+    });
+    expect(row()).toEqual({
+      title: "Listmonk",
+      names: '{"app":"listmonk","db":"listmonk-db"}',
+    });
+    await apply(HASH_B, {});
+    expect(row()).toEqual({ title: null, names: null });
+  });
+
+  it("keeps a stack's service names and the server's leftovers", async () => {
+    const { db, sqlite, node } = setup();
+    const services = () =>
+      sqlite.prepare("SELECT services FROM stacks WHERE node_id = ?").get(NODE);
+    const leftovers = () =>
+      sqlite.prepare("SELECT leftovers FROM nodes WHERE id = ?").get(NODE);
+    await applyInventory(
+      db,
+      node(),
+      {
+        hash: HASH_A,
+        services: [],
+        stacks: [{ ...stack("listmonk"), services: ["app", "db"] }],
+        leftovers: ["adguard-home"],
+      },
+      NOW,
+    );
+    expect(services()).toEqual({ services: '["app","db"]' });
+    expect(leftovers()).toEqual({ leftovers: '["adguard-home"]' });
+    await applyInventory(
+      db,
+      node(),
+      { hash: HASH_B, services: [], stacks: [stack("listmonk")] },
+      NOW + 1,
+    );
+    expect(services()).toEqual({ services: null });
+    expect(leftovers()).toEqual({ leftovers: '["adguard-home"]' });
+    await applyInventory(
+      db,
+      node(),
+      { hash: HASH_A, services: [], leftovers: [] },
+      NOW + 2,
+    );
+    expect(leftovers()).toEqual({ leftovers: null });
+  });
+
+  it("moves container checks to a stack's new container names", async () => {
+    const { db, sqlite, node } = setup();
+    const OTHER = "22222222-2222-4222-8222-222222222222";
+    seedNode(sqlite, { id: OTHER });
+    const check = (id: string, nodeId: string, target: string, name = target) =>
+      sqlite
+        .prepare(
+          "INSERT INTO checks (id, node_id, name, kind, target) VALUES (?, ?, ?, 'CONTAINER', ?)",
+        )
+        .run(id, nodeId, name, target);
+    check("app", NODE, "listmonk-app-1");
+    check("db", NODE, "listmonk_db_1", "Listmonk database");
+    check("elsewhere", OTHER, "listmonk-app-1");
+    const targets = () =>
+      sqlite.prepare("SELECT id, name, target FROM checks ORDER BY id").all();
+    const apply = (hash: string, names?: Record<string, string>) =>
+      applyInventory(
+        db,
+        node(),
+        { hash, services: [], stacks: [{ ...stack("listmonk"), names }] },
+        NOW,
+      );
+    await apply(HASH_A);
+    await apply(HASH_B, { app: "listmonk", db: "listmonk-db" });
+    expect(targets()).toEqual([
+      { id: "app", name: "listmonk", target: "listmonk" },
+      { id: "db", name: "Listmonk database", target: "listmonk-db" },
+      { id: "elsewhere", name: "listmonk-app-1", target: "listmonk-app-1" },
+    ]);
+    await apply(HASH_A, { app: "mail", db: "listmonk-db" });
+    expect(targets()).toEqual([
+      { id: "app", name: "mail", target: "mail" },
+      { id: "db", name: "Listmonk database", target: "listmonk-db" },
+      { id: "elsewhere", name: "listmonk-app-1", target: "listmonk-app-1" },
+    ]);
+  });
+
   it("keeps what a stack serves and reaches, written once", async () => {
     const { db, sqlite, node } = setup();
     const row = () =>

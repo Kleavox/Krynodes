@@ -300,6 +300,8 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		return e.refuse(request.ID, errors.New("compose did not return a readable file"))
 	}
 	document, own := e.ownAddress()
+	meta.Names = nameable(config, meta.Names)
+	former := e.formerNames(name, config, meta.Names)
 	kindOf := e.kindOf(ctx)
 	uses := sharedUses(config, kindOf)
 	if err := checkShared(config, uses, meta.Access == "full"); err != nil {
@@ -327,6 +329,8 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 			addHosts(config, document.Members)
 		}
 		applyPins(config, config, pins)
+		applyNames(config, config, meta.Names, former)
+		applyRelations(config, config, name)
 		if err := writeJSON(directory, "compose.krynodes.json", config, 0o640); err != nil {
 			return e.failed(request, err, "")
 		}
@@ -336,12 +340,16 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		return e.failed(request, err, "")
 	}
 	hosts := filepath.Join(directory, hostsFile)
-	if meta.Access == "full" && (own != "" || len(pins) > 0) {
-		override := map[string]any{"services": map[string]any{}}
+	override := map[string]any{"services": map[string]any{}}
+	if meta.Access == "full" {
 		if own != "" {
 			override = hostsOverride(config, document.Members)
 		}
 		applyPins(override, config, pins)
+		applyNames(override, config, meta.Names, former)
+		applyRelations(override, config, name)
+	}
+	if len(asMap(override["services"])) > 0 {
 		if err := writeJSON(directory, hostsFile, override, 0o640); err != nil {
 			return e.failed(request, err, "")
 		}

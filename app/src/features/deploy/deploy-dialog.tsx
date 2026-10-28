@@ -86,9 +86,10 @@ function DeployForm({
   const several = targets.length > 1;
   const word = rollback ? "Roll Back" : "Deploy";
   const [first] = targets;
+  const shown = (first ?? request.members[0])?.stack.title ?? request.project;
   const title = several
-    ? `${word} ${request.project} on ${targets.length} servers?`
-    : `${word} ${request.project} on ${first?.node.name ?? request.members[0]?.node.name ?? ""}?`;
+    ? `${word} ${shown} on ${targets.length} servers?`
+    : `${word} ${shown} on ${first?.node.name ?? request.members[0]?.node.name ?? ""}?`;
   const list = devices.data?.devices;
   const ids = list?.map((device) => device.id) ?? [];
   const signers = signersFor(

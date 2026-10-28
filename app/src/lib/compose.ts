@@ -210,17 +210,35 @@ export function sharedNetworksOf(
   });
 }
 
+function copiesOf(service: Record<string, unknown>) {
+  const copies = Number(record(service.deploy).replicas ?? service.scale ?? 1);
+  return Number.isFinite(copies) ? copies : 1;
+}
+
 export function serviceShape(text: string, name: string) {
   const service = record(load(text).services?.[name]);
-  const copies = Number(record(service.deploy).replicas ?? service.scale ?? 1);
   return {
     privileged: service.privileged === true,
     caps: list(service.cap_add).map((cap) =>
       String(cap).toUpperCase().replace(/^CAP_/u, ""),
     ),
     networkMode: service.network_mode !== undefined,
-    copies: Number.isFinite(copies) ? copies : 1,
+    copies: copiesOf(service),
   };
+}
+
+export function namingOf(
+  text: string,
+): { service: string; own: string | null; copies: number }[] {
+  return Object.entries(load(text).services ?? {}).map(([service, value]) => {
+    const entry = record(value);
+    return {
+      service,
+      own:
+        typeof entry.container_name === "string" ? entry.container_name : null,
+      copies: copiesOf(entry),
+    };
+  });
 }
 
 export function servicesOf(text: string): string[] {

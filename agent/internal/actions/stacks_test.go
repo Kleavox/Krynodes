@@ -760,9 +760,10 @@ func TestAHealGivesUpAfterThreeInAnHour(t *testing.T) {
 	}
 }
 
-func TestANewStackRefusesAMountThatLinksOutOfItsFolder(t *testing.T) {
+func TestAnEditRefusesAMountThatLinksOutOfItsFolder(t *testing.T) {
 	executor, run := stackExecutor(t)
-	dir := kumaDir(executor)
+	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	withStacks(&executor, stack)
 	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -773,13 +774,13 @@ func TestANewStackRefusesAMountThatLinksOutOfItsFolder(t *testing.T) {
 	service := kumaService(dir)
 	service["volumes"] = []any{map[string]any{"type": "bind", "source": link, "target": "/host"}}
 	run.respond = map[string]string{composeCall(dir, "compose.yaml", "config --format json"): resolved(t, dir, service, nil)}
-	result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText))
+	result := runRequest(t, executor, composeRequest(t, idA, "kuma", "edit", func(c *Command) { c.Compose = kumaText }))
 	if result.OK || !strings.Contains(result.Output, "mounts") {
 		t.Fatalf("result %#v", result)
 	}
 	service["volumes"] = []any{map[string]any{"type": "bind", "source": filepath.Join(link, "not-yet"), "target": "/host"}}
 	run.respond = map[string]string{composeCall(dir, "compose.yaml", "config --format json"): resolved(t, dir, service, nil)}
-	result = runRequest(t, executor, createRequest(t, idB, "kuma", kumaText))
+	result = runRequest(t, executor, composeRequest(t, idB, "kuma", "edit", func(c *Command) { c.Compose = kumaText }))
 	if result.OK || !strings.Contains(result.Output, "mounts") {
 		t.Fatalf("a folder that does not exist yet under the link: %#v", result)
 	}

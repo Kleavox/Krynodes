@@ -1,3 +1,5 @@
+import { CONTAINER_NAME } from "@krynodes/protocol";
+
 import type {
   ActionRecord,
   AttentionItem,
@@ -11,6 +13,7 @@ import type {
   WebAddress,
 } from "../types";
 
+import { namingOf } from "./compose";
 import { agentCurrent, agentGap } from "./devices";
 import { nodeState, timeAgo } from "./format";
 import {
@@ -150,6 +153,7 @@ export function groupStacks(
       if (
         needle &&
         !stack.project.includes(needle) &&
+        !stack.title?.toLowerCase().includes(needle) &&
         !node.name.toLowerCase().includes(needle)
       ) {
         continue;
@@ -178,7 +182,9 @@ export function groupStacks(
   return sorted.sort(
     (a, b) =>
       Number(healthy(a)) - Number(healthy(b)) ||
-      a.project.localeCompare(b.project),
+      stackTitle(a.members[0]!.stack).localeCompare(
+        stackTitle(b.members[0]!.stack),
+      ),
   );
 }
 
@@ -268,22 +274,166 @@ export function newStackBlocker(
   return null;
 }
 
+export const stackSlug = (title: string) =>
+  title
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "-")
+    .replace(/^[-_]+/u, "")
+    .slice(0, 63)
+    .replace(/[-_]+$/u, "");
+
+export const stackTitle = (stack: Pick<StackEntry, "project" | "title">) =>
+  stack.title ?? stack.project;
+
+export const titleProblem = (title: string) =>
+  !title
+    ? "Give the stack a name."
+    : [...title].length > 64
+      ? "Keep the name to 64 characters."
+      : null;
+
 export function stackNameProblem(
-  name: string,
+  title: string,
   taken: string[],
   waiting: string[] = [],
 ): string | null {
-  if (!name) return "Give the stack a name.";
-  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/u.test(name)) {
-    return "Use lowercase letters, digits, - and _, starting with a letter or digit.";
+  const wrong = titleProblem(title);
+  if (wrong) return wrong;
+  const project = stackSlug(title);
+  if (!project) return "Use at least one letter or digit.";
+  if (taken.includes(project)) {
+    return `This server already runs a stack named ${project}.`;
   }
-  if (taken.includes(name)) {
-    return `This server already runs a stack named ${name}.`;
-  }
-  if (waiting.includes(name)) {
-    return `A stack named ${name} waits in Removed. Restore it or delete it permanently first.`;
+  if (waiting.includes(project)) {
+    return `A stack named ${project} waits in Removed. Restore it or delete it permanently first.`;
   }
   return null;
+}
+
+export interface ContainerName {
+  service: string;
+  suggested: string;
+  value: string;
+}
+
+export function containerNames(
+  text: string,
+  project: string,
+  saved: Record<string, string> = {},
+  typed: Record<string, string> = {},
+  original = "",
+): ContainerName[] {
+  const services = namingOf(text);
+  const before = new Map(
+    namingOf(original).map((entry) => [entry.service, entry.own]),
+  );
+  return services
+    .filter((entry) => entry.copies <= 1)
+    .map(({ service, own }) => {
+      const fallback =
+        services.length === 1 ? project : `${project}-${service}`;
+      const suggested =
+        own !== (before.get(service) ?? null)
+          ? (own ?? fallback)
+          : (saved[service] ?? own ?? fallback);
+      return { service, suggested, value: typed[service]?.trim() || suggested };
+    });
+}
+
+export type NameOwner = (name: string) => string | null;
+
+type ServerEntry = Pick<
+  ServicesResponse["nodes"][number],
+  "stacks" | "services"
+>;
+
+export function nameOwner(
+  entry: ServerEntry | undefined,
+  project: string,
+  server: string,
+): NameOwner {
+  const stacks = entry?.stacks ?? [];
+  const services = entry?.services ?? [];
+  return (name) => {
+    const suffix = [project, ...stacks.map((stack) => stack.project)].find(
+      (owner) => name.endsWith(`.${owner}`),
+    );
+    if (suffix !== undefined) {
+      const owner = stacks.find(
+        (stack) => stack.project === suffix && suffix !== project,
+      );
+      return `Names ending in .${suffix} are kept for the services of ${owner ? stackTitle(owner) : "this stack"}.`;
+    }
+    for (const stack of stacks) {
+      if (stack.project === project) continue;
+      if (containersOf(stack, services).some((entry) => entry.name === name)) {
+        return `${name} is a container of ${stackTitle(stack)} on ${server}.`;
+      }
+    }
+    for (const stack of stacks) {
+      if (stack.project !== project && stack.services?.includes(name)) {
+        return `${name} is a service of ${stackTitle(stack)} on ${server}.`;
+      }
+    }
+    return services.some(
+      (entry) =>
+        entry.kind === "docker" &&
+        entry.name === name &&
+        stackOf(stacks, name) === undefined,
+    )
+      ? `${server} already runs a container named ${name}.`
+      : null;
+  };
+}
+
+export function sameTitle(
+  title: string,
+  stacks: Pick<StackEntry, "project" | "title">[],
+  server: string,
+  self?: string,
+): string | null {
+  const other = stacks.find(
+    (stack) =>
+      stack.project !== self &&
+      stackTitle(stack).toLowerCase() === title.trim().toLowerCase(),
+  );
+  return other
+    ? `Another stack on ${server} is called ${stackTitle(other)}.`
+    : null;
+}
+
+export function moveClash(
+  stack: Pick<StackEntry, "project" | "title" | "names">,
+  entry: (ServerEntry & { leftovers?: string[] }) | undefined,
+  server: string,
+): string | null {
+  if (!entry) return null;
+  if (entry.leftovers?.includes(stack.project)) {
+    return `Files left from an earlier ${stack.project} are still on ${server}. Delete them there first.`;
+  }
+  const owner = nameOwner(entry, stack.project, server);
+  for (const name of Object.values(stack.names ?? {})) {
+    const found = owner(name);
+    if (found) return found;
+  }
+  return sameTitle(stackTitle(stack), entry.stacks, server, stack.project);
+}
+
+export function containerNameProblem(
+  rows: ContainerName[],
+  index: number,
+  owner: NameOwner,
+): string | null {
+  const { value } = rows[index]!;
+  if (!CONTAINER_NAME.test(value)) {
+    return "Use letters, digits, dashes, dots and underscores, starting with a letter or digit.";
+  }
+  if (rows.some((row, other) => other !== index && row.value === value)) {
+    return "Another container in this stack has this name.";
+  }
+  return owner(value);
 }
 
 export interface ServerStack {
@@ -350,13 +500,14 @@ export function serverLists(
         (item) =>
           (serverMatch ||
             item.member.stack.project.includes(needle) ||
+            item.member.stack.title?.toLowerCase().includes(needle) ||
             item.containers.some(matches)) &&
           (!options.notRunning || unhealthy(item)),
       )
       .sort(
         (a, b) =>
           Number(unhealthy(b)) - Number(unhealthy(a)) ||
-          a.member.stack.project.localeCompare(b.member.stack.project),
+          stackTitle(a.member.stack).localeCompare(stackTitle(b.member.stack)),
       );
     for (const item of stacks) {
       item.containers.sort((a, b) =>

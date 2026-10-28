@@ -49,9 +49,10 @@ func kumaReady(t *testing.T, executor Executor, run *fakeRun, service map[string
 	t.Helper()
 	dir := kumaDir(executor)
 	run.respond = map[string]string{
-		composeCall(dir, "compose.yaml", "config --format json"): resolved(t, dir, service, extra),
-		composeCall(dir, "compose.krynodes.json", psStates):      "web\trunning\t\t0\n",
-		composeCall(dir, "compose.yaml", psStates):               "web\trunning\t\t0\n",
+		composeCall(dir, "compose.yaml", "config --format json"):                     resolved(t, dir, service, extra),
+		composeCall(dir, "compose.krynodes.json", psStates):                          "web\trunning\t\t0\n",
+		composeCall(dir, "compose.yaml", psStates):                                   "web\trunning\t\t0\n",
+		composeCall(dir, "compose.yaml -f "+filepath.Join(dir, hostsFile), psStates): "web\trunning\t\t0\n",
 	}
 	return dir
 }

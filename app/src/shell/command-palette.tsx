@@ -20,7 +20,7 @@ import {
 import { usePackageNames } from "@/lib/api";
 import { canRestartServer } from "@/lib/devices";
 import { packageCommands } from "@/lib/packages";
-import { deployBlocker, groupStacks } from "@/lib/stacks";
+import { deployBlocker, groupStacks, stackTitle } from "@/lib/stacks";
 import type { NodeRecord, ServiceAction, ServicesResponse } from "@/types";
 
 import { PAGES } from "./nav";
@@ -170,14 +170,14 @@ export function CommandPalette({
                 .map((member) => (
                   <CommandItem
                     key={`${group.project}|${member.node.id}`}
-                    value={`stack deploy ${group.project} ${member.node.name}`}
+                    value={`stack deploy ${group.project} ${member.stack.title ?? ""} ${member.node.name}`}
                     onSelect={() =>
                       go(
                         `/services?deploy=${encodeURIComponent(group.project)}&node=${member.node.id}`,
                       )
                     }
                   >
-                    Deploy {group.project} · {member.node.name}
+                    Deploy {stackTitle(member.stack)} · {member.node.name}
                   </CommandItem>
                 )),
             )}

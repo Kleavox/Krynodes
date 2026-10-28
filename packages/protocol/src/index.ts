@@ -8,9 +8,23 @@ import {
 import { bridgesReportSchema } from "./bridges";
 import { eventSchema, releaseSchema } from "./quarantine";
 import { reachSchema } from "./tailscale";
-import { isValidTarget, RECIPES } from "./targets";
+import {
+  isValidTarget,
+  RECIPES,
+  SERVICE_NAME,
+  stackNamesValid,
+  stackTitleValid,
+} from "./targets";
 
-export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
+export {
+  CONTAINER_NAME,
+  isProtectedTarget,
+  isValidTarget,
+  parseStackNames,
+  RECIPES,
+  stackNamesValid,
+  stackTitleValid,
+} from "./targets";
 export {
   ADMIN_KEY_ARG,
   ADMIN_NAME,
@@ -505,6 +519,9 @@ export const stackEntrySchema = z
       .max(500)
       .optional(),
     network: stackNetworkSchema.optional(),
+    title: z.string().refine(stackTitleValid).optional(),
+    names: z.record(z.string(), z.string()).refine(stackNamesValid).optional(),
+    services: z.array(z.string().regex(SERVICE_NAME)).max(64).optional(),
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 
@@ -683,6 +700,10 @@ export const agentActionsRequestSchema = z
         hash: z.string().regex(/^[0-9a-f]{64}$/u),
         docker: z.enum(["ready", "no-compose", "missing"]).optional(),
         removed: z.array(removedStackSchema).max(50).optional(),
+        leftovers: z
+          .array(z.string().refine((name) => isValidTarget("compose", name)))
+          .max(50)
+          .optional(),
         sealKey: z
           .string()
           .regex(/^[A-Za-z0-9_-]{87}$/u)

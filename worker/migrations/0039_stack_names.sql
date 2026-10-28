@@ -1,0 +1,2 @@
+ALTER TABLE stacks ADD COLUMN title TEXT;
+ALTER TABLE stacks ADD COLUMN names TEXT;
