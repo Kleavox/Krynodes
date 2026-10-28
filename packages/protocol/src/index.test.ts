@@ -1036,6 +1036,30 @@ describe("orchestration messages of agent 0.5.0", () => {
     expect(accepts({ names: { adguard: "bad name" } })).toBe(false);
     expect(accepts({ names: { "bad service": "adguard-home" } })).toBe(false);
   });
+
+  it("carries a stack's service names and a server's leftovers", () => {
+    const stack = {
+      project: "monitoring",
+      directory: "/var/lib/kry-exec/compose/monitoring",
+      running: 2,
+      total: 2,
+      compose: true,
+      rollback: false,
+    };
+    const accepts = (services: unknown) =>
+      stackEntrySchema.safeParse({ ...stack, services }).success;
+    expect(accepts(["uptime-kuma", "db"])).toBe(true);
+    expect(accepts(["bad service"])).toBe(false);
+    expect(accepts(Array(65).fill("db"))).toBe(false);
+    const leftovers = (names: unknown) =>
+      agentActionsRequestSchema.safeParse({
+        nodeId: "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+        inventory: { hash: "a".repeat(64), leftovers: names },
+      }).success;
+    expect(leftovers(["adguard-home"])).toBe(true);
+    expect(leftovers(["Bad Name"])).toBe(false);
+    expect(leftovers(Array(51).fill("x"))).toBe(false);
+  });
 });
 
 describe("stack names", () => {

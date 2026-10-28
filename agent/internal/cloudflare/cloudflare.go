@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -204,6 +205,26 @@ func (c *Client) Route(ctx context.Context, account, tunnel, hostname, service s
 	}
 	rules = slices.DeleteFunc(rules, func(rule Rule) bool { return rule.Hostname == hostname })
 	return c.setIngress(ctx, account, tunnel, append(rules, Rule{Hostname: hostname, Service: service}))
+}
+
+func (c *Client) Rehost(ctx context.Context, account, tunnel string, hosts map[string]string) error {
+	rules, err := c.ingress(ctx, account, tunnel)
+	if err != nil {
+		return err
+	}
+	for index, rule := range rules {
+		host, found := hosts[rule.Hostname]
+		target, err := url.Parse(rule.Service)
+		if !found || err != nil || target.Host == "" {
+			continue
+		}
+		if port := target.Port(); port != "" {
+			host = net.JoinHostPort(host, port)
+		}
+		target.Host = host
+		rules[index].Service = target.String()
+	}
+	return c.setIngress(ctx, account, tunnel, rules)
 }
 
 func (c *Client) Unroute(ctx context.Context, account, tunnel, hostname string) error {

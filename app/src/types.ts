@@ -483,6 +483,7 @@ export interface StackEntry {
   network?: StackNetwork | null;
   title?: string | null;
   names?: Record<string, string> | null;
+  services?: string[];
 }
 
 export interface Finding {
@@ -563,6 +564,7 @@ interface ServiceNode {
   tailscaleVault?: VaultReport | null;
   webAddresses?: WebAddress[];
   bridges?: BridgesReport | null;
+  leftovers?: string[];
 }
 
 export interface DeviceRecord {

@@ -18,7 +18,13 @@ import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/http";
 import { privateIpProblem } from "@/lib/network";
 import { seal } from "@/lib/seal";
-import { parseHostPorts, titleProblem } from "@/lib/stacks";
+import {
+  nameOwner,
+  parseHostPorts,
+  sameTitle,
+  titleProblem,
+} from "@/lib/stacks";
+import type { ServicesResponse } from "@/types";
 
 import {
   ContainerNames,
@@ -57,7 +63,7 @@ export interface StackTarget {
   title: string;
   names?: Record<string, string> | null;
   named?: boolean;
-  taken?: string[];
+  entry?: ServicesResponse["nodes"][number];
   containers?: string[];
 }
 
@@ -137,14 +143,23 @@ function ComposeForm({
   const [sealing, setSealing] = useState(false);
   const current = text ?? read?.compose ?? "";
   const shownTitle = title ?? target.title;
-  const titleWrong = target.named ? titleProblem(shownTitle.trim()) : null;
+  const titleWrong = target.named
+    ? (titleProblem(shownTitle.trim()) ??
+      (shownTitle.trim() !== target.title
+        ? sameTitle(
+            shownTitle,
+            target.entry?.stacks ?? [],
+            target.nodeName,
+            target.project,
+          )
+        : null))
+    : null;
   const names = useContainerNames({
     text: current,
     project: target.project,
     saved: target.names,
     original: read?.compose,
-    taken: target.taken ?? [],
-    server: target.nodeName,
+    owner: nameOwner(target.entry, target.project, target.nodeName),
     running: target.containers,
   });
   const note = editable && target.named ? renameNote(names.renamed) : null;

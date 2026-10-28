@@ -1,6 +1,7 @@
 import { BRIDGE_NAME, type BridgesReport } from "@krynodes/protocol";
 
 import type { StackEntry } from "../types";
+import { stackTitle } from "./stacks";
 import { serviceShape, sharedNetworksOf } from "./compose";
 import { bounds, listOf, networkOf, overlaps } from "./network";
 
@@ -261,6 +262,17 @@ export function networkBoxes(
         return refused(
           `${problem}, so it cannot join ${name}, a Contained network.`,
         );
+      const twin = network.members.find(
+        (member) => member.project !== project && member.service === service,
+      );
+      if (twin) {
+        const owner = server.stacks?.find(
+          (entry) => entry.project === twin.project,
+        );
+        return refused(
+          `${name} already has a service named ${service}, from ${owner ? stackTitle(owner) : twin.project}. Rename this one in the compose file.`,
+        );
+      }
       const copies = serviceShape(text, service).copies;
       if (copies > 1) {
         return refused(
@@ -366,6 +378,14 @@ export function moveLines(
     const there = to.bridges.networks.find(
       (entry) => entry.name === network.name,
     );
+    const twin = there?.members.find(
+      (member) =>
+        member.project !== stack.project &&
+        network.members.some(
+          (own) =>
+            own.project === stack.project && own.service === member.service,
+        ),
+    );
     const subnet = network.subnet ?? "";
     const clash = to.bridges.taken.find((entry) =>
       overlaps(entry.range, subnet),
@@ -377,6 +397,10 @@ export function moveLines(
     } else if (there && there.kind !== network.kind) {
       refuse(
         `${to.name} already has ${network.name} as a ${KIND_TAG[there.kind]} network.`,
+      );
+    } else if (twin) {
+      refuse(
+        `${network.name} on ${to.name} already has a service named ${twin.service}, from ${twin.project}.`,
       );
     } else if (!there && clash) {
       refuse(

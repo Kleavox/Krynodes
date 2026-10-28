@@ -112,19 +112,13 @@ function StackControls({
     title: stackTitle(member.stack),
     names: member.stack.names,
     named: agentGap(member.node.agent_version, FEATURE_AGENT) === null,
-    taken: (entry?.services ?? [])
-      .filter(
-        (service) =>
-          service.kind === "docker" &&
-          !(member.stack.containers ?? []).includes(service.name),
-      )
-      .map((service) => service.name),
+    entry,
     containers: member.stack.containers ?? [],
   };
   const modern =
     agentCurrent(member.node) && member.trusted && member.stack.compose;
   const own = ownFolder(member.stack.directory);
-  const confirm = (action: StackActionRequest["action"]) =>
+  const confirm = (action: "stop" | "remove" | "purge") =>
     action !== "stop" && addresses.length > 0
       ? setPanel(action)
       : setConfirming({

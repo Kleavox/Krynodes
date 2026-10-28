@@ -11,6 +11,7 @@ import { reachSchema } from "./tailscale";
 import {
   isValidTarget,
   RECIPES,
+  SERVICE_NAME,
   stackNamesValid,
   stackTitleValid,
 } from "./targets";
@@ -520,6 +521,7 @@ export const stackEntrySchema = z
     network: stackNetworkSchema.optional(),
     title: z.string().refine(stackTitleValid).optional(),
     names: z.record(z.string(), z.string()).refine(stackNamesValid).optional(),
+    services: z.array(z.string().regex(SERVICE_NAME)).max(64).optional(),
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 
@@ -698,6 +700,10 @@ export const agentActionsRequestSchema = z
         hash: z.string().regex(/^[0-9a-f]{64}$/u),
         docker: z.enum(["ready", "no-compose", "missing"]).optional(),
         removed: z.array(removedStackSchema).max(50).optional(),
+        leftovers: z
+          .array(z.string().refine((name) => isValidTarget("compose", name)))
+          .max(50)
+          .optional(),
         sealKey: z
           .string()
           .regex(/^[A-Za-z0-9_-]{87}$/u)

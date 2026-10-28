@@ -775,11 +775,16 @@ func (e Executor) pinShared(project string, uses []sharedUse) ([]pinned, error) 
 	for _, use := range uses {
 		record := records[use.name]
 		for _, service := range use.services {
+			for _, key := range slices.Sorted(maps.Keys(record.Pins)) {
+				if other, named, _ := strings.Cut(key, "/"); other != project && named == service {
+					return nil, fmt.Errorf("%s already has a service named %s, from %s; rename this one in the compose file", use.name, service, other)
+				}
+			}
 			address, err := pin(use.name, &record, project+"/"+service)
 			if err != nil {
 				return nil, err
 			}
-			pins = append(pins, pinned{service: service, key: use.key, address: address, alias: service + "." + project})
+			pins = append(pins, pinned{service: service, key: use.key, address: address, alias: relation(service, project)})
 		}
 		records[use.name] = record
 	}
@@ -793,17 +798,8 @@ func applyPins(target, base map[string]any, pins []pinned) {
 		target["services"] = services
 	}
 	for _, entry := range pins {
-		service := asMap(services[entry.service])
-		if service == nil {
-			service = map[string]any{}
-			services[entry.service] = service
-		}
-		settings := serviceNetwork(service, entry.key)
-		aliases := asList(asMap(asMap(asMap(asMap(base["services"])[entry.service])["networks"])[entry.key])["aliases"])
-		if !slices.Contains(aliases, any(entry.alias)) {
-			aliases = append(slices.Clone(aliases), entry.alias)
-		}
-		settings["ipv4_address"], settings["aliases"] = entry.address, aliases
+		service := addAlias(target, base, entry.service, entry.key, entry.alias)
+		serviceNetwork(service, entry.key)["ipv4_address"] = entry.address
 		if drops := asList(service["cap_drop"]); !slices.Contains(drops, any("NET_RAW")) {
 			service["cap_drop"] = append(slices.Clone(drops), "NET_RAW")
 		}

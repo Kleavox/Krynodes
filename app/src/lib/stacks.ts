@@ -342,11 +342,89 @@ export function containerNames(
     });
 }
 
+export type NameOwner = (name: string) => string | null;
+
+type ServerEntry = Pick<
+  ServicesResponse["nodes"][number],
+  "stacks" | "services"
+>;
+
+export function nameOwner(
+  entry: ServerEntry | undefined,
+  project: string,
+  server: string,
+): NameOwner {
+  const stacks = entry?.stacks ?? [];
+  const services = entry?.services ?? [];
+  return (name) => {
+    const suffix = [project, ...stacks.map((stack) => stack.project)].find(
+      (owner) => name.endsWith(`.${owner}`),
+    );
+    if (suffix !== undefined) {
+      const owner = stacks.find(
+        (stack) => stack.project === suffix && suffix !== project,
+      );
+      return `Names ending in .${suffix} are kept for the services of ${owner ? stackTitle(owner) : "this stack"}.`;
+    }
+    for (const stack of stacks) {
+      if (stack.project === project) continue;
+      if (containersOf(stack, services).some((entry) => entry.name === name)) {
+        return `${name} is a container of ${stackTitle(stack)} on ${server}.`;
+      }
+    }
+    for (const stack of stacks) {
+      if (stack.project !== project && stack.services?.includes(name)) {
+        return `${name} is a service of ${stackTitle(stack)} on ${server}.`;
+      }
+    }
+    return services.some(
+      (entry) =>
+        entry.kind === "docker" &&
+        entry.name === name &&
+        stackOf(stacks, name) === undefined,
+    )
+      ? `${server} already runs a container named ${name}.`
+      : null;
+  };
+}
+
+export function sameTitle(
+  title: string,
+  stacks: Pick<StackEntry, "project" | "title">[],
+  server: string,
+  self?: string,
+): string | null {
+  const other = stacks.find(
+    (stack) =>
+      stack.project !== self &&
+      stackTitle(stack).toLowerCase() === title.trim().toLowerCase(),
+  );
+  return other
+    ? `Another stack on ${server} is called ${stackTitle(other)}.`
+    : null;
+}
+
+export function moveClash(
+  stack: Pick<StackEntry, "project" | "title" | "names">,
+  entry: (ServerEntry & { leftovers?: string[] }) | undefined,
+  server: string,
+): string | null {
+  if (!entry) return null;
+  if (entry.leftovers?.includes(stack.project)) {
+    return `Files left from an earlier ${stack.project} are still on ${server}. Delete them there first.`;
+  }
+  const owner = nameOwner(entry, stack.project, server);
+  for (const name of Object.values(stack.names ?? {})) {
+    const found = owner(name);
+    if (found) return found;
+  }
+  return sameTitle(stackTitle(stack), entry.stacks, server, stack.project);
+}
+
 export function containerNameProblem(
   rows: ContainerName[],
   index: number,
-  taken: string[],
-  server: string,
+  owner: NameOwner,
 ): string | null {
   const { value } = rows[index]!;
   if (!CONTAINER_NAME.test(value)) {
@@ -355,10 +433,7 @@ export function containerNameProblem(
   if (rows.some((row, other) => other !== index && row.value === value)) {
     return "Another container in this stack has this name.";
   }
-  if (taken.includes(value)) {
-    return `${server} already runs a container named ${value}.`;
-  }
-  return null;
+  return owner(value);
 }
 
 export interface ServerStack {

@@ -777,6 +777,43 @@ describe("removed stacks", () => {
     expect((await reply(running)).code).toBe("UNKNOWN_TARGET");
   });
 
+  it("sends each stack's services and each server's leftovers, [] when none", async () => {
+    const t = withRemoved();
+    t.sqlite
+      .prepare("UPDATE stacks SET services = '[\"app\"]' WHERE node_id = ?")
+      .run(A);
+    t.sqlite
+      .prepare("UPDATE nodes SET leftovers = '[\"adguard-home\"]' WHERE id = ?")
+      .run(A);
+    const body = (await (await t.call("GET", "/api/services")).json()) as {
+      nodes: {
+        id: string;
+        leftovers: string[];
+        stacks: { services: string[] }[];
+      }[];
+    };
+    const a = body.nodes.find((node) => node.id === A)!;
+    expect(a.stacks.map((stack) => stack.services)).toEqual([["app"]]);
+    expect(a.leftovers).toEqual(["adguard-home"]);
+    expect(body.nodes.find((node) => node.id === B)!.leftovers).toEqual([]);
+  });
+
+  it("keeps New stack away from leftovers and lets them be deleted", async () => {
+    const t = withRemoved();
+    t.sqlite
+      .prepare("UPDATE nodes SET leftovers = '[\"adguard-home\"]' WHERE id = ?")
+      .run(A);
+    const left = await t.send("create", "adguard-home");
+    expect(left.status).toBe(409);
+    expect(await reply(left)).toEqual({
+      code: "LEFTOVERS",
+      message: `Files left from an earlier adguard-home are still on ${A}. Delete them first.`,
+    });
+    expect((await t.send("purge", "adguard-home")).status).toBe(201);
+    t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
+    expect((await t.send("restore", "adguard-home")).status).toBe(422);
+  });
+
   it("keeps New stack away from a name waiting in Removed", async () => {
     const t = withRemoved();
     const taken = await t.send("create", "old");

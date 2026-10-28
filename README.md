@@ -536,6 +536,20 @@ Container Names shows what each runs as now. Docker checks on the old name
 follow, and a Web address keeps answering on the old name as an alias. Agent
 0.7.1 or newer.
 
+**A name belongs to one stack.** Container Names refuses a name that another
+stack on the server already uses for a container or a service, and says whose
+it is ("uptime-kuma is a service of Monitoring on io."); names ending in
+`.<stack>` are kept for Krynodes. Every service also answers to
+`<service>.<stack>` on its networks, and Web addresses route to that name, so
+two stacks with a service of the same name never get each other's traffic. An
+address made earlier moves to it the next time the vault opens, once its stack
+has been saved again. A Krynodes network refuses a second service with a name
+another stack already has on it, and two stacks on one server cannot share a
+display name. When a stack is gone but its folder or volumes stay, New Stack
+says so and offers **Delete Leftovers** (typed confirmation) before the name
+can be used again. Move says why a server cannot take the stack. Agent 0.7.1 or
+newer.
+
 Deploys, like start, stop and restart, need a trusted passkey. On
 **Passkeys** (account menu) you register a passkey on your laptop or phone; each
 server keeps the public keys in `/var/lib/kry-exec/trust.json`, and the root

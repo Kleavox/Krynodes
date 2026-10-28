@@ -82,6 +82,12 @@ func (e Executor) removedStack(ctx context.Context, request Request, snapshot Sn
 		return e.failed(request, err, "")
 	}
 	entry, ok := bin.Stacks[request.Name]
+	if !ok && request.Action == "purge" && e.leftover(ctx, request.Name) {
+		if err := e.wipe(ctx, request.Name, filepath.Join(e.StateDir, "compose", request.Name)); err != nil {
+			return e.failed(request, err, "")
+		}
+		return Result{ID: request.ID, OK: true, Output: "deleted the leftovers", FinishedAt: e.stamp()}
+	}
 	if !ok {
 		return e.refuse(request.ID, fmt.Errorf("%s is not on this server", request.Name))
 	}
@@ -252,19 +258,19 @@ func (e Executor) create(ctx context.Context, request Request, command Command, 
 	if err := checkText(command.Compose, access); err != nil {
 		return e.refuse(request.ID, err)
 	}
+	if e.leftover(ctx, name) {
+		return e.refuse(request.ID, fmt.Errorf("files left from an earlier %s are still on this server; delete them first", name))
+	}
 	directory := filepath.Join(e.StateDir, "compose", name)
-	_, err = os.Lstat(directory)
-	fresh := errors.Is(err, os.ErrNotExist)
 	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return e.failed(request, err, "")
 	}
 	tidy := func(result Result) Result {
-		if !fresh {
-			return result
-		}
 		ids, err := e.docker(ctx, collectTimeout, "inspect", "ps", "-a", "--no-trunc", "--filter", "label=com.docker.compose.project="+name, "--format", "{{.ID}}")
 		if err == nil && strings.TrimSpace(string(ids)) == "" {
-			os.RemoveAll(directory)
+			if err := e.wipe(ctx, name, directory); err != nil {
+				log.Printf("tidy %s: %v", name, err)
+			}
 			e.unpin(name)
 		}
 		return result

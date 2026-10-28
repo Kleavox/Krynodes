@@ -173,6 +173,15 @@ describe("operations in steps", () => {
     ]);
   });
 
+  it("refuses a move to a server that still holds files of that name", async () => {
+    const t = routes();
+    t.sqlite
+      .prepare("UPDATE nodes SET leftovers = '[\"listmonk\"]' WHERE id = ?")
+      .run(B);
+    expect(await code(await t.operate("move", moveSteps()))).toBe("LEFTOVERS");
+    expect(t.rows()).toEqual([]);
+  });
+
   it("refuses a move to a name that is taken, from a stack that is gone, or to an old key", async () => {
     const t = routes();
     t.sqlite

@@ -51,6 +51,8 @@ import { ownersRefusal } from "../trust/approval";
 import { loadFleet, readReport, syncedUpdates } from "../trust/fleet";
 import {
   invalidRequest,
+  leftoversOf,
+  leftoversRefusal,
   readJson,
   type KrynodesApp,
   type KrynodesEnv,
@@ -300,7 +302,7 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
-                  seal_key, security, vault, tailscale_vault, bridges
+                  seal_key, security, vault, tailscale_vault, bridges, leftovers
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
@@ -315,6 +317,7 @@ export function registerServiceRoutes(
           vault: string | null;
           tailscale_vault: string | null;
           bridges: string | null;
+          leftovers: string | null;
         }>(),
       db
         .prepare(
@@ -344,7 +347,7 @@ export function registerServiceRoutes(
     const [stacks, removed, addresses] = await Promise.all([
       db
         .prepare(
-          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network, title, names FROM stacks
+          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network, title, names, services FROM stacks
            WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
            ORDER BY node_id, project`,
         )
@@ -363,6 +366,7 @@ export function registerServiceRoutes(
           network: string | null;
           title: string | null;
           names: string | null;
+          services: string | null;
         }>(),
       db
         .prepare(
@@ -412,6 +416,7 @@ export function registerServiceRoutes(
         vault: parsed(node.vault),
         tailscaleVault: parsed(node.tailscale_vault),
         bridges: parsed(node.bridges),
+        leftovers: (parsed(node.leftovers) as string[] | null) ?? [],
         webAddresses: addresses.results
           .filter((address) => address.node_id === node.id)
           .map(({ node_id: _, ...address }) => address),
@@ -430,6 +435,7 @@ export function registerServiceRoutes(
             network: parsed(stack.network),
             title: stack.title,
             names: parsed(stack.names),
+            services: (parsed(stack.services) as string[] | null) ?? [],
           })),
         removed: removed.results
           .filter((stack) => stack.node_id === node.id)
@@ -678,7 +684,7 @@ export function registerServiceRoutes(
     const nodeIds = JSON.stringify([...wanted]);
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker, tailscale,
+        `SELECT id, name, agent_version, docker, tailscale, leftovers,
                 (SELECT json_extract(report, '$.apt') FROM packages
                  WHERE node_id = nodes.id) AS apt
          FROM nodes
@@ -692,6 +698,7 @@ export function registerServiceRoutes(
         agent_version: string | null;
         docker: string | null;
         tailscale: string | null;
+        leftovers: string | null;
         apt: number | null;
       }>();
     if (nodes.results.length !== wanted.size) {
@@ -822,6 +829,15 @@ export function registerServiceRoutes(
           409,
         );
       }
+      const left = targets.find((target) =>
+        leftoversOf(byId.get(target.nodeId)!).includes(target.name),
+      );
+      if (left) {
+        return context.json(
+          leftoversRefusal(left.name, byId.get(left.nodeId)!.name),
+          409,
+        );
+      }
       const bare = targets.find(
         (target) => byId.get(target.nodeId)!.docker !== "ready",
       );
@@ -854,6 +870,13 @@ export function registerServiceRoutes(
               name: stack.name,
             }),
           ),
+        ...(action === "purge"
+          ? nodes.results.flatMap((node) =>
+              leftoversOf(node).map((name) =>
+                targetKey({ nodeId: node.id, kind: "compose", name }),
+              ),
+            )
+          : []),
         ...nodes.results.flatMap((node) =>
           [
             "server",

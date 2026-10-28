@@ -45,7 +45,7 @@ import {
   readServes,
   servesArg,
 } from "@/lib/network";
-import { moveBlocker, moveConfirmed } from "@/lib/stacks";
+import { moveBlocker, moveClash, moveConfirmed } from "@/lib/stacks";
 import { cn } from "@/lib/utils";
 import { moveSteps } from "@/lib/vault";
 import type { WebAddress } from "@/types";
@@ -198,7 +198,11 @@ function MoveForm({
   const secretsWrong = secretsProblem(secrets);
   const privateWrong = privateIpProblem(text, targetName, there !== null);
   const tooMany = block && !block.red ? moveProblem(changes) : null;
-  const problem = secretsWrong ?? privateWrong ?? tooMany ?? bridging.refusal;
+  const clash = stack
+    ? moveClash(stack, entries.get(chosen), targetName)
+    : null;
+  const problem =
+    clash ?? secretsWrong ?? privateWrong ?? tooMany ?? bridging.refusal;
   const carried = chosenAccess === "contained" ? (read?.hostPorts ?? []) : [];
   const blocked = moveBlocker(addresses, original);
   const targetKey = entries.get(chosen)?.sealKey ?? "";
@@ -316,6 +320,7 @@ function MoveForm({
                 ))}
               </SelectContent>
             </Select>
+            {clash && <p className="text-xs text-destructive">{clash}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Access There</Label>

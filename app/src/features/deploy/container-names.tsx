@@ -2,7 +2,11 @@ import { ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
 
 import { Input } from "@/components/ui/input";
-import { containerNameProblem, containerNames } from "@/lib/stacks";
+import {
+  containerNameProblem,
+  containerNames,
+  type NameOwner,
+} from "@/lib/stacks";
 import { cn } from "@/lib/utils";
 
 interface NamesInput {
@@ -11,8 +15,7 @@ interface NamesInput {
   saved?: Record<string, string> | null;
   original?: string;
   typed: Record<string, string>;
-  taken: string[];
-  server: string;
+  owner: NameOwner;
   running?: string[];
 }
 
@@ -22,8 +25,7 @@ export function namesState({
   saved,
   original,
   typed,
-  taken,
-  server,
+  owner,
   running = [],
 }: NamesInput) {
   const rows = containerNames(text, project, saved ?? {}, typed, original).map(
@@ -37,7 +39,7 @@ export function namesState({
     },
   );
   const problems = rows.map((_, index) =>
-    containerNameProblem(rows, index, taken, server),
+    containerNameProblem(rows, index, owner),
   );
   return {
     rows,

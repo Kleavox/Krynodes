@@ -251,6 +251,7 @@ describe("compose actions", () => {
         network: null,
         title: "Listmonk",
         names: { app: "listmonk" },
+        services: [],
       },
     ]);
     expect(a.trust).toEqual({

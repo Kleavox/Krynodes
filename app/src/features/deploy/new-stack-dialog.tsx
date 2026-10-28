@@ -28,14 +28,20 @@ import { toast } from "sonner";
 import { privateIpProblem } from "@/lib/network";
 import { isPending } from "@/lib/services";
 import {
+  nameOwner,
   newStackBlocker,
   parseHostPorts,
+  sameTitle,
   stackNameProblem,
   stackSlug,
 } from "@/lib/stacks";
 import type { NodeRecord } from "@/types";
 
 import { ContainerNames, useContainerNames } from "./container-names";
+import {
+  StackActionDialog,
+  type StackActionRequest,
+} from "./stack-action-dialog";
 import {
   AccessChoice,
   FullAccessSummary,
@@ -102,6 +108,7 @@ function NewStackForm({
   const [reach, setReach] = useState("");
   const [sealing, setSealing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState<StackActionRequest | null>(null);
   const action = useAction(actionId).data?.action;
 
   const chosen = choices.find((choice) => choice.node.id === nodeId);
@@ -112,13 +119,11 @@ function NewStackForm({
     agentGap(chosen.node.agent_version, FEATURE_AGENT) === null;
   const title = name.trim();
   const project = stackSlug(title);
+  const serverName = chosen?.node.name ?? "This server";
   const names = useContainerNames({
     text,
     project,
-    taken: (entries.get(nodeId)?.services ?? [])
-      .filter((service) => service.kind === "docker")
-      .map((service) => service.name),
-    server: chosen?.node.name ?? "This server",
+    owner: nameOwner(entries.get(nodeId), project, serverName),
   });
   const reaching = modern && access === "contained";
   const hostPorts = parseHostPorts(reaching ? reach : "");
@@ -145,7 +150,15 @@ function NewStackForm({
   const waiting = (entries.get(nodeId)?.removed ?? []).map(
     (stack) => stack.project,
   );
-  const nameProblem = stackNameProblem(title, taken, waiting);
+  const nameProblem =
+    stackNameProblem(title, taken, waiting) ??
+    (named
+      ? sameTitle(title, entries.get(nodeId)?.stacks ?? [], serverName)
+      : null);
+  const leftover =
+    project !== "" &&
+    nameProblem === null &&
+    (entries.get(nodeId)?.leftovers ?? []).includes(project);
   const size = new TextEncoder().encode(text).length;
   const textProblem = !text.trim()
     ? "Paste the compose file."
@@ -156,6 +169,7 @@ function NewStackForm({
     chosen !== undefined &&
     chosen.blocker === null &&
     nameProblem === null &&
+    !leftover &&
     textProblem === null &&
     hostPorts.problem === null &&
     privateWrong === null &&
@@ -277,6 +291,27 @@ function NewStackForm({
             <p id="stack-name-problem" className="text-xs text-destructive">
               {nameProblem}
             </p>
+          )}
+          {leftover && chosen && (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs text-destructive">
+                Files left from an earlier {project} are still on {serverName}.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setClearing({
+                    action: "leftovers",
+                    project,
+                    node: chosen.node,
+                    directory: "",
+                  })
+                }
+              >
+                Delete Leftovers
+              </Button>
+            </div>
           )}
           {named && <ContainerNames names={names} />}
         </div>
@@ -401,6 +436,7 @@ function NewStackForm({
           {run.isPending ? <Waiting /> : "Create"}
         </Button>
       </DialogFooter>
+      <StackActionDialog request={clearing} onClose={() => setClearing(null)} />
     </DialogContent>
   );
 }

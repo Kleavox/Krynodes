@@ -150,6 +150,7 @@ type StackEntry struct {
 	Network    *StackNetwork     `json:"network,omitempty"`
 	Title      string            `json:"title,omitempty"`
 	Names      map[string]string `json:"names,omitempty"`
+	Services   []string          `json:"services,omitempty"`
 }
 
 type StackNetwork struct {
