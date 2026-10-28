@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -134,8 +134,8 @@ export function ReleaseDialog({
               type="submit"
               disabled={release.isPending || quarantine.isFetching}
             >
-              {!release.isPending && <Fingerprint aria-hidden="true" />}
-              {release.isPending ? "Waiting for the Fingerprint…" : "Release"}
+              {!release.isPending && <KeyRound aria-hidden="true" />}
+              {release.isPending ? "Waiting for the Passkey…" : "Release"}
             </Button>
           </DialogFooter>
         </form>

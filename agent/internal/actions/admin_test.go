@@ -147,6 +147,7 @@ func TestAdminUserMakesTheUserAndQuietsOnlyItsOwnItems(t *testing.T) {
 	rootFile(t, executor, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
 	run.respond["sshd -T"] = "passwordauthentication yes\npermitrootlogin yes\nport 22\n"
 	adminRunner(t, &executor, run)
+	sshTakesEffect(run, "root", "musyaf")
 	executor.watchServer(context.Background())
 	writeJSON(executor.StateDir, adminFile, adminTicket{ID: idA, Name: "musyaf", Keys: []string{adminBlob + ":laptop"}, Until: executorNow.Add(10 * time.Minute)}, 0o600)
 	writeJSON(executor.StateDir, "security.json", securityState{}, 0o640)
@@ -182,6 +183,7 @@ func TestSetupMakesTheAdminUserFirstAndTurnsRootLoginOffLast(t *testing.T) {
 	run.respond["ip -j route show default"] = `[{"dev":"eth0"}]`
 	run.respond["wg show all listen-port"] = "wg0\t51820\n"
 	adminRunner(t, &executor, run)
+	sshTakesEffect(run, "root", "musyaf")
 	executor.watchServer(context.Background())
 	var out strings.Builder
 	tty := &adminTerminal{out: &out, answer: true}

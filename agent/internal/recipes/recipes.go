@@ -312,19 +312,25 @@ func reloadSSH(ctx context.Context, env Env) error {
 	return nil
 }
 
-func Hold(env Env, args map[string]string) error {
-	platform := Detect(env)
-	if platform.Family == "" {
-		return ErrUnsupported
+func UnattendedOn(ctx context.Context, env Env) error {
+	if answer, _ := env.output(ctx, "apt-config", "shell", "UU", "APT::Periodic::Unattended-Upgrade"); !strings.Contains(answer, "UU='1'") {
+		return errors.New("Another file in /etc/apt/apt.conf.d turns unattended upgrades off.")
 	}
-	if sentence := platform.Unverified(); sentence != "" && args["anyway"] != "yes" {
-		return errors.New(sentence + " Confirm to run it anyway.")
+	if err := env.run(ctx, "systemctl", "is-enabled", "--quiet", "apt-daily-upgrade.timer"); err != nil {
+		return errors.New("apt-daily-upgrade.timer is off, so updates would never run.")
+	}
+	return nil
+}
+
+func Hold(env Env) error {
+	if Detect(env).Family == "" {
+		return ErrUnsupported
 	}
 	return nil
 }
 
 func Apply(ctx context.Context, env Env, id string, args map[string]string) (map[string]string, error) {
-	if err := Hold(env, args); err != nil {
+	if err := Hold(env); err != nil {
 		return nil, err
 	}
 	switch id {
@@ -339,17 +345,21 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		if err := env.write(autoUpgrades, "APT::Periodic::Update-Package-Lists \"1\";\nAPT::Periodic::Unattended-Upgrade \"1\";\n", 0o644); err != nil {
 			return nil, env.takeBack(ctx, err, fresh, autoUpgrades)
 		}
+		if err := UnattendedOn(ctx, env); err != nil {
+			return nil, env.takeBack(ctx, err, fresh, autoUpgrades)
+		}
 		return installed(fresh), nil
 	case "ssh-keys-only":
-		if len(SSHLogins(ctx, env)) == 0 {
+		logins := SSHLogins(ctx, env)
+		if len(logins) == 0 {
 			return nil, errors.New("no SSH key lets root or a sudo user log in; add one before turning passwords off")
 		}
-		return nil, sshChange(ctx, env, sshDropIn, "PasswordAuthentication no\nKbdInteractiveAuthentication no\n")
+		return nil, sshChange(ctx, env, sshDropIn, "PasswordAuthentication no\nKbdInteractiveAuthentication no\n", passwordsOff(logins))
 	case "no-root-login":
 		if !slices.ContainsFunc(SSHLogins(ctx, env), func(user string) bool { return user != "root" }) {
 			return nil, errors.New("no SSH key lets a sudo user other than root log in; add one before turning root login off")
 		}
-		return nil, sshChange(ctx, env, rootDropIn, "PermitRootLogin no\n")
+		return nil, sshChange(ctx, env, rootDropIn, "PermitRootLogin no\n", rootOff)
 	case "fail2ban":
 		var fresh string
 		var err error
@@ -370,6 +380,9 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		if err := env.run(ctx, "systemctl", "restart", "fail2ban"); err != nil {
 			return nil, env.takeBack(ctx, err, fresh, jail)
 		}
+		if err := env.run(ctx, "fail2ban-client", "status", "sshd"); err != nil {
+			return nil, env.takeBack(ctx, fmt.Errorf("fail2ban started, but its SSH jail did not: %w", err), fresh, jail)
+		}
 		return installed(fresh), nil
 	case "firewall":
 		return firewall(ctx, env, args["ports"], args[NetworkPort])
@@ -381,7 +394,7 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 
 const NetworkPort = "networkPort"
 
-func sshChange(ctx context.Context, env Env, file, body string) error {
+func sshChange(ctx context.Context, env Env, file, body string, took func(context.Context, Env) error) error {
 	config, _ := os.ReadFile(env.path("/etc/ssh/sshd_config"))
 	if !includeConf.Match(config) {
 		return errors.New("this server's SSH does not read /etc/ssh/sshd_config.d; change it by hand")
@@ -390,6 +403,10 @@ func sshChange(ctx context.Context, env Env, file, body string) error {
 		return err
 	}
 	if err := env.run(ctx, "sshd", "-t"); err != nil {
+		env.remove(file)
+		return err
+	}
+	if err := took(ctx, env); err != nil {
 		env.remove(file)
 		return err
 	}
@@ -453,7 +470,82 @@ func firewall(ctx context.Context, env Env, chosen, networkPort string) (map[str
 	}
 	saved["wasActive"] = fmt.Sprint(active)
 	saved["rules"] = strings.Join(rules, ",")
+	if !active {
+		if status, _ := env.output(ctx, "ufw", "status"); !sshAllowed(status, sshPorts(ctx, env)) {
+			return nil, firewallBack(undo(ctx, env, "firewall", saved))
+		}
+	}
 	return saved, nil
+}
+
+var errFirewallWithoutSSH = errors.New("The firewall came up without SSH allowed, so Krynodes turned it back off.")
+
+func firewallBack(err error) error {
+	if err != nil {
+		return fmt.Errorf("%w; turning it off also failed: %v", errFirewallWithoutSSH, err)
+	}
+	return errFirewallWithoutSSH
+}
+
+func sshAllowed(status string, ports []string) bool {
+	if !strings.Contains(status, "Status: active") {
+		return false
+	}
+	lines := strings.Split(status, "\n")
+	for _, port := range ports {
+		if !slices.ContainsFunc(lines, func(line string) bool {
+			fields := strings.Fields(line)
+			return len(fields) > 0 && fields[0] == port && strings.Contains(line, "ALLOW")
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+const probeAs = ",host=krynodes.invalid,addr=192.0.2.1"
+
+func sshAnswer(ctx context.Context, env Env, user string) map[string]string {
+	args := []string{"-T"}
+	if user != "" {
+		args = append(args, "-C", "user="+user+probeAs)
+	}
+	output, _ := env.output(ctx, "sshd", args...)
+	answer := map[string]string{}
+	for line := range strings.SplitSeq(output, "\n") {
+		if fields := strings.Fields(line); len(fields) == 2 {
+			answer[strings.ToLower(fields[0])] = strings.ToLower(fields[1])
+		}
+	}
+	return answer
+}
+
+func passwordsOff(users []string) func(context.Context, Env) error {
+	return func(ctx context.Context, env Env) error {
+		for _, user := range append([]string{""}, users...) {
+			if strings.ContainsAny(user, ", =") {
+				continue
+			}
+			answer := sshAnswer(ctx, env, user)
+			kbd, listed := answer["kbdinteractiveauthentication"]
+			if answer["passwordauthentication"] == "no" && (!listed || kbd == "no") {
+				continue
+			}
+			who := ""
+			if user != "" {
+				who = " for " + user
+			}
+			return fmt.Errorf("SSH still accepts passwords%s: a setting read before Krynodes' wins (a file in /etc/ssh/sshd_config.d or a Match block). Change it by hand.", who)
+		}
+		return nil
+	}
+}
+
+func rootOff(ctx context.Context, env Env) error {
+	if sshAnswer(ctx, env, "root")["permitrootlogin"] != "no" {
+		return errors.New("SSH still lets root log in: a setting read before Krynodes' wins (a file in /etc/ssh/sshd_config.d or a Match block). Change it by hand.")
+	}
+	return nil
 }
 
 func freePort53(ctx context.Context, env Env) (map[string]string, error) {

@@ -1,7 +1,8 @@
 import { ADMIN_NAME } from "@krynodes/protocol";
-import { agentHasFeatures, FEATURE_AGENT } from "@krynodes/protocol/versions";
+import { FEATURE_AGENT } from "@krynodes/protocol/versions";
 
 import type { NodeRecord } from "../types";
+import { agentGap, FIRST_REPORT } from "./devices";
 
 export interface AdminKey {
   line: string;
@@ -141,9 +142,9 @@ export function adminBlocker(
   node: Pick<NodeRecord, "name" | "agent_version">,
   admin: EnrollAdmin | null,
 ): string | null {
-  if (!agentHasFeatures(node.agent_version)) {
-    return `Needs agent ${FEATURE_AGENT} · ${node.name} runs ${node.agent_version ?? "--"}`;
-  }
+  const gap = agentGap(node.agent_version, FEATURE_AGENT);
+  if (gap === FIRST_REPORT) return gap;
+  if (gap !== null) return `${gap} · ${node.name} runs ${node.agent_version}`;
   if (!admin || admin.keys.length === 0) {
     return "Add your SSH public keys in Enroll Defaults first.";
   }

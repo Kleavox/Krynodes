@@ -641,7 +641,7 @@ export function alarmRows(alarms: TailnetAlarm[], servers: TailnetServer[]) {
         }
       : {
           id: alarm.id,
-          title: `Your policy was changed with Krynodes' credential at ${clockTime(alarm.at)}, without your fingerprint`,
+          title: `Your policy was changed with Krynodes' credential at ${clockTime(alarm.at)}, without your passkey`,
           detail: null,
           tag: null,
           text: "Someone else has the credential. Delete it in Tailscale's admin console, then connect a new one. Krynodes cannot undo the change on its own.",
@@ -788,7 +788,7 @@ export async function connectSteps(input: {
   if (input.holders.length < 2) {
     return {
       ok: false as const,
-      reason: `Connect needs two servers with agent ${MIN_AGENT_VERSION} that this device reaches; ${input.holders.length} is.`,
+      reason: `Connect needs two servers with agent ${MIN_AGENT_VERSION} that your passkey reaches; ${input.holders.length} is.`,
     };
   }
   return {

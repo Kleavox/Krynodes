@@ -34,13 +34,19 @@ import {
   type ActionRow,
 } from "../actions/store";
 import { decodeJson, toB64url } from "../lib/b64url";
+import {
+  endOfLifeDate,
+  eolFinding,
+  readEndOfLife,
+  type EndOfLife,
+} from "../agent/end-of-life";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
 import { liveRange, readNetwork } from "../network/document";
 import { quarantineRefusal } from "../quarantine/quarantine";
 import { networkMember } from "./admin";
 import { readPrivateRanges } from "./settings";
 import { ownersRefusal } from "../trust/approval";
-import { loadFleet, readReport } from "../trust/fleet";
+import { loadFleet, readReport, syncedUpdates } from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
@@ -224,12 +230,32 @@ function securityReport(
   text: string | null,
   ranges: string[],
   network: string | null,
+  endOfLife: EndOfLife,
+  now: number,
 ): unknown {
   const report = parsed(text) as {
     findings?: unknown;
     listeners?: Listener[];
+    platform?: {
+      name: string;
+      id?: unknown;
+      version?: unknown;
+      endOfLife?: string | null;
+    };
   } | null;
   if (!report) return report;
+  const platform = report.platform;
+  if (typeof platform?.id === "string") {
+    const date = endOfLifeDate(
+      endOfLife,
+      platform.id,
+      typeof platform.version === "string" ? platform.version : "",
+    );
+    platform.endOfLife = date;
+    const finding = eolFinding(platform.name, date, now);
+    if (finding && Array.isArray(report.findings))
+      report.findings.push(finding);
+  }
   const { listeners: _, ...shown } = Array.isArray(report.findings)
     ? filterListeners(
         report as { findings: Finding[]; listeners?: Listener[] },
@@ -261,9 +287,10 @@ export function registerServiceRoutes(
     const owner = context.get("identity").id;
     const now = Date.now();
     await db.batch(sweepStatements(db, now));
-    const [ranges, network] = await Promise.all([
+    const [ranges, network, endOfLife] = await Promise.all([
       readPrivateRanges(db, owner),
       readNetwork(db, owner).then(liveRange),
+      readEndOfLife(db),
     ]);
     const [nodes, services, actions] = await Promise.all([
       db
@@ -369,7 +396,13 @@ export function registerServiceRoutes(
         trust: readReport(node.trust_report),
         docker: node.docker,
         sealKey: node.seal_key,
-        security: securityReport(node.security, ranges, network),
+        security: securityReport(
+          node.security,
+          ranges,
+          network,
+          endOfLife,
+          now,
+        ),
         vault: parsed(node.vault),
         tailscaleVault: parsed(node.tailscale_vault),
         bridges: parsed(node.bridges),
@@ -578,7 +611,7 @@ export function registerServiceRoutes(
         {
           code: "FINGERPRINT_NEEDED",
           message:
-            "This passkey did not verify a fingerprint. Use the fingerprint, or choose Use a phone in the passkey window.",
+            "This passkey was opened without your fingerprint, face or PIN. Open it with one of those, or choose Use a phone in the passkey window.",
         },
         400,
       );
@@ -892,6 +925,7 @@ export function registerServiceRoutes(
               "UPDATE devices SET last_used_at = ? WHERE id = ? AND owner_user_id = ?",
             )
             .bind(new Date(now).toISOString(), credential, identity.id),
+          ...syncedUpdates(db, identity.id, [targets[0]!.signed!.grant]),
         ]
       : [];
     const deleting = then

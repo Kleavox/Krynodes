@@ -3,6 +3,7 @@ import type {
   CheckKind,
   CheckRecord,
   CheckResult,
+  DockerState,
   Incident,
   NodeRecord,
   QuietSpan,
@@ -17,6 +18,7 @@ import {
   titleCase,
   type CheckDisplay,
 } from "./format";
+import { agentGap } from "./devices";
 import type { WorkSpan } from "./series";
 import { failureText } from "./services";
 
@@ -26,6 +28,18 @@ const KIND_LABEL: Record<CheckKind, string> = {
   SERVICE: "Systemd",
   CONTAINER: "Docker",
 };
+
+export function dockerKindBlocker(
+  nodeId: string,
+  node: Pick<NodeRecord, "name" | "agent_version"> | undefined,
+  docker: DockerState | null | undefined,
+): string | null {
+  if (nodeId === "") return "Choose a Server First";
+  const gap = agentGap(node?.agent_version);
+  if (gap !== null) return gap;
+  if (docker === "missing") return `No Docker on ${node!.name}`;
+  return null;
+}
 
 export const kindLabel = (kind: string) =>
   KIND_LABEL[kind as CheckKind] ?? kind;

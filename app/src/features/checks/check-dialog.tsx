@@ -24,9 +24,9 @@ import {
   useServices,
   useUpdateCheck,
 } from "@/lib/api";
-import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import {
   checkTargetProblem,
+  dockerKindBlocker,
   pickedKind,
   TARGET_HINT,
   TARGET_PLACEHOLDER,
@@ -124,9 +124,14 @@ function CheckForm({
     (entry) => entry.enrolled_at !== null && entry.disabled_at === null,
   );
   const known = nodes.length > 0 ? nodes : (overview.data?.nodes ?? []);
-  const dockerReady =
-    check?.kind === "CONTAINER" ||
-    agentSupported(known.find((entry) => entry.id === node)?.agent_version);
+  const dockerBlocker =
+    check?.kind === "CONTAINER"
+      ? null
+      : dockerKindBlocker(
+          node,
+          known.find((entry) => entry.id === node),
+          services.data?.nodes.find((entry) => entry.id === node)?.docker,
+        );
   const listed = (nextNode: string) =>
     services.data?.nodes.find((entry) => entry.id === nextNode)?.services;
   const options = targetOptions(listed(node), kind, target);
@@ -226,9 +231,9 @@ function CheckForm({
               </SelectTrigger>
               <SelectContent>
                 {KINDS.map((entry) =>
-                  entry.value === "CONTAINER" && !dockerReady ? (
+                  entry.value === "CONTAINER" && dockerBlocker !== null ? (
                     <SelectItem key={entry.value} value={entry.value} disabled>
-                      {entry.label} · Needs agent {MIN_AGENT_VERSION} or newer
+                      {`${entry.label} · ${dockerBlocker}`}
                     </SelectItem>
                   ) : (
                     <SelectItem key={entry.value} value={entry.value}>

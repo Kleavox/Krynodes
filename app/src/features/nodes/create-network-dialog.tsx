@@ -1,5 +1,5 @@
 import type { BridgesReport } from "@krynodes/protocol";
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -179,8 +179,8 @@ export function CreateNetworkForm({
           Cancel
         </Button>
         <Button disabled={pending || !name.ok || !subnet.ok} onClick={onCreate}>
-          {!pending && <Fingerprint aria-hidden="true" />}
-          {pending ? "Waiting for the Fingerprint…" : "Create"}
+          {!pending && <KeyRound aria-hidden="true" />}
+          {pending ? "Waiting for the Passkey…" : "Create"}
         </Button>
       </div>
     </div>

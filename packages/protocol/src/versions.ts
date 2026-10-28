@@ -1,5 +1,4 @@
 export const MIN_AGENT_VERSION = "0.7.0";
-export const UPDATABLE_FROM = "0.5.0";
 export const FEATURE_AGENT = "0.7.1";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
@@ -20,9 +19,6 @@ const reaches = (version: string | null | undefined, floor: string) =>
 
 export const agentSupported = (version: string | null | undefined) =>
   reaches(version, MIN_AGENT_VERSION);
-
-export const agentUpdatable = (version: string | null | undefined) =>
-  reaches(version, UPDATABLE_FROM);
 
 export const agentHasFeatures = (version: string | null | undefined) =>
   reaches(version, FEATURE_AGENT);

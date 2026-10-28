@@ -166,6 +166,7 @@ func TestTurningOnTheFirewallOnAMemberKeepsTheNetworkOpen(t *testing.T) {
 	executor, run := securityExecutor(t)
 	rootFile(t, executor, "/etc/os-release", "ID=debian\nVERSION_ID=\"12\"\n")
 	run.respond["sshd -T"] = "port 22\n"
+	ufwComesUp(run)
 	document := onNetwork
 	if err := executor.saveNetwork(networkRecord{Joined: true, Document: &document, Applied: network.Applied{Version: 1}, Port: 51821}); err != nil {
 		t.Fatal(err)

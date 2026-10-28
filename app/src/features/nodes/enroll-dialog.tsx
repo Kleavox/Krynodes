@@ -119,8 +119,8 @@ export function EnrollDialog({
               </DialogDescription>
               <p className="text-xs text-muted-foreground">
                 {deviceCount > 0
-                  ? `This server will trust your ${deviceCount} trusted ${deviceCount === 1 ? "device" : "devices"} from the start, and the device you confirm with can reach it right away.`
-                  : "No trusted device yet. Set one up first (Trusted devices in the account menu) so this server trusts it from the start; until then it takes the first devices the dashboard sends."}
+                  ? `This server will trust your ${deviceCount} trusted ${deviceCount === 1 ? "passkey" : "passkeys"} from the start, and the passkey you confirm with can reach it right away.`
+                  : "No trusted passkey yet. Set one up first (Passkeys in the account menu) so this server trusts it from the start; until then it takes the first passkeys the dashboard sends."}
               </p>
             </DialogHeader>
             <SetupOptions value={setup} onChange={change} admin={admin} />

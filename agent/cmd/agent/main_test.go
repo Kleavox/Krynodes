@@ -344,11 +344,11 @@ func TestSetupChecksItsFlagsBeforeAnythingElse(t *testing.T) {
 			t.Errorf("%q: %v", args, err)
 		}
 	}
-	if got := setupCommandLine(true, true, 20); got != "kry setup --recommended --docker --reboot-hour 20" {
-		t.Fatalf("command %q", got)
-	}
-	if got := setupCommandLine(false, true, 20); got != "kry setup --docker" {
-		t.Fatalf("command %q", got)
+}
+
+func TestSetupRefusesTheOldAnywayFlag(t *testing.T) {
+	if err := setupCommand([]string{"--recommended", "--anyway"}); err == nil || !strings.Contains(err.Error(), "anyway") {
+		t.Fatalf("err %v", err)
 	}
 }
 

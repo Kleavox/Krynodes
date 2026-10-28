@@ -36,6 +36,7 @@ interface Reply {
     core: boolean;
     fingerprint: string;
     verifies: boolean | null;
+    synced: boolean | null;
   }[];
   passphrase?: { salt: string; iterations: number; publicKey: string } | null;
 }
@@ -174,13 +175,14 @@ function setup(agent = "0.7.0") {
   const approval = async (
     passkey: TestPasskey,
     text: string,
-    options: { verified?: boolean; proof?: string } = {},
+    options: { verified?: boolean; proof?: string; synced?: boolean } = {},
   ) => ({
     ...(await passkey.sign({
       challenge: await sha256(fromB64url(text)),
       origin: ORIGIN,
       rpId: RP,
       verified: options.verified ?? true,
+      synced: options.synced ?? false,
     })),
     ...(options.proof ? { proof: options.proof } : {}),
   });
@@ -435,6 +437,40 @@ describe("proposals", () => {
     ).toHaveLength(2);
     expect(t.mail.map((message) => message.subject)).toEqual([
       "[Krynodes] Waiting for approval: Admit Tablet",
+    ]);
+  });
+
+  it("marks each approving passkey from its own flags", async () => {
+    const t = setup();
+    const [laptop, phone, spare, tablet] = await fleet(5).then((keys) => [
+      keys[0],
+      keys[1],
+      keys[4],
+      keys[2],
+    ]);
+    for (const key of [laptop!, phone!, spare!, tablet!]) await t.register(key);
+    await t.report(A, [laptop!, phone!, spare!], [laptop!, phone!]);
+    const text = t.change({
+      core: [laptop!, phone!, spare!, tablet!],
+      access: { [A]: [laptop!, phone!] },
+    });
+    const opened = await reply(
+      t.open(text, await t.approval(laptop!, text, { synced: true })),
+    );
+    const done = await t.call("POST", `/api/proposals/${opened.id}/approvals`, {
+      approval: await t.approval(phone!, text),
+    });
+    expect(await reply(done)).toMatchObject({ status: "applied" });
+    const synced = (id: string) =>
+      (
+        t.sqlite.prepare("SELECT synced FROM devices WHERE id = ?").get(id) as {
+          synced: number | null;
+        }
+      ).synced;
+    expect([synced(laptop!.id), synced(phone!.id), synced(spare!.id)]).toEqual([
+      1,
+      0,
+      null,
     ]);
   });
 
@@ -731,6 +767,26 @@ describe("devices", () => {
       }),
       expect.objectContaining({ id: phone!.id, core: false, verifies: true }),
     ]);
+  });
+
+  it("lists whether a passkey is synced, and -- when it was never told", async () => {
+    const t = setup();
+    const [laptop, phone] = await fleet(2);
+    await t.call("POST", "/api/devices", {
+      id: laptop!.id,
+      name: laptop!.name,
+      alg: laptop!.alg,
+      publicKey: laptop!.publicKey,
+      verifies: true,
+      synced: true,
+    });
+    await t.register(phone!);
+    const body = await reply(t.call("GET", "/api/devices"));
+    expect(
+      Object.fromEntries(
+        body.devices!.map((device) => [device.id, device.synced]),
+      ),
+    ).toEqual({ [laptop!.id]: true, [phone!.id]: null });
   });
 
   it("forgets a device that never joined the core, never a core device", async () => {

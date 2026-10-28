@@ -19,7 +19,7 @@ import {
   storedDocument,
 } from "../network/document";
 import { ownersRefusal } from "../trust/approval";
-import { loadFleet } from "../trust/fleet";
+import { loadFleet, syncedUpdates } from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
@@ -351,7 +351,7 @@ export function registerNetworkRoutes(
         context,
         400,
         "FINGERPRINT_NEEDED",
-        "This passkey did not verify a fingerprint. Use the fingerprint, or choose Use a phone in the passkey window.",
+        "This passkey was opened without your fingerprint, face or PIN. Open it with one of those, or choose Use a phone in the passkey window.",
       );
     }
     const db = context.env.DB;
@@ -703,6 +703,7 @@ export function registerNetworkRoutes(
           "UPDATE devices SET last_used_at = ? WHERE id = ? AND owner_user_id = ?",
         )
         .bind(at, signed.grant.credentialId, owner),
+      ...syncedUpdates(db, owner, [signed.grant]),
     );
     await db.batch(statements);
     pokeSoon(context, owner, [...kept, ...leaves]);

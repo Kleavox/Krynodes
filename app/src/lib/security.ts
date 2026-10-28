@@ -170,16 +170,32 @@ export const toUtcHour = (hour: number, offsetMinutes: number) =>
 export const fromUtcHour = (hour: number, offsetMinutes: number) =>
   ((((hour * 60 - offsetMinutes) / 60) % 24) + 24) % 24;
 
-export function protectionsNotice(report: SecurityReport): string | null {
-  const platform = report.platform;
-  if (!platform || platform.verified) return null;
-  if (platform.family === null) {
-    return "Protections support Debian, Ubuntu and RHEL-family servers.";
-  }
-  const sentence =
-    report.findings.find((finding) => finding.id === "os-unverified")?.detail ??
-    `Krynodes has not checked ${platform.name}.`;
-  return `${sentence} Turning a protection on asks you to confirm.`;
+export const protectionsNotice = (report: SecurityReport) =>
+  report.platform?.family === null
+    ? "Protections support Debian, Ubuntu and RHEL-family servers."
+    : null;
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+export function updatesUntil(report: SecurityReport): string | null {
+  if (!report.platform) return null;
+  const [year, month, day] = report.platform.endOfLife?.split("-") ?? [];
+  return year && month && day
+    ? `Updates until ${Number(day)} ${MONTHS[Number(month) - 1]} ${year}`
+    : "Updates until --";
 }
 
 export const firewallName = (report: SecurityReport) =>

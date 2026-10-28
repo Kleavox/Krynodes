@@ -67,6 +67,9 @@ async function verifySignature(
 export const assertionUv = (authenticatorData: string) =>
   ((fromB64url(authenticatorData)[32] ?? 0) & 0x04) !== 0;
 
+export const assertionSynced = (authenticatorData: string) =>
+  ((fromB64url(authenticatorData)[32] ?? 0) & 0x08) !== 0;
+
 export async function verifyAssertion(
   key: StoredKey,
   assertion: SignedAssertion,

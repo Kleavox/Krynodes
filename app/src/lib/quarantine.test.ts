@@ -550,7 +550,7 @@ describe("a stopped stack", () => {
 describe("Settings → Quarantine", () => {
   it("has four rows with their defaults and choices", () => {
     expect(QUARANTINE_INTRO).toBe(
-      "What Krynodes does on its own when a server looks broken into. It only ever takes access away; giving it back always asks for your fingerprint.",
+      "What Krynodes does on its own when a server looks broken into. It only ever takes access away; giving it back always asks for your passkey.",
     );
     const rows = settingsRows(true);
     expect(rows.map((row) => [row.key, row.title, row.later])).toEqual([

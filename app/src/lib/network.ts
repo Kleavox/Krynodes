@@ -1,7 +1,5 @@
 import {
-  agentSupported,
   dnsName,
-  MIN_AGENT_VERSION,
   NETWORK,
   networkDocumentSchema,
   networkPreparedSchema,
@@ -24,6 +22,7 @@ import type {
   StackEntry,
 } from "../types";
 import { summarize, usePrivateAddress, usesPrivateIp } from "./compose";
+import { agentGap, FIRST_REPORT } from "./devices";
 import {
   capitalize,
   clockTime,
@@ -370,9 +369,10 @@ export function candidateState(
   agentVersion: string | null,
   rows: Row[] | null,
 ): { text: string; details: boolean; joinable: boolean } {
-  if (!agentSupported(agentVersion)) {
+  const gap = agentGap(agentVersion);
+  if (gap !== null) {
     return {
-      text: `Needs agent ${MIN_AGENT_VERSION} or newer`,
+      text: gap === FIRST_REPORT ? gap : `${gap} or newer`,
       details: false,
       joinable: false,
     };

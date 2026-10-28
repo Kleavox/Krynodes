@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -43,8 +43,8 @@ export function DeleteNetworkActions({
           disabled={pending || !ok}
           onClick={onDelete}
         >
-          {!pending && <Fingerprint aria-hidden="true" />}
-          {pending ? "Waiting for the Fingerprint…" : "Delete"}
+          {!pending && <KeyRound aria-hidden="true" />}
+          {pending ? "Waiting for the Passkey…" : "Delete"}
         </Button>
       </div>
     </>

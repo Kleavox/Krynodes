@@ -33,9 +33,9 @@ const rows = (
 describe("It Was Me on each warning", () => {
   it("waits for the Fingerprint on the pressed row only", () => {
     const [first, second, third] = rows([{}, { confirming: true }, {}]);
-    expect(second).toContain("Waiting for the Fingerprint…");
+    expect(second).toContain("Waiting for the Passkey…");
     for (const row of [first!, third!]) {
-      expect(row).not.toContain("Waiting for the Fingerprint…");
+      expect(row).not.toContain("Waiting for the Passkey…");
       expect(row).toContain("It Was Me");
       expect(row).not.toContain('disabled=""');
     }

@@ -1,6 +1,6 @@
 import { agentSupported } from "@krynodes/protocol";
 
-import { fingerprint } from "../lib/webauthn";
+import { assertionSynced, fingerprint } from "../lib/webauthn";
 
 export interface TrustReport {
   version: number;
@@ -19,6 +19,7 @@ interface FleetDevice {
   lastUsedAt: string | null;
   removedAt: string | null;
   verifies: boolean | null;
+  synced: boolean | null;
   fingerprint: string;
   account: string | null;
 }
@@ -85,7 +86,7 @@ export async function loadFleet(
   const [devices, nodes] = await Promise.all([
     db
       .prepare(
-        `SELECT id, name, alg, public_key, created_at, last_used_at, removed_at, verifies, account
+        `SELECT id, name, alg, public_key, created_at, last_used_at, removed_at, verifies, synced, account
          FROM devices WHERE owner_user_id = ? ORDER BY created_at, id`,
       )
       .bind(ownerId)
@@ -98,6 +99,7 @@ export async function loadFleet(
         last_used_at: string | null;
         removed_at: string | null;
         verifies: number | null;
+        synced: number | null;
         account: string | null;
       }>(),
     db
@@ -124,6 +126,7 @@ export async function loadFleet(
       lastUsedAt: row.last_used_at,
       removedAt: row.removed_at,
       verifies: row.verifies === null ? null : row.verifies === 1,
+      synced: row.synced === null ? null : row.synced === 1,
       fingerprint: await fingerprint(row.public_key),
       account: row.account,
     })),
@@ -145,4 +148,22 @@ export async function loadFleet(
     core: ids([...union]),
     ids,
   };
+}
+
+export function syncedUpdates(
+  db: D1Database,
+  owner: string,
+  grants: { credentialId: string; authenticatorData: string }[],
+): D1PreparedStatement[] {
+  return grants.map((grant) =>
+    db
+      .prepare(
+        "UPDATE devices SET synced = ? WHERE id = ? AND owner_user_id = ?",
+      )
+      .bind(
+        assertionSynced(grant.authenticatorData) ? 1 : 0,
+        grant.credentialId,
+        owner,
+      ),
+  );
 }

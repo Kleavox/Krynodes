@@ -2,6 +2,7 @@ package recipes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -16,7 +17,21 @@ const (
 	rebootFile     = "/var/run/reboot-required"
 )
 
+var errNoMarker = errors.New("Nothing on this server marks when a restart is needed. Turn on Security updates first.")
+
 func rhelUpdates(ctx context.Context, env Env) (map[string]string, error) {
+	notices, err := env.output(ctx, "dnf", "-q", "updateinfo", "list", "--security", "--all")
+	if err != nil {
+		return nil, fmt.Errorf("dnf could not read the security notices: %w", err)
+	}
+	if strings.TrimSpace(notices) == "" {
+		return nil, fmt.Errorf("%s's repositories publish no security notices, so dnf cannot pick out security updates.", Detect(env).Name)
+	}
+	if !env.has(ctx, "dnf-plugins-core") {
+		if _, err := env.install(ctx, "dnf-plugins-core"); err != nil {
+			return nil, err
+		}
+	}
 	files := []struct{ path, body string }{
 		{updatesService, "[Unit]\nDescription=Krynodes security updates\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/dnf -y upgrade --security\n"},
 		{updatesTimer, "[Unit]\nDescription=Krynodes security updates\n\n[Timer]\nOnCalendar=daily\nRandomizedDelaySec=1h\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n"},
@@ -56,7 +71,6 @@ func rhelFail2ban(ctx context.Context, env Env) (string, error) {
 	platform := Detect(env)
 	var fresh []string
 	switch platform.ID {
-	case "fedora":
 	case "rhel":
 		if !env.has(ctx, "epel-release") {
 			if err := env.run(ctx, "dnf", "install", "-y", "-q", "https://dl.fedoraproject.org/pub/epel/epel-release-latest-"+platform.Version+".noarch.rpm"); err != nil {
@@ -84,6 +98,22 @@ func rhelFail2ban(ctx context.Context, env Env) (string, error) {
 	return strings.Join(fresh, " "), err
 }
 
+func RestartMarked(ctx context.Context, env Env) error {
+	if Detect(env).Family == RHEL {
+		answer, _ := env.output(ctx, "dnf", "needs-restarting", "-r")
+		if strings.Contains(answer, "Reboot is required") || strings.Contains(answer, "Reboot should not be necessary") {
+			return nil
+		}
+		return errNoMarker
+	}
+	for _, marker := range []string{"/usr/share/update-notifier/notify-reboot-required", "/etc/kernel/postinst.d/unattended-upgrades"} {
+		if _, err := os.Stat(env.path(marker)); err == nil {
+			return nil
+		}
+	}
+	return errNoMarker
+}
+
 func RebootNeeded(ctx context.Context, env Env) (bool, time.Time) {
 	if Detect(env).Family == RHEL {
 		output, _ := env.output(ctx, "dnf", "needs-restarting", "-r")
@@ -109,7 +139,8 @@ func firewalld(ctx context.Context, env Env, extra []string) (map[string]string,
 	}
 	state, _ := env.output(ctx, "firewall-cmd", "--state")
 	running := strings.TrimSpace(state) == "running"
-	ports := sshPorts(ctx, env)
+	ssh := sshPorts(ctx, env)
+	ports := slices.Clone(ssh)
 	for _, port := range extra {
 		if !slices.Contains(ports, port) {
 			ports = append(ports, port)
@@ -141,6 +172,9 @@ func firewalld(ctx context.Context, env Env, extra []string) (map[string]string,
 	}
 	saved["ports"] = strings.Join(added, ",")
 	saved["wasRunning"] = fmt.Sprint(running)
+	if !running && slices.ContainsFunc(ssh, func(port string) bool { return env.run(ctx, "firewall-cmd", "--query-port="+port) != nil }) {
+		return nil, firewallBack(undoFirewalld(ctx, env, saved))
+	}
 	return saved, nil
 }
 

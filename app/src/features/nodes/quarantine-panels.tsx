@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
@@ -77,8 +77,8 @@ export function WarningStrip({
           {cutting ? "Working…" : "Cut Off Now"}
         </Button>
         <Button size="sm" disabled={cutting || confirming} onClick={onMine}>
-          {!confirming && <Fingerprint aria-hidden="true" />}
-          {confirming ? "Waiting for the Fingerprint…" : "It Was Me"}
+          {!confirming && <KeyRound aria-hidden="true" />}
+          {confirming ? "Waiting for the Passkey…" : "It Was Me"}
         </Button>
       </div>
       {error && (
@@ -237,8 +237,8 @@ function ChangeAction({
         disabled={remove.isPending}
         onClick={() => remove.mutate(node.id)}
       >
-        {!remove.isPending && <Fingerprint aria-hidden="true" />}
-        {remove.isPending ? "Waiting for the Fingerprint…" : row.action.label}
+        {!remove.isPending && <KeyRound aria-hidden="true" />}
+        {remove.isPending ? "Waiting for the Passkey…" : row.action.label}
       </Button>
     );
   }
@@ -264,9 +264,9 @@ function ChangeAction({
       title={why ?? undefined}
       onClick={() => reshare.run(addresses)}
     >
-      {!reshare.operate.isPending && <Fingerprint aria-hidden="true" />}
+      {!reshare.operate.isPending && <KeyRound aria-hidden="true" />}
       {reshare.operate.isPending
-        ? "Waiting for the Fingerprint…"
+        ? "Waiting for the Passkey…"
         : row.action.label}
     </Button>
   );
@@ -392,8 +392,8 @@ export function StoppedStackNote({
               })
             }
           >
-            {!start.isPending && <Fingerprint aria-hidden="true" />}
-            {start.isPending ? "Waiting for the Fingerprint…" : "Start"}
+            {!start.isPending && <KeyRound aria-hidden="true" />}
+            {start.isPending ? "Waiting for the Passkey…" : "Start"}
           </Button>
         </div>
       </div>

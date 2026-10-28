@@ -489,11 +489,12 @@ export interface Finding {
   detail: string;
 }
 
-export interface Platform {
+interface Platform {
   family: "debian" | "rhel" | null;
   name: string;
-  verified: boolean;
-  checked: string;
+  id?: string;
+  version?: string;
+  endOfLife?: string | null;
 }
 
 export interface SecurityReport {
@@ -570,6 +571,7 @@ export interface DeviceRecord {
   createdAt: string;
   lastUsedAt: string | null;
   verifies: boolean | null;
+  synced?: boolean | null;
   fingerprint: string;
   core: boolean;
   owner?: string | null;

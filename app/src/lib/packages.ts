@@ -1,5 +1,4 @@
 import { TAILSCALE, type TailscaleReport } from "@krynodes/protocol";
-import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
 import type {
   ActionRecord,
@@ -10,7 +9,7 @@ import type {
   SecurityReport,
   UpdatesSummary,
 } from "../types";
-import { formatPrint } from "./devices";
+import { agentGap, FIRST_REPORT, formatPrint } from "./devices";
 import {
   formatBytes,
   nodeState,
@@ -155,10 +154,12 @@ function parsed<T>(text: string | null): T | null {
 export const outcomeOf = (action: Pick<ActionRecord, "output">) =>
   parsed<Outcome>(action.output);
 
-export const agentNeeded = (node: Pick<NodeRecord, "agent_version">) =>
-  agentSupported(node.agent_version)
-    ? null
-    : `Needs agent ${MIN_AGENT_VERSION} or newer · it runs ${node.agent_version ?? "--"}`;
+export function agentNeeded(node: Pick<NodeRecord, "agent_version">) {
+  const gap = agentGap(node.agent_version);
+  return gap === null || gap === FIRST_REPORT
+    ? gap
+    : `${gap} or newer · it runs ${node.agent_version}`;
+}
 
 export function packagesBlocker(
   node: Pick<
@@ -173,9 +174,8 @@ export function packagesBlocker(
   trusted: boolean,
   now: number,
 ): string | null {
-  if (!agentSupported(node.agent_version)) {
-    return `Needs agent ${MIN_AGENT_VERSION}`;
-  }
+  const gap = agentGap(node.agent_version);
+  if (gap !== null) return gap;
   if (nodeState(node, now) !== "online") {
     return `Waits until ${node.name} is back online`;
   }

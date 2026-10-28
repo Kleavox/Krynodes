@@ -578,7 +578,7 @@ describe("removing a server that holds a piece", () => {
     ).toEqual({
       ok: false,
       reason:
-        "No other server with agent 0.7.0 that this device reaches can take the token.",
+        "No other server with agent 0.7.0 that your passkey reaches can take the token.",
     });
   });
 });
@@ -652,7 +652,7 @@ describe("the Tailscale credential in pieces", () => {
     ).toEqual({
       ok: false,
       reason:
-        "Only one other server with agent 0.7.0 that this device reaches can take the credential, and it needs two.",
+        "Only one other server with agent 0.7.0 that your passkey reaches can take the credential, and it needs two.",
     });
     expect(
       planRemoval(

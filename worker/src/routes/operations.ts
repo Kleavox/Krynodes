@@ -366,7 +366,8 @@ export function registerOperationRoutes(
         return context.json(
           {
             code: "FINGERPRINT_NEEDED",
-            message: "This passkey did not verify a fingerprint.",
+            message:
+              "This passkey was opened without your fingerprint, face or PIN.",
           },
           400,
         );

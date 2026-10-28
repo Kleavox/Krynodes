@@ -480,6 +480,7 @@ describe("before a server joins", () => {
       details: false,
       joinable: false,
     });
+    expect(candidateState(null, null).text).toBe("Waiting for First Report");
     expect(candidateState("0.7.0", null)).toEqual({
       text: "Checking",
       details: false,
@@ -629,8 +630,6 @@ describe("reading the candidates", () => {
           platform: {
             family: "debian",
             name: "Debian 12",
-            verified: true,
-            checked: "",
           },
         },
       }),

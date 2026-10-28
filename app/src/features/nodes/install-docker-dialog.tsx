@@ -1,5 +1,4 @@
-import { Fingerprint } from "lucide-react";
-import { useState } from "react";
+import { KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -14,28 +13,22 @@ import {
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { errorMessage } from "@/lib/http";
-import type { NodeRecord, Platform } from "@/types";
+import type { NodeRecord } from "@/types";
 
 export function InstallDockerDialog({
   node,
-  platform,
   composeOnly,
   open,
   onOpenChange,
 }: {
   node: NodeRecord;
-  platform: Platform;
   composeOnly: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const run = useSignedAction(false);
-  const [anyway, setAnyway] = useState(false);
   const close = (next: boolean) => {
-    if (!next) {
-      run.reset();
-      setAnyway(false);
-    }
+    if (!next) run.reset();
     onOpenChange(next);
   };
   const submit = () =>
@@ -47,7 +40,6 @@ export function InstallDockerDialog({
             nodeId: node.id,
             kind: "host",
             name: "docker",
-            ...(anyway ? { args: { anyway: "yes" } } : {}),
           },
         ],
       },
@@ -73,17 +65,6 @@ export function InstallDockerDialog({
               : "Installs Docker and Compose from Docker's own repository. Takes a few minutes."}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {!platform.verified && (
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={anyway}
-              onChange={() => setAnyway(!anyway)}
-            />
-            Run it on {platform.name} anyway
-          </label>
-        )}
         {run.error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(run.error)}
@@ -91,13 +72,10 @@ export function InstallDockerDialog({
         )}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <Button
-            disabled={run.isPending || (!platform.verified && !anyway)}
-            onClick={submit}
-          >
-            {!run.isPending && <Fingerprint aria-hidden="true" />}
+          <Button disabled={run.isPending} onClick={submit}>
+            {!run.isPending && <KeyRound aria-hidden="true" />}
             {run.isPending
-              ? "Waiting for the Fingerprint…"
+              ? "Waiting for the Passkey…"
               : composeOnly
                 ? "Add Compose"
                 : "Install Docker"}

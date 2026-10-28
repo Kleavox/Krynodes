@@ -379,7 +379,7 @@ export function planSpread(
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `This device reaches no online server with agent ${words.agent}.`,
+      reason: `Your passkey reaches no online server with agent ${words.agent}.`,
     };
   }
   const online = current.filter(usable);
@@ -458,13 +458,13 @@ export function planRemoval(
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `No other server with agent ${WORDS[name].agent} that this device reaches can take ${WORDS[name].thing}.`,
+      reason: `No other server with agent ${WORDS[name].agent} that your passkey reaches can take ${WORDS[name].thing}.`,
     };
   }
   if (name === "tailscale" && holders.length < 2) {
     return {
       ok: false,
-      reason: `Only one other server with agent ${WORDS[name].agent} that this device reaches can take ${WORDS[name].thing}, and it needs two.`,
+      reason: `Only one other server with agent ${WORDS[name].agent} that your passkey reaches can take ${WORDS[name].thing}, and it needs two.`,
     };
   }
   return {

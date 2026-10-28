@@ -114,13 +114,13 @@ function Body({
         <DialogDescription>
           {scope.device
             ? `Choose where ${name} can run actions.`
-            : `Choose which devices can run actions on ${name}.`}{" "}
-          Another device that already reaches a server approves giving it.
+            : `Choose which passkeys can run actions on ${name}.`}{" "}
+          Another passkey that already reaches a server approves giving it.
         </DialogDescription>
       </DialogHeader>
       {rows.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No server trusts your devices yet.
+          No server trusts your passkeys yet.
         </p>
       ) : (
         <ul className="max-h-[55dvh] divide-y overflow-auto rounded-md border">

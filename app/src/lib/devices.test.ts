@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { FEATURE_AGENT } from "@krynodes/protocol/versions";
+
 import { apiFetch } from "./http";
 
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
@@ -7,6 +9,7 @@ import {
   accessChange,
   accessIds,
   admitChange,
+  agentGap,
   appliedOn,
   buildChange,
   canRestartServer,
@@ -22,6 +25,7 @@ import {
   twinOf,
   signersFor,
   syncChange,
+  syncText,
   type FleetView,
 } from "./devices";
 
@@ -31,7 +35,7 @@ const N1 = "11111111-1111-4111-8111-111111111111";
 const N2 = "22222222-2222-4222-8222-222222222222";
 const N3 = "33333333-3333-4333-8333-333333333333";
 
-const node = (id: string, agent = "0.7.0") =>
+const node = (id: string, agent: string | null = "0.7.0") =>
   ({
     id,
     name: id.slice(0, 2),
@@ -86,6 +90,14 @@ describe("fingerprints", () => {
 
   it("groups a fingerprint for reading aloud", () => {
     expect(formatPrint("a1b2c3d4e5f6a7b8")).toBe("A1B2 C3D4 E5F6 A7B8");
+  });
+});
+
+describe("synced", () => {
+  it("says whether a passkey is synced, and -- when it was never told", () => {
+    expect(syncText(null)).toBe("--");
+    expect(syncText(true)).toBe("Synced");
+    expect(syncText(false)).toBe("This Device Only");
   });
 });
 
@@ -150,6 +162,19 @@ describe("server state", () => {
       [{ node: node(N1), trust: trust(3, [laptop, phone], []) }],
     );
     expect(serverState(current, current.servers[0]!)).toBe("current");
+  });
+
+  it("agentGap tells a server that has not reported from an old one", () => {
+    expect(agentGap(null)).toBe("Waiting for First Report");
+    expect(agentGap("0.6.14")).toBe("Needs agent 0.7.0");
+    expect(agentGap("0.7.0")).toBeNull();
+    expect(agentGap("0.7.0", FEATURE_AGENT)).toBe("Needs agent 0.7.1");
+    expect(agentGap("dev", FEATURE_AGENT)).toBeNull();
+    const fleet = view(
+      [laptop],
+      [{ node: node(N1, null), trust: trust(1, [laptop], [laptop]) }],
+    );
+    expect(serverState(fleet, fleet.servers[0]!)).toBe("waiting");
   });
 
   it("asks for agent 0.7.0 before devices can change", () => {

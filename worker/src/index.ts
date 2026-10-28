@@ -1,3 +1,4 @@
+import { runEndOfLifeCheck } from "./agent/end-of-life";
 import { runReleaseCheck } from "./agent/releases";
 import { app } from "./app";
 import type { Env } from "./env";
@@ -16,6 +17,7 @@ const worker = {
   ): void {
     context.waitUntil(runRetention(env));
     context.waitUntil(runReleaseCheck(env.DB));
+    context.waitUntil(runEndOfLifeCheck(env.DB));
     context.waitUntil(remindTokens(env));
   },
 };

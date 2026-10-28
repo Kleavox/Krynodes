@@ -101,7 +101,7 @@ export function ChangeDetails({
       )}
       {empty && (
         <p className="text-muted-foreground">
-          Nothing changes for your devices. Servers that missed an earlier
+          Nothing changes for your passkeys. Servers that missed an earlier
           change catch up with the current core and access.
         </p>
       )}

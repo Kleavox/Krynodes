@@ -5,10 +5,8 @@ import {
   agentHasFeatures,
   agentSupported,
   FEATURE_AGENT,
-  agentUpdatable,
   compareVersions,
   MIN_AGENT_VERSION,
-  UPDATABLE_FROM,
 } from "./versions";
 
 describe("agent versions", () => {
@@ -31,16 +29,6 @@ describe("agent versions", () => {
     expect(agentSupported(null)).toBe(false);
   });
 
-  it("still reaches agents from 0.5.0 on to tell them to update", () => {
-    expect(UPDATABLE_FROM).toBe("0.5.0");
-    expect(agentUpdatable("0.5.0")).toBe(true);
-    expect(agentUpdatable("0.5.1")).toBe(true);
-    expect(agentUpdatable("0.6.0")).toBe(true);
-    expect(agentUpdatable("0.4.1")).toBe(false);
-    expect(agentUpdatable("dev")).toBe(true);
-    expect(agentUpdatable(undefined)).toBe(false);
-  });
-
   it("gates the new features on agent 0.7.1", () => {
     expect(FEATURE_AGENT).toBe("0.7.1");
     expect(agentHasFeatures("0.7.1")).toBe(true);
@@ -54,10 +42,8 @@ describe("agent versions", () => {
     expect(Object.keys(versions).sort()).toEqual([
       "FEATURE_AGENT",
       "MIN_AGENT_VERSION",
-      "UPDATABLE_FROM",
       "agentHasFeatures",
       "agentSupported",
-      "agentUpdatable",
       "compareVersions",
     ]);
   });

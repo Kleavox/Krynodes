@@ -2,17 +2,17 @@ import { openSession } from "./deploy-session";
 import { ApiError, apiFetch, errorMessage } from "./http";
 import { signIntent } from "./passkeys";
 
-const NO_FINGERPRINT_HERE =
-  "No fingerprint was confirmed. If this device has none, choose Use a phone in the passkey window.";
+const NOT_CONFIRMED =
+  "The passkey was not confirmed. If this device cannot open it, choose Use a phone in the passkey window.";
 
 export function failure(error: unknown): string {
   if (error instanceof DOMException && error.name === "InvalidStateError") {
-    return "This device is already registered.";
+    return "This passkey is already registered.";
   }
   if (!(error instanceof DOMException && error.name === "NotAllowedError")) {
     return errorMessage(error);
   }
-  return NO_FINGERPRINT_HERE;
+  return NOT_CONFIRMED;
 }
 
 interface Needed {

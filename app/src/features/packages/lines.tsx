@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { Line } from "@/lib/packages";
@@ -26,8 +26,8 @@ export function SignButton({
       disabled={disabled || pending}
       onClick={onClick}
     >
-      {!pending && <Fingerprint aria-hidden="true" />}
-      {pending ? "Waiting for the Fingerprint…" : label}
+      {!pending && <KeyRound aria-hidden="true" />}
+      {pending ? "Waiting for the Passkey…" : label}
     </Button>
   );
 }

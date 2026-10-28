@@ -266,7 +266,7 @@ function AccountMenu({
           <Link to="/history">History</Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
-          <Link to="/devices">Trusted Devices</Link>
+          <Link to="/devices">Passkeys</Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/settings">Settings</Link>

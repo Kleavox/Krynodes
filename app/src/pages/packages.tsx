@@ -199,7 +199,7 @@ export function PackagesPage() {
         <p className={notice}>
           {node.name} is not trusted yet. Trust it from{" "}
           <Link to="/devices" className="underline underline-offset-4">
-            Trusted Devices
+            Passkeys
           </Link>{" "}
           before changing its packages.
         </p>

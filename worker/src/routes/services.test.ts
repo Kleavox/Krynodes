@@ -988,3 +988,88 @@ describe("shared networks and admin users of agent 0.7.1", () => {
     ).toEqual({ t1: peer, t2: null, docker: null });
   });
 });
+
+describe("the end of life on a security report", () => {
+  const report = (platform: unknown, findings: unknown[] = []) =>
+    JSON.stringify({
+      checkedAt: "2026-10-05T10:00:00.000Z",
+      findings,
+      recipes: [],
+      lockdown: false,
+      rebootHour: null,
+      platform,
+    });
+  const securityOf = async (call: ReturnType<typeof setup>["call"]) => {
+    const body = (await (await call("GET", "/api/services")).json()) as {
+      nodes: {
+        id: string;
+        security: Record<string, unknown> & { findings: { id: string }[] };
+      }[];
+    };
+    return body.nodes.find((node) => node.id === A)!.security;
+  };
+
+  it("adds the end of life to a report that names its system", async () => {
+    const { sqlite, call } = setup();
+    sqlite
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('os_end_of_life', ?, ?)",
+      )
+      .run(
+        JSON.stringify({ ubuntu: { "25.10": "2026-07-01" } }),
+        "2026-10-28T03:17:00.000Z",
+      );
+    sqlite.prepare("UPDATE nodes SET security = ? WHERE id = ?").run(
+      report({
+        family: "debian",
+        name: "Ubuntu 25.10",
+        id: "ubuntu",
+        version: "25.10",
+      }),
+      A,
+    );
+    const security = await securityOf(call);
+    expect(security.platform).toMatchObject({ endOfLife: "2026-07-01" });
+    expect(security.findings).toContainEqual({
+      id: "os-eol",
+      severity: "serious",
+      detail: "Ubuntu 25.10 no longer gets security updates (since 1 Jul 2026)",
+    });
+  });
+
+  it("leaves a report without a platform id as it is", async () => {
+    const { sqlite, call } = setup();
+    sqlite
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('os_end_of_life', ?, ?)",
+      )
+      .run(
+        JSON.stringify({ debian: { "12": "2028-06-30" } }),
+        "2026-10-28T03:17:00.000Z",
+      );
+    sqlite.prepare("UPDATE nodes SET security = ? WHERE id = ?").run(
+      report(
+        {
+          family: "debian",
+          name: "Debian GNU/Linux 12",
+          verified: true,
+          checked: "11 to 13",
+        },
+        [
+          {
+            id: "os-eol",
+            severity: "warning",
+            detail:
+              "Debian GNU/Linux 12 stops getting security updates on 30 Jun 2028",
+          },
+        ],
+      ),
+      A,
+    );
+    const security = await securityOf(call);
+    expect(
+      security.findings.filter((finding) => finding.id === "os-eol"),
+    ).toHaveLength(1);
+    expect(security.platform).not.toHaveProperty("endOfLife");
+  });
+});

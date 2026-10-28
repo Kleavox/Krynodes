@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -124,14 +124,14 @@ function DeployForm({
       {list && (ids.length === 0 || signers.length === 0) ? (
         <p className="text-sm">
           {ids.length === 0
-            ? "Deploys need a trusted device. "
-            : "None of your devices has access to every server here. "}
+            ? "Deploys need a trusted passkey. "
+            : "None of your passkeys has access to every server here. "}
           <Link
             to="/devices"
             className="underline underline-offset-4"
             onClick={onClose}
           >
-            {ids.length === 0 ? "Set Up Trusted Devices" : "Change Access"}
+            {ids.length === 0 ? "Set Up Passkeys" : "Change Access"}
           </Link>
           .
         </p>
@@ -195,12 +195,8 @@ function DeployForm({
           disabled={working || signers.length === 0 || targets.length === 0}
           onClick={submit}
         >
-          {!working && <Fingerprint aria-hidden="true" />}
-          {working
-            ? state
-              ? "Sending…"
-              : "Waiting for the Fingerprint…"
-            : word}
+          {!working && <KeyRound aria-hidden="true" />}
+          {working ? (state ? "Sending…" : "Waiting for the Passkey…") : word}
         </Button>
       </AlertDialogFooter>
     </AlertDialogContent>

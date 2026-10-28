@@ -92,7 +92,7 @@ export function SetupOptions<T extends SetupChoice>({
             <span className="block font-medium">Join Private Network</span>
             <span className="block text-xs text-muted-foreground">
               Gets it ready while it enrolls. It joins once it shows up and you
-              allow it with your fingerprint.
+              allow it with your passkey.
             </span>
           </span>
         </label>

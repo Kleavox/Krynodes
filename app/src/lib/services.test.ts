@@ -466,6 +466,16 @@ describe("restart automatically", () => {
     expect(
       autoRestartBlocker(check, node("n1", "pivox", "0.4.1"), entry()),
     ).toBe("Needs agent 0.7.0");
+    expect(autoRestartBlocker(check, undefined, entry())).toBe(
+      "Server Not Found",
+    );
+    expect(
+      autoRestartBlocker(
+        check,
+        { ...node("n1", "pivox", "0.7.0"), agent_version: null },
+        entry(),
+      ),
+    ).toBe("Waiting for First Report");
     expect(
       autoRestartBlocker(
         { ...check, target: "ssh" },

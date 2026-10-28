@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
@@ -376,9 +376,9 @@ function OpenForm({
           }
           onClick={submit}
         >
-          {!operate.isPending && <Fingerprint aria-hidden="true" />}
+          {!operate.isPending && <KeyRound aria-hidden="true" />}
           {operate.isPending
-            ? "Waiting for the Fingerprint…"
+            ? "Waiting for the Passkey…"
             : existing
               ? "Save"
               : "Open"}
@@ -528,7 +528,7 @@ function CloseForm({
           onClick={() => void close()}
         >
           {operate.isPending
-            ? "Waiting for the Fingerprint…"
+            ? "Waiting for the Passkey…"
             : disposal
               ? disposal === "purge"
                 ? "Delete Permanently"

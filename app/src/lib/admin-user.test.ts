@@ -122,6 +122,9 @@ describe("Add Admin User at enroll and on a server", () => {
     expect(adminBlocker({ ...node, agent_version: "0.7.0" }, admin)).toBe(
       "Needs agent 0.7.1 · io runs 0.7.0",
     );
+    expect(adminBlocker({ ...node, agent_version: null }, admin)).toBe(
+      "Waiting for First Report",
+    );
     expect(adminBlocker(node, null)).toBe(
       "Add your SSH public keys in Enroll Defaults first.",
     );

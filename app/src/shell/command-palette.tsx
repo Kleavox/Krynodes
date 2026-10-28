@@ -83,9 +83,7 @@ export function CommandPalette({
           <CommandItem onSelect={() => go("/?enroll=1")}>
             Enroll Server
           </CommandItem>
-          <CommandItem onSelect={() => go("/devices")}>
-            Trusted Devices
-          </CommandItem>
+          <CommandItem onSelect={() => go("/devices")}>Passkeys</CommandItem>
           <CommandItem onSelect={() => go("/checks?add=1")}>
             Add Check
           </CommandItem>

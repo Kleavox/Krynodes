@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -171,8 +171,8 @@ function AdminFields({
         >
           {wrong ??
             (keys.length < MAX_ADMIN_KEYS
-              ? "Paste a public key, one line. Changing the keys asks for your fingerprint."
-              : `Up to ${MAX_ADMIN_KEYS} keys. Changing the keys asks for your fingerprint.`)}
+              ? "Paste a public key, one line. Changing the keys asks for your passkey."
+              : `Up to ${MAX_ADMIN_KEYS} keys. Changing the keys asks for your passkey.`)}
         </p>
       </div>
     </div>
@@ -228,7 +228,7 @@ function DefaultsForm({ initial }: { initial: EnrollDefaults }) {
           size="sm"
           disabled={!changed || problem !== null || save.isPending}
         >
-          {confirming && !save.isPending && <Fingerprint aria-hidden="true" />}
+          {confirming && !save.isPending && <KeyRound aria-hidden="true" />}
           {save.isPending ? "Saving…" : "Save"}
         </Button>
       </div>

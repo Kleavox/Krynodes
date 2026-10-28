@@ -942,34 +942,6 @@ describe("FleetHub", () => {
     expect(ws.replies()).toHaveLength(1);
   });
 
-  it("tells an agent below the minimum to update at once, and no one else", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare(
-        "INSERT INTO settings (key, value, updated_at) VALUES ('agent_release', '0.6.2', ?)",
-      )
-      .run(new Date(BASE).toISOString());
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    expect(ws.replies().at(-1)).not.toMatchObject({
-      response: { update: expect.anything() },
-    });
-    await t.send(ws, BASE + 65_000, {
-      ...heartbeat(10),
-      agentVersion: "0.5.1",
-    });
-    expect(ws.replies().at(-1)).toMatchObject({
-      response: { update: { version: "0.6.2" } },
-    });
-    expect(
-      t.sqlite
-        .prepare(
-          "SELECT update_requested_version, update_attempts FROM nodes WHERE id = ?",
-        )
-        .get(NODE),
-    ).toEqual({ update_requested_version: "0.6.2", update_attempts: 1 });
-  });
-
   it("asks again for a stalled update and keeps the agent's reason, like the HTTP route", async () => {
     const t = setup();
     t.sqlite

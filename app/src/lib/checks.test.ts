@@ -16,6 +16,7 @@ import {
   checkLive,
   checksByServer,
   checkTargetProblem,
+  dockerKindBlocker,
   failuresText,
   incidentLine,
   pickedKind,
@@ -406,5 +407,28 @@ describe("a check's live status", () => {
     expect(live({})).toEqual({ label: "--", tone: "ok" });
     expect(live({ display: "UNKNOWN" })).toEqual({ label: "--", tone: "idle" });
     expect(live({ display: "STALE" })).toEqual({ label: "--", tone: "idle" });
+  });
+});
+
+describe("dockerKindBlocker", () => {
+  it("names why Docker is not offered", () => {
+    const io = (agent_version: string | null) => ({
+      name: "io",
+      agent_version,
+    });
+    expect(dockerKindBlocker("", undefined, undefined)).toBe(
+      "Choose a Server First",
+    );
+    expect(dockerKindBlocker("n1", io(null), undefined)).toBe(
+      "Waiting for First Report",
+    );
+    expect(dockerKindBlocker("n1", io("0.6.14"), "ready")).toBe(
+      "Needs agent 0.7.0",
+    );
+    expect(dockerKindBlocker("n1", io("0.7.1"), "missing")).toBe(
+      "No Docker on io",
+    );
+    expect(dockerKindBlocker("n1", io("0.7.1"), "no-compose")).toBeNull();
+    expect(dockerKindBlocker("n1", io("0.7.1"), null)).toBeNull();
   });
 });

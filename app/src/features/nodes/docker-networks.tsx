@@ -14,6 +14,7 @@ import {
   notReported,
   type BridgeNetwork,
 } from "@/lib/bridges";
+import { FIRST_REPORT } from "@/lib/devices";
 import { useNow } from "@/lib/use-now";
 import type { NodeRecord } from "@/types";
 
@@ -140,8 +141,9 @@ export function DockerNetworks({ node }: { node: NodeRecord }) {
         ) : (
           <span className="ml-auto flex items-center gap-2">
             <span className="font-mono text-xs text-muted-foreground">
-              Needs agent {FEATURE_AGENT} · {node.name} runs{" "}
-              {node.agent_version ?? "--"}
+              {node.agent_version
+                ? `Needs agent ${FEATURE_AGENT} · ${node.name} runs ${node.agent_version}`
+                : FIRST_REPORT}
             </span>
             {updatable && (
               <Button

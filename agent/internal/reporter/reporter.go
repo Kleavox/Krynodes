@@ -179,10 +179,10 @@ type Finding struct {
 }
 
 type Platform struct {
-	Family   *string `json:"family"`
-	Name     string  `json:"name"`
-	Verified bool    `json:"verified"`
-	Checked  string  `json:"checked"`
+	Family  *string `json:"family"`
+	Name    string  `json:"name"`
+	ID      string  `json:"id"`
+	Version string  `json:"version"`
 }
 
 type SecurityReport struct {

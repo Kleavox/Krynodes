@@ -9,7 +9,6 @@ import {
 import {
   acceptResults,
   commit,
-  forcedUpdate,
   heartbeatResponse,
   heartbeatStatements,
   insertWindow,
@@ -42,8 +41,7 @@ import {
   type WarningMail,
 } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
-import { agentConfigResponseSchema, agentSupported } from "@krynodes/protocol";
-import { readAgentRelease } from "../agent/releases";
+import { agentConfigResponseSchema } from "@krynodes/protocol";
 import {
   drain,
   fold,
@@ -779,17 +777,7 @@ export class FleetHub {
     }
     const trusted = !known.quarantined;
     const retried = updateRetry(db, known, beat, now);
-    const forced =
-      agentSupported(beat.agentVersion) || retried.node.update_requested_version
-        ? { node: retried.node, statements: [] }
-        : forcedUpdate(
-            db,
-            retried.node,
-            beat.agentVersion,
-            (await readAgentRelease(db)).version,
-            now,
-          );
-    const node = forced.node;
+    const node = retried.node;
     let state: StreamState = { ...current, interval: node.interval_seconds };
     if (state.lastSeen === null) {
       const row = await db
@@ -835,7 +823,7 @@ export class FleetHub {
     if (folded.writeNode) {
       leading.push(...heartbeatStatements(db, node, beat, now));
     }
-    leading.push(...retried.statements, ...forced.statements);
+    leading.push(...retried.statements);
     const reported = beat.release ? JSON.stringify(beat.release) : null;
     const pending = known.release ?? null;
     if (

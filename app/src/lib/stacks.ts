@@ -10,9 +10,8 @@ import type {
   StackEntry,
   WebAddress,
 } from "../types";
-import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
-import { agentCurrent } from "./devices";
+import { agentCurrent, agentGap } from "./devices";
 import { nodeState, timeAgo } from "./format";
 import {
   displayName,
@@ -192,7 +191,8 @@ export const moveBlocker = (
     : null;
 
 export function deployBlocker(member: StackMember): string | null {
-  if (!agentCurrent(member.node)) return `Needs agent ${MIN_AGENT_VERSION}`;
+  const gap = agentGap(member.node.agent_version);
+  if (gap !== null) return gap;
   if (!member.stack.compose) return "Docker Compose is not installed";
   if (!member.trusted) return "Not Trusted Yet";
   return null;
@@ -259,7 +259,8 @@ export function newStackBlocker(
   node: NodeRecord,
   entry: ServicesResponse["nodes"][number] | undefined,
 ): string | null {
-  if (!agentCurrent(node)) return `Needs agent ${MIN_AGENT_VERSION}`;
+  const gap = agentGap(node.agent_version);
+  if (gap !== null) return gap;
   if (!entry?.docker) return "Docker Not Reported Yet";
   if (entry.docker === "missing") return "No Docker";
   if (entry.docker === "no-compose") return "Docker without Compose";

@@ -80,7 +80,7 @@ curl -fsSL https://<agent-host>/i/<code> | sudo sh
 
 The code is the one-time enrollment token (30 minutes). The Worker serves
 `app/public/install.sh` with its last line replaced by the arguments that
-token carries: the address, the token, the trusted devices' keys and the
+token carries: the address, the token, the trusted passkeys' keys and the
 setup chosen in the dialog. They sit in one `{ … }` block, so a download cut
 anywhere runs nothing. A used or expired code prints why and stops.
 
@@ -91,8 +91,8 @@ its SHA-256 and its signature against the release key written into the script
 security check once so the dashboard shows it at once. The node takes the
 server's hostname as its name (**Rename node** changes it) and reports every
 minute. A server that is already enrolled is left alone; to enroll it again,
-run `sudo kry uninstall-service` first. With two or more trusted devices, the
-device that confirmed the command can reach the new server right away
+run `sudo kry uninstall-service` first. With two or more trusted passkeys, the
+passkey that confirmed the command can reach the new server right away
 (`kry trust --access`); the others are added through **Change access** as
 before. Afterwards:
 
@@ -127,22 +127,27 @@ A step that fails is printed and the next one runs; the server is enrolled
 either way, and the dashboard can turn the rest on later. `sudo kry setup
 --recommended --docker --reboot-hour 20` runs it again by hand.
 
-Supported systems, and the versions Krynodes has checked:
+Supported systems:
 
-| System                                     | Tools                | Checked        |
-| ------------------------------------------ | -------------------- | -------------- |
-| Debian                                     | apt, ufw             | 11 to 13       |
-| Ubuntu (and systems based on it)           | apt, ufw             | 22.04 to 26.04 |
-| RHEL, Rocky Linux, AlmaLinux, Oracle Linux | dnf, firewalld, EPEL | 8 to 10        |
-| CentOS Stream                              | dnf, firewalld, EPEL | 9 to 10        |
-| Fedora                                     | dnf, firewalld       | 41 to 44       |
+| System                                     | Tools                |
+| ------------------------------------------ | -------------------- |
+| Debian                                     | apt, ufw             |
+| Ubuntu (and systems based on it)           | apt, ufw             |
+| RHEL, Rocky Linux, AlmaLinux, Oracle Linux | dnf, firewalld, EPEL |
+| CentOS Stream                              | dnf, firewalld, EPEL |
 
-On a version outside that list (a newer release, an older one, or a system
-based on one of these), the Security check says so, `kry setup` asks before it
-runs (`--anyway` skips the question), and the dashboard's Protections and
-Install Docker ask for a "Run it anyway" tick. Turning a protection off never
-asks. Other systems run the agent, the checks and the Security check, but not
-Protections or Docker setup.
+Each protection checks what it needs before it changes anything, and checks
+that it took effect after. When either says no, it puts back what it wrote and
+says why; there is no way around it. apt must really run unattended upgrades,
+with its daily timer on. dnf must find security notices; CentOS Stream
+publishes none, so Security updates stay off there. Restart when needed wants
+something that marks a needed restart: unattended-upgrades' kernel hook,
+update-notifier, or `dnf needs-restarting`. `sshd -T` must show passwords or
+root login off for every user with a key. fail2ban's SSH jail must answer. The
+firewall must list SSH as allowed after Krynodes turns it on. Docker must have
+published packages for the system's codename and architecture. Turning a
+protection off never asks. Other systems (Fedora among them) run the agent, the
+checks and the Security check, but not Protections or Docker setup.
 
 Releases are cut by `.github/workflows/agent-release.yml` whenever
 `agent/VERSION` changes on `main`, as `agent-v<version>` with `krynodes-linux-amd64`
@@ -163,7 +168,7 @@ downloads a release, and so does the install script (`curl --proto =https
 Checks run on the agent of the server they belong to: HTTP (down on errors,
 timeouts and 5xx answers), TCP (down when the connection fails), systemd
 (up while the unit is active) and Docker (up while the container runs and is
-not unhealthy; agent 0.6.4 or newer). A systemd or Docker target is picked
+not unhealthy). A systemd or Docker target is picked
 from a searchable list of what the server reports on the Services page, never
 typed, so protected units such as ssh or docker itself are not offered. A
 Docker check reads the state `krynodes-containers.service` keeps (below), so a
@@ -174,7 +179,7 @@ instead of a response time (`running 4m`), and a systemd check how long the
 unit has been active (`active 37d`); HTTP and TCP checks show their latency
 (`130ms`), and every check that is down says for how long its incident has
 been open (`down 36m`). `--` is left only for a check with no result yet. The
-durations come from agent 0.6.14: `kry watch-containers` reads each running
+durations come from `kry watch-containers` reads each running
 container's `State.StartedAt` (one `docker inspect` per snapshot, only when
 containers change) and its compose project, and systemd checks read
 `ActiveEnterTimestamp` with the state in one `systemctl show` per cycle. Older
@@ -191,16 +196,16 @@ changed check within seconds; others at their next report.
 A SERVICE check's menu has **Restart automatically**: one
 switch. When the check turns red (an incident opens; never while it is yellow
 or during planned work) the Worker queues a restart of its unit, once per
-incident. The server only restarts a unit it was told to with a fingerprint,
+incident. The server only restarts a unit it was told to with a passkey,
 that is not running, that you did not stop from Krynodes, and at most 3 times
-an hour. Turning it on needs a fingerprint, turning it off does not; the row
+an hour. Turning it on needs your passkey, turning it off does not; the row
 shows `AUTO`, and the failure mail says the unit is being restarted. Removing
 the check or pointing it at another unit turns it off.
 
 Removing a check, pausing it or changing its kind, target or server asks for
-a trusted device's fingerprint (see Deploy), like deleting a server or creating
-an install command. One fingerprint covers 5 minutes of such work. An owner
-with no trusted device yet is not asked.
+a trusted passkey (see Deploy), like deleting a server or creating an install
+command. One passkey confirmation covers 5 minutes of such work. An owner with
+no trusted passkey yet is not asked.
 
 Incident mail goes out the moment a failure is confirmed, one mail per server
 for that report ("pivox: 2 checks down — Health, API"). A server that stops
@@ -227,7 +232,7 @@ out again.
 Anyone who can open Krynodes can post an update on an open incident, from the
 one-line box on its page: a status (Investigating, Identified, Monitoring or
 Update) and what is going on, up to 1,000 characters. Updates need no
-fingerprint and never mail. The incident page tells everything as one
+passkey and never mail. The incident page tells everything as one
 timeline, newest first: the check's results folded into runs (`Still down
 09:30 – 10:25 · 12 checks in a row · HTTP 502`), the updates with their
 author (only the author can delete one, ⋯ **Delete**), Opened and Resolved,
@@ -256,11 +261,9 @@ up to a minute.
   a connection that stays silent for 75 seconds and reconnects after 1 second,
   doubling to 1 minute (with jitter). Cloudflare closes every connection on a
   deploy or restart; agents are back within seconds and report at once.
-- Agents before 0.6.14 are not supported. An agent from 0.5.0 to 0.6.13
-  still connects and is told to update at once to the published release;
-  older agents are
-  refused (426), the Worker refuses every action for them, and the server
-  page's agent dialog shows the command to update such a server by hand.
+- Agents before 0.7.0 are not supported: they are refused (426), the Worker
+  refuses every action for them, and the server page's agent dialog shows the
+  command to update such a server by hand.
 - At a 60-second interval a server costs about 870 D1 writes a day.
 
 Dashboards use the same hub: each tab opens `GET /api/live`, a WebSocket that
@@ -292,19 +295,18 @@ saw the call come from, with the network it belongs to (`PT Telkom
 Indonesia`). A family the newest probe did not reach within an hour is left
 out, so an address the server lost does not linger.
 
-The agent (0.6.13 or newer) sends the addresses its own interfaces hold with
+The agent sends the addresses its own interfaces hold with
 that call (`POST`; older Krynodes answer `GET`). A seen address the server
 does not hold is a router's: a home server behind NAT shows its router's
 address marked **Router**, a VPS with its own address shows none. The server
 page's ⋯ beside IPv4 or IPv6 says **Its own address** or **A router's
 address** when the guess is wrong, and **Detect automatically** goes back.
-Agents before 0.6.13 send no interfaces, so their addresses carry no mark.
 
 Interface addresses inside **Private addresses** are listed under their
 interface's name (`tailscale0 100.101.102.7`), so a VPN address shows once its
 range is on that list; nothing is listed by default.
 
-Only an account with a device that reaches that server (the server page's
+Only an account with a passkey that reaches that server (the server page's
 **Reached by**) sees its addresses; any other account gets a blurred
 stand-in, and the addresses never leave the Worker. Copy copies the whole
 address.
@@ -366,7 +368,7 @@ Auto-restart failed: port 53 is already allocated`), and Logs and Restart
   Beside them, **Incidents · last 30 days**: `5 incidents · 2h 25m down`, the
   open ones counted up to now, and one row per incident (`Today 15:30 · open ·
 36m`). `/incidents` opens Checks; `/incidents/:id` is still the incident page.
-- **History** (the account menu, above Trusted devices; the hourglass in the
+- **History** (the account menu, above Passkeys; the hourglass in the
   header shows `2 failed` and lists them under **Failed, not fixed**):
   **Failed, not fixed** cards, each with its output (last lines
   first) and one tab per container of the stack it touched, read from the
@@ -376,7 +378,7 @@ Auto-restart failed: port 53 is already allocated`), and Logs and Restart
   picker and a search over the 90 days (verbs, names, servers, outputs, check
   names, incident causes). Reads of logs and secrets show only under Actions.
 - **The server page**: a line of facts (`Debian 12 · amd64 · up 37 days ·
-reports every minute · agent 0.6.13`), then **What runs**: one card per
+reports every minute · agent 0.7.1`), then **What runs**: one card per
   stack, per container outside a stack and per unit that is not running, each
   holding its not fixed action, its checks and its open or last incident;
   running units fold into one card. **Other checks** holds the checks that
@@ -395,7 +397,7 @@ exactly the URL's hostname; a TCP check watches nothing.
 
 A failed or expired action that changes something is **not fixed** until a
 later action on the same thing finishes, the thing is running again or gone,
-or someone hides it (⋯ **Hide**, for everyone, no fingerprint, recorded on the
+or someone hides it (⋯ **Hide**, for everyone, no passkey, recorded on the
 action). The Worker works it out over the 90 days (`/api/history/attention`).
 
 ### Service actions
@@ -403,11 +405,11 @@ action). The Worker works it out over the 90 days (`/api/history/attention`).
 The **Services** page starts, stops or restarts stacks, containers and units
 (above). The server page, Ctrl K and a SERVICE check's menu offer the same
 actions; a SERVICE check's menu has
-**Restart service**. Every one of them needs a fingerprint, like a deploy
-(see below): a server that trusts no device refuses them.
+**Restart service**. Every one of them needs your passkey, like a deploy
+(see below): a server that trusts no passkey refuses them.
 
 The server page's **Actions** menu (and Ctrl K) also has
-**Restart server**: after a confirmation and the same fingerprint, `kry exec`
+**Restart server**: after a confirmation and the same passkey, `kry exec`
 reports "restarting the server" and then runs `systemctl reboot --no-block`.
 It refuses while a protection or a Docker install is still running there, since
 a restart in the middle of a package install leaves the package manager broken.
@@ -441,7 +443,7 @@ The agent never runs anything itself:
   start, stop, restart or health change, refreshes the file's time every
   minute and reconnects when Docker restarts. It only reads Docker; the
   agent itself still has no Docker access.
-- `kry exec` refuses anything that is not signed by a trusted device and
+- `kry exec` refuses anything that is not signed by a trusted passkey and
   aimed at something present on the server. The only unsigned requests it
   takes are turning auto-restart off, restarting a listed unit that is down
   and running the Security check.
@@ -453,8 +455,8 @@ The agent never runs anything itself:
 
 To take Krynodes off a server, delete the node in the dashboard while the
 server is online: with **Remove Krynodes from the server** ticked (on by
-default for servers on agent 0.6.2 or newer that this device can sign for) one
-fingerprint queues the whole job and the dialog closes. Krynodes spreads the
+default for servers your passkey can sign for) one
+passkey confirmation queues the whole job and the dialog closes. Krynodes spreads the
 token, asks the server to remove Krynodes, and deletes the node once every step
 is done; the removal runs 30 seconds later, after the answer reached Krynodes.
 Meanwhile the server shows as **deleting**; if a step fails it shows **delete
@@ -497,7 +499,7 @@ container leaves the list as soon as its server confirms.
 
 **Remove** takes a stack's containers and networks down and moves it to
 **Removed**, under the server lists. It waits there for 7 days with its volumes
-and compose files: **Restore** starts it again (with a fingerprint), and
+and compose files: **Restore** starts it again (with your passkey), and
 **Delete permanently** deletes it at once. After 7 days the server deletes it
 by itself, but not while its clock is not synchronized with a time server.
 **Delete permanently**, on a running or a removed stack, deletes its
@@ -518,14 +520,14 @@ ports are bound to `127.0.0.1`; reach them through a Cloudflare Tunnel. Then
 it pulls, starts and health-checks the stack like a deploy. Do not paste
 passwords you use elsewhere: the text is kept with the action in History.
 
-Deploys, like start, stop and restart, need a fingerprint. On **Trusted
-devices** (account menu) you register a passkey on your laptop or phone; each
+Deploys, like start, stop and restart, need a trusted passkey. On
+**Passkeys** (account menu) you register a passkey on your laptop or phone; each
 server keeps the public keys in `/var/lib/kry-exec/trust.json`, and the root
 executor checks every action against them, so nothing on Cloudflare can run one
-on its own. One fingerprint opens a 5-minute session, like sudo. It ends at
+on its own. One passkey confirmation opens a 5-minute session, like sudo. It ends at
 once when the page is hidden (another tab or app in front, the screen locked, a
 phone screen off) and is checked against the clock before every signature, so
-a laptop that slept needs a new fingerprint. Nothing on screen shows whether a
+a laptop that slept needs the passkey again. Nothing on screen shows whether a
 session is open. Agents and the Worker accept sessions of at most 15 minutes.
 Signatures carry Krynodes' time (from its responses), so a device whose clock
 is off still signs; a server whose clock is off refuses with both times in the
@@ -538,47 +540,54 @@ cross-site, is refused, so another tab cannot act with your Access login.
 One admin login can be shared safely by several people, and the rules are
 these:
 
-- **Trusted devices** are the passkeys every server knows. Each one reaches
-  (may run actions on) only the servers it is given. A device someone
-  registers waits until it is approved, and you get an email.
-- Each device belongs to the Access account that registered it, and the
-  Trusted devices page says whose it is ("Yours", "Owner: budi"). Nobody signs
-  with someone else's device: the Worker refuses it, and the fingerprint
-  prompt offers only your own. Only the owner renames or forgets a device.
-  Devices from before owners existed belong to whoever last used them, and
-  one never used is claimed by the first account that verifies with it.
-- The first device trusts itself on your servers (**Trust on servers**). The
-  second one, such as your phone, is approved by the first and reaches every
-  server enrolled then.
-- With one or two trusted devices, one approval adds or removes a device.
-  With more than two, two approvals from two different devices.
-- A device's ⋯ **Servers** chooses the servers it reaches; a server's ⋯
+- **Passkeys** (account menu) are the trusted passkeys every server knows.
+  Each one reaches (may run actions on) only the servers it is given. A
+  passkey someone registers waits until it is approved, and you get an email.
+- Each passkey belongs to the Access account that registered it, and the
+  Passkeys page says whose it is ("Yours", "Owner: budi"). Nobody signs with
+  someone else's passkey: the Worker refuses it, and the passkey prompt offers
+  only your own. Only the owner renames or forgets a passkey. Passkeys from
+  before owners existed belong to whoever last used them, and one never used
+  is claimed by the first account that verifies with it.
+- The first passkey trusts itself on your servers (**Trust on servers**). The
+  second one, such as one on your phone, is approved by the first and reaches
+  every server enrolled then.
+- With one or two trusted passkeys, one approval adds or removes a passkey.
+  With more than two, two approvals from two different passkeys.
+- A passkey's ⋯ **Servers** chooses the servers it reaches; a server's ⋯
   **Devices** shows who reaches it, and **Remove every device** takes them all
-  away. A server is given to a device only by another device that already
-  reaches it, never by the device itself; when nobody else reaches it, by one
-  other trusted device (two when there are more than two). Servers enrolled
-  later start with the devices and nobody reaching them.
+  away. A server is given to a passkey only by another passkey that already
+  reaches it, never by the passkey itself; when nobody else reaches it, by one
+  other trusted passkey (two when there are more than two). Servers enrolled
+  later start with the passkeys and nobody reaching them.
 - A passkey already registered, under any name, cannot be set up again.
 - Changes wait under **Waiting for approval** for up to 24 hours. Each approval
-  signs the exact change; the dialog shows new devices' key fingerprints for
+  signs the exact change; the dialog shows new passkeys' key fingerprints for
   you to compare with the new device's screen.
 - **Recent changes**, under the devices and servers, lists every closed change
   newest first ("Give Budi access to pivox"): its outcome, who opened and
   approved it and when, and any server that has not taken it yet.
-- Every approval, session and confirmation needs a passkey that verifies you:
-  the fingerprint by default, a face on Windows Hello, a Mac or an iPhone, or a
-  security key such as a YubiKey. A touch alone ("a finger is there") is
+- Every approval, session and confirmation needs a passkey that you unlock
+  with your fingerprint, your face or a PIN: Windows Hello, Google Password
+  Manager, iCloud Keychain, a phone, or a security key such as a YubiKey with
+  its PIN. A touch alone ("a finger is there") is
   refused by the browser, the Worker and every server; a passkey
   that only takes a touch (such as Microsoft Password Manager) cannot join, and
   one trusted earlier reads **Cannot sign** until it is removed and set up
   again. There is no passphrase and no setting to turn this off.
-- On a computer without a fingerprint reader, choose **Use a phone** in the
-  passkey window: the phone's own passkey signs, so the phone is the trusted
-  device. It joins as "Phone"; a security key joins as "Security key".
-- WebAuthn only reports that the person was verified, not how, so a device or
-  security key PIN counts the same as a fingerprint. Keep those PINs private.
-- Keep two fingerprint devices or more: with one, losing it needs SSH to
-  recover. With two, the other removes a lost one alone.
+- On a computer that cannot open your passkey, choose **Use a phone** in the
+  passkey window: the phone's own passkey signs, so it is the trusted one. It
+  joins as "Phone"; a security key joins as "Security key".
+- WebAuthn only reports that the person was verified, not how, so a PIN counts
+  the same as a fingerprint or a face. Keep those PINs private.
+- Each passkey shows **Synced** or **This Device Only** (`--` for one set up
+  before, until its next use). A synced passkey follows your account (such as
+  Google Password Manager or iCloud Keychain) to your other devices: it is
+  convenient, but whoever takes over that account and its unlock can approve.
+  One kept on this device only, such as a security key, is stronger and needs
+  a backup.
+- Keep two passkeys or more: with one, losing it needs SSH to recover. With
+  two, the other removes a lost one alone.
 
 To start over on a server:
 
@@ -588,7 +597,7 @@ sudo kry trust --reset
 
 ### Stacks without SSH, secured servers
 
-Everything below is signed with a fingerprint and lands in History.
+Everything below is signed with your passkey and lands in History.
 
 Each agent makes a P-256 seal key in `/var/lib/kry-exec/keys` (root only) and
 reports the public half. The browser encrypts secrets, token pieces and tunnel
@@ -614,11 +623,11 @@ stored data, not a live takeover.
   the stack's own networks.
   Published ports are bound to `127.0.0.1`, and the server can open them:
   replies to a connection the server started come back, but the stack cannot
-  start one to the server. **Reach this server on** (agent 0.6.7 or newer)
+  start one to the server. **Reach this server on**
   lists the ports the stack may open on its server, such as `3000/tcp`, at
   most 16; the rule covers every network of that stack only, is signed with
   the compose file and goes when the list is emptied or the stack removed.
-  From agent 0.6.8 the rule is in place before the stack starts, so an app
+  The rule is in place before the stack starts, so an app
   that calls the server as it starts finds the port open.
   The rules live in the `KRY-CONTAINED` chain, which INPUT enters for the
   stacks' bridges. From agent 0.7.1 the same list covers ports other stacks
@@ -627,7 +636,7 @@ stored data, not a live takeover.
   port is in Reach this server on, and each refused try is logged with
   `kry-reach `.
 - **Full access**: public ports, host network, server folders, builds and
-  devices. Before the fingerprint the dialog lists what the stack opens. It
+  devices. Before you sign, the dialog lists what the stack opens. It
   is root-equivalent; use it for stacks you trust like the server itself.
 
 Pulls are refused when the images need more disk than is free (compressed size
@@ -638,9 +647,7 @@ and written there as a root-only `.env` beside the compose file. Refer to them
 as `${NAME}`. Edit compose lists the secrets a stack has by name, each shown
 as `••••••`: **Replace** takes a new value, **Remove** drops it, and one left
 alone is kept on the server as it is, so its value never leaves the server and
-Cancel changes nothing. Removing every one empties the `.env`. Agents before
-0.6.12 report no names; there an empty Secrets field keeps them and anything
-entered replaces them all. A reinstalled agent has a new key: enter them again
+Cancel changes nothing. Removing every one empties the `.env`. A reinstalled agent has a new key: enter them again
 with Edit compose.
 
 **Web address.** A stack's ⋯ **Web address…** picks a service and its port and
@@ -649,9 +656,7 @@ opened on the server. Who can open it: **Only people I allow** (the same
 Cloudflare Access login as this dashboard), **Login only for a path** (such as
 `/admin`), or **Everyone**. The login copies the dashboard's Access app: its
 policies, its login methods and Instant Auth, so a dashboard that signs in
-straight through one identity provider gives every address the same. An
-address opened by an agent before 0.6.11 copied only the policies; close and
-open it again to follow. Krynodes makes one tunnel per server
+straight through one identity provider gives every address the same. Krynodes makes one tunnel per server
 (`krynodes-<server id>`), runs `cloudflared` as a digest-pinned container on
 the stacks' own networks only, and touches only the DNS records, Access apps
 and tunnels it made. A hostname that already exists is refused. On a stack
@@ -667,7 +672,7 @@ Delete permanently remove what it made, the login last.
 Account · Cloudflare Tunnel · Edit, Account · Access: Apps and Policies · Edit
 and Zone · DNS · Edit for your zone, expiring in a year, and paste it once. The
 browser splits it with Shamir's scheme: any 2 pieces rebuild it. Every
-online server this device reaches gets one piece, sealed to its key; one
+online server your passkey reaches gets one piece, sealed to its key; one
 server keeps the whole token, two servers must both be online, three or more
 need any two. A new split takes over only once two of its pieces are stored,
 and each server keeps its piece of the split in use until then, so a spread
@@ -682,8 +687,8 @@ Krynodes mails 30 days before the token expires.
 
 **Delete node** on a server that holds a piece first spreads the token across
 the other servers, makes the leaving server forget its piece and removes its
-tunnel, DNS records and Access apps, then deletes it, on its own after the
-fingerprint. When the token cannot move (fewer than two pieces online),
+tunnel, DNS records and Access apps, then deletes it, on its own after your
+passkey. When the token cannot move (fewer than two pieces online),
 the dialog says why and offers **Delete anyway**; replace the token if the
 server may be in the wrong hands.
 
@@ -711,13 +716,16 @@ it was. A stack that mounts server folders moves as Full access.
 change below, each server checks SSH password and root login, SSH keys, ports
 open to the internet (also ones Krynodes did not open), automatic updates,
 pending updates and restarts, privileged containers and `docker.sock` mounts,
-OS end of life, and a clock that is not synchronized (signed actions depend on
-it). Fleet shows a shield (green, amber, red); the server page lists the
-findings with **Check now**. A new serious finding is mailed under the quiet
-rules.
+and a clock that is not synchronized (signed actions depend on it). Fleet
+shows a shield (green, amber, red); the server page lists the findings with
+**Check now**. A new serious finding is mailed under the quiet rules. The
+system's end of life comes from endoflife.date, fetched by the Worker once a
+day: the Security section shows `Updates until 30 Jun 2028`, or
+`Updates until --` for a system it does not list, with a warning 90 days ahead
+and a serious finding after, never mailed.
 
 A port counts as open to the internet when the firewall lets it in from
-anywhere (agent 0.6.9 or newer): ufw rules without a source restriction, on any
+anywhere: ufw rules without a source restriction, on any
 interface or on the interface of the default route, or everything when the
 input policy is ACCEPT; firewalld's zone of that interface (or the default
 zone), its services and ports, or everything when its target is ACCEPT. With
@@ -727,13 +735,13 @@ count, since Docker goes around the host firewall.
 **Private addresses** (Settings → Private addresses) keeps one list of address
 ranges (IPv4 or IPv6, at most 32) for every server, empty until you fill it.
 Listeners bound to an address inside a range, such as a VPN's, are left out of
-the public-ports finding. The agent (0.6.6 or newer) reports each listener's
+the public-ports finding. The agent reports each listener's
 address; the Worker applies the list when it shows the report, so a change
 shows at once, without a new check. A server's interface addresses inside a
 range show among its addresses under the interface's name, such as
 `tailscale0`.
 
-**Settings** (the account menu, under Trusted devices) is its own page for
+**Settings** (the account menu, under Passkeys) is its own page for
 what applies to every server: Cloudflare, Private addresses, Enroll defaults (what a new install command sets up) and Usage, each at its
 own address (`/settings/usage`).
 
@@ -756,7 +764,7 @@ only accounts SSH really lets in with a key (`PermitRootLogin`, `AllowUsers`,
 `DenyUsers`, `AllowGroups`, `DenyGroups`, `PubkeyAuthentication`,
 `AuthenticationMethods`, keys in the files `AuthorizedKeysFile` names) and
 leaves root's login rule alone. **Apply
-recommended** turns on the first five with one fingerprint, the firewall with
+recommended** turns on the first five with one passkey confirmation, the firewall with
 the ports you tick. The agent connects outward, so none of them can cut
 Krynodes off. Free port 53 is not a finding: it is offered only for a server
 that will run a DNS server.
@@ -812,11 +820,11 @@ port is in its Reach this server on. Check those stacks before you update.
 ### Admin user
 
 Enroll defaults hold an admin user name and up to 4 SSH public keys (changing
-them asks for your fingerprint). **Add Admin User** at enroll, or Actions →
+them asks for your passkey). **Add Admin User** at enroll, or Actions →
 Add Admin User on a server (agent 0.7.1), makes a sudo user (`sudo` or
 `wheel`) that logs in with exactly those keys, then turns on SSH keys only and
-No root login once key login works for it. On an enrolled server the
-fingerprint gets a command, `sudo kry admin-user <name>`, to run within 30
+No root login once key login works for it. On an enrolled server your
+passkey gets a command, `sudo kry admin-user <name>`, to run within 30
 minutes. The server shows the keys before writing anything, and the password
 is typed into `passwd` on the server's own terminal: it never passes through
 Krynodes, the agent, an argument, the environment or a file. The changes it
@@ -834,7 +842,7 @@ by name and shows what the install adds, removes and opens before you sign;
 **Upgrade all**, **Remove** (with or without its settings), **Hold**, **Release
 hold**, **Add repository** (paste the vendor's instructions; Krynodes reads the
 key and shows its fingerprint) and **Remove repository** each take one
-fingerprint, and the agent refuses a key that is not the one shown. A package
+passkey confirmation, and the agent refuses a key that is not the one shown. A package
 Krynodes installed for a protection or Docker goes when that is turned off.
 
 A running job shows its step in the hourglass and on Fleet; a finished one says
@@ -867,7 +875,7 @@ only its own links. From agent 0.7.0.
   fixed after creation. A hand-made `wg0` is left alone and avoided.
 - **Each server makes its own key**; only the public half leaves it. The
   preshared key of each pair is made in the browser and sealed to both servers.
-  The member list is a **network document signed with a trusted device's
+  The member list is a **network document signed with a trusted
   passkey**; an agent applies only a version newer than its last, so the Worker
   can neither add a peer nor replay an old list. Without a signature the Worker
   can only take a member away. A peer's `AllowedIPs` is its own `/32`, never a
@@ -888,7 +896,7 @@ only its own links. From agent 0.7.0.
 - **Test Link** (a problem row, a server's links, **Test links** for all its
   pairs, **Test all links**) reads both servers and changes nothing: agents,
   `kry0` and keys, clocks, public addresses, firewall rules, handshakes, small
-  and large packets, then the most likely cause. Its fixes take a fingerprint:
+  and large packets, then the most likely cause. Its fixes take your passkey:
   **Send again**, **Put rule back** and **Use 1380** (a smaller MTU for that
   server). Every test is kept in History.
 - **Remove from network**, **Make new keys** and **Delete network** say before
@@ -918,7 +926,7 @@ Stacks on the network:
   a grey line, and on a member points a public Full access stack to the private
   address. Turn on firewall keeps the network's port as a locked row.
 - **Move** carries the lists, offers to change the other stacks that reach this
-  one (the same fingerprint signs them) and turns red when the new server is
+  one (the same passkey signs them) and turns red when the new server is
   outside the network. Checks suggests a TCP check for each place a Contained
   stack reaches; **Not now** hides it until that list changes.
 
@@ -959,7 +967,7 @@ agent 0.7.0.
   one-time key tagged `tag:kry`, sealed to the joining server.
 - **Two alarms**, each a red row on Network and one mail: a device that joins
   with `tag:kry` that Krynodes never signed in, and a policy change made with
-  Krynodes' credential without your fingerprint.
+  Krynodes' credential without your passkey.
 - A quarantined server's place on your tailnet gets **Remove from Tailnet**;
   its credential piece gets **Reshare Without It**, and Delete Node reshares it
   first. **Disconnect** erases every piece and leaves your rules in the policy
@@ -968,14 +976,14 @@ agent 0.7.0.
 ### Quarantine
 
 What Krynodes does on its own when a server looks broken into. It only ever
-takes access away; giving access back always asks for your fingerprint. From
+takes access away; giving access back always asks for your passkey. From
 agent 0.7.0.
 
 - **A warning first.** A new SSH key, a sign-in with a key not from Krynodes, a
   new user or sudo rule, a port opened on a public address outside Krynodes,
   Krynodes' firewall rule removed, or an agent that goes quiet while its peers
   still see the server: the server page shows an amber strip and a mail goes
-  out. **Cut Off Now** quarantines it at once; **It Was Me** (fingerprint)
+  out. **Cut Off Now** quarantines it at once; **It Was Me** (passkey)
   takes the change as yours. Unanswered, the server is cut off after the time
   in Settings, Quarantine (15 minutes by default, or Warn Only).
 - **A scan.** A member that knocks on more closed ports or servers in one
@@ -997,14 +1005,14 @@ agent 0.7.0.
   false alarm: run `sudo kry release-code` on the server, type the code it
   shows (it works for 10 minutes) and sign. The server makes new keys
   (WireGuard, sealing and its sign-in to Krynodes); the old ones stay blocked.
-  The same fingerprint unlocks it, lifts the Tailscale block and sends its new
+  The same passkey releases it, lifts the Tailscale block and sends its new
   keys to the network. The code shows you were on the server; it does not show
   the server is clean.
 - **A Contained stack that knocks** (tries places it was not given) is stopped
   and stays stopped after a reboot, while the server stays trusted. What Runs
   shows what it tried, with Logs and Start; change its secrets first.
 - **Settings, Quarantine** holds the four choices. A stricter one reaches the
-  servers at once; a looser one asks for your fingerprint and travels in the
+  servers at once; a looser one asks for your passkey and travels in the
   next signed network document.
 - A quarantined server's checks are grouped last on Checks under
   **Quarantined**, its windows are **Quarantined** (faded red) and not counted

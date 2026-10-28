@@ -1,5 +1,5 @@
 import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -494,8 +494,8 @@ function MoveForm({
           }
           onClick={() => void move()}
         >
-          {!operate.isPending && <Fingerprint aria-hidden="true" />}
-          {operate.isPending ? "Waiting for the Fingerprint…" : "Move"}
+          {!operate.isPending && <KeyRound aria-hidden="true" />}
+          {operate.isPending ? "Waiting for the Passkey…" : "Move"}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -552,9 +552,7 @@ export function AdoptDialog({
               )
             }
           >
-            {run.isPending
-              ? "Waiting for the Fingerprint…"
-              : "Move into Krynodes"}
+            {run.isPending ? "Waiting for the Passkey…" : "Move into Krynodes"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

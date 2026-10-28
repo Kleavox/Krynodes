@@ -357,7 +357,7 @@ func TestANetworkDocumentIsCheckedLikeACommand(t *testing.T) {
 		"signature is invalid":     func(c *deployCase) { c.signer = other },
 		"no access to this server": func(c *deployCase) { c.trust.Access = nil },
 		"passkey is not trusted":   func(c *deployCase) { c.trust.Core = nil },
-		"did not verify":           func(c *deployCase) { c.assertion.flags = flagPresent },
+		"was opened without":       func(c *deployCase) { c.assertion.flags = flagPresent },
 		"longer than 15 minutes":   func(c *deployCase) { c.grant["expiresAt"] = testNow.Add(time.Hour).Format(time.RFC3339Nano) },
 		"malformed":                func(c *deployCase) { c.extra = true },
 	}

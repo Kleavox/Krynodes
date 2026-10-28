@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -379,8 +379,8 @@ function NewStackForm({
           disabled={sealing || run.isPending || (touched && !ready)}
           onClick={() => void create()}
         >
-          {!run.isPending && <Fingerprint aria-hidden="true" />}
-          {run.isPending ? "Waiting for the Fingerprint…" : "Create"}
+          {!run.isPending && <KeyRound aria-hidden="true" />}
+          {run.isPending ? "Waiting for the Passkey…" : "Create"}
         </Button>
       </DialogFooter>
     </DialogContent>

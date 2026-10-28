@@ -307,7 +307,7 @@ export async function sendProposalEmail(
   message: { title: string; openedBy: string },
 ): Promise<void> {
   const detail =
-    "A trusted device opened this change. It needs more approvals before it reaches your servers.";
+    "A trusted passkey opened this change. It needs more approvals before it reaches your servers.";
   await deliver(env, {
     title: `[Krynodes] Waiting for approval: ${message.title}`,
     preheader: detail,
@@ -319,7 +319,7 @@ export async function sendProposalEmail(
       ["Opened by", message.openedBy],
     ],
     action: {
-      label: "Open Trusted devices",
+      label: "Open Passkeys",
       href: new URL("/devices", env.PUBLIC_ORIGIN).toString(),
     },
   });
@@ -478,7 +478,7 @@ export async function sendWarningEmail(
     ],
     action: serverLink(env, mail.nodeId, mail.nodeName),
     after:
-      "It Was Me is on the server page and asks for your fingerprint. Nothing in this mail can answer for you.",
+      "It Was Me is on the server page and asks for your passkey. Nothing in this mail can answer for you.",
   });
 }
 
@@ -518,7 +518,7 @@ export async function sendQuarantineEmail(
       ["Change", change],
     ],
     action: serverLink(env, mail.nodeId, mail.nodeName),
-    after: `Reinstall ${mail.nodeName} if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your fingerprint.`,
+    after: `Reinstall ${mail.nodeName} if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your passkey.`,
   });
 }
 
@@ -548,7 +548,7 @@ export async function sendStoppedEmail(
     ],
     action: serverLink(env, mail.nodeId, mail.nodeName),
     after:
-      "Change its secrets before you start it again. Start asks for your fingerprint.",
+      "Change its secrets before you start it again. Start asks for your passkey.",
   });
 }
 
@@ -602,7 +602,7 @@ export async function sendTailnetPolicyEmail(
   env: Env,
   mail: TailnetPolicyMail,
 ): Promise<void> {
-  const heading = "Your Tailscale policy was changed without your fingerprint";
+  const heading = "Your Tailscale policy was changed without your passkey";
   const intro =
     "The change was made with Krynodes' credential, and you signed no change in Krynodes. Someone else has the credential.";
   const word = mail.block ? "rule" : "line";

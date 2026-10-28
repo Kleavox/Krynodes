@@ -14,6 +14,7 @@ import {
   recommended,
   shownFindings,
   toUtcHour,
+  updatesUntil,
   worst,
 } from "./security";
 
@@ -248,44 +249,31 @@ describe("protections on other systems", () => {
   const rocky = {
     family: "rhel" as const,
     name: "Rocky Linux 11.0",
-    verified: false,
-    checked: "8 to 10",
+    id: "rocky",
+    version: "11",
   };
 
-  it("says when protections cannot run or must be confirmed", () => {
+  it("says when protections cannot run", () => {
     expect(protectionsNotice(report())).toBeNull();
     expect(
       protectionsNotice(
         report({
-          platform: {
-            family: null,
-            name: "Alpine Linux 3.20.3",
-            verified: false,
-            checked: "",
-          },
+          platform: { family: null, name: "Alpine Linux 3.20.3" },
         }),
       ),
     ).toBe("Protections support Debian, Ubuntu and RHEL-family servers.");
+    expect(protectionsNotice(report({ platform: rocky }))).toBeNull();
+  });
+
+  it("says until when the system gets updates", () => {
+    expect(updatesUntil(report())).toBeNull();
     expect(
-      protectionsNotice(
-        report({
-          platform: rocky,
-          findings: [
-            {
-              id: "os-unverified",
-              severity: "note",
-              detail:
-                "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10).",
-            },
-          ],
-        }),
-      ),
-    ).toBe(
-      "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10). Turning a protection on asks you to confirm.",
-    );
+      updatesUntil(report({ platform: { ...rocky, endOfLife: "2028-06-30" } })),
+    ).toBe("Updates until 30 Jun 2028");
     expect(
-      protectionsNotice(report({ platform: { ...rocky, verified: true } })),
-    ).toBeNull();
+      updatesUntil(report({ platform: { ...rocky, endOfLife: null } })),
+    ).toBe("Updates until --");
+    expect(updatesUntil(report({ platform: rocky }))).toBe("Updates until --");
   });
 
   it("names the firewall of the family", () => {
@@ -300,8 +288,6 @@ describe("what each protection does, per system", () => {
       platform: {
         family: "rhel",
         name: "Rocky Linux 9.4",
-        verified: true,
-        checked: "8 to 10",
       },
     });
     expect(protectionDetail("security-updates", report())).toBe(

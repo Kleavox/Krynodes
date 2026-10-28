@@ -78,11 +78,9 @@ export { summarizeChange, type ChangeSummary } from "./summary";
 export {
   agentHasFeatures,
   agentSupported,
-  agentUpdatable,
   compareVersions,
   FEATURE_AGENT,
   MIN_AGENT_VERSION,
-  UPDATABLE_FROM,
 } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
 export {
@@ -528,8 +526,10 @@ export const securityReportSchema = z.strictObject({
     .strictObject({
       family: z.enum(["debian", "rhel"]).nullable(),
       name: z.string().max(120),
-      verified: z.boolean(),
-      checked: z.string().max(40),
+      id: z.string().max(40).optional(),
+      version: z.string().max(40).optional(),
+      verified: z.boolean().optional(),
+      checked: z.string().max(40).optional(),
     })
     .optional(),
   listeners: z

@@ -210,6 +210,12 @@ describe("stacks", () => {
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
+        node: { ...node("n1", "Callisto", "0.7.0"), agent_version: null },
+      }),
+    ).toBe("Waiting for First Report");
+    expect(
+      deployBlocker({
+        ...listmonk!.members[0]!,
         stack: stack("listmonk", { compose: false }),
       }),
     ).toBe("Docker Compose is not installed");
@@ -327,6 +333,12 @@ describe("stack commands", () => {
     expect(newStackBlocker(node("n1", "pivox", "0.4.1"), entry("ready"))).toBe(
       "Needs agent 0.7.0",
     );
+    expect(
+      newStackBlocker(
+        { ...node("n1", "pivox", "0.7.0"), agent_version: null },
+        entry("ready"),
+      ),
+    ).toBe("Waiting for First Report");
     expect(
       newStackBlocker(node("n1", "pivox", "0.7.0"), entry("missing")),
     ).toBe("No Docker");

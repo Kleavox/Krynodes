@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -44,6 +45,13 @@ var fetchClient = &http.Client{
 	},
 }
 
+type httpAnswer struct {
+	URL, Status string
+	Code        int
+}
+
+func (a httpAnswer) Error() string { return a.URL + " answered " + a.Status }
+
 func (e Env) Get(ctx context.Context, url string) ([]byte, error) {
 	return e.fetch(ctx, url)
 }
@@ -62,7 +70,7 @@ func (e Env) fetch(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s answered %s", url, response.Status)
+		return nil, httpAnswer{URL: url, Status: response.Status, Code: response.StatusCode}
 	}
 	return io.ReadAll(io.LimitReader(response.Body, 1<<20))
 }
@@ -79,7 +87,7 @@ func (e Env) mentions(directory, text string) bool {
 }
 
 func InstallDocker(ctx context.Context, env Env, args map[string]string) (DockerResult, error) {
-	if err := Hold(env, args); err != nil {
+	if err := Hold(env); err != nil {
 		return DockerResult{}, err
 	}
 	platform := Detect(env)
@@ -123,6 +131,13 @@ func dockerRepository(ctx context.Context, env Env, platform Platform) error {
 		if env.mentions("/etc/yum.repos.d", "download.docker.com") {
 			return nil
 		}
+		machine, err := env.output(ctx, "uname", "-m")
+		if machine = strings.TrimSpace(machine); err != nil || machine == "" {
+			return errors.New("uname does not say this server's architecture")
+		}
+		if _, err := env.fetch(ctx, "https://download.docker.com/linux/"+platform.Base+"/"+platform.Version+"/"+machine+"/stable/repodata/repomd.xml"); err != nil {
+			return published(platform, machine, err)
+		}
 		body, err := env.fetch(ctx, "https://download.docker.com/linux/"+platform.Base+"/docker-ce.repo")
 		if err != nil {
 			return fmt.Errorf("Docker's repository: %w", err)
@@ -132,6 +147,20 @@ func dockerRepository(ctx context.Context, env Env, platform Platform) error {
 	if env.mentions("/etc/apt/sources.list.d", "download.docker.com") {
 		return nil
 	}
+	if platform.Codename == "" {
+		return errors.New("This server names no codename, so Docker's repository cannot be chosen.")
+	}
+	arch, err := env.output(ctx, "dpkg", "--print-architecture")
+	if arch = strings.TrimSpace(arch); err != nil || arch == "" {
+		return errors.New("dpkg does not say this server's architecture")
+	}
+	release, err := env.fetch(ctx, "https://download.docker.com/linux/"+platform.Base+"/dists/"+platform.Codename+"/Release")
+	if err != nil {
+		return published(platform, platform.Codename, err)
+	}
+	if !archListed(release, arch) {
+		return fmt.Errorf("Docker publishes no %s packages for %s.", arch, platform.Name)
+	}
 	key, err := env.fetch(ctx, "https://download.docker.com/linux/"+platform.Base+"/gpg")
 	if err != nil {
 		return fmt.Errorf("Docker's signing key: %w", err)
@@ -139,10 +168,23 @@ func dockerRepository(ctx context.Context, env Env, platform Platform) error {
 	if err := env.write(dockerKey, string(key), 0o644); err != nil {
 		return err
 	}
-	arch, err := env.output(ctx, "dpkg", "--print-architecture")
-	if err != nil || strings.TrimSpace(arch) == "" {
-		return errors.New("dpkg does not say this server's architecture")
-	}
-	line := fmt.Sprintf("deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\n", strings.TrimSpace(arch), dockerKey, platform.Base, platform.Codename)
+	line := fmt.Sprintf("deb [arch=%s signed-by=%s] https://download.docker.com/linux/%s %s stable\n", arch, dockerKey, platform.Base, platform.Codename)
 	return env.write(DockerList, line, 0o644)
+}
+
+func published(platform Platform, which string, err error) error {
+	var answer httpAnswer
+	if errors.As(err, &answer) && answer.Code == http.StatusNotFound {
+		return fmt.Errorf("Docker has not published packages for %s (%s) yet.", platform.Name, which)
+	}
+	return fmt.Errorf("Docker's repository: %w", err)
+}
+
+func archListed(release []byte, arch string) bool {
+	for line := range strings.SplitSeq(string(release), "\n") {
+		if fields, found := strings.CutPrefix(line, "Architectures:"); found {
+			return slices.Contains(strings.Fields(fields), arch)
+		}
+	}
+	return false
 }

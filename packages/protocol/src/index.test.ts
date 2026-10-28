@@ -920,6 +920,21 @@ describe("orchestration messages of agent 0.5.0", () => {
         security: { ...security, platform: { ...platform, family: "arch" } },
       }),
     ).toBe(false);
+    const named = {
+      family: "debian",
+      name: "Debian GNU/Linux 12",
+      id: "debian",
+      version: "12",
+    };
+    expect(request({ security: { ...security, platform: named } })).toBe(true);
+    expect(
+      request({
+        security: {
+          ...security,
+          platform: { ...named, endOfLife: "2028-06-30" },
+        },
+      }),
+    ).toBe(false);
     const listener = {
       address: "100.79.66.29",
       port: 57969,

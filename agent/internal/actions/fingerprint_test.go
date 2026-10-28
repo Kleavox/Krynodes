@@ -6,7 +6,7 @@ func TestEveryServerRefusesATouchOnlyGrant(t *testing.T) {
 	c := newDeployCase(t, algES256)
 	c.trust.RequireUV = false
 	c.assertion.flags = flagPresent
-	refused(t, c.verify(t, testNow), "did not verify a fingerprint")
+	refused(t, c.verify(t, testNow), "was opened without a fingerprint, face or PIN")
 }
 
 func TestEveryServerRefusesATouchOnlyApproval(t *testing.T) {
@@ -14,7 +14,7 @@ func TestEveryServerRefusesATouchOnlyApproval(t *testing.T) {
 	c := newChange(2, nil, map[string][]string{testNode: {"a"}}).by(found, "a")
 	c.approvals[0].flags = flagPresent
 	_, err := apply(t, storeOf(found, []string{"a", "b"}, []string{"a", "b"}), c)
-	refused(t, err, "did not verify a fingerprint")
+	refused(t, err, "was opened without a fingerprint, face or PIN")
 }
 
 func TestAPassphraseIsNeverAccepted(t *testing.T) {

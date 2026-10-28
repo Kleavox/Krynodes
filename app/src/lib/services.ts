@@ -11,12 +11,9 @@ import type {
   ServiceState,
 } from "../types";
 import { isProtectedTarget } from "@krynodes/protocol/targets";
-import {
-  MIN_AGENT_VERSION,
-  compareVersions,
-} from "@krynodes/protocol/versions";
+import { compareVersions } from "@krynodes/protocol/versions";
 
-import { agentCurrent } from "./devices";
+import { agentGap } from "./devices";
 
 import { clockTime, nodeState, parseTimestamp, timeAgo } from "./format";
 import { untilWindowSettles } from "./series";
@@ -208,7 +205,7 @@ export interface ServerGroup {
 }
 
 export function displayName(kind: ActionKind, name: string): string {
-  if (kind === "trust") return "Trusted Devices";
+  if (kind === "trust") return "Passkeys";
   if (kind === "vault") {
     return name === "tailscale"
       ? "the Tailscale credential"
@@ -438,7 +435,9 @@ export function autoRestartBlocker(
   node: NodeRecord | undefined,
   data: ServicesResponse | undefined,
 ): string | null {
-  if (!node || !agentCurrent(node)) return `Needs agent ${MIN_AGENT_VERSION}`;
+  if (!node) return "Server Not Found";
+  const gap = agentGap(node.agent_version);
+  if (gap !== null) return gap;
   const unit = check.target.endsWith(".service")
     ? check.target
     : `${check.target}.service`;

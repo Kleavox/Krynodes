@@ -29,7 +29,7 @@ import type {
 } from "@/types";
 
 const NO_SIGNER =
-  "None of your devices has access to every server here. Change access in Trusted devices.";
+  "None of your passkeys has access to every server here. Change access in Passkeys.";
 
 const said = (error: unknown) =>
   new Error(

@@ -1,5 +1,5 @@
 import { agentHasFeatures } from "@krynodes/protocol/versions";
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
 import { CopyCommand } from "@/components/copy-command";
@@ -112,8 +112,8 @@ export function AdminUserForm({
           }
           onClick={onGet}
         >
-          {!pending && <Fingerprint aria-hidden="true" />}
-          {pending ? "Waiting for the Fingerprint…" : "Get Command"}
+          {!pending && <KeyRound aria-hidden="true" />}
+          {pending ? "Waiting for the Passkey…" : "Get Command"}
         </Button>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -59,8 +59,10 @@ import {
   fingerprint,
   firstTrusts,
   formatPrint,
+  syncText,
   accessChange,
   agentCurrent,
+  FIRST_REPORT,
   removeChange,
   serverState,
   syncChange,
@@ -77,6 +79,7 @@ import type { DeviceRecord, ProposalRecord } from "@/types";
 const SECTION = "rounded-lg border bg-card";
 
 const STATE: Record<ServerState, { label: string; tone: string }> = {
+  waiting: { label: FIRST_REPORT, tone: "text-muted-foreground" },
   update: {
     label: `Needs agent ${MIN_AGENT_VERSION}`,
     tone: "text-muted-foreground",
@@ -134,14 +137,15 @@ function HowToVerify({ waiting }: { waiting?: string }) {
   return (
     <div className="space-y-1 text-xs text-muted-foreground">
       <p>
-        Your device asks for your fingerprint, or your face on Windows Hello, a
-        Mac or an iPhone. A security key such as a YubiKey works too. Passkeys
-        that only take a touch cannot join. Without a fingerprint reader, choose
-        &ldquo;Use a phone&rdquo; in the passkey window.
+        Your passkey asks for your fingerprint, your face or a PIN: Windows
+        Hello, Google Password Manager, iCloud Keychain, a phone, or a security
+        key such as a YubiKey. A passkey that only takes a touch cannot join. On
+        a computer that cannot open it, choose &ldquo;Use a phone&rdquo; in the
+        passkey window.
         {waiting ? ` ${waiting}` : ""}
       </p>
       <p>
-        Browsers cannot tell a fingerprint from the device&rsquo;s PIN, so keep
+        Anyone who knows the PIN that opens your passkey can approve, so keep
         that PIN to yourself.
       </p>
     </div>
@@ -164,7 +168,7 @@ function SetUpForm({
       }}
     >
       <div className="grid gap-1.5">
-        <Label htmlFor="device-name">Device Name</Label>
+        <Label htmlFor="device-name">Passkey Name</Label>
         <Input
           id="device-name"
           value={setup.name}
@@ -174,8 +178,8 @@ function SetUpForm({
         />
       </div>
       <Button type="submit" className="h-9" disabled={setup.working}>
-        <Fingerprint aria-hidden="true" />
-        {setup.working ? "Waiting for the Fingerprint…" : label}
+        <KeyRound aria-hidden="true" />
+        {setup.working ? "Waiting for the Passkey…" : label}
       </Button>
     </form>
   );
@@ -210,20 +214,19 @@ function FirstDevice({ fleet }: { fleet: Fleet }) {
   const setup = useSetUp(fleet, () => undefined);
   return (
     <>
-      <PageHeader title="Trusted Devices" />
+      <PageHeader title="Passkeys" />
       <section className={cn(SECTION, "max-w-xl p-5")}>
-        <Fingerprint aria-hidden="true" className="mb-3 size-6 text-primary" />
-        <h2 className="font-medium">Control servers with your fingerprint</h2>
+        <KeyRound aria-hidden="true" className="mb-3 size-6 text-primary" />
+        <h2 className="font-medium">Control servers with your passkey</h2>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Start, stop, restart and deploy need a fingerprint from a trusted
-          device. Servers keep the keys themselves, so nothing on Cloudflare can
-          act on its own.
+          Start, stop, restart and deploy need a trusted passkey. Servers keep
+          the keys themselves, so nothing on Cloudflare can act on its own.
         </p>
         <p className="my-4 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
-          Set up this device first. Share the admin login only after your own
-          devices are set up.
+          Set up your passkey first. Share the admin login only after your own
+          passkeys are set up.
         </p>
-        <SetUpForm setup={setup} label="Set Up This Device" />
+        <SetUpForm setup={setup} label="Set Up a Passkey" />
         <div className="mt-3">
           <HowToVerify />
         </div>
@@ -238,7 +241,7 @@ function NewDevice({ fleet, device }: { fleet: Fleet; device: DeviceRecord }) {
   const joining = fleet.joining.includes(device.id);
   return (
     <>
-      <PageHeader title="Trusted Devices" />
+      <PageHeader title="Passkeys" />
       <section
         aria-labelledby="new-device"
         className={cn(SECTION, "max-w-xl p-5")}
@@ -258,13 +261,13 @@ function NewDevice({ fleet, device }: { fleet: Fleet; device: DeviceRecord }) {
         </h2>
         <BigPrint publicKey={device.publicKey} className="my-4 sm:text-3xl" />
         <p className="text-sm">
-          Open Trusted devices on one of your other devices and approve it.
+          Open Passkeys where one of your other passkeys works and approve it.
           Check that it shows this code.
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
           {fleet.core.length > 2
-            ? "Two of your devices approve a new one. "
-            : "One of your devices approves it. "}
+            ? "Two of your passkeys approve a new one. "
+            : "One of your passkeys approves it. "}
           This page updates by itself once your servers take it.
         </p>
         {!joining && (
@@ -274,7 +277,7 @@ function NewDevice({ fleet, device }: { fleet: Fleet; device: DeviceRecord }) {
             className="mt-4 h-9 text-destructive"
             onClick={() => setConfirm(true)}
           >
-            Forget This Device
+            Forget This Passkey
           </Button>
         )}
       </section>
@@ -304,7 +307,7 @@ function serversText(fleet: Fleet, device: DeviceRecord): string {
 
 function proofText(device: DeviceRecord): string | null {
   if (device.verifies === null) return null;
-  return device.verifies ? "Fingerprint" : "Cannot Sign";
+  return device.verifies ? "Can Sign" : "Cannot Sign";
 }
 
 function DeviceRow({
@@ -347,6 +350,7 @@ function DeviceRow({
         : "Not Claimed Yet",
     formatPrint(device.fingerprint),
     proofText(device),
+    syncText(device.synced),
     device.core ? serversText(fleet, device) : null,
     device.lastUsedAt ? `Used ${timeAgo(device.lastUsedAt)}` : "Never Used",
   ].filter(Boolean);
@@ -356,7 +360,7 @@ function DeviceRow({
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="min-w-0 truncate font-medium">{device.name}</span>
           {fleet.mine.includes(device.id) && (
-            <Badge variant="outline">This Device</Badge>
+            <Badge variant="outline">This Browser</Badge>
           )}
           {!device.core && (
             <Badge variant="secondary" className="text-warning">
@@ -455,7 +459,7 @@ function ProposalCard({
       <p className="mt-2 font-mono text-xs">{approvalLine(fleet, proposal)}</p>
       {mineApproved && (
         <p className="mt-1 text-xs text-muted-foreground">
-          You approved this. Approve on another device.
+          You approved this. Approve with another passkey.
         </p>
       )}
       <div className="mt-3 flex flex-wrap gap-2">
@@ -623,8 +627,8 @@ function FirstTrustDialog({
             {servers.map((server) => server.node.name).join(", ")}{" "}
             {servers.length === 1 ? "trusts" : "trust"} no device yet.{" "}
             {founding
-              ? "They take this device as their first trusted device, and it reaches them."
-              : "They take your trusted devices; choose which ones reach them from each server's menu."}
+              ? "They take this passkey as their first trusted passkey, and it reaches them."
+              : "They take your trusted passkeys; choose which ones reach them from each server's menu."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <ul className="divide-y rounded-md border text-sm">
@@ -668,7 +672,7 @@ export function DevicesPage() {
   if (!fleet) {
     return (
       <>
-        <PageHeader title="Trusted Devices" />
+        <PageHeader title="Passkeys" />
         <Skeleton className="h-64" />
       </>
     );
@@ -741,7 +745,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
 
   const addButton = (
     <Button size="sm" className="h-9 md:h-8" onClick={() => setAdding(true)}>
-      Add Device
+      Add Passkey
     </Button>
   );
   let notice: ReactNode = null;
@@ -759,8 +763,8 @@ function Manage({ fleet }: { fleet: Fleet }) {
             </Button>
           }
         >
-          Trust {founder?.name ?? "this device"} on your servers. It becomes
-          your first trusted device.
+          Trust {founder?.name ?? "this passkey"} on your servers. It becomes
+          your first trusted passkey.
         </Notice>
       ) : (
         <Notice tone="warning">
@@ -779,8 +783,8 @@ function Manage({ fleet }: { fleet: Fleet }) {
   } else if (fleet.core.length === 1 && fleet.pending.length === 0) {
     notice = (
       <Notice action={addButton}>
-        Add a second device as a backup, such as your phone or a security key.
-        It gets access to your servers.
+        Add a second passkey as a backup, such as one on your phone or a
+        security key. It gets access to your servers.
       </Notice>
     );
   } else if (touchOnly.length > 0) {
@@ -791,7 +795,8 @@ function Manage({ fleet }: { fleet: Fleet }) {
           ? "its passkey only takes"
           : "their passkeys only take"}{" "}
         a touch. Remove {touchOnly.length === 1 ? "it" : "them"} and set{" "}
-        {touchOnly.length === 1 ? "it" : "them"} up again with a fingerprint.
+        {touchOnly.length === 1 ? "it" : "them"} up again with a passkey that
+        asks for your fingerprint, face or PIN.
       </Notice>
     );
   }
@@ -801,10 +806,10 @@ function Manage({ fleet }: { fleet: Fleet }) {
   return (
     <>
       <PageHeader
-        title="Trusted Devices"
+        title="Passkeys"
         meta={
           <span className="font-mono text-xs text-muted-foreground">
-            {plural(fleet.core.length, "trusted device")}
+            {plural(fleet.core.length, "trusted passkey")}
           </span>
         }
       />
@@ -854,14 +859,14 @@ function Manage({ fleet }: { fleet: Fleet }) {
               className="ml-auto h-9 md:h-8"
               onClick={() => setAdding((value) => !value)}
             >
-              {adding ? "Close" : "Add Device"}
+              {adding ? "Close" : "Add Passkey"}
             </Button>
           </div>
           {adding && (
             <div className="space-y-2 border-b px-4 py-3">
-              <SetUpForm setup={setup} label="Set Up with Fingerprint" />
+              <SetUpForm setup={setup} label="Set Up Passkey" />
               <HowToVerify
-                waiting={`It waits until ${fleet.core.length > 2 ? "two of your devices approve" : "one of your devices approves"} it.`}
+                waiting={`It waits until ${fleet.core.length > 2 ? "two of your passkeys approve" : "one of your passkeys approves"} it.`}
               />
             </div>
           )}
@@ -964,7 +969,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
       <ConfirmDialog
         open={forgetting !== null}
         onOpenChange={(open) => !open && setForgetting(null)}
-        title={`Forget ${forgetting?.name ?? "this device"}?`}
+        title={`Forget ${forgetting?.name ?? "this passkey"}?`}
         description="No server knows it yet. It can be set up again later."
         confirmLabel="Forget"
         mutation={forget}

@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
 import { Field } from "@/components/field";
@@ -78,7 +78,7 @@ export function EditNodeDialog({
             <DialogDescription>
               Every server reports once a minute.
               {member &&
-                " It is in the private network, so your fingerprint tells the others its new name; containers take it at their next deploy."}
+                " It is in the private network, so your passkey tells the others its new name; containers take it at their next deploy."}
             </DialogDescription>
           </DialogHeader>
           <Field id="node-name" label="Name">
@@ -108,12 +108,12 @@ export function EditNodeDialog({
               }
             >
               {member && !save.isPending && !told.isPending && (
-                <Fingerprint aria-hidden="true" />
+                <KeyRound aria-hidden="true" />
               )}
               {save.isPending
                 ? "Saving…"
                 : told.isPending
-                  ? "Waiting for the Fingerprint…"
+                  ? "Waiting for the Passkey…"
                   : "Save"}
             </Button>
           </DialogFooter>

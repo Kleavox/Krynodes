@@ -259,15 +259,12 @@ export function NodeActions({
         }}
       />
 
-      {platform && (
-        <InstallDockerDialog
-          node={node}
-          platform={platform}
-          composeOnly={entry?.docker === "no-compose"}
-          open={dialog === "docker"}
-          onOpenChange={(open) => setDialog(open ? "docker" : null)}
-        />
-      )}
+      <InstallDockerDialog
+        node={node}
+        composeOnly={entry?.docker === "no-compose"}
+        open={dialog === "docker"}
+        onOpenChange={(open) => setDialog(open ? "docker" : null)}
+      />
 
       <DeleteNodeDialog
         node={node}

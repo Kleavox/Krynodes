@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -142,7 +142,7 @@ function Body({
         <DialogDescription>
           {proposal
             ? `Opened by ${fleet.name(proposal.openedBy)} · Expires ${when(change.expiresAt)}`
-            : `Expires ${when(change.expiresAt)} unless enough devices approve it.`}
+            : `Expires ${when(change.expiresAt)} unless enough passkeys approve it.`}
         </DialogDescription>
       </DialogHeader>
       <ChangeDetails fleet={fleet} change={change} />
@@ -154,10 +154,12 @@ function Body({
         {!mineApproved && after && (
           <p>After you approve: {capitalize(after)}.</p>
         )}
-        {mineApproved && <p>You approved this. Approve on another device.</p>}
+        {mineApproved && (
+          <p>You approved this. Approve with another passkey.</p>
+        )}
         {!proposal && after === undefined && (
           <p>
-            Approve with one of your trusted devices. The servers count the
+            Approve with one of your trusted passkeys. The servers count the
             approvals.
           </p>
         )}
@@ -176,10 +178,8 @@ function Body({
             disabled={working || signers.length === 0}
             onClick={() => void submit()}
           >
-            <Fingerprint aria-hidden="true" />
-            {working
-              ? "Waiting for the Fingerprint…"
-              : "Approve with Fingerprint"}
+            <KeyRound aria-hidden="true" />
+            {working ? "Waiting for the Passkey…" : "Approve with Passkey"}
           </Button>
         )}
       </DialogFooter>

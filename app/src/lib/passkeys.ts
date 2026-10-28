@@ -36,6 +36,7 @@ export interface DeviceInput {
   alg: number;
   publicKey: string;
   verifies: boolean;
+  synced: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -66,8 +67,8 @@ const random = (length: number) =>
 const NOT_TOUCHED =
   "The passkey was not touched. Try again and confirm on your device.";
 
-const NO_FINGERPRINT =
-  "This passkey did not verify a fingerprint. Use the fingerprint, or choose Use a phone or a security key.";
+const NOT_UNLOCKED =
+  "This passkey was opened without your fingerprint, face or PIN. Open it with one of those, or choose Use a phone or a security key.";
 
 const HINTS = ["client-device", "security-key", "hybrid"];
 
@@ -79,7 +80,7 @@ export function nameFor(transports: string[], fallback: string): string {
   return fallback;
 }
 
-function requireFingerprint(
+function requireUnlock(
   authenticatorData: ArrayBuffer,
   attachment: string | null | undefined,
 ) {
@@ -91,7 +92,7 @@ function requireFingerprint(
     ].join(", ");
     throw new Error(`${NOT_TOUCHED} (${detail})`);
   }
-  if ((flags & 0x04) !== 0x04) throw new Error(NO_FINGERPRINT);
+  if ((flags & 0x04) !== 0x04) throw new Error(NOT_UNLOCKED);
 }
 
 export function thisBrowser(): string[] {
@@ -155,7 +156,7 @@ export async function registerDevice(
   })) as PublicKeyCredential | null;
   if (!credential) throw new Error("No passkey was created.");
   const response = credential.response as AuthenticatorAttestationResponse;
-  requireFingerprint(
+  requireUnlock(
     response.getAuthenticatorData(),
     credential.authenticatorAttachment,
   );
@@ -173,6 +174,8 @@ export async function registerDevice(
     alg: response.getPublicKeyAlgorithm(),
     publicKey: b64url(publicKey),
     verifies: true,
+    synced:
+      ((new Uint8Array(response.getAuthenticatorData())[32] ?? 0) & 0x08) !== 0,
   };
 }
 
@@ -196,10 +199,7 @@ async function assert(
   })) as PublicKeyCredential | null;
   if (!credential) throw new Error("The passkey did not answer.");
   const response = credential.response as AuthenticatorAssertionResponse;
-  requireFingerprint(
-    response.authenticatorData,
-    credential.authenticatorAttachment,
-  );
+  requireUnlock(response.authenticatorData, credential.authenticatorAttachment);
   if (credential.authenticatorAttachment !== "cross-platform") {
     remember(credential.id);
   }

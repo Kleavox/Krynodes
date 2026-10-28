@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
@@ -332,7 +332,7 @@ export function DeleteNodeDialog({
                 <p>
                   {node.name} holds a piece of the Tailscale credential.
                   Krynodes first shares it again among your other servers, with
-                  the same fingerprint.
+                  the same passkey.
                 </p>
               )}
               {!tailnetPlan.ok && (
@@ -344,8 +344,8 @@ export function DeleteNodeDialog({
               )}
               {background && (
                 <p>
-                  It runs on its own after your fingerprint, so you can close
-                  this. {node.name} shows as deleting until it is gone.
+                  It runs on its own after your passkey, so you can close this.{" "}
+                  {node.name} shows as deleting until it is gone.
                 </p>
               )}
               {!plan.ok && (
@@ -427,9 +427,9 @@ export function DeleteNodeDialog({
               disabled={busy}
               onClick={() => first(spread)}
             >
-              {!operate.isPending && <Fingerprint aria-hidden="true" />}
+              {!operate.isPending && <KeyRound aria-hidden="true" />}
               {operate.isPending
-                ? "Waiting for the Fingerprint…"
+                ? "Waiting for the Passkey…"
                 : piece
                   ? "Spread and Delete"
                   : "Clean Up and Delete"}
@@ -440,10 +440,8 @@ export function DeleteNodeDialog({
               disabled={busy}
               onClick={() => first(removeAndDelete)}
             >
-              {!run.isPending && <Fingerprint aria-hidden="true" />}
-              {run.isPending
-                ? "Waiting for the Fingerprint…"
-                : "Remove and Delete"}
+              {!run.isPending && <KeyRound aria-hidden="true" />}
+              {run.isPending ? "Waiting for the Passkey…" : "Remove and Delete"}
             </Button>
           ) : (
             <Button

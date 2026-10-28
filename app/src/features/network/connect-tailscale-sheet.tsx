@@ -106,7 +106,7 @@ export function ConnectTailscaleSheet({
   const problem = !tailnet
     ? "No server is on a tailnet yet. Sign one in from its Packages page first."
     : holders.length < 2
-      ? `Connect needs two servers with agent ${MIN_AGENT_VERSION} that this device reaches; ${holders.length} is.`
+      ? `Connect needs two servers with agent ${MIN_AGENT_VERSION} that your passkey reaches; ${holders.length} is.`
       : null;
   const ready =
     problem === null &&
@@ -212,8 +212,8 @@ export function ConnectTailscaleSheet({
           <p className="font-medium">Where the Secret Goes</p>
           <p className="text-xs text-muted-foreground">
             {holders.length > 0
-              ? `Your browser splits it into ${holders.length} pieces, one for each of ${listOf(names)}. Any two rebuild it, only for a change you sign with your fingerprint, and the server erases it after. Krynodes' Worker never sees it.`
-              : `No server with agent ${MIN_AGENT_VERSION} that this device reaches can hold a piece yet.`}
+              ? `Your browser splits it into ${holders.length} pieces, one for each of ${listOf(names)}. Any two rebuild it, only for a change you sign with your passkey, and the server erases it after. Krynodes' Worker never sees it.`
+              : `No server with agent ${MIN_AGENT_VERSION} that your passkey reaches can hold a piece yet.`}
           </p>
         </div>
         <Said text={problem} />

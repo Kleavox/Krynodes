@@ -213,10 +213,25 @@ func TestNoRootLoginNeedsAnotherUserWithAKey(t *testing.T) {
 	}
 }
 
+func TestNoRootLoginStaysOffWhenAnEarlierSettingWins(t *testing.T) {
+	env, run := newEnv(t)
+	usersWithKeys(t, env, true)
+	write(t, env, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	afterSSHCheck(run, map[string]string{rootProbe: "permitrootlogin yes\n"})
+	_, err := Apply(context.Background(), env, "no-root-login", nil)
+	if err == nil || err.Error() != "SSH still lets root log in: a setting read before Krynodes' wins (a file in /etc/ssh/sshd_config.d or a Match block). Change it by hand." {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, rootDropIn) || slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "reload") }) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
 func TestNoRootLoginTurnsRootOffAndCanBeUndone(t *testing.T) {
 	env, run := newEnv(t)
 	usersWithKeys(t, env, true)
 	write(t, env, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	afterSSHCheck(run, map[string]string{rootProbe: "permitrootlogin no\n"})
 	if _, err := Apply(context.Background(), env, "no-root-login", nil); err != nil {
 		t.Fatal(err)
 	}

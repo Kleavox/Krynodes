@@ -1,4 +1,4 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -287,8 +287,8 @@ function ComposeForm({
             disabled={!read || sealing || run.isPending || problem !== null}
             onClick={() => void save()}
           >
-            {!run.isPending && <Fingerprint aria-hidden="true" />}
-            {run.isPending ? "Waiting for the Fingerprint…" : "Save"}
+            {!run.isPending && <KeyRound aria-hidden="true" />}
+            {run.isPending ? "Waiting for the Passkey…" : "Save"}
           </Button>
         )}
       </DialogFooter>

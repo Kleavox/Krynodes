@@ -86,6 +86,7 @@ func TestPackagesAreReadAgainOnlyWhenAptChanged(t *testing.T) {
 func TestRestartNeededAndTheDailyUpdatesAreReadEveryRun(t *testing.T) {
 	executor, run := aptExecutor(t)
 	run.respond["dpkg-query -W -f ${Status} unattended-upgrades"] = "install ok installed"
+	run.respond["apt-config shell UU APT::Periodic::Unattended-Upgrade"] = "UU='1'"
 	rootFile(t, executor, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades", "APT::Periodic::Unattended-Upgrade \"1\";\n")
 	rootFile(t, executor, "/var/lib/apt/periodic/unattended-upgrades-stamp", "")
 	ran := time.Date(2026, 9, 29, 6, 12, 0, 0, time.UTC)
