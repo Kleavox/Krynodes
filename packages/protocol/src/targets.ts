@@ -2,6 +2,38 @@ const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$/u;
 const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
 export const BRIDGE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/u;
 const APT_NAME = /^[a-z0-9][a-z0-9+.-]{0,127}$/u;
+export const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{1,127}$/u;
+export const SERVICE_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
+const MAX_STACK_NAMES = 64;
+
+export const stackTitleValid = (title: string) =>
+  title !== "" &&
+  [...title].length <= 64 &&
+  title.trim() === title &&
+  !/\p{Cc}/u.test(title);
+
+export const stackNamesValid = (names: Record<string, string>) => {
+  const entries = Object.entries(names);
+  return (
+    entries.length <= MAX_STACK_NAMES &&
+    entries.every(
+      ([service, name]) =>
+        SERVICE_NAME.test(service) && CONTAINER_NAME.test(name),
+    ) &&
+    new Set(entries.map(([, name]) => name)).size === entries.length
+  );
+};
+
+export function parseStackNames(text: string): Record<string, string> | null {
+  if (text === "") return {};
+  const names: Record<string, string> = {};
+  for (const entry of text.split(",")) {
+    const [service = "", name, ...rest] = entry.split("=");
+    if (name === undefined || rest.length > 0 || service in names) return null;
+    names[service] = name;
+  }
+  return stackNamesValid(names) ? names : null;
+}
 
 export const RECIPES = [
   "security-updates",

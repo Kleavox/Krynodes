@@ -3,6 +3,8 @@ import {
   ADMIN_NAME,
   OFFER_ENTRY,
   PEER_ENTRY,
+  parseStackNames,
+  stackTitleValid,
 } from "@krynodes/protocol";
 
 const PRIVATE: [number, number][] = [
@@ -75,3 +77,10 @@ export function stackNetworkArgsValid(args: Record<string, string>): boolean {
 
 export const hasStackNetworkArgs = (args: Record<string, string>) =>
   list(args.offers).length > 0 || list(args.peers).length > 0;
+
+export const stackNameArgsValid = (args: Record<string, string>) =>
+  (args.title === undefined || stackTitleValid(args.title)) &&
+  (args.names === undefined || parseStackNames(args.names) !== null);
+
+export const hasStackNameArgs = (args: Record<string, string>) =>
+  args.title !== undefined || (args.names ?? "") !== "";

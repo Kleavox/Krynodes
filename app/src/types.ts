@@ -481,6 +481,8 @@ export interface StackEntry {
   public?: string[];
   containers?: string[];
   network?: StackNetwork | null;
+  title?: string | null;
+  names?: Record<string, string> | null;
 }
 
 export interface Finding {

@@ -15,7 +15,9 @@ import { z } from "zod";
 import { createBatch, sweepStatements } from "../actions/store";
 import {
   bridgeArgsValid,
+  hasStackNameArgs,
   hasStackNetworkArgs,
+  stackNameArgsValid,
   stackNetworkArgsValid,
 } from "../bridges/args";
 import { pokeSoon } from "../fleet/client";
@@ -375,7 +377,8 @@ export function registerOperationRoutes(
       const args = command.data.args ?? {};
       if (
         !isValidTarget(step.kind, step.name) ||
-        (step.kind === "compose" && !stackNetworkArgsValid(args))
+        (step.kind === "compose" &&
+          !(stackNetworkArgsValid(args) && stackNameArgsValid(args)))
       ) {
         return invalidRequest(context);
       }
@@ -465,7 +468,8 @@ export function registerOperationRoutes(
     const behind = steps.find(
       (step) =>
         (step.kind === "bridge" ||
-          (step.kind === "compose" && hasStackNetworkArgs(step.args))) &&
+          (step.kind === "compose" &&
+            (hasStackNetworkArgs(step.args) || hasStackNameArgs(step.args)))) &&
         !agentHasFeatures(byId.get(step.nodeId)!.agent_version),
     );
     if (behind) {

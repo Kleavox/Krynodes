@@ -20,7 +20,9 @@ import { requestRefresh } from "../actions/inventory";
 import {
   adminArgsValid,
   bridgeArgsValid,
+  hasStackNameArgs,
   hasStackNetworkArgs,
+  stackNameArgsValid,
   stackNetworkArgsValid,
 } from "../bridges/args";
 import { assertionUv } from "../lib/webauthn";
@@ -153,7 +155,8 @@ const needsFeatures = (
 ) =>
   target.kind === "bridge" ||
   (target.kind === "host" && action === "admin") ||
-  (target.kind === "compose" && hasStackNetworkArgs(args));
+  (target.kind === "compose" &&
+    (hasStackNetworkArgs(args) || hasStackNameArgs(args)));
 
 const signedArgsFit = (
   kind: string,
@@ -164,7 +167,8 @@ const signedArgsFit = (
     ? bridgeArgsValid(action, args)
     : kind === "host" && action === "admin"
       ? adminArgsValid(args)
-      : kind !== "compose" || stackNetworkArgsValid(args);
+      : kind !== "compose" ||
+        (stackNetworkArgsValid(args) && stackNameArgsValid(args));
 
 const askedFits = (
   kind: string,
@@ -340,7 +344,7 @@ export function registerServiceRoutes(
     const [stacks, removed, addresses] = await Promise.all([
       db
         .prepare(
-          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network FROM stacks
+          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network, title, names FROM stacks
            WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
            ORDER BY node_id, project`,
         )
@@ -357,6 +361,8 @@ export function registerServiceRoutes(
           public: string | null;
           containers: string | null;
           network: string | null;
+          title: string | null;
+          names: string | null;
         }>(),
       db
         .prepare(
@@ -422,6 +428,8 @@ export function registerServiceRoutes(
             public: (parsed(stack.public) as string[] | null) ?? [],
             containers: (parsed(stack.containers) as string[] | null) ?? [],
             network: parsed(stack.network),
+            title: stack.title,
+            names: parsed(stack.names),
           })),
         removed: removed.results
           .filter((stack) => stack.node_id === node.id)

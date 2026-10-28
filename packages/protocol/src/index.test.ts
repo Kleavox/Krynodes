@@ -17,7 +17,9 @@ import {
   SESSION_MS,
   TRUST_CHANGE_MS,
   isValidTarget,
+  parseStackNames,
   stackEntrySchema,
+  stackTitleValid,
 } from "./index";
 
 describe("Krynodes Agent protocol v1", () => {
@@ -1013,6 +1015,61 @@ describe("orchestration messages of agent 0.5.0", () => {
     expect(accepts(undefined)).toBe(true);
     expect(accepts(["bad;name"])).toBe(false);
     expect(accepts(Array(501).fill("listmonk_app"))).toBe(false);
+  });
+
+  it("carries a stack's display name and container names", () => {
+    const stack = {
+      project: "adguard-home",
+      directory: "/var/lib/kry-exec/compose/adguard-home",
+      running: 1,
+      total: 1,
+      compose: true,
+      rollback: false,
+    };
+    const accepts = (extra: Record<string, unknown>) =>
+      stackEntrySchema.safeParse({ ...stack, ...extra }).success;
+    expect(
+      accepts({ title: "AdGuard Home", names: { adguard: "adguard-home" } }),
+    ).toBe(true);
+    expect(accepts({ title: " AdGuard" })).toBe(false);
+    expect(accepts({ title: "x".repeat(65) })).toBe(false);
+    expect(accepts({ names: { adguard: "bad name" } })).toBe(false);
+    expect(accepts({ names: { "bad service": "adguard-home" } })).toBe(false);
+  });
+});
+
+describe("stack names", () => {
+  it("takes a display name with capitals and spaces", () => {
+    expect(stackTitleValid("AdGuard Home")).toBe(true);
+    expect(stackTitleValid("Pi-hole · DNS")).toBe(true);
+    expect(stackTitleValid("x".repeat(64))).toBe(true);
+    expect(stackTitleValid("")).toBe(false);
+    expect(stackTitleValid(" AdGuard")).toBe(false);
+    expect(stackTitleValid("AdGuard ")).toBe(false);
+    expect(stackTitleValid("x".repeat(65))).toBe(false);
+    expect(stackTitleValid("Ad\nGuard")).toBe(false);
+  });
+
+  it("reads service=container pairs", () => {
+    expect(
+      parseStackNames("webserver=paperless,db=paperless-db,broker=redis.1"),
+    ).toEqual({
+      webserver: "paperless",
+      db: "paperless-db",
+      broker: "redis.1",
+    });
+    expect(parseStackNames("")).toEqual({});
+    expect(parseStackNames("web=a")).toBeNull();
+    expect(parseStackNames("web=-web")).toBeNull();
+    expect(parseStackNames("web=my web")).toBeNull();
+    expect(parseStackNames("web")).toBeNull();
+    expect(parseStackNames("web=one,web=two")).toBeNull();
+    expect(parseStackNames("web=same,db=same")).toBeNull();
+    expect(
+      parseStackNames(
+        Array.from({ length: 65 }, (_, n) => `s${n}=c${n}x`).join(","),
+      ),
+    ).toBeNull();
   });
 });
 

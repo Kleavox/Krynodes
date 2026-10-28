@@ -380,6 +380,7 @@ func (e Executor) stackEntries(snapshot Snapshot) []reporter.StackEntry {
 		if e.ownStack(stack.Directory) {
 			stored = e.metaOf(stack.Directory)
 		}
+		entry.Title, entry.Names = stored.Title, stored.Names
 		if own != "" || len(stored.Offers) > 0 || len(stored.Peers) > 0 {
 			var meta stackMeta
 			if entry.Access == "contained" {

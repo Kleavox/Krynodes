@@ -138,16 +138,18 @@ type ServiceEntry struct {
 }
 
 type StackEntry struct {
-	Access     string        `json:"access,omitempty"`
-	Public     []string      `json:"public,omitempty"`
-	Project    string        `json:"project"`
-	Directory  string        `json:"directory"`
-	Running    int           `json:"running"`
-	Total      int           `json:"total"`
-	Compose    bool          `json:"compose"`
-	Rollback   bool          `json:"rollback"`
-	Containers []string      `json:"containers,omitempty"`
-	Network    *StackNetwork `json:"network,omitempty"`
+	Access     string            `json:"access,omitempty"`
+	Public     []string          `json:"public,omitempty"`
+	Project    string            `json:"project"`
+	Directory  string            `json:"directory"`
+	Running    int               `json:"running"`
+	Total      int               `json:"total"`
+	Compose    bool              `json:"compose"`
+	Rollback   bool              `json:"rollback"`
+	Containers []string          `json:"containers,omitempty"`
+	Network    *StackNetwork     `json:"network,omitempty"`
+	Title      string            `json:"title,omitempty"`
+	Names      map[string]string `json:"names,omitempty"`
 }
 
 type StackNetwork struct {

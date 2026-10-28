@@ -251,6 +251,8 @@ export function moveSteps(input: {
   networks?: { name: string; kind: string; subnet: string }[];
   offers?: string;
   peers?: string;
+  title?: string;
+  names?: string;
   original: "now" | "later" | "keep";
 }): OperationTarget[] {
   const args = Object.fromEntries(
@@ -260,6 +262,8 @@ export function moveSteps(input: {
       ["reaches", input.reaches ?? ""],
       ["offers", input.offers ?? ""],
       ["peers", input.peers ?? ""],
+      ["title", input.title ?? ""],
+      ["names", input.names ?? ""],
     ].filter(([, value]) => value !== ""),
   );
   return [

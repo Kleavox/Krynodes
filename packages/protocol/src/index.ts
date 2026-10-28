@@ -8,9 +8,22 @@ import {
 import { bridgesReportSchema } from "./bridges";
 import { eventSchema, releaseSchema } from "./quarantine";
 import { reachSchema } from "./tailscale";
-import { isValidTarget, RECIPES } from "./targets";
+import {
+  isValidTarget,
+  RECIPES,
+  stackNamesValid,
+  stackTitleValid,
+} from "./targets";
 
-export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
+export {
+  CONTAINER_NAME,
+  isProtectedTarget,
+  isValidTarget,
+  parseStackNames,
+  RECIPES,
+  stackNamesValid,
+  stackTitleValid,
+} from "./targets";
 export {
   ADMIN_KEY_ARG,
   ADMIN_NAME,
@@ -505,6 +518,8 @@ export const stackEntrySchema = z
       .max(500)
       .optional(),
     network: stackNetworkSchema.optional(),
+    title: z.string().refine(stackTitleValid).optional(),
+    names: z.record(z.string(), z.string()).refine(stackNamesValid).optional(),
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 

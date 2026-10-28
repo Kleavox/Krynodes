@@ -307,6 +307,24 @@ describe("moving a stack", () => {
     expect(create()?.args).toBeUndefined();
   });
 
+  it("carries the stack's display name and container names to the new server", () => {
+    const create = moveSteps({
+      source: A,
+      target: B,
+      targetKey: "KB",
+      project: "adguard-home",
+      compose: "x",
+      access: "full",
+      original: "keep",
+      title: "AdGuard Home",
+      names: "adguard=adguard-home",
+    })[1];
+    expect(create?.args).toEqual({
+      title: "AdGuard Home",
+      names: "adguard=adguard-home",
+    });
+  });
+
   it("creates the stack's Krynodes networks on the new server before the stack", () => {
     const steps = moveSteps({
       source: A,

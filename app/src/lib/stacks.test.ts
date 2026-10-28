@@ -10,6 +10,8 @@ import type {
 } from "../types";
 import { actionText, outcomeText } from "./services";
 import {
+  containerNameProblem,
+  containerNames,
   containersOf,
   daysLeft,
   deployBlocker,
@@ -27,6 +29,7 @@ import {
   stackCommands,
   stackNameProblem,
   stackOf,
+  stackSlug,
   stackState,
 } from "./stacks";
 
@@ -358,15 +361,105 @@ describe("stack commands", () => {
 
   it("checks a stack name the way the server does", () => {
     expect(stackNameProblem("uptime-kuma", [])).toBeNull();
+    expect(stackNameProblem("AdGuard Home", [])).toBeNull();
     expect(stackNameProblem("", [])).toBe("Give the stack a name.");
-    expect(stackNameProblem("Kuma", [])).toBe(
-      "Use lowercase letters, digits, - and _, starting with a letter or digit.",
+    expect(stackNameProblem("!!!", [])).toBe(
+      "Use at least one letter or digit.",
     );
-    expect(stackNameProblem("kuma", ["kuma"])).toBe(
+    expect(stackNameProblem("k".repeat(65), [])).toBe(
+      "Keep the name to 64 characters.",
+    );
+    expect(stackNameProblem("Kuma", ["kuma"])).toBe(
       "This server already runs a stack named kuma.",
     );
     expect(stackNameProblem("kuma", [], ["kuma"])).toBe(
       "A stack named kuma waits in Removed. Restore it or delete it permanently first.",
+    );
+  });
+});
+
+describe("stack and container names", () => {
+  const one = "services:\n  adguard:\n    image: adguard/adguardhome\n";
+  const three =
+    "services:\n  broker:\n    image: redis:7\n  db:\n    image: postgres:17\n  webserver:\n    image: paperless\n";
+
+  it("turns a display name into the folder and project name", () => {
+    expect(stackSlug("AdGuard Home")).toBe("adguard-home");
+    expect(stackSlug("  Uptime   Kuma! ")).toBe("uptime-kuma");
+    expect(stackSlug("my_app")).toBe("my_app");
+    expect(stackSlug("Pi-hole · DNS")).toBe("pi-hole-dns");
+    expect(stackSlug("!!!")).toBe("");
+    const long = stackSlug(`${"a".repeat(62)} b`);
+    expect(long.length).toBeLessThanOrEqual(63);
+    expect(long.endsWith("-")).toBe(false);
+  });
+
+  it("names one container after the stack and several after their services", () => {
+    expect(containerNames(one, "adguard-home")).toEqual([
+      { service: "adguard", suggested: "adguard-home", value: "adguard-home" },
+    ]);
+    expect(containerNames(three, "paperless").map((row) => row.value)).toEqual([
+      "paperless-broker",
+      "paperless-db",
+      "paperless-webserver",
+    ]);
+    expect(containerNames("", "paperless")).toEqual([]);
+    expect(containerNames("services: [", "paperless")).toEqual([]);
+  });
+
+  it("starts from the file's own name, then the saved one, then what was typed", () => {
+    const own = `${three}    container_name: paperless\n`;
+    expect(containerNames(own, "paperless")[2]!.value).toBe("paperless");
+    expect(
+      containerNames(three, "paperless", { db: "postgres" })[1]!.value,
+    ).toBe("postgres");
+    const typed = containerNames(
+      three,
+      "paperless",
+      {},
+      {
+        db: "pg",
+        broker: "",
+      },
+    );
+    expect(typed.map((row) => row.value)).toEqual([
+      "paperless-broker",
+      "pg",
+      "paperless-webserver",
+    ]);
+  });
+
+  it("leaves a service with copies to Docker's numbers", () => {
+    const copies = three.replace(
+      "image: paperless\n",
+      "image: paperless\n    deploy:\n      replicas: 2\n",
+    );
+    expect(
+      containerNames(copies, "paperless").map((row) => row.service),
+    ).toEqual(["broker", "db"]);
+  });
+
+  it("says what is wrong with a container name", () => {
+    const rows = containerNames(
+      three,
+      "paperless",
+      {},
+      {
+        broker: "redis",
+        db: "redis",
+        webserver: "my web",
+      },
+    );
+    expect(containerNameProblem(rows, 0, [], "io")).toBe(
+      "Another container in this stack has this name.",
+    );
+    expect(containerNameProblem(rows, 2, [], "io")).toBe(
+      "Use letters, digits, dashes, dots and underscores, starting with a letter or digit.",
+    );
+    const fine = containerNames(three, "paperless");
+    expect(containerNameProblem(fine, 0, [], "io")).toBeNull();
+    expect(containerNameProblem(fine, 1, ["paperless-db"], "io")).toBe(
+      "io already runs a container named paperless-db.",
     );
   });
 });

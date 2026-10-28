@@ -230,6 +230,11 @@ describe("compose actions", () => {
       }),
       A,
     );
+    sqlite
+      .prepare(
+        "UPDATE stacks SET title = 'Listmonk', names = ? WHERE project = 'listmonk'",
+      )
+      .run(JSON.stringify({ app: "listmonk" }));
     const body = await reply(call("GET", "/api/services"));
     const a = body.nodes!.find((node) => node.id === A)!;
     expect(a.stacks).toEqual([
@@ -244,6 +249,8 @@ describe("compose actions", () => {
         public: [],
         containers: [],
         network: null,
+        title: "Listmonk",
+        names: { app: "listmonk" },
       },
     ]);
     expect(a.trust).toEqual({

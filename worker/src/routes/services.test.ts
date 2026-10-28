@@ -946,6 +946,28 @@ describe("shared networks and admin users of agent 0.7.1", () => {
     ).toBe(201);
   });
 
+  it("gates a stack's display name and container names on agent 0.7.1 and checks their form", async () => {
+    const t = current();
+    t.sqlite.prepare("UPDATE nodes SET docker = 'ready' WHERE id = ?").run(B);
+    const stack = { kind: "compose", name: "adguard-home" };
+    const named = { title: "AdGuard Home", names: "adguard=adguard-home" };
+    expect(
+      (await t.send("create", { ...stack, nodeId: A }, named)).status,
+    ).toBe(201);
+    expect(
+      (
+        await t.send(
+          "create",
+          { ...stack, nodeId: A, name: "pihole" },
+          { names: "pihole=pi hole" },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (await t.send("create", { ...stack, nodeId: B }, named)).status,
+    ).toBe(422);
+  });
+
   it("returns each server's networks and names the pair a link test ran on", async () => {
     const t = current();
     const bridges = {

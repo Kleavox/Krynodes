@@ -1,3 +1,4 @@
+import { FEATURE_AGENT } from "@krynodes/protocol";
 import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -14,7 +15,7 @@ import {
   StateCell,
 } from "@/features/services/service-list";
 import { useCancelActions, useServices } from "@/lib/api";
-import { agentCurrent } from "@/lib/devices";
+import { agentCurrent, agentGap } from "@/lib/devices";
 import { nodeState } from "@/lib/format";
 import { LogsDialog } from "@/features/services/logs-dialog";
 import { isPending } from "@/lib/services";
@@ -23,6 +24,7 @@ import {
   ownFolder,
   stackCommands,
   stackState,
+  stackTitle,
   type ServerStack,
   type StackMember,
 } from "@/lib/stacks";
@@ -100,14 +102,23 @@ function StackControls({
   const services = useServices();
   const [panel, setPanel] = useState<Panel | null>(null);
   const addresses = member.addresses ?? [];
+  const entry = services.data?.nodes.find((node) => node.id === member.node.id);
   const target: StackTarget = {
     nodeId: member.node.id,
     nodeName: member.node.name,
     project,
-    sealKey:
-      services.data?.nodes.find((entry) => entry.id === member.node.id)
-        ?.sealKey ?? null,
+    sealKey: entry?.sealKey ?? null,
     reach: agentCurrent(member.node),
+    title: member.stack.title,
+    names: member.stack.names,
+    named: agentGap(member.node.agent_version, FEATURE_AGENT) === null,
+    taken: (entry?.services ?? [])
+      .filter(
+        (service) =>
+          service.kind === "docker" &&
+          !(member.stack.containers ?? []).includes(service.name),
+      )
+      .map((service) => service.name),
   };
   const modern =
     agentCurrent(member.node) && member.trusted && member.stack.compose;
@@ -317,6 +328,7 @@ export function StackRow({
   const [open, setOpen] = useState(false);
   const { member, containers } = item;
   const project = member.stack.project;
+  const shown = stackTitle(member.stack);
   const listId = `containers-${member.node.id}-${project}`;
   const addresses = member.addresses ?? [];
   const action = member.action;
@@ -336,7 +348,7 @@ export function StackRow({
             className="-ml-1.5 size-7 shrink-0"
             aria-expanded={open}
             aria-controls={listId}
-            aria-label={`${open ? "Hide" : "Show"} containers of ${project}`}
+            aria-label={`${open ? "Hide" : "Show"} containers of ${shown}`}
             onClick={() => setOpen(!open)}
           >
             <ChevronRight
@@ -349,7 +361,7 @@ export function StackRow({
             pulse={isPending(member.action)}
           />
           <span className="truncate font-medium" title={member.stack.directory}>
-            {project}
+            {shown}
           </span>
           <KindLabel kind="stack" />
         </span>

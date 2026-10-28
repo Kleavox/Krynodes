@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   adminArgsValid,
   bridgeArgsValid,
+  hasStackNameArgs,
   hasStackNetworkArgs,
+  stackNameArgsValid,
   stackNetworkArgsValid,
 } from "./args";
 
@@ -96,5 +98,29 @@ describe("a stack's offers and reaches", () => {
     expect(hasStackNetworkArgs({ offers: "apps-inner/web=3001/tcp" })).toBe(
       true,
     );
+  });
+});
+
+describe("a stack's display name and container names", () => {
+  it("accepts a display name and service=container pairs", () => {
+    expect(stackNameArgsValid({})).toBe(true);
+    expect(
+      stackNameArgsValid({
+        title: "AdGuard Home",
+        names: "adguard=adguard-home",
+      }),
+    ).toBe(true);
+    expect(stackNameArgsValid({ names: "" })).toBe(true);
+    expect(stackNameArgsValid({ title: "" })).toBe(false);
+    expect(stackNameArgsValid({ title: "AdGuard Home " })).toBe(false);
+    expect(stackNameArgsValid({ names: "adguard=adguard home" })).toBe(false);
+    expect(stackNameArgsValid({ names: "web=same,db=same" })).toBe(false);
+  });
+
+  it("says when a stack uses them, so the 0.7.1 gate applies", () => {
+    expect(hasStackNameArgs({ hostPorts: "3000/tcp" })).toBe(false);
+    expect(hasStackNameArgs({ names: "" })).toBe(false);
+    expect(hasStackNameArgs({ title: "AdGuard Home" })).toBe(true);
+    expect(hasStackNameArgs({ names: "adguard=adguard-home" })).toBe(true);
   });
 });

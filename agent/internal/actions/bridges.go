@@ -798,19 +798,7 @@ func applyPins(target, base map[string]any, pins []pinned) {
 			service = map[string]any{}
 			services[entry.service] = service
 		}
-		networks := asMap(service["networks"])
-		if networks == nil {
-			networks = map[string]any{}
-			for _, key := range asList(service["networks"]) {
-				networks[asText(key)] = nil
-			}
-			service["networks"] = networks
-		}
-		settings := asMap(networks[entry.key])
-		if settings == nil {
-			settings = map[string]any{}
-			networks[entry.key] = settings
-		}
+		settings := serviceNetwork(service, entry.key)
 		aliases := asList(asMap(asMap(asMap(asMap(base["services"])[entry.service])["networks"])[entry.key])["aliases"])
 		if !slices.Contains(aliases, any(entry.alias)) {
 			aliases = append(slices.Clone(aliases), entry.alias)

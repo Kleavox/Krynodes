@@ -1,3 +1,5 @@
+import { CONTAINER_NAME } from "@krynodes/protocol";
+
 import type {
   ActionRecord,
   AttentionItem,
@@ -11,6 +13,7 @@ import type {
   WebAddress,
 } from "../types";
 
+import { namingOf } from "./compose";
 import { agentCurrent, agentGap } from "./devices";
 import { nodeState, timeAgo } from "./format";
 import {
@@ -268,20 +271,83 @@ export function newStackBlocker(
   return null;
 }
 
+export const stackSlug = (title: string) =>
+  title
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "-")
+    .replace(/^[-_]+/u, "")
+    .slice(0, 63)
+    .replace(/[-_]+$/u, "");
+
+export const stackTitle = (stack: Pick<StackEntry, "project" | "title">) =>
+  stack.title ?? stack.project;
+
+export const titleProblem = (title: string) =>
+  !title
+    ? "Give the stack a name."
+    : [...title].length > 64
+      ? "Keep the name to 64 characters."
+      : null;
+
 export function stackNameProblem(
-  name: string,
+  title: string,
   taken: string[],
   waiting: string[] = [],
 ): string | null {
-  if (!name) return "Give the stack a name.";
-  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/u.test(name)) {
-    return "Use lowercase letters, digits, - and _, starting with a letter or digit.";
+  const wrong = titleProblem(title);
+  if (wrong) return wrong;
+  const project = stackSlug(title);
+  if (!project) return "Use at least one letter or digit.";
+  if (taken.includes(project)) {
+    return `This server already runs a stack named ${project}.`;
   }
-  if (taken.includes(name)) {
-    return `This server already runs a stack named ${name}.`;
+  if (waiting.includes(project)) {
+    return `A stack named ${project} waits in Removed. Restore it or delete it permanently first.`;
   }
-  if (waiting.includes(name)) {
-    return `A stack named ${name} waits in Removed. Restore it or delete it permanently first.`;
+  return null;
+}
+
+export interface ContainerName {
+  service: string;
+  suggested: string;
+  value: string;
+}
+
+export function containerNames(
+  text: string,
+  project: string,
+  saved: Record<string, string> = {},
+  typed: Record<string, string> = {},
+): ContainerName[] {
+  const services = namingOf(text);
+  return services
+    .filter((entry) => entry.copies <= 1)
+    .map(({ service, own }) => {
+      const suggested =
+        own ??
+        saved[service] ??
+        (services.length === 1 ? project : `${project}-${service}`);
+      return { service, suggested, value: typed[service]?.trim() || suggested };
+    });
+}
+
+export function containerNameProblem(
+  rows: ContainerName[],
+  index: number,
+  taken: string[],
+  server: string,
+): string | null {
+  const { value } = rows[index]!;
+  if (!CONTAINER_NAME.test(value)) {
+    return "Use letters, digits, dashes, dots and underscores, starting with a letter or digit.";
+  }
+  if (rows.some((row, other) => other !== index && row.value === value)) {
+    return "Another container in this stack has this name.";
+  }
+  if (taken.includes(value)) {
+    return `${server} already runs a container named ${value}.`;
   }
   return null;
 }

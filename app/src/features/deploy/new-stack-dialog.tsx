@@ -1,3 +1,4 @@
+import { FEATURE_AGENT } from "@krynodes/protocol";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
@@ -21,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAction, useServices } from "@/lib/api";
-import { agentCurrent } from "@/lib/devices";
+import { agentCurrent, agentGap } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import { toast } from "sonner";
 import { privateIpProblem } from "@/lib/network";
@@ -30,9 +31,11 @@ import {
   newStackBlocker,
   parseHostPorts,
   stackNameProblem,
+  stackSlug,
 } from "@/lib/stacks";
 import type { NodeRecord } from "@/types";
 
+import { ContainerNames, useContainerNames } from "./container-names";
 import {
   AccessChoice,
   FullAccessSummary,
@@ -104,6 +107,19 @@ function NewStackForm({
   const chosen = choices.find((choice) => choice.node.id === nodeId);
   const sealKey = entries.get(nodeId)?.sealKey ?? null;
   const modern = chosen !== undefined && agentCurrent(chosen.node);
+  const named =
+    chosen !== undefined &&
+    agentGap(chosen.node.agent_version, FEATURE_AGENT) === null;
+  const title = name.trim();
+  const project = stackSlug(title);
+  const names = useContainerNames({
+    text,
+    project,
+    taken: (entries.get(nodeId)?.services ?? [])
+      .filter((service) => service.kind === "docker")
+      .map((service) => service.name),
+    server: chosen?.node.name ?? "This server",
+  });
   const reaching = modern && access === "contained";
   const hostPorts = parseHostPorts(reaching ? reach : "");
   const network = useStackNetwork(nodeId, text);
@@ -111,7 +127,7 @@ function NewStackForm({
   const boxes = useNetworkBoxes(
     { id: nodeId, name: chosen?.node.name ?? "This server" },
     text,
-    name.trim(),
+    project,
     access,
   );
   const joining = modern && boxes.boxes.length > 0;
@@ -129,7 +145,7 @@ function NewStackForm({
   const waiting = (entries.get(nodeId)?.removed ?? []).map(
     (stack) => stack.project,
   );
-  const nameProblem = stackNameProblem(name.trim(), taken, waiting);
+  const nameProblem = stackNameProblem(title, taken, waiting);
   const size = new TextEncoder().encode(text).length;
   const textProblem = !text.trim()
     ? "Paste the compose file."
@@ -145,6 +161,7 @@ function NewStackForm({
     privateWrong === null &&
     networkWrong === null &&
     (!joining || boxes.problem === null) &&
+    (!named || names.problem === null) &&
     (!modern || secretsProblem(secrets) === null);
 
   const create = async () => {
@@ -161,6 +178,15 @@ function NewStackForm({
     } finally {
       setSealing(false);
     }
+    const args = {
+      ...(hostPorts.ports.length > 0
+        ? { hostPorts: hostPorts.ports.join(",") }
+        : {}),
+      ...(serving ? network.args : {}),
+      ...(joining ? boxes.args : {}),
+      ...(named ? { title } : {}),
+      ...(named && names.rows.length > 0 ? { names: names.arg } : {}),
+    };
     run.mutate(
       {
         action: "create",
@@ -168,21 +194,11 @@ function NewStackForm({
           {
             nodeId,
             kind: "compose",
-            name: name.trim(),
+            name: project,
             compose: text,
             ...(modern ? { access } : {}),
             ...(sealed ? { secrets: sealed } : {}),
-            ...(hostPorts.ports.length > 0 || serving || joining
-              ? {
-                  args: {
-                    ...(hostPorts.ports.length > 0
-                      ? { hostPorts: hostPorts.ports.join(",") }
-                      : {}),
-                    ...(serving ? network.args : {}),
-                    ...(joining ? boxes.args : {}),
-                  },
-                }
-              : {}),
+            ...(Object.keys(args).length > 0 ? { args } : {}),
           },
         ],
       },
@@ -249,7 +265,7 @@ function NewStackForm({
           <Input
             id="stack-name"
             value={name}
-            placeholder="uptime-kuma"
+            placeholder="Uptime Kuma"
             autoComplete="off"
             aria-invalid={touched && nameProblem !== null}
             aria-describedby={
@@ -262,6 +278,7 @@ function NewStackForm({
               {nameProblem}
             </p>
           )}
+          {named && <ContainerNames names={names} />}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="stack-server">Server</Label>

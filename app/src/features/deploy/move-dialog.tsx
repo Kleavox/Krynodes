@@ -250,6 +250,10 @@ function MoveForm({
             hostPorts: carried,
             networks: bridging.creates,
             offers: stack?.network?.offers?.join(",") ?? "",
+            title: stack?.title ?? "",
+            names: Object.entries(stack?.names ?? {})
+              .map(([service, name]) => `${service}=${name}`)
+              .join(","),
             peers:
               chosenAccess === "contained"
                 ? (stack?.network?.peers?.join(",") ?? "")

@@ -48,6 +48,12 @@ func (e Executor) choicesFrom(command Command, access string, current stackMeta)
 		return stackMeta{}, err
 	}
 	meta := stackMeta{Access: access, HostPorts: hostPorts, Offers: current.Offers}
+	if meta.Title, err = titleFrom(command, current.Title); err != nil {
+		return stackMeta{}, err
+	}
+	if meta.Names, err = namesFrom(command, current.Names); err != nil {
+		return stackMeta{}, err
+	}
 	if access == "contained" {
 		meta.Serves, meta.Reaches, meta.Peers = current.Serves, current.Reaches, current.Peers
 	}
