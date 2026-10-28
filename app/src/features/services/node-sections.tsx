@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { useNodeActions } from "@/lib/api";
 import type { NodeRecord } from "@/types";
 
@@ -29,7 +30,7 @@ export function RecentActions({ node }: { node: NodeRecord }) {
       </div>
       {list.length === 0 ? (
         <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-          {actions.data ? "No actions yet." : "Loading actions…"}
+          {actions.data ? "No actions yet." : <Busy>Loading actions</Busy>}
         </p>
       ) : (
         <ul className="divide-y rounded-lg border bg-card">

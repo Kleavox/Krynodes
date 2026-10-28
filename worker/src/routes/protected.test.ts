@@ -4,6 +4,7 @@ import { app } from "../app";
 import type { Env } from "../env";
 import { toB64url } from "../lib/b64url";
 import { fingerprint } from "../lib/webauthn";
+import { LAPTOP, PHONE } from "../test/keys";
 import { testPasskey, type TestPasskey } from "../test/passkeys";
 import { seedCheck, seedNode } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
@@ -289,5 +290,71 @@ describe("dashboard actions that destroy or hide", () => {
     expect(script).toContain(`phone.-7.${t.phone.publicKey}`);
     expect(script).toContain(`laptop.-7.${laptop.publicKey}`);
     expect(script).not.toContain("--grant");
+  });
+});
+
+describe("the admin user in enroll defaults", () => {
+  const defaults = { recommended: true, docker: true, hour: 3, network: false };
+  const digest = async (name: string, keys: string[]) =>
+    Array.from(
+      await sha256(
+        new Uint8Array(encoder.encode(`${name}\n${keys.join("\n")}`)),
+      ),
+      (byte) => byte.toString(16).padStart(2, "0"),
+    ).join("");
+
+  it("asks for the fingerprint only when the name or the keys change", async () => {
+    const t = await setup();
+    const admin = { name: "musyaf", keys: [LAPTOP] };
+    expect(
+      (
+        await t.call("PUT", "/api/settings/enroll-defaults", {
+          ...defaults,
+          hour: 5,
+        })
+      ).status,
+    ).toBe(200);
+    const bare = await t.call("PUT", "/api/settings/enroll-defaults", {
+      ...defaults,
+      admin,
+    });
+    expect(bare.status).toBe(403);
+    expect(await bare.json()).toMatchObject({
+      code: "PROOF_NEEDED",
+      op: "enroll.admin",
+      target: await digest("musyaf", [LAPTOP]),
+    });
+    const other = await t.call(
+      "PUT",
+      "/api/settings/enroll-defaults",
+      { ...defaults, admin },
+      await proof(t.phone, "enroll.admin", await digest("musyaf", [PHONE])),
+    );
+    expect(other.status).toBe(400);
+    const good = await t.call(
+      "PUT",
+      "/api/settings/enroll-defaults",
+      { ...defaults, admin },
+      await proof(t.phone, "enroll.admin", await digest("musyaf", [LAPTOP])),
+    );
+    expect(good.status).toBe(200);
+    expect(
+      (
+        await t.call("PUT", "/api/settings/enroll-defaults", {
+          ...defaults,
+          hour: 6,
+          admin,
+        })
+      ).status,
+    ).toBe(200);
+    const removing = await t.call("PUT", "/api/settings/enroll-defaults", {
+      ...defaults,
+      admin: null,
+    });
+    expect(await removing.json()).toMatchObject({
+      code: "PROOF_NEEDED",
+      target:
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    });
   });
 });

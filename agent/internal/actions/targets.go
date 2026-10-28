@@ -12,7 +12,9 @@ var targetName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$`)
 
 var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
-var Recipes = []string{"security-updates", "reboot-window", "ssh-keys-only", "fail2ban", "firewall", "free-port-53"}
+var bridgeTarget = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+
+var Recipes = []string{"security-updates", "reboot-window", "ssh-keys-only", "no-root-login", "fail2ban", "firewall", "free-port-53"}
 
 const TunnelContainer = "krynodes-tunnel"
 
@@ -69,6 +71,8 @@ func ValidTarget(kind, name string) bool {
 		return apt.ValidName(name)
 	case "network":
 		return name == "kry0"
+	case "bridge":
+		return bridgeTarget.MatchString(name)
 	}
 	if !targetName.MatchString(name) {
 		return false

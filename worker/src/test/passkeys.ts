@@ -42,6 +42,7 @@ export interface TestPasskey {
     origin: string;
     rpId: string;
     verified?: boolean;
+    synced?: boolean;
   }) => Promise<{
     credentialId: string;
     authenticatorData: string;
@@ -64,10 +65,16 @@ export async function testPasskey(id: string, name = id): Promise<TestPasskey> {
     name,
     alg: -7,
     publicKey: toB64url(spki),
-    async sign({ challenge, origin, rpId, verified = true }) {
+    async sign({ challenge, origin, rpId, verified = true, synced = false }) {
       const authData = concat(
         await sha256(rpId),
-        new Uint8Array([verified ? 0x05 : 0x01, 0, 0, 0, 1]),
+        new Uint8Array([
+          (verified ? 0x05 : 0x01) | (synced ? 0x18 : 0),
+          0,
+          0,
+          0,
+          1,
+        ]),
       );
       const clientData = encoder.encode(
         JSON.stringify({

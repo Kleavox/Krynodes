@@ -2,6 +2,7 @@ import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -106,7 +107,7 @@ export function CloudflareSettings() {
           const holders = splitHolders(nodesFor(fingerprint));
           if (holders.length === 0) {
             throw new Error(
-              `This device reaches no online server with agent ${MIN_AGENT_VERSION}.`,
+              `Your passkey reaches no online server with agent ${MIN_AGENT_VERSION}.`,
             );
           }
           return splitSteps(token, holders, crypto.randomUUID(), setId);
@@ -161,9 +162,9 @@ export function CloudflareSettings() {
             Where the Token Is
           </h3>
           <p className="text-sm text-muted-foreground">
-            The token is split into pieces, one for each server this device can
-            reach. Any two pieces rebuild it for a few seconds, and only after a
-            fingerprint. One piece alone is useless.
+            The token is split into pieces, one for each server your passkey
+            reaches. Any two pieces rebuild it for a few seconds, and only after
+            your passkey. One piece alone is useless.
           </p>
           <Holders nodes={nodes} setId={setId} />
           {settings.data?.expiresAt && (
@@ -265,9 +266,7 @@ export function CloudflareSettings() {
             }
             onClick={split}
           >
-            {operate.isPending
-              ? "Waiting for the Fingerprint…"
-              : "Split Across My Servers"}
+            {operate.isPending ? <Waiting /> : "Split Across My Servers"}
           </Button>
         </section>
       </div>

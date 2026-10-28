@@ -187,7 +187,13 @@ export function CheckRow({
     <li className={cn(ROW, !check.enabled && "text-muted-foreground")}>
       <div className="min-w-0">
         <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
-          <span title={TONE_NOTE[live.tone] ?? live.label}>
+          <span
+            title={
+              view.display(check) === "UNTRUSTED"
+                ? "Quarantined. Its results are not used and not counted against uptime."
+                : (TONE_NOTE[live.tone] ?? live.label)
+            }
+          >
             <StatusDot
               tone={live.tone}
               pulse={live.tone === "work" || live.tone === "info"}

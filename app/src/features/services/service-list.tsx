@@ -1,18 +1,20 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { Elapsed } from "@/components/node-status";
 import { RowMenu } from "@/components/row-menu";
 import { SmallLabel, StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useCancelActions, useDevices } from "@/lib/api";
-import { capitalize, nodeState, parseTimestamp } from "@/lib/format";
+import { nodeState, parseTimestamp } from "@/lib/format";
 import { actorOf } from "@/lib/operations";
 import {
   actionText,
   displayName,
   isPending,
+  STATE_LABEL,
   toTarget,
   type ServiceMember,
 } from "@/lib/services";
@@ -33,6 +35,8 @@ const TONE: Record<ServiceState, "ok" | "bad" | "warn" | "idle"> = {
   starting: "warn",
   stopped: "idle",
   failed: "bad",
+  boot: "idle",
+  unneeded: "idle",
 };
 
 const KIND: Record<"stack" | ServiceKind, string> = {
@@ -106,7 +110,7 @@ export function PendingText({
   const devices = useDevices().data?.devices;
   return (
     <span className="font-mono text-xs text-warning">
-      {actionText(action, nodeName)} · {actorOf(action, devices)}
+      <Busy>{actionText(action, nodeName)}</Busy> · {actorOf(action, devices)}
       {action.status === "sent" && (
         <>
           {" · "}
@@ -222,7 +226,7 @@ export function ServiceRows({
               </span>
               {!branch && <KindLabel kind={member.entry.kind} />}
             </span>
-            <StateCell label={capitalize(member.entry.state)} />
+            <StateCell label={STATE_LABEL[member.entry.state]} />
             <span
               className="col-span-2 min-w-0 truncate font-mono text-xs text-muted-foreground empty:hidden md:col-span-1 md:empty:block"
               aria-live="polite"

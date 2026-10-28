@@ -3,6 +3,7 @@ import type {
   CheckKind,
   CheckRecord,
   CheckResult,
+  DockerState,
   Incident,
   NodeRecord,
   QuietSpan,
@@ -17,6 +18,7 @@ import {
   titleCase,
   type CheckDisplay,
 } from "./format";
+import { agentGap } from "./devices";
 import type { WorkSpan } from "./series";
 import { failureText } from "./services";
 
@@ -26,6 +28,18 @@ const KIND_LABEL: Record<CheckKind, string> = {
   SERVICE: "Systemd",
   CONTAINER: "Docker",
 };
+
+export function dockerKindBlocker(
+  nodeId: string,
+  node: Pick<NodeRecord, "name" | "agent_version"> | undefined,
+  docker: DockerState | null | undefined,
+): string | null {
+  if (nodeId === "") return "Choose a Server First";
+  const gap = agentGap(node?.agent_version);
+  if (gap !== null) return gap;
+  if (docker === "missing") return `No Docker on ${node!.name}`;
+  return null;
+}
 
 export const kindLabel = (kind: string) =>
   KIND_LABEL[kind as CheckKind] ?? kind;
@@ -112,7 +126,11 @@ export function checksByServer(
   nodes: NodeRecord[],
   seen: number,
 ): { node: NodeRecord; checks: CheckRecord[] }[] {
-  return nodes.flatMap((node) => {
+  const order = [
+    ...nodes.filter((node) => !node.quarantine),
+    ...nodes.filter((node) => node.quarantine),
+  ];
+  return order.flatMap((node) => {
     const state = nodeState(node, seen);
     const isDown = (check: CheckRecord) =>
       checkDisplayStatus(check.status, state, check.enabled) === "DOWN";
@@ -181,6 +199,18 @@ const RUNNING: Partial<Record<CheckKind, string>> = {
 };
 
 export type LiveTone = "ok" | "bad" | "warn" | "idle" | "off" | "info" | "work";
+
+export type CheckBucket = "down" | "offline" | "quarantined" | "up";
+
+export function checkBucket(
+  display: CheckDisplay,
+  tone: LiveTone,
+): CheckBucket | null {
+  if (display === "UNTRUSTED") return "quarantined";
+  if (display === "DOWN") return tone === "work" ? null : "down";
+  if (display === "OFFLINE") return tone === "off" ? "offline" : null;
+  return display === "UP" ? "up" : null;
+}
 
 const covers = (from: number, to: number, now: number) =>
   from <= now && now < to;

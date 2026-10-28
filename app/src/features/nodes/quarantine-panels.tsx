@@ -1,7 +1,8 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
+import { Busy, Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useRemoveFromTailnet } from "@/features/network/use-tailscale";
@@ -25,12 +26,94 @@ import {
   type ChangeRow,
 } from "@/lib/quarantine";
 import { queryKeys } from "@/lib/query-client";
-import type { NodeRecord, QuarantineView, StoppedStack } from "@/types";
+import type {
+  NodeRecord,
+  NodeWarning,
+  QuarantineView,
+  StoppedStack,
+} from "@/types";
 
 import { useItWasMe, useReshareWithout } from "./use-quarantine";
 
 const SECTION_TITLE =
   "mb-2 flex min-h-8 items-center text-xs font-medium text-muted-foreground";
+
+export function WarningStrip({
+  strip,
+  cutting,
+  confirming,
+  error,
+  onCut,
+  onMine,
+}: {
+  strip: ReturnType<typeof warningStrip>;
+  cutting: boolean;
+  confirming: boolean;
+  error: string | null;
+  onCut: () => void;
+  onMine: () => void;
+}) {
+  return (
+    <section
+      aria-label="Warning"
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2"
+    >
+      <div className="min-w-0 flex-1 text-sm">
+        <p className="font-medium break-words">{strip.title}</p>
+        {strip.detail && (
+          <p className="font-mono text-xs break-all text-muted-foreground">
+            {strip.detail}
+          </p>
+        )}
+        <p className="text-xs text-muted-foreground">{strip.cutoff}</p>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive"
+          disabled={cutting || confirming}
+          onClick={onCut}
+        >
+          {cutting ? <Busy>Working</Busy> : "Cut Off Now"}
+        </Button>
+        <Button size="sm" disabled={cutting || confirming} onClick={onMine}>
+          <KeyRound aria-hidden="true" />
+          {confirming ? <Waiting /> : "It Was Me"}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="basis-full text-sm text-destructive">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function WarningRow({
+  node,
+  warning,
+  now,
+}: {
+  node: NodeRecord;
+  warning: NodeWarning;
+  now: number;
+}) {
+  const cut = useCutOff();
+  const mine = useItWasMe(node);
+  const error = cut.error ?? mine.error;
+  return (
+    <WarningStrip
+      strip={warningStrip(warning, node.name, now)}
+      cutting={cut.isPending}
+      confirming={mine.isPending}
+      error={error ? errorMessage(error) : null}
+      onCut={() => cut.mutate({ nodeId: node.id, id: warning.id })}
+      onMine={() => mine.mutate(warning)}
+    />
+  );
+}
 
 export function WarningStrips({
   node,
@@ -39,56 +122,12 @@ export function WarningStrips({
   node: NodeRecord;
   now: number;
 }) {
-  const cut = useCutOff();
-  const mine = useItWasMe(node);
-  const error = cut.error ?? mine.error;
   if (node.quarantine || !node.warnings?.length) return null;
   return (
     <div className="mb-5 space-y-2">
-      {node.warnings.map((warning) => {
-        const strip = warningStrip(warning, node.name, now);
-        return (
-          <section
-            key={warning.id}
-            aria-label="Warning"
-            className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2"
-          >
-            <div className="min-w-0 flex-1 text-sm">
-              <p className="font-medium break-words">{strip.title}</p>
-              {strip.detail && (
-                <p className="font-mono text-xs break-all text-muted-foreground">
-                  {strip.detail}
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground">{strip.cutoff}</p>
-            </div>
-            <div className="flex shrink-0 gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-destructive"
-                disabled={cut.isPending || mine.isPending}
-                onClick={() => cut.mutate({ nodeId: node.id, id: warning.id })}
-              >
-                {cut.isPending ? "Working…" : "Cut Off Now"}
-              </Button>
-              <Button
-                size="sm"
-                disabled={cut.isPending || mine.isPending}
-                onClick={() => mine.mutate(warning)}
-              >
-                {!mine.isPending && <Fingerprint aria-hidden="true" />}
-                {mine.isPending ? "Waiting for the Fingerprint…" : "It Was Me"}
-              </Button>
-            </div>
-          </section>
-        );
-      })}
-      {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {errorMessage(error)}
-        </p>
-      )}
+      {node.warnings.map((warning) => (
+        <WarningRow key={warning.id} node={node} warning={warning} now={now} />
+      ))}
     </div>
   );
 }
@@ -199,15 +238,15 @@ function ChangeAction({
         disabled={remove.isPending}
         onClick={() => remove.mutate(node.id)}
       >
-        {!remove.isPending && <Fingerprint aria-hidden="true" />}
-        {remove.isPending ? "Waiting for the Fingerprint…" : row.action.label}
+        <KeyRound aria-hidden="true" />
+        {remove.isPending ? <Waiting /> : row.action.label}
       </Button>
     );
   }
   if (busy) {
     return (
       <span className="font-mono text-xs text-muted-foreground">
-        Resharing…
+        <Busy>Resharing</Busy>
       </span>
     );
   }
@@ -226,10 +265,8 @@ function ChangeAction({
       title={why ?? undefined}
       onClick={() => reshare.run(addresses)}
     >
-      {!reshare.operate.isPending && <Fingerprint aria-hidden="true" />}
-      {reshare.operate.isPending
-        ? "Waiting for the Fingerprint…"
-        : row.action.label}
+      <KeyRound aria-hidden="true" />
+      {reshare.operate.isPending ? <Waiting /> : row.action.label}
     </Button>
   );
 }
@@ -354,8 +391,8 @@ export function StoppedStackNote({
               })
             }
           >
-            {!start.isPending && <Fingerprint aria-hidden="true" />}
-            {start.isPending ? "Waiting for the Fingerprint…" : "Start"}
+            <KeyRound aria-hidden="true" />
+            {start.isPending ? <Waiting /> : "Start"}
           </Button>
         </div>
       </div>

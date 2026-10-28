@@ -1,4 +1,4 @@
-import { agentHasFeatures } from "@krynodes/protocol/versions";
+import { agentSupported } from "@krynodes/protocol/versions";
 import { useEffect, useState } from "react";
 
 import { Elapsed } from "@/components/node-status";
@@ -246,7 +246,7 @@ export function SignInDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const connected = !!useTailnet().data?.connected;
-  const keyed = connected && agentHasFeatures(node.agent_version);
+  const keyed = connected && agentSupported(node.agent_version);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={SHEET}>

@@ -104,9 +104,11 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		}
 		return Result{ID: request.ID, OK: true, Output: "Krynodes leaves this server in 30 seconds; its apps keep running", FinishedAt: e.stamp()}, false
 	case request.Name == "reboot-window" && (request.Action == "apply" || request.Action == "undo"):
-		return e.rebootSetting(request), false
+		return e.rebootSetting(ctx, request), false
 	case server && request.Action == "accept":
 		return e.accept(request), false
+	case server && request.Action == "admin":
+		return e.adminExpect(request), false
 	case request.Name == "tailscale" && request.Action == "block":
 		return e.blockTailnet(ctx, request), false
 	case request.Name == "tailscale" && request.Action == "unblock":
@@ -133,7 +135,7 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action)), false
 }
 
-func (e Executor) rebootSetting(request Request) Result {
+func (e Executor) rebootSetting(ctx context.Context, request Request) Result {
 	command, err := e.authorize(request)
 	if err != nil {
 		return e.refuse(request.ID, err)
@@ -147,6 +149,9 @@ func (e Executor) rebootSetting(request Request) Result {
 	hour, err := strconv.Atoi(command.Args["hour"])
 	if err != nil || hour < 0 || hour > 23 {
 		return e.refuse(request.ID, errors.New("the hour must be 0 to 23"))
+	}
+	if err := recipes.RestartMarked(ctx, e.recipeEnv()); err != nil {
+		return e.refuse(request.ID, err)
 	}
 	if err := writeJSON(e.StateDir, "reboot.json", rebootWindow{Hour: &hour}, 0o640); err != nil {
 		return e.failed(request, err, "")

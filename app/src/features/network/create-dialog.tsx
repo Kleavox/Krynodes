@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  agentHasFeatures,
+  agentSupported,
   dnsName,
   NETWORK,
   type NetworkInspect,
@@ -146,7 +146,7 @@ function Picker({
   const waiting = new Map(view.waiting.map((entry) => [entry.nodeId, entry]));
   const candidates = nodes.filter((node) => !taken.has(node.id));
   const eligible = (node: NodeRecord) =>
-    presence[node.id]?.online === true && agentHasFeatures(node.agent_version);
+    presence[node.id]?.online === true && agentSupported(node.agent_version);
   const [picked, setPicked] = useState<string[]>(() =>
     preset
       ? [preset]
@@ -374,7 +374,7 @@ function Picker({
                     : candidateState(node.agent_version, rowsOf(node.id));
             const on = picked.includes(node.id);
             const gets = on ? addressOf(node.id) : null;
-            const old = !agentHasFeatures(node.agent_version);
+            const old = !agentSupported(node.agent_version);
             const updatable =
               old &&
               release !== null &&

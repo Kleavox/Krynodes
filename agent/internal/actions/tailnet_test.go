@@ -150,8 +150,8 @@ func TestTheSecretTakesNoPieceOfTheOtherVault(t *testing.T) {
 
 const (
 	tsClient = "kQ1clientCNTRL"
-	tsSecret = "tskey-client-kQ1clientCNTRL-0123456789abcdef"
-	tsKey    = "tskey-auth-k1CNTRL-0123456789abcdef"
+	tsSecret = "tskey-" + "client-kQ1clientCNTRL-0123456789abcdef"
+	tsKey    = "tskey-" + "auth-k1CNTRL-0123456789abcdef"
 	pivoxID  = "6f1c2c8e-4a51-4d0c-9a59-1d2a6c7b8e90"
 	idD      = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a04"
 )

@@ -7,6 +7,7 @@ import {
   useSearchParams,
 } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ import { agentState } from "@/lib/agent";
 import { canRestartServer } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import {
-  featureNeeded,
+  agentNeeded,
   packagesBlocker,
   packagesHeader,
   runningPackages,
@@ -113,7 +114,7 @@ export function PackagesPage() {
     (jobs.length > 0 ? "Waits until the running job finishes" : null);
   const checking =
     refresh.isPending || jobs.some((job) => job.action === "refresh");
-  const needed = featureNeeded(node);
+  const needed = agentNeeded(node);
   const release = overview.data.agentRelease.version;
   const updatable =
     release !== null &&
@@ -152,7 +153,7 @@ export function PackagesPage() {
                   })
                 }
               >
-                {checking ? "Checking…" : "Check for Updates"}
+                {checking ? <Busy>Checking</Busy> : "Check for Updates"}
               </Button>
               <Button
                 size="sm"
@@ -199,7 +200,7 @@ export function PackagesPage() {
         <p className={notice}>
           {node.name} is not trusted yet. Trust it from{" "}
           <Link to="/devices" className="underline underline-offset-4">
-            Trusted Devices
+            Passkeys
           </Link>{" "}
           before changing its packages.
         </p>

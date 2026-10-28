@@ -1,3 +1,4 @@
+import { Busy } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -77,7 +78,7 @@ function ActionForm({
             run.mutate({ action, targets: [target] }, { onSuccess: onClose })
           }
         >
-          {run.isPending ? "Working…" : verb(action)}
+          {run.isPending ? <Busy>Working</Busy> : verb(action)}
         </Button>
       </AlertDialogFooter>
     </AlertDialogContent>

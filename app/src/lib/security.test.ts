@@ -14,6 +14,7 @@ import {
   recommended,
   shownFindings,
   toUtcHour,
+  updatesUntil,
   worst,
 } from "./security";
 
@@ -29,10 +30,10 @@ const report = (over: Partial<SecurityReport> = {}): SecurityReport => ({
 describe("the protections in one line", () => {
   it("counts what is on, on outside Krynodes and off", () => {
     expect(protectionsText(report())).toBe(
-      "Protections · 3 on outside Krynodes · 2 off",
+      "Protections · 3 on outside Krynodes · 3 off",
     );
     expect(protectionsText(report({ recipes: ["fail2ban"] }))).toBe(
-      "Protections · 1 on · 2 on outside Krynodes · 2 off",
+      "Protections · 1 on · 2 on outside Krynodes · 3 off",
     );
   });
 });
@@ -86,6 +87,11 @@ describe("the security check on screen", () => {
         false,
         "First let root or a sudo user log in over SSH with a key.",
       ],
+      [
+        "no-root-login",
+        false,
+        "First let a sudo user other than root log in over SSH with a key.",
+      ],
       ["fail2ban", true, null],
       ["firewall", false, null],
     ]);
@@ -114,6 +120,7 @@ describe("the security check on screen", () => {
       ["security-updates", true, false],
       ["reboot-window", false, false],
       ["ssh-keys-only", false, false],
+      ["no-root-login", false, false],
       ["fail2ban", false, true],
       ["firewall", false, true],
       ["free-port-53", false, false],
@@ -242,43 +249,38 @@ describe("protections on other systems", () => {
   const rocky = {
     family: "rhel" as const,
     name: "Rocky Linux 11.0",
-    verified: false,
-    checked: "8 to 10",
+    id: "rocky",
+    version: "11",
   };
 
-  it("says when protections cannot run or must be confirmed", () => {
+  it("says when protections cannot run", () => {
     expect(protectionsNotice(report())).toBeNull();
     expect(
       protectionsNotice(
         report({
-          platform: {
-            family: null,
-            name: "Alpine Linux 3.20.3",
-            verified: false,
-            checked: "",
-          },
+          platform: { family: null, name: "Alpine Linux 3.20.3" },
         }),
       ),
     ).toBe("Protections support Debian, Ubuntu and RHEL-family servers.");
+    expect(protectionsNotice(report({ platform: rocky }))).toBeNull();
+  });
+
+  it("says until when the system gets updates", () => {
+    expect(updatesUntil(report())).toBeNull();
     expect(
-      protectionsNotice(
-        report({
-          platform: rocky,
-          findings: [
-            {
-              id: "os-unverified",
-              severity: "note",
-              detail:
-                "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10).",
-            },
-          ],
-        }),
+      updatesUntil(report({ platform: { ...rocky, endOfLife: "2028-06-30" } })),
+    ).toBe("Updates until 30 Jun 2028");
+    expect(
+      updatesUntil(report({ platform: { ...rocky, endOfLife: null } })),
+    ).toBe("Updates until --");
+    expect(updatesUntil(report({ platform: rocky }))).toBe("Updates until --");
+  });
+
+  it("says nothing about updates for an agent that does not name its system", () => {
+    expect(
+      updatesUntil(
+        report({ platform: { family: "debian", name: "Debian GNU/Linux 12" } }),
       ),
-    ).toBe(
-      "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10). Turning a protection on asks you to confirm.",
-    );
-    expect(
-      protectionsNotice(report({ platform: { ...rocky, verified: true } })),
     ).toBeNull();
   });
 
@@ -294,8 +296,6 @@ describe("what each protection does, per system", () => {
       platform: {
         family: "rhel",
         name: "Rocky Linux 9.4",
-        verified: true,
-        checked: "8 to 10",
       },
     });
     expect(protectionDetail("security-updates", report())).toBe(
@@ -326,6 +326,81 @@ describe("what each protection does, per system", () => {
     );
     expect(protectionDetail("ssh-keys-only", report())).toBe(
       "SSH stops accepting passwords; keys keep working. If you get locked out, Krynodes can turn passwords back on.",
+    );
+  });
+});
+
+describe("no root login", () => {
+  const keyed = (detail: string) =>
+    report({
+      findings: [
+        { id: "ssh-keys", severity: "note", detail },
+        {
+          id: "root-login",
+          severity: "note",
+          detail: "Root can log in over SSH.",
+        },
+      ],
+    });
+
+  it("comes after SSH keys only and waits for a sudo user other than root", () => {
+    const choices = recipeChoices(keyed("SSH keys for root"));
+    const ids = choices.map((choice) => choice.id);
+    expect(ids.indexOf("no-root-login")).toBe(ids.indexOf("ssh-keys-only") + 1);
+    const choice = choices.find((each) => each.id === "no-root-login")!;
+    expect(choice).toMatchObject({
+      title: "No root login",
+      applied: false,
+      outside: false,
+      blocked:
+        "First let a sudo user other than root log in over SSH with a key.",
+    });
+    expect(
+      recipeChoices(keyed("SSH keys for musyaf, root")).find(
+        (each) => each.id === "no-root-login",
+      )!.blocked,
+    ).toBeNull();
+    expect(recommended(keyed("SSH keys for musyaf, root"))).not.toContain(
+      "no-root-login",
+    );
+    expect(
+      recipeChoices(
+        report({
+          findings: [
+            { id: "ssh-keys", severity: "note", detail: "SSH keys for musyaf" },
+          ],
+        }),
+      ).find((each) => each.id === "no-root-login")!.outside,
+    ).toBe(true);
+  });
+
+  it("says on its row who keeps logging in, until it is on", () => {
+    const row = (findings: string, recipes: string[] = []) =>
+      recipeChoices({ ...keyed(findings), recipes }).find(
+        (each) => each.id === "no-root-login",
+      )!;
+    expect(row("SSH keys for musyaf, root").hint).toBe(
+      "SSH stops letting root log in. musyaf keeps logging in with a key and uses sudo. If you get locked out, Krynodes can turn root login back on.",
+    );
+    expect(row("SSH keys for musyaf, root", ["no-root-login"])).toMatchObject({
+      applied: true,
+      hint: null,
+    });
+  });
+
+  it("names who keeps logging in", () => {
+    expect(
+      protectionDetail("no-root-login", keyed("SSH keys for musyaf, root")),
+    ).toBe(
+      "SSH stops letting root log in. musyaf keeps logging in with a key and uses sudo. If you get locked out, Krynodes can turn root login back on.",
+    );
+    expect(
+      protectionDetail(
+        "no-root-login",
+        keyed("SSH keys for budi, musyaf, root"),
+      ),
+    ).toBe(
+      "SSH stops letting root log in. budi and musyaf keep logging in with a key and use sudo. If you get locked out, Krynodes can turn root login back on.",
     );
   });
 });

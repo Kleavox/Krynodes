@@ -9,14 +9,14 @@ interface CheckChange {
 }
 
 const COLOR = {
-  bg: "#0c0c0e",
-  card: "#141417",
-  border: "#27272d",
-  fg: "#ededf0",
-  muted: "#8a8a94",
+  bg: "#0c0c10",
+  card: "#14141a",
+  border: "#282831",
+  fg: "#ececf1",
+  muted: "#92929f",
   primary: "#8b7bff",
-  destructive: "#f0616d",
-  warning: "#f5b544",
+  destructive: "#ed7477",
+  warning: "#ebba62",
 };
 
 const SANS =
@@ -80,7 +80,7 @@ function render(layout: Layout, origin: string): string {
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px">
             <tr>
               <td style="padding:0 4px 20px;${SANS};font-size:15px;font-weight:600;color:${COLOR.fg}">
-                <span style="display:inline-block;width:10px;height:10px;margin-right:8px;border-radius:3px;background:${COLOR.primary};vertical-align:middle"></span>Krynodes
+                Krynodes
               </td>
             </tr>
             <tr>
@@ -307,7 +307,7 @@ export async function sendProposalEmail(
   message: { title: string; openedBy: string },
 ): Promise<void> {
   const detail =
-    "A trusted device opened this change. It needs more approvals before it reaches your servers.";
+    "A trusted passkey opened this change. It needs more approvals before it reaches your servers.";
   await deliver(env, {
     title: `[Krynodes] Waiting for approval: ${message.title}`,
     preheader: detail,
@@ -319,7 +319,7 @@ export async function sendProposalEmail(
       ["Opened by", message.openedBy],
     ],
     action: {
-      label: "Open Trusted devices",
+      label: "Open Passkeys",
       href: new URL("/devices", env.PUBLIC_ORIGIN).toString(),
     },
   });
@@ -421,8 +421,15 @@ function warningParts(mail: WarningMail): {
       };
     case "port":
       return {
-        heading: "a port was opened outside Krynodes",
-        what: `${value("port")} was opened on a public address and not through Krynodes. If you did not open it`,
+        ...(value("port").includes("-")
+          ? {
+              heading: "temporary UDP ports were opened outside Krynodes",
+              what: `${value("process")} uses temporary UDP ports (${value("port")}) on a public address and not through Krynodes. If you did not start it`,
+            }
+          : {
+              heading: "a port was opened outside Krynodes",
+              what: `${value("port")} was opened on a public address and not through Krynodes. If you did not open it`,
+            }),
         rows: [
           ["Port", value("port")],
           ["Process", value("process")],
@@ -471,7 +478,7 @@ export async function sendWarningEmail(
     ],
     action: serverLink(env, mail.nodeId, mail.nodeName),
     after:
-      "It Was Me is on the server page and asks for your fingerprint. Nothing in this mail can answer for you.",
+      "It Was Me is on the server page and asks for your passkey. Nothing in this mail can answer for you.",
   });
 }
 
@@ -511,7 +518,7 @@ export async function sendQuarantineEmail(
       ["Change", change],
     ],
     action: serverLink(env, mail.nodeId, mail.nodeName),
-    after: `Reinstall ${mail.nodeName} if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your fingerprint.`,
+    after: `Reinstall ${mail.nodeName} if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your passkey.`,
   });
 }
 
@@ -541,7 +548,7 @@ export async function sendStoppedEmail(
     ],
     action: serverLink(env, mail.nodeId, mail.nodeName),
     after:
-      "Change its secrets before you start it again. Start asks for your fingerprint.",
+      "Change its secrets before you start it again. Start asks for your passkey.",
   });
 }
 
@@ -595,7 +602,7 @@ export async function sendTailnetPolicyEmail(
   env: Env,
   mail: TailnetPolicyMail,
 ): Promise<void> {
-  const heading = "Your Tailscale policy was changed without your fingerprint";
+  const heading = "Your Tailscale policy was changed without your passkey";
   const intro =
     "The change was made with Krynodes' credential, and you signed no change in Krynodes. Someone else has the credential.";
   const word = mail.block ? "rule" : "line";

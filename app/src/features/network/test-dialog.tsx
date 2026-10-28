@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { NetworkTest } from "@krynodes/protocol";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -68,14 +69,12 @@ export function TestDialog({
   const now = useNow(1_000);
   const reports = useServices().data?.nodes ?? [];
   const keys = useNetworkKeys(view.members);
-  const fix = useSignChange();
   const [run, setRun] = useState(0);
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [current, setCurrent] = useState<{ key: string; at: number } | null>(
     null,
   );
-  const [fixed, setFixed] = useState<string | null>(null);
-  const [fixing, setFixing] = useState<string | null>(null);
+  const [fixed, setFixed] = useState<Set<string>>(new Set());
   const sent = useRef<string | null>(null);
   const alive = useRef(true);
   const mtu = view.network?.mtu ?? 1420;
@@ -224,7 +223,11 @@ export function TestDialog({
               <section key={key} className="space-y-2">
                 {!single && <PairName pair={pair} />}
                 <p className="text-sm text-muted-foreground">
-                  {current?.key === key ? "Testing…" : "Waiting its turn…"}
+                  {current?.key === key ? (
+                    <Busy>Testing</Busy>
+                  ) : (
+                    <Busy>Waiting its turn</Busy>
+                  )}
                 </p>
               </section>
             );
@@ -256,36 +259,23 @@ export function TestDialog({
                   </p>
                 )}
                 {likely.fix && (
-                  <div className="mt-2">
-                    {fixed === key ? (
-                      <p role="status" className="text-xs text-success">
-                        Sent. Test again once the servers have it.
-                      </p>
-                    ) : (
-                      <SignButton
-                        label={fixLabel(likely.fix)}
-                        pending={fix.isPending && fixing === key}
-                        disabled={fix.isPending}
-                        onClick={() => {
-                          setFixing(key);
-                          fix.mutate(
-                            {
-                              ...changeFor(pair, likely.fix!),
-                              detail: likely.text,
-                              signers: keys.signers,
-                            },
-                            { onSuccess: () => setFixed(key) },
-                          );
-                        }}
-                      />
-                    )}
-                  </div>
+                  <FixRow
+                    label={fixLabel(likely.fix)}
+                    change={{
+                      ...changeFor(pair, likely.fix),
+                      detail: likely.text,
+                      signers: keys.signers,
+                    }}
+                    fixed={fixed.has(key)}
+                    onFixed={() =>
+                      setFixed((current) => new Set(current).add(key))
+                    }
+                  />
                 )}
               </div>
             </section>
           );
         })}
-        <Said text={fix.error?.message ?? null} />
         <DialogFooter>
           <DialogClose asChild>
             <Button variant="outline">Close</Button>
@@ -294,16 +284,65 @@ export function TestDialog({
             disabled={running || pairs.length === 0}
             onClick={() => {
               setOutcomes({});
-              setFixed(null);
-              fix.reset();
+              setFixed(new Set());
               setRun((count) => count + 1);
             }}
           >
-            {running ? "Testing…" : "Test Again"}
+            {running ? <Busy>Testing</Busy> : "Test Again"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function FixLine({
+  label,
+  fixed,
+  pending,
+  error,
+  onFix,
+}: {
+  label: string;
+  fixed: boolean;
+  pending: boolean;
+  error: string | null;
+  onFix: () => void;
+}) {
+  return (
+    <div className="mt-2 space-y-2">
+      {fixed ? (
+        <p role="status" className="text-xs text-success">
+          Sent. Test again once the servers have it.
+        </p>
+      ) : (
+        <SignButton label={label} pending={pending} onClick={onFix} />
+      )}
+      <Said text={error} />
+    </div>
+  );
+}
+
+function FixRow({
+  label,
+  change,
+  fixed,
+  onFixed,
+}: {
+  label: string;
+  change: Change;
+  fixed: boolean;
+  onFixed: () => void;
+}) {
+  const fix = useSignChange();
+  return (
+    <FixLine
+      label={label}
+      fixed={fixed}
+      pending={fix.isPending}
+      error={fix.error?.message ?? null}
+      onFix={() => fix.mutate(change, { onSuccess: onFixed })}
+    />
   );
 }
 

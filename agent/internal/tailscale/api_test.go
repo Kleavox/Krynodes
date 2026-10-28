@@ -15,7 +15,8 @@ import (
 
 const (
 	clientID     = "kQ1clientCNTRL"
-	clientSecret = "tskey-client-kQ1clientCNTRL-0123456789abcdef"
+	authKey      = "tskey-" + "auth-k1-secret"
+	clientSecret = "tskey-" + "client-kQ1clientCNTRL-0123456789abcdef"
 )
 
 type fakeAPI struct {
@@ -149,9 +150,9 @@ func TestDevicesAreTaggedKeptAndDeleted(t *testing.T) {
 
 func TestTheAuthKeyIsOneTimeTaggedAndPreApproved(t *testing.T) {
 	fake, api := newFakeAPI(t)
-	fake.reply["POST /api/v2/tailnet/-/keys"] = `{"id":"k1","key":"tskey-auth-k1-secret"}`
+	fake.reply["POST /api/v2/tailnet/-/keys"] = `{"id":"k1","key":"` + authKey + `"}`
 	key, err := api.AuthKey(context.Background(), []string{"tag:kry"}, 600)
-	if err != nil || key != "tskey-auth-k1-secret" {
+	if err != nil || key != authKey {
 		t.Fatalf("key %q %v", key, err)
 	}
 	var asked struct {

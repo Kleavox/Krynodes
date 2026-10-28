@@ -36,6 +36,7 @@ interface Reply {
     core: boolean;
     fingerprint: string;
     verifies: boolean | null;
+    synced: boolean | null;
   }[];
   passphrase?: { salt: string; iterations: number; publicKey: string } | null;
 }
@@ -49,7 +50,7 @@ const sha256 = async (bytes: Uint8Array<ArrayBuffer>) =>
 const encode = (value: unknown) =>
   toB64url(new TextEncoder().encode(JSON.stringify(value)));
 
-function setup(agent = "0.6.14") {
+function setup(agent = "0.7.0") {
   const { db, sqlite } = createTestDb();
   for (const id of [A, B, C]) {
     seedNode(sqlite, { id });
@@ -174,13 +175,14 @@ function setup(agent = "0.6.14") {
   const approval = async (
     passkey: TestPasskey,
     text: string,
-    options: { verified?: boolean; proof?: string } = {},
+    options: { verified?: boolean; proof?: string; synced?: boolean } = {},
   ) => ({
     ...(await passkey.sign({
       challenge: await sha256(fromB64url(text)),
       origin: ORIGIN,
       rpId: RP,
       verified: options.verified ?? true,
+      synced: options.synced ?? false,
     })),
     ...(options.proof ? { proof: options.proof } : {}),
   });
@@ -435,6 +437,40 @@ describe("proposals", () => {
     ).toHaveLength(2);
     expect(t.mail.map((message) => message.subject)).toEqual([
       "[Krynodes] Waiting for approval: Admit Tablet",
+    ]);
+  });
+
+  it("marks each approving passkey from its own flags", async () => {
+    const t = setup();
+    const [laptop, phone, spare, tablet] = await fleet(5).then((keys) => [
+      keys[0],
+      keys[1],
+      keys[4],
+      keys[2],
+    ]);
+    for (const key of [laptop!, phone!, spare!, tablet!]) await t.register(key);
+    await t.report(A, [laptop!, phone!, spare!], [laptop!, phone!]);
+    const text = t.change({
+      core: [laptop!, phone!, spare!, tablet!],
+      access: { [A]: [laptop!, phone!] },
+    });
+    const opened = await reply(
+      t.open(text, await t.approval(laptop!, text, { synced: true })),
+    );
+    const done = await t.call("POST", `/api/proposals/${opened.id}/approvals`, {
+      approval: await t.approval(phone!, text),
+    });
+    expect(await reply(done)).toMatchObject({ status: "applied" });
+    const synced = (id: string) =>
+      (
+        t.sqlite.prepare("SELECT synced FROM devices WHERE id = ?").get(id) as {
+          synced: number | null;
+        }
+      ).synced;
+    expect([synced(laptop!.id), synced(phone!.id), synced(spare!.id)]).toEqual([
+      1,
+      0,
+      null,
     ]);
   });
 
@@ -733,6 +769,26 @@ describe("devices", () => {
     ]);
   });
 
+  it("lists whether a passkey is synced, and -- when it was never told", async () => {
+    const t = setup();
+    const [laptop, phone] = await fleet(2);
+    await t.call("POST", "/api/devices", {
+      id: laptop!.id,
+      name: laptop!.name,
+      alg: laptop!.alg,
+      publicKey: laptop!.publicKey,
+      verifies: true,
+      synced: true,
+    });
+    await t.register(phone!);
+    const body = await reply(t.call("GET", "/api/devices"));
+    expect(
+      Object.fromEntries(
+        body.devices!.map((device) => [device.id, device.synced]),
+      ),
+    ).toEqual({ [laptop!.id]: true, [phone!.id]: null });
+  });
+
   it("forgets a device that never joined the core, never a core device", async () => {
     const t = setup();
     const [laptop, phone] = await fleet(2);
@@ -849,7 +905,7 @@ describe("fingerprint rule", () => {
     [C]: keys,
   });
 
-  async function touchAndPhone(agent = "0.6.14", requireUv = false) {
+  async function touchAndPhone(agent = "0.7.0", requireUv = false) {
     const t = setup(agent);
     const [laptop, phone] = await fleet(2);
     t.touchOnly(laptop!);
@@ -867,7 +923,7 @@ describe("fingerprint rule", () => {
     return { t, laptop: laptop!, phone: phone! };
   }
 
-  it("needs agent 0.6.14 on every server to change the devices or the rule", async () => {
+  it("needs agent 0.7.0 on every server to change the devices or the rule", async () => {
     const { t, phone } = await touchAndPhone("0.4.1");
     const text = t.change({
       core: [phone],
@@ -878,7 +934,7 @@ describe("fingerprint rule", () => {
     expect(response.status).toBe(422);
     expect(await reply(response)).toMatchObject({
       code: "NEEDS_AGENT",
-      message: expect.stringContaining("0.6.14"),
+      message: expect.stringContaining("0.7.0"),
     });
   });
 
@@ -893,7 +949,7 @@ describe("fingerprint rule", () => {
   });
 
   it("refuses a passphrase once fingerprints are required", async () => {
-    const { t, phone, laptop } = await touchAndPhone("0.6.14", true);
+    const { t, phone, laptop } = await touchAndPhone("0.7.0", true);
     const passphrase = await testPassphrase();
     const text = t.change({
       access: everywhere([laptop, phone]),
@@ -905,7 +961,7 @@ describe("fingerprint rule", () => {
   });
 
   it("refuses to admit or register a device without a fingerprint once required", async () => {
-    const { t, phone } = await touchAndPhone("0.6.14", true);
+    const { t, phone } = await touchAndPhone("0.7.0", true);
     for (const id of [A, B, C])
       await t.report(id, [phone], [phone], 1, false, true);
     const [, , tablet, helper] = await fleet(4);
@@ -932,7 +988,7 @@ describe("fingerprint rule", () => {
   });
 
   it("gives a new server the rule with its first trust", async () => {
-    const { t, phone } = await touchAndPhone("0.6.14", true);
+    const { t, phone } = await touchAndPhone("0.7.0", true);
     for (const id of [A, B])
       await t.report(id, [phone], [phone], 1, false, true);
     t.sqlite

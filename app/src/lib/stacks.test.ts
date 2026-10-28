@@ -10,13 +10,17 @@ import type {
 } from "../types";
 import { actionText, outcomeText } from "./services";
 import {
+  containerNameProblem,
+  containerNames,
   containersOf,
   daysLeft,
   deployBlocker,
   foldedText,
   groupStacks,
   moveBlocker,
+  moveClash,
   moveConfirmed,
+  nameOwner,
   newStackBlocker,
   ownFolder,
   removedStacks,
@@ -27,7 +31,9 @@ import {
   stackCommands,
   stackNameProblem,
   stackOf,
+  stackSlug,
   stackState,
+  sameTitle,
 } from "./stacks";
 
 describe("ports a Contained stack may reach on its server", () => {
@@ -57,7 +63,7 @@ describe("ports a Contained stack may reach on its server", () => {
   });
 });
 
-const node = (id: string, name: string, agent = "0.6.14") =>
+const node = (id: string, name: string, agent = "0.7.0") =>
   ({
     id,
     name,
@@ -206,7 +212,13 @@ describe("stacks", () => {
         ...listmonk!.members[0]!,
         node: node("n1", "Callisto", "0.4.1"),
       }),
-    ).toBe("Needs agent 0.6.14");
+    ).toBe("Needs agent 0.7.0");
+    expect(
+      deployBlocker({
+        ...listmonk!.members[0]!,
+        node: { ...node("n1", "Callisto", "0.7.0"), agent_version: null },
+      }),
+    ).toBe("Waiting for First Report");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
@@ -284,7 +296,7 @@ describe("stacks", () => {
 });
 
 describe("stack commands", () => {
-  const member = (running: number, total: number, agent = "0.6.14") => ({
+  const member = (running: number, total: number, agent = "0.7.0") => ({
     node: node("n1", "pivox", agent),
     stack: stack("kuma", { running, total }),
     trusted: true,
@@ -322,22 +334,28 @@ describe("stack commands", () => {
       docker,
     });
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("ready")),
+      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("ready")),
     ).toBeNull();
     expect(newStackBlocker(node("n1", "pivox", "0.4.1"), entry("ready"))).toBe(
-      "Needs agent 0.6.14",
+      "Needs agent 0.7.0",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("missing")),
+      newStackBlocker(
+        { ...node("n1", "pivox", "0.7.0"), agent_version: null },
+        entry("ready"),
+      ),
+    ).toBe("Waiting for First Report");
+    expect(
+      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("missing")),
     ).toBe("No Docker");
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), entry("no-compose")),
+      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("no-compose")),
     ).toBe("Docker without Compose");
-    expect(newStackBlocker(node("n1", "pivox", "0.6.14"), entry(null))).toBe(
+    expect(newStackBlocker(node("n1", "pivox", "0.7.0"), entry(null))).toBe(
       "Docker Not Reported Yet",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.6.14"), {
+      newStackBlocker(node("n1", "pivox", "0.7.0"), {
         ...entry("ready"),
         trust: null,
       }),
@@ -346,16 +364,225 @@ describe("stack commands", () => {
 
   it("checks a stack name the way the server does", () => {
     expect(stackNameProblem("uptime-kuma", [])).toBeNull();
+    expect(stackNameProblem("AdGuard Home", [])).toBeNull();
     expect(stackNameProblem("", [])).toBe("Give the stack a name.");
-    expect(stackNameProblem("Kuma", [])).toBe(
-      "Use lowercase letters, digits, - and _, starting with a letter or digit.",
+    expect(stackNameProblem("!!!", [])).toBe(
+      "Use at least one letter or digit.",
     );
-    expect(stackNameProblem("kuma", ["kuma"])).toBe(
+    expect(stackNameProblem("k".repeat(65), [])).toBe(
+      "Keep the name to 64 characters.",
+    );
+    expect(stackNameProblem("Kuma", ["kuma"])).toBe(
       "This server already runs a stack named kuma.",
     );
     expect(stackNameProblem("kuma", [], ["kuma"])).toBe(
       "A stack named kuma waits in Removed. Restore it or delete it permanently first.",
     );
+  });
+});
+
+describe("stack and container names", () => {
+  const one = "services:\n  adguard:\n    image: adguard/adguardhome\n";
+  const three =
+    "services:\n  broker:\n    image: redis:7\n  db:\n    image: postgres:17\n  webserver:\n    image: paperless\n";
+
+  it("turns a display name into the folder and project name", () => {
+    expect(stackSlug("AdGuard Home")).toBe("adguard-home");
+    expect(stackSlug("  Uptime   Kuma! ")).toBe("uptime-kuma");
+    expect(stackSlug("my_app")).toBe("my_app");
+    expect(stackSlug("Pi-hole · DNS")).toBe("pi-hole-dns");
+    expect(stackSlug("!!!")).toBe("");
+    const long = stackSlug(`${"a".repeat(62)} b`);
+    expect(long.length).toBeLessThanOrEqual(63);
+    expect(long.endsWith("-")).toBe(false);
+  });
+
+  it("names one container after the stack and several after their services", () => {
+    expect(containerNames(one, "adguard-home")).toEqual([
+      { service: "adguard", suggested: "adguard-home", value: "adguard-home" },
+    ]);
+    expect(containerNames(three, "paperless").map((row) => row.value)).toEqual([
+      "paperless-broker",
+      "paperless-db",
+      "paperless-webserver",
+    ]);
+    expect(containerNames("", "paperless")).toEqual([]);
+    expect(containerNames("services: [", "paperless")).toEqual([]);
+  });
+
+  it("starts from the file's own name, then the saved one, then what was typed", () => {
+    const own = `${three}    container_name: paperless\n`;
+    expect(containerNames(own, "paperless")[2]!.value).toBe("paperless");
+    expect(
+      containerNames(three, "paperless", { db: "postgres" })[1]!.value,
+    ).toBe("postgres");
+    const typed = containerNames(
+      three,
+      "paperless",
+      {},
+      {
+        db: "pg",
+        broker: "",
+      },
+    );
+    expect(typed.map((row) => row.value)).toEqual([
+      "paperless-broker",
+      "pg",
+      "paperless-webserver",
+    ]);
+  });
+
+  it("keeps a name typed over the file's own until the file's own changes", () => {
+    const own =
+      "services:\n  web:\n    image: nginx\n    container_name: site\n";
+    const saved = { web: "blog-web" };
+    expect(containerNames(own, "blog", saved, {}, own)[0]!.value).toBe(
+      "blog-web",
+    );
+    expect(
+      containerNames(own.replace("site", "landing"), "blog", saved, {}, own)[0]!
+        .value,
+    ).toBe("landing");
+    expect(
+      containerNames(
+        "services:\n  web:\n    image: nginx\n",
+        "blog",
+        saved,
+        {},
+        own,
+      )[0]!.value,
+    ).toBe("blog");
+  });
+
+  it("leaves a service with copies to Docker's numbers", () => {
+    const copies = three.replace(
+      "image: paperless\n",
+      "image: paperless\n    deploy:\n      replicas: 2\n",
+    );
+    expect(
+      containerNames(copies, "paperless").map((row) => row.service),
+    ).toEqual(["broker", "db"]);
+  });
+
+  it("says what is wrong with a container name", () => {
+    const rows = containerNames(
+      three,
+      "paperless",
+      {},
+      {
+        broker: "redis",
+        db: "redis",
+        webserver: "my web",
+      },
+    );
+    expect(containerNameProblem(rows, 2, () => null)).toBe(
+      "Use letters, digits, dashes, dots and underscores, starting with a letter or digit.",
+    );
+    const fine = containerNames(three, "paperless");
+    const free = () => null;
+    expect(containerNameProblem(rows, 0, free)).toBe(
+      "Another container in this stack has this name.",
+    );
+    expect(containerNameProblem(fine, 0, free)).toBeNull();
+    expect(
+      containerNameProblem(fine, 1, (name) =>
+        name === "paperless-db" ? "taken" : null,
+      ),
+    ).toBe("taken");
+  });
+
+  const io = {
+    stacks: [
+      stack("monitoring", {
+        title: "Monitoring",
+        containers: ["status"],
+        services: ["uptime-kuma", "db"],
+      }),
+      stack("blog", { services: ["web"] }),
+      stack("paperless", { containers: ["paperless-db"], services: ["db"] }),
+    ],
+    services: [
+      {
+        kind: "docker" as const,
+        name: "status",
+        state: "running" as const,
+        since: null,
+        system: false,
+      },
+      {
+        kind: "docker" as const,
+        name: "blog-web-1",
+        state: "running" as const,
+        since: null,
+        system: false,
+      },
+      {
+        kind: "docker" as const,
+        name: "portainer",
+        state: "running" as const,
+        since: null,
+        system: false,
+      },
+    ],
+  };
+
+  it("names the stack that owns a container name on the server", () => {
+    const owner = nameOwner(io, "paperless", "io");
+    expect(owner("uptime-kuma")).toBe(
+      "uptime-kuma is a service of Monitoring on io.",
+    );
+    expect(owner("status")).toBe("status is a container of Monitoring on io.");
+    expect(owner("blog-web-1")).toBe(
+      "blog-web-1 is a container of blog on io.",
+    );
+    expect(owner("portainer")).toBe(
+      "io already runs a container named portainer.",
+    );
+    expect(owner("web.monitoring")).toBe(
+      "Names ending in .monitoring are kept for the services of Monitoring.",
+    );
+    expect(owner("db.paperless")).toBe(
+      "Names ending in .paperless are kept for the services of this stack.",
+    );
+    expect(owner("paperless-db")).toBeNull();
+    expect(owner("db")).toBe("db is a service of Monitoring on io.");
+    expect(nameOwner(undefined, "paperless", "io")("anything")).toBeNull();
+  });
+
+  it("refuses a display name another stack on the server has", () => {
+    expect(sameTitle("monitoring", io.stacks, "io")).toBe(
+      "Another stack on io is called Monitoring.",
+    );
+    expect(sameTitle("Blog", io.stacks, "io")).toBe(
+      "Another stack on io is called blog.",
+    );
+    expect(sameTitle("Monitoring", io.stacks, "io", "monitoring")).toBeNull();
+    expect(sameTitle("Status", io.stacks, "io")).toBeNull();
+  });
+
+  it("says why a server cannot take a stack that moves", () => {
+    const moving = stack("kuma", {
+      title: "Uptime Kuma",
+      names: { web: "uptime-kuma" },
+    });
+    expect(moveClash(moving, { ...io, leftovers: ["kuma"] }, "io")).toBe(
+      "Files left from an earlier kuma are still on io. Delete them there first.",
+    );
+    expect(moveClash(moving, io, "io")).toBe(
+      "uptime-kuma is a service of Monitoring on io.",
+    );
+    expect(
+      moveClash(
+        { ...moving, names: {} },
+        {
+          ...io,
+          stacks: [...io.stacks, stack("kuma-2", { title: "Uptime Kuma" })],
+        },
+        "io",
+      ),
+    ).toBe("Another stack on io is called Uptime Kuma.");
+    expect(moveClash({ ...moving, names: {} }, io, "io")).toBeNull();
+    expect(moveClash(moving, undefined, "io")).toBeNull();
   });
 });
 
@@ -478,6 +705,54 @@ describe("one list per server", () => {
     expect(
       shape(serverLists(data, nodes, { ...all, notRunning: true })),
     ).toEqual([["Callisto", [["shop", []]], []]]);
+  });
+
+  it("finds a stack by its display name", () => {
+    const titled: ServicesResponse = {
+      ...data,
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          stacks: [
+            { ...data.nodes[0]!.stacks[0]!, title: "Weekly Newsletter" },
+            data.nodes[0]!.stacks[1]!,
+          ],
+        },
+        data.nodes[1]!,
+      ],
+    };
+    expect(
+      shape(serverLists(titled, nodes, { ...all, query: "weekly news" })),
+    ).toEqual([
+      ["Callisto", [["listmonk", ["listmonk-db-1", "listmonk_app"]]], []],
+    ]);
+    expect(
+      groupStacks(titled, nodes, "Weekly").map((group) => [
+        group.project,
+        group.members.length,
+      ]),
+    ).toEqual([["listmonk", 1]]);
+  });
+
+  it("sorts stacks by their display name", () => {
+    const titled: ServicesResponse = {
+      ...data,
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          stacks: [stack("listmonk", { title: "Zine" }), stack("shop")],
+        },
+        data.nodes[1]!,
+      ],
+    };
+    expect(
+      serverLists(titled, nodes, all)[0]!.stacks.map(
+        (item) => item.member.stack.project,
+      ),
+    ).toEqual(["shop", "listmonk"]);
+    expect(
+      groupStacks(titled, nodes, "").map((group) => group.project),
+    ).toEqual(["shop", "listmonk"]);
   });
 
   it("gives every server one box with its count, and folds system services until asked", () => {
@@ -632,9 +907,9 @@ describe("what needs attention on Services", () => {
     since: string | null = null,
   ) => ({ kind: "docker" as const, name, state, since, system: false });
   const servers = [
-    node("pv", "pivox", "0.6.14"),
-    node("io", "io", "0.6.14"),
-    node("cl", "calisto", "0.6.14"),
+    node("pv", "pivox", "0.7.0"),
+    node("io", "io", "0.7.0"),
+    node("cl", "calisto", "0.7.0"),
   ];
   const estate: ServicesResponse = {
     nodes: [
@@ -810,5 +1085,48 @@ describe("deleting the original of a move at once", () => {
     expect(moveConfirmed("now", "", "listmonk")).toBe(false);
     expect(moveConfirmed("now", "listmon", "listmonk")).toBe(false);
     expect(moveConfirmed("now", "listmonk", "listmonk")).toBe(true);
+  });
+});
+
+describe("units that only run at boot", () => {
+  it("leaves them out of the server count and of what needs attention", () => {
+    const states = [
+      ...Array.from({ length: 14 }, () => "running" as const),
+      "stopped" as const,
+      "boot" as const,
+      "boot" as const,
+      "unneeded" as const,
+    ];
+    const resting: ServicesResponse = {
+      nodes: [
+        {
+          ...data.nodes[0]!,
+          stacks: [],
+          services: states.map((state, index) => ({
+            kind: "systemd" as const,
+            name: `unit-${index}.service`,
+            state,
+            since: null,
+            system: false,
+          })),
+        },
+      ],
+      actions: [],
+    };
+    const options = { query: "", kind: "all" as const, showSystem: true };
+    const box = serverBoxes(resting, nodes, options)[0]!;
+    expect(box.count).toBe("14 running · 1 stopped");
+    expect(box.members.slice(-3).map((member) => member.entry.state)).toEqual([
+      "boot",
+      "boot",
+      "unneeded",
+    ]);
+    expect(
+      serverLists(resting, nodes, {
+        showSystem: true,
+        query: "",
+        notRunning: true,
+      })[0]!.members.map((member) => member.entry.state),
+    ).toEqual(["stopped"]);
   });
 });

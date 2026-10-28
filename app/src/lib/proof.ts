@@ -2,17 +2,17 @@ import { openSession } from "./deploy-session";
 import { ApiError, apiFetch, errorMessage } from "./http";
 import { signIntent } from "./passkeys";
 
-const NO_FINGERPRINT_HERE =
-  "No fingerprint was confirmed. If this device has none, choose Use a phone in the passkey window.";
+const NOT_CONFIRMED =
+  "The passkey was not confirmed. If this device cannot open it, choose Use a phone in the passkey window.";
 
 export function failure(error: unknown): string {
   if (error instanceof DOMException && error.name === "InvalidStateError") {
-    return "This device is already registered.";
+    return "This passkey is already registered.";
   }
   if (!(error instanceof DOMException && error.name === "NotAllowedError")) {
     return errorMessage(error);
   }
-  return NO_FINGERPRINT_HERE;
+  return NOT_CONFIRMED;
 }
 
 interface Needed {
@@ -24,6 +24,7 @@ interface Needed {
 export async function guardedFetch<T = unknown>(
   path: string,
   init: RequestInit,
+  expected?: { op: string; target: string },
 ): Promise<T> {
   try {
     return await apiFetch<T>(path, init);
@@ -32,6 +33,14 @@ export async function guardedFetch<T = unknown>(
       throw error;
     }
     const needed = error.details as unknown as Needed;
+    if (
+      expected &&
+      (needed.op !== expected.op || needed.target !== expected.target)
+    ) {
+      throw new Error(
+        "Krynodes asked to confirm something else. Nothing was saved.",
+      );
+    }
     let proof: string;
     try {
       const session = await openSession(needed.core);

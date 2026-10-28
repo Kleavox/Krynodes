@@ -5,6 +5,7 @@ import {
   LoaderCircle,
 } from "lucide-react";
 
+import { Busy } from "@/components/busy";
 import { CopyCommand } from "@/components/copy-command";
 import { Button } from "@/components/ui/button";
 import {
@@ -71,7 +72,7 @@ export function AgentDialog({
               onClick={() => check.mutate()}
               disabled={check.isPending}
             >
-              {check.isPending ? "Checking…" : "Check for Releases"}
+              {check.isPending ? <Busy>Checking</Busy> : "Check for Releases"}
             </Button>
           </p>
         </div>
@@ -100,7 +101,7 @@ export function AgentDialog({
                 onClick={() => request.mutate(node.id)}
                 disabled={request.isPending}
               >
-                {request.isPending ? "Requesting…" : "Update Agent"}
+                {request.isPending ? <Busy>Requesting</Busy> : "Update Agent"}
               </Button>
             </div>
           )}

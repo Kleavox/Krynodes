@@ -90,7 +90,7 @@ func scanOf(who string, targets map[string]int) Scan {
 	return Scan{Who: who, Count: len(sorted), Sample: sorted[:min(sampleSize, len(sorted))]}
 }
 
-func Scans(knocks []Knock, now time.Time, scan int, bridges map[string]string) Seen {
+func Scans(knocks []Knock, now time.Time, scan int, bridges map[string]string, addresses map[string]string) Seen {
 	sources := map[string]map[string]int{}
 	stacks := map[string]map[string]int{}
 	add := func(into map[string]map[string]int, who, target string) {
@@ -106,6 +106,8 @@ func Scans(knocks []Knock, now time.Time, scan int, bridges map[string]string) S
 		if !knock.Reach {
 			add(sources, knock.Src, knock.Target)
 		} else if project, ok := bridges[knock.In]; ok {
+			add(stacks, project, knock.Target)
+		} else if project, ok := addresses[knock.Src]; ok {
 			add(stacks, project, knock.Target)
 		}
 	}

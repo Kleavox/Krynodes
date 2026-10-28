@@ -2,6 +2,7 @@ import { Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -88,7 +89,7 @@ export function ServicesPage() {
                 onClick={() => refresh.mutate(undefined)}
               >
                 <RefreshCw aria-hidden="true" />
-                {refreshing ? "Refreshing…" : "Refresh All"}
+                {refreshing ? <Busy>Refreshing</Busy> : "Refresh All"}
               </Button>
             </>
           )

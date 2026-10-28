@@ -128,8 +128,8 @@ describe("server operations", () => {
     expect(
       serverOperation(
         node({
-          agent_version: "0.6.0",
-          update_requested_version: "0.6.1",
+          agent_version: "0.7.0",
+          update_requested_version: "0.7.1",
           update_requested_at: ago(4),
           update_attempts: 2,
         }),
@@ -138,7 +138,7 @@ describe("server operations", () => {
       ),
     ).toEqual({
       kind: "updating",
-      version: "0.6.1",
+      version: "0.7.1",
       attempt: 2,
       since: NOW - 4 * 60_000,
     });

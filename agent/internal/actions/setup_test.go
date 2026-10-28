@@ -11,6 +11,8 @@ import (
 
 const trixie = "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION_CODENAME=trixie\nID=debian\n"
 
+const upgradesInstall = "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q unattended-upgrades"
+
 func setupServer(t *testing.T) (Executor, *fakeRun) {
 	t.Helper()
 	executor, run := securityExecutor(t)
@@ -20,8 +22,15 @@ func setupServer(t *testing.T) (Executor, *fakeRun) {
 	run.failing["docker --version"] = ""
 	run.respond["dpkg --print-architecture"] = "amd64\n"
 	run.respond["docker version --format {{.Client.Version}}"] = "28.4.0\n"
-	executor.Fetch = func(context.Context, string) ([]byte, error) { return []byte("KEY"), nil }
+	executor.Fetch = dockerFetch
 	return executor, run
+}
+
+func dockerFetch(_ context.Context, url string) ([]byte, error) {
+	if strings.HasSuffix(url, "/Release") {
+		return []byte("Origin: Docker\nArchitectures: amd64 arm64\n"), nil
+	}
+	return []byte("KEY"), nil
 }
 
 func runSetup(t *testing.T, executor Executor, options SetupOptions, answer bool, asked bool) string {
@@ -61,8 +70,30 @@ func TestSetupGetsTheServerReadyForThePrivateNetwork(t *testing.T) {
 	}
 }
 
+func TestSetupTurnsOnRestartWhenNeededAfterSecurityUpdates(t *testing.T) {
+	for _, hook := range []bool{true, false} {
+		executor, run := setupServer(t)
+		if hook {
+			run.effects = map[string]func(){upgradesInstall: func() {
+				rootFile(t, executor, "/etc/kernel/postinst.d/unattended-upgrades", "")
+			}}
+		}
+		got := runSetup(t, executor, SetupOptions{Recommended: true, RebootHour: hour(20)}, false, false)
+		want := []string{"✓ Automatic security updates", "✓ Restart when needed · 20:00 UTC", "✓ SSH keys only"}
+		if !hook {
+			want = []string{"✓ Automatic security updates", "✗ Restart when needed: Nothing on this server marks when a restart is needed. Turn on Security updates first.", "✓ SSH keys only"}
+		}
+		for _, line := range want {
+			if !strings.Contains(got, line) {
+				t.Fatalf("hook %v: missing %q in\n%s", hook, line, got)
+			}
+		}
+	}
+}
+
 func TestSetupRunsTheRecommendedStepsAndDocker(t *testing.T) {
 	executor, _ := setupServer(t)
+	rootFile(t, executor, "/etc/kernel/postinst.d/unattended-upgrades", "")
 	writeJSON(executor.StateDir, "security.json", securityState{}, 0o640)
 	got := runSetup(t, executor, SetupOptions{Recommended: true, Docker: true, RebootHour: hour(20)}, false, false)
 	want := "Detected: Debian GNU/Linux 13 (trixie) (apt, ufw)\n" +
@@ -93,6 +124,7 @@ func firewallSetup(t *testing.T, answer func(question string) (bool, bool)) (Exe
 	executor, run := setupServer(t)
 	rootFile(t, executor, "/etc/ufw/ufw.conf", "ENABLED=no\n")
 	run.respond[listening] = manyListeners
+	ufwComesUp(run)
 	var questions []string
 	var out strings.Builder
 	ask := func(question string) (bool, bool) {
@@ -170,29 +202,25 @@ func TestSetupSkipsWhatIsOnAndGoesOnAfterAFailure(t *testing.T) {
 	}
 }
 
-func TestSetupAsksOnAnUnverifiedVersion(t *testing.T) {
+func TestSetupRunsOnANewerVersionWithoutAsking(t *testing.T) {
 	newer := strings.ReplaceAll(strings.ReplaceAll(trixie, "13", "14"), "trixie", "forky")
-	options := SetupOptions{Recommended: true, Docker: true, RebootHour: hour(20), Command: "kry setup --recommended --docker --reboot-hour 20"}
-	for _, answer := range []struct {
-		yes, asked bool
-		held       bool
-	}{{true, true, false}, {false, true, true}, {false, false, true}} {
-		executor, _ := setupServer(t)
-		rootFile(t, executor, "/etc/os-release", newer)
-		got := runSetup(t, executor, options, answer.yes, answer.asked)
-		if !strings.Contains(got, "Debian GNU/Linux 14 is newer than the versions Krynodes has checked (11 to 13).\n") || !strings.Contains(got, "asked: Run the setup anyway? [y/N] ") {
-			t.Fatalf("%+v:\n%s", answer, got)
-		}
-		held := strings.Contains(got, "Setup held. Run it later with: sudo kry setup --recommended --docker --reboot-hour 20 --anyway\n")
-		if held != answer.held || strings.Contains(got, "✓") == answer.held {
-			t.Fatalf("%+v:\n%s", answer, got)
-		}
-	}
 	executor, _ := setupServer(t)
 	rootFile(t, executor, "/etc/os-release", newer)
-	options.Anyway = true
-	if got := runSetup(t, executor, options, false, false); strings.Contains(got, "asked:") || !strings.Contains(got, "✓ Automatic security updates") {
-		t.Fatalf("--anyway runs without a question:\n%s", got)
+	var out strings.Builder
+	var questions []string
+	ask := func(text string) (bool, bool) {
+		questions = append(questions, text)
+		return false, true
+	}
+	if err := executor.Setup(context.Background(), SetupOptions{Recommended: true}, &out, ask); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if slices.ContainsFunc(questions, func(question string) bool { return strings.Contains(question, "anyway") }) {
+		t.Fatalf("asked %q", questions)
+	}
+	if strings.Contains(got, "newer than") || strings.Contains(got, "Setup held") || !strings.Contains(got, "Automatic security updates") {
+		t.Fatalf("got\n%s", got)
 	}
 }
 

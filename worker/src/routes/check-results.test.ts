@@ -92,6 +92,27 @@ describe("GET /api/checks/results", () => {
     ]);
   });
 
+  it("names a quarantine as a quiet span of its own server only", async () => {
+    const { db, sqlite } = setup();
+    seedNode(sqlite, { id: "n2" });
+    const at = ago(30 * 60_000);
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', 'n1', 'why', ?, '{}')",
+      )
+      .run(at);
+
+    const body = await results(db);
+    expect(body.nodes.n1?.quiet).toContainEqual({
+      from: at,
+      to: null,
+      why: "quarantined",
+    });
+    expect(
+      body.nodes.n2?.quiet.filter((span) => span.why === "quarantined"),
+    ).toEqual([]);
+  });
+
   it("leaves out a check whose results are all older than four hours", async () => {
     const { db, sqlite } = setup();
     seedResult(sqlite, "c1", ago(5 * 3_600_000), "UP");

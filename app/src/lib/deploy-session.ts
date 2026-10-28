@@ -147,12 +147,26 @@ async function withPrompt<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
+let opening: Promise<Session> | null = null;
+
 export async function openSession(devices: string[]): Promise<Session> {
   const current = activeSession();
   if (current && devices.includes(current.grant.credentialId)) return current;
-  const session = await withPrompt(() =>
+  if (opening) {
+    const shared = await opening.catch(() => null);
+    if (shared && devices.includes(shared.grant.credentialId)) return shared;
+    return openSession(devices);
+  }
+  const prompt = withPrompt(() =>
     createSession(devices, window.location.hostname),
-  );
-  startSession(session);
-  return session;
+  )
+    .then((session) => {
+      startSession(session);
+      return session;
+    })
+    .finally(() => {
+      opening = null;
+    });
+  opening = prompt;
+  return prompt;
 }

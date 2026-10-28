@@ -50,7 +50,9 @@ export const CHECK_RESULTS_SQL = `
   WHERE n.owner_user_id = ?1`;
 
 const QUIET_NODES_SQL = `
-  SELECT id, interval_seconds, last_seen_at, security FROM nodes
+  SELECT id, interval_seconds, last_seen_at, security,
+    (SELECT json_group_array(json_object('at', at, 'releasedAt', released_at)) FROM quarantines q WHERE q.node_id = nodes.id) AS quarantines
+  FROM nodes
   WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
 
 type QuietWindow = WindowRow & {
@@ -63,6 +65,7 @@ interface QuietNode {
   interval_seconds: number;
   last_seen_at: string | null;
   security: string | null;
+  quarantines: string | null;
 }
 
 const OWNED_CHECKS_SQL = `
@@ -313,7 +316,9 @@ export function registerCheckResultRoutes(
     const [node, live] = await Promise.all([
       db
         .prepare(
-          "SELECT id, interval_seconds, last_seen_at, security FROM nodes WHERE id = ?",
+          `SELECT id, interval_seconds, last_seen_at, security,
+             (SELECT json_group_array(json_object('at', at, 'releasedAt', released_at)) FROM quarantines q WHERE q.node_id = nodes.id) AS quarantines
+           FROM nodes WHERE id = ?`,
         )
         .bind(incident.node_id)
         .first<QuietNode>(),

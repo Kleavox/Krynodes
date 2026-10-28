@@ -15,11 +15,15 @@ type fakeRun struct {
 	calls   []string
 	respond map[string]string
 	failing map[string]bool
+	effects map[string]func()
 }
 
 func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, int, error) {
 	call := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, call)
+	if effect := f.effects[call]; effect != nil {
+		effect()
+	}
 	if f.failing[call] {
 		return []byte("failed"), 1, errors.New("exit status 1")
 	}
@@ -28,7 +32,7 @@ func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, i
 
 func newEnv(t *testing.T) (Env, *fakeRun) {
 	t.Helper()
-	run := &fakeRun{respond: map[string]string{}, failing: map[string]bool{}}
+	run := &fakeRun{respond: map[string]string{}, failing: map[string]bool{}, effects: map[string]func(){}}
 	env := Env{Root: t.TempDir(), Run: run.run}
 	write(t, env, "/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION_CODENAME=bookworm\nID=debian\n")
 	return env, run
@@ -55,6 +59,27 @@ func exists(env Env, path string) bool {
 	return err == nil
 }
 
+const (
+	budiProbe = "sshd -T -C user=budi,host=krynodes.invalid,addr=192.0.2.1"
+	rootProbe = "sshd -T -C user=root,host=krynodes.invalid,addr=192.0.2.1"
+)
+
+func afterSSHCheck(run *fakeRun, answers map[string]string) {
+	run.effects["sshd -t"] = func() {
+		for call, answer := range answers {
+			run.respond[call] = answer
+		}
+	}
+}
+
+func passwordsOffFor(run *fakeRun, users ...string) {
+	answers := map[string]string{"sshd -T": "passwordauthentication no\nkbdinteractiveauthentication no\n"}
+	for _, user := range users {
+		answers["sshd -T -C user="+user+",host=krynodes.invalid,addr=192.0.2.1"] = "passwordauthentication no\nkbdinteractiveauthentication no\n"
+	}
+	afterSSHCheck(run, answers)
+}
+
 func usersWithKeys(t *testing.T, env Env, keyed bool) {
 	t.Helper()
 	write(t, env, "/etc/passwd", "root:x:0:0:root:/root:/bin/bash\nbudi:x:1000:1000::/home/budi:/bin/bash\nwww:x:33:33::/var/www:/usr/sbin/nologin\n")
@@ -65,8 +90,80 @@ func usersWithKeys(t *testing.T, env Env, keyed bool) {
 	write(t, env, "/var/www/.ssh/authorized_keys", "ssh-ed25519 AAAA www\n")
 }
 
+const unattendedProbe = "apt-config shell UU APT::Periodic::Unattended-Upgrade"
+
+func TestSecurityUpdatesStayOffWhenAnotherFileTurnsThemOff(t *testing.T) {
+	env, run := newEnv(t)
+	run.failing["dpkg-query -W -f ${Status} unattended-upgrades"] = true
+	run.respond[unattendedProbe] = "UU='0'\n"
+	_, err := Apply(context.Background(), env, "security-updates", nil)
+	if err == nil || err.Error() != "Another file in /etc/apt/apt.conf.d turns unattended upgrades off." {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades") {
+		t.Fatal("the drop-in is taken back")
+	}
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q unattended-upgrades") {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestSecurityUpdatesSayWhenAptConfigIsMissing(t *testing.T) {
+	env, run := newEnv(t)
+	run.failing[unattendedProbe] = true
+	_, err := Apply(context.Background(), env, "security-updates", nil)
+	if err == nil || err.Error() != "apt-config did not answer, so Krynodes cannot tell whether unattended upgrades run." {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades") {
+		t.Fatal("the drop-in is taken back")
+	}
+}
+
+func TestSecurityUpdatesNeedTheDailyUpgradeTimer(t *testing.T) {
+	env, run := newEnv(t)
+	run.respond[unattendedProbe] = "UU='1'\n"
+	run.failing["systemctl is-enabled --quiet apt-daily-upgrade.timer"] = true
+	_, err := Apply(context.Background(), env, "security-updates", nil)
+	if err == nil || err.Error() != "apt-daily-upgrade.timer is off, so updates would never run." {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades") {
+		t.Fatal("the drop-in is taken back")
+	}
+}
+
+func TestRestartIsMarkedPerFamily(t *testing.T) {
+	ctx := context.Background()
+	const none = "Nothing on this server marks when a restart is needed. Turn on Security updates first."
+	env, _ := newEnv(t)
+	if err := RestartMarked(ctx, env); err == nil || err.Error() != none {
+		t.Fatalf("debian without a marker: %v", err)
+	}
+	write(t, env, "/etc/kernel/postinst.d/unattended-upgrades", "")
+	if err := RestartMarked(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	env, _ = onRelease(t, "ubuntu")
+	write(t, env, "/usr/share/update-notifier/notify-reboot-required", "")
+	if err := RestartMarked(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	env, run := onRelease(t, "rocky")
+	run.respond["dnf needs-restarting -r"] = "No core libraries or services have been updated since boot-up.\nReboot should not be necessary.\n"
+	if err := RestartMarked(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	run.respond["dnf needs-restarting -r"] = "No such command: needs-restarting."
+	run.failing["dnf needs-restarting -r"] = true
+	if err := RestartMarked(ctx, env); err == nil || err.Error() != none {
+		t.Fatalf("rocky without the plugin: %v", err)
+	}
+}
+
 func TestAutomaticSecurityUpdates(t *testing.T) {
 	env, run := newEnv(t)
+	run.respond[unattendedProbe] = "UU='1'\n"
 	if _, err := Apply(context.Background(), env, "security-updates", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +205,7 @@ func TestKeysOnlyNeedsSSHToReadTheDropInFolder(t *testing.T) {
 func TestKeysOnlyTurnsPasswordsOffAndCanBeUndone(t *testing.T) {
 	env, run := newEnv(t)
 	usersWithKeys(t, env, true)
+	passwordsOffFor(run, "budi")
 	write(t, env, "/etc/ssh/sshd_config", "include /etc/ssh/sshd_config.d/*.conf\nPasswordAuthentication yes\n")
 	run.failing["systemctl reload ssh"] = true
 	if _, err := Apply(context.Background(), env, "ssh-keys-only", nil); err != nil {
@@ -141,6 +239,58 @@ func TestKeysOnlyLeavesNothingBehindWhenSSHRefusesTheChange(t *testing.T) {
 	}
 }
 
+func TestKeysOnlyStaysOffWhenAnEarlierSettingWins(t *testing.T) {
+	env, run := newEnv(t)
+	usersWithKeys(t, env, true)
+	write(t, env, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	afterSSHCheck(run, map[string]string{"sshd -T": "passwordauthentication no\n", budiProbe: "passwordauthentication yes\n"})
+	_, err := Apply(context.Background(), env, "ssh-keys-only", nil)
+	if err == nil || err.Error() != "SSH still accepts passwords for budi: a setting read before Krynodes' wins (a file in /etc/ssh/sshd_config.d or a Match block). Change it by hand." {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, "/etc/ssh/sshd_config.d/10-krynodes.conf") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "reload") }) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestFail2banIsTakenBackWhenItsJailDoesNotStart(t *testing.T) {
+	env, run := newEnv(t)
+	run.failing["fail2ban-client status sshd"] = true
+	_, err := Apply(context.Background(), env, "fail2ban", nil)
+	if err == nil || !strings.HasPrefix(err.Error(), "fail2ban started, but its SSH jail did not: ") {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, "/etc/fail2ban/jail.d/krynodes.local") {
+		t.Fatal("the jail is taken back")
+	}
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q fail2ban python3-systemd") {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestAFirewallWithoutSSHIsTurnedBackOff(t *testing.T) {
+	env, run := newEnv(t)
+	run.respond["sshd -T"] = "port 22\n"
+	run.respond["ufw status"] = "Status: inactive\n"
+	run.effects["ufw --force enable"] = func() { run.respond["ufw status"] = "Status: active\n" }
+	_, err := Apply(context.Background(), env, "firewall", nil)
+	if err == nil || err.Error() != "The firewall came up without SSH allowed, so Krynodes turned it back off." {
+		t.Fatalf("err %v", err)
+	}
+	if enable, disable := slices.Index(run.calls, "ufw --force enable"), slices.Index(run.calls, "ufw --force disable"); enable < 0 || disable < enable {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestAFirewallThatWasOnIsNotCheckedAgain(t *testing.T) {
+	env, run := newEnv(t)
+	run.respond["sshd -T"] = "port 22\n"
+	run.respond["ufw status"] = "Status: active\n"
+	if _, err := Apply(context.Background(), env, "firewall", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRepeatedLoginFailuresAreBlocked(t *testing.T) {
 	env, run := newEnv(t)
 	if _, err := Apply(context.Background(), env, "fail2ban", nil); err != nil {
@@ -163,6 +313,9 @@ func TestTheFirewallKeepsSSHAndTheChosenPortsOpen(t *testing.T) {
 	env, run := newEnv(t)
 	run.respond["sshd -T"] = "port 2222\npasswordauthentication no\n"
 	run.respond["ufw status"] = "Status: inactive\n"
+	run.effects["ufw --force enable"] = func() {
+		run.respond["ufw status"] = "Status: active\n\nTo Action From\n2222/tcp ALLOW Anywhere # krynodes\n"
+	}
 	saved, err := Apply(context.Background(), env, "firewall", map[string]string{"ports": "80/tcp,53/udp"})
 	if err != nil {
 		t.Fatal(err)
@@ -194,6 +347,9 @@ func TestTheFirewallKeepsEveryPortSSHReallyListensOn(t *testing.T) {
 	run.respond["ss -H -tulnp"] = "tcp LISTEN 0 128 0.0.0.0:2022 0.0.0.0:* users:((\"sshd\",pid=9,fd=3))\n" +
 		"tcp LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"nginx\",pid=7,fd=3))\n"
 	run.respond["ufw status"] = "Status: inactive\n"
+	run.effects["ufw --force enable"] = func() {
+		run.respond["ufw status"] = "Status: active\n\n22/tcp ALLOW Anywhere # krynodes\n2200/tcp ALLOW Anywhere # krynodes\n2022/tcp ALLOW Anywhere # krynodes\n"
+	}
 	if _, err := Apply(context.Background(), env, "firewall", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -303,6 +459,7 @@ func TestKeysOnlyLeavesRootLoginAsStrictAsItWas(t *testing.T) {
 		usersWithKeys(t, env, true)
 		write(t, env, "/etc/ssh/sshd_config", "include /etc/ssh/sshd_config.d/*.conf\n")
 		run.respond["sshd -T"] = setting
+		passwordsOffFor(run, "budi")
 		if _, err := Apply(context.Background(), env, "ssh-keys-only", nil); err != nil {
 			t.Fatal(err)
 		}
@@ -376,6 +533,7 @@ func TestKeysOnlyLeavesNothingWhenSSHCannotReload(t *testing.T) {
 	write(t, env, "/etc/ssh/sshd_config", "include /etc/ssh/sshd_config.d/*.conf\nPasswordAuthentication yes\n")
 	run.failing["systemctl reload ssh"] = true
 	run.failing["systemctl reload sshd"] = true
+	passwordsOffFor(run, "budi")
 	if _, err := Apply(context.Background(), env, "ssh-keys-only", nil); err == nil {
 		t.Fatal("the failed reload is reported")
 	}
@@ -416,6 +574,7 @@ func TestUndoRemovesOnlyThePackagesItInstalled(t *testing.T) {
 	env, run := newEnv(t)
 	run.respond["dpkg-query -W -f ${Status} python3-systemd"] = "install ok installed"
 	run.respond["dpkg-query -W -f ${Status} unattended-upgrades"] = "install ok installed"
+	run.respond[unattendedProbe] = "UU='1'"
 	saved, err := Apply(context.Background(), env, "fail2ban", nil)
 	if err != nil || saved["installed"] != "fail2ban" {
 		t.Fatalf("saved %v err %v", saved, err)

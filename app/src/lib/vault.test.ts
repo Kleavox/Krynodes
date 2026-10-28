@@ -307,6 +307,60 @@ describe("moving a stack", () => {
     expect(create()?.args).toBeUndefined();
   });
 
+  it("carries the stack's display name and container names to the new server", () => {
+    const create = moveSteps({
+      source: A,
+      target: B,
+      targetKey: "KB",
+      project: "adguard-home",
+      compose: "x",
+      access: "full",
+      original: "keep",
+      title: "AdGuard Home",
+      names: "adguard=adguard-home",
+    })[1];
+    expect(create?.args).toEqual({
+      title: "AdGuard Home",
+      names: "adguard=adguard-home",
+    });
+  });
+
+  it("creates the stack's Krynodes networks on the new server before the stack", () => {
+    const steps = moveSteps({
+      source: A,
+      target: B,
+      targetKey: "KB",
+      project: "kuma",
+      compose: "x",
+      access: "contained",
+      original: "keep",
+      networks: [
+        { name: "apps-inner", kind: "contained", subnet: "172.24.0.0/24" },
+      ],
+      offers: "apps-inner/web=3001/tcp",
+      peers: "apps-inner/postgres.db:5432/tcp",
+    });
+    expect(steps.map((step) => `${step.kind} ${step.action}`)).toEqual([
+      "compose export",
+      "bridge create",
+      "compose create",
+    ]);
+    expect(steps[1]).toEqual({
+      nodeId: B,
+      kind: "bridge",
+      name: "apps-inner",
+      action: "create",
+      args: { kind: "contained", subnet: "172.24.0.0/24" },
+    });
+    expect(steps[2]).toMatchObject({
+      attachFrom: 0,
+      args: {
+        offers: "apps-inner/web=3001/tcp",
+        peers: "apps-inner/postgres.db:5432/tcp",
+      },
+    });
+  });
+
   it("carries what the stack serves and reaches, then changes the other stacks' reach", () => {
     const steps = moveSteps({
       source: A,
@@ -542,7 +596,7 @@ describe("removing a server that holds a piece", () => {
     ).toEqual({
       ok: false,
       reason:
-        "No other server with agent 0.6.14 that this device reaches can take the token.",
+        "No other server with agent 0.7.0 that your passkey reaches can take the token.",
     });
   });
 });
@@ -616,7 +670,7 @@ describe("the Tailscale credential in pieces", () => {
     ).toEqual({
       ok: false,
       reason:
-        "Only one other server with agent 0.7.0 that this device reaches can take the credential, and it needs two.",
+        "Only one other server with agent 0.7.0 that your passkey reaches can take the credential, and it needs two.",
     });
     expect(
       planRemoval(

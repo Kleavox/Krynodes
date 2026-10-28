@@ -20,16 +20,18 @@ func mustCall(t *testing.T, run *fakeRun, calls ...string) {
 
 func TestSecurityUpdatesOnRHELUseTheirOwnTimer(t *testing.T) {
 	ctx := context.Background()
-	for _, key := range []string{"rocky", "fedora"} {
+	for _, key := range []string{"rocky", "almalinux"} {
 		env, run := onRelease(t, key)
 		write(t, env, "/etc/dnf/automatic.conf", "owner's file")
+		run.respond[securityNotices] = "RLSA-2024:3501 Important/Sec. openssl-1:3.0.7-27.el9.x86_64\n"
+		run.failing["rpm -q dnf-plugins-core"] = true
 		saved, err := Apply(ctx, env, "security-updates", nil)
 		if err != nil || saved != nil {
 			t.Fatalf("%s: saved %v err %v", key, saved, err)
 		}
-		mustCall(t, run, "systemctl daemon-reload", "systemctl enable --now krynodes-security-updates.timer")
-		if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "dnf install") }) {
-			t.Fatalf("%s: nothing to install: %q", key, run.calls)
+		mustCall(t, run, "dnf install -y -q dnf-plugins-core", "systemctl daemon-reload", "systemctl enable --now krynodes-security-updates.timer")
+		if slices.Index(run.calls, "dnf install -y -q dnf-plugins-core") > slices.Index(run.calls, "systemctl daemon-reload") {
+			t.Fatalf("%s: the plugin comes first: %q", key, run.calls)
 		}
 		if service := read(env, "/etc/systemd/system/krynodes-security-updates.service"); !strings.Contains(service, "ExecStart=/usr/bin/dnf -y upgrade --security\n") || !strings.Contains(service, "Type=oneshot\n") {
 			t.Fatalf("%s: service:\n%s", key, service)
@@ -55,8 +57,27 @@ func TestSecurityUpdatesOnRHELUseTheirOwnTimer(t *testing.T) {
 	}
 }
 
+const securityNotices = "dnf -q updateinfo list --security --all"
+
+func TestSecurityUpdatesNeedSecurityNoticesOnRHEL(t *testing.T) {
+	env, run := onRelease(t, "centos")
+	_, err := Apply(context.Background(), env, "security-updates", nil)
+	if err == nil || err.Error() != "CentOS Stream 9's repositories publish no security notices, so dnf cannot pick out security updates." {
+		t.Fatalf("err %v", err)
+	}
+	if exists(env, "/etc/systemd/system/krynodes-security-updates.timer") {
+		t.Fatal("no timer without notices")
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool {
+		return call == "systemctl daemon-reload" || strings.HasPrefix(call, "dnf install")
+	}) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
 func TestAFailedSecurityUpdatesTimerOnRHELLeavesNoUnits(t *testing.T) {
 	env, run := onRelease(t, "rocky")
+	run.respond[securityNotices] = "RLSA-2024:3501 Important/Sec. openssl-1:3.0.7-27.el9.x86_64\n"
 	run.failing["systemctl enable --now krynodes-security-updates.timer"] = true
 	if _, err := Apply(context.Background(), env, "security-updates", nil); err == nil {
 		t.Fatal("the failure is reported")
@@ -73,6 +94,7 @@ func TestSSHOnRHELReloadsSshd(t *testing.T) {
 	usersWithKeys(t, env, true)
 	write(t, env, "/etc/group", "wheel:x:10:budi\n")
 	write(t, env, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	passwordsOffFor(run, "budi")
 	if _, err := Apply(context.Background(), env, "ssh-keys-only", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -112,13 +134,6 @@ func TestFail2banOnRHELBringsEPEL(t *testing.T) {
 		if saved["installed"] != want {
 			t.Fatalf("%s: saved %v", key, saved)
 		}
-	}
-	env, run := onRelease(t, "fedora")
-	if _, err := Apply(ctx, env, "fail2ban", nil); err != nil {
-		t.Fatal(err)
-	}
-	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "epel") }) {
-		t.Fatalf("Fedora needs no EPEL: %q", run.calls)
 	}
 }
 
@@ -179,6 +194,17 @@ func TestFirewalldKeepsSSHAndTheChosenPortsOpen(t *testing.T) {
 	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw") }) {
 		t.Fatalf("no ufw on RHEL: %q", run.calls)
 	}
+}
+
+func TestFirewalldWithoutSSHIsTurnedBackOff(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	run.failing["firewall-cmd --state"] = true
+	run.failing["firewall-cmd --query-port=22/tcp"] = true
+	_, err := Apply(context.Background(), env, "firewall", nil)
+	if err == nil || err.Error() != "The firewall came up without SSH allowed, so Krynodes turned it back off." {
+		t.Fatalf("err %v", err)
+	}
+	mustCall(t, run, "systemctl disable --now firewalld")
 }
 
 func TestFirewalldNeverStartsWithoutSSH(t *testing.T) {

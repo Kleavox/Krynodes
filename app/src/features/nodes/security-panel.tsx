@@ -1,8 +1,9 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
 import {
@@ -41,6 +42,7 @@ import {
   firewallPorts,
   protectionDetail,
   protectionsNotice,
+  updatesUntil,
   protectionsText,
   fromUtcHour,
   recipeChoices,
@@ -78,8 +80,6 @@ function RecipeDialog({
   )?.security;
   const [hour, setHour] = useState("3");
   const [ticked, setTicked] = useState<string[] | null>(null);
-  const [anyway, setAnyway] = useState(false);
-  const platform = report?.platform;
   const member = view && inside(view).find((entry) => entry.nodeId === node.id);
   const locked = member ? firewallRow(member) : null;
   const suggested = (
@@ -93,18 +93,12 @@ function RecipeDialog({
   const ids = recommend ?? [choice!.id];
   const needsHour = turnOn && ids.includes("reboot-window");
   const firewall = turnOn && ids.includes("firewall");
-  const needsAnyway =
-    turnOn &&
-    !!platform &&
-    !platform.verified &&
-    ids.some((id) => id !== "reboot-window");
   const argsFor = (id: string): Record<string, string> | undefined => {
     const args = {
       ...(id === "reboot-window"
         ? { hour: String(Math.floor(toUtcHour(Number(hour), offset()))) }
         : {}),
       ...(id === "firewall" ? { ports: ports.join(",") } : {}),
-      ...(anyway ? { anyway: "yes" } : {}),
     };
     return Object.keys(args).length > 0 ? args : undefined;
   };
@@ -208,17 +202,6 @@ function RecipeDialog({
             </p>
           </fieldset>
         )}
-        {needsAnyway && (
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={anyway}
-              onChange={() => setAnyway(!anyway)}
-            />
-            Run it on {platform.name} anyway
-          </label>
-        )}
         {run.error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(run.error)}
@@ -228,17 +211,19 @@ function RecipeDialog({
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <Button
             variant={turnOn ? "default" : "destructive"}
-            disabled={run.isPending || (needsAnyway && !anyway)}
+            disabled={run.isPending}
             onClick={submit}
           >
-            {!run.isPending && <Fingerprint aria-hidden="true" />}
-            {run.isPending
-              ? "Waiting for the Fingerprint…"
-              : recommend
-                ? "Apply"
-                : turnOn
-                  ? "Turn On"
-                  : "Turn Off"}
+            <KeyRound aria-hidden="true" />
+            {run.isPending ? (
+              <Waiting />
+            ) : recommend ? (
+              "Apply"
+            ) : turnOn ? (
+              "Turn On"
+            ) : (
+              "Turn Off"
+            )}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -271,6 +256,7 @@ export function SecurityPanel({
     stack.access === "full" ? (stack.public ?? []) : [],
   );
   const notice = protectionsNotice(report);
+  const until = updatesUntil(report);
   const unsupported = report.platform?.family === null;
   const findings = shownFindings(report);
   return (
@@ -281,6 +267,7 @@ export function SecurityPanel({
         </h2>
         <span className="font-mono text-[11px] text-muted-foreground">
           Checked {timeAgo(report.checkedAt, seen)}
+          {until && ` · ${until}`}
         </span>
         <Button
           variant="ghost"

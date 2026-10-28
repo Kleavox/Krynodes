@@ -24,7 +24,6 @@ var (
 const (
 	checkEvery  = 6 * time.Hour
 	staleReboot = 7 * 24 * time.Hour
-	eolWarning  = 90 * 24 * time.Hour
 )
 
 type securityState struct {
@@ -89,6 +88,9 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		if passwords && settings["permitrootlogin"] == "yes" {
 			add("ssh-root", "serious", "Root can log in over SSH with a password")
 		}
+		if settings["permitrootlogin"] != "no" {
+			add("root-login", "note", "Root can log in over SSH.")
+		}
 	}
 	if users := recipes.SSHLogins(ctx, e.recipeEnv()); len(users) == 0 {
 		add("ssh-no-keys", "warning", "No SSH key lets root or a sudo user log in")
@@ -96,17 +98,6 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		add("ssh-keys", "note", "SSH keys for "+strings.Join(users, ", "))
 	}
 	platform := recipes.Detect(e.recipeEnv())
-	if date := platform.EndOfLife; !date.IsZero() {
-		switch {
-		case e.Now().After(date):
-			add("os-eol", "serious", fmt.Sprintf("%s no longer gets security updates (since %s)", platform.Name, date.Format("2 Jan 2006")))
-		case date.Sub(e.Now()) <= eolWarning:
-			add("os-eol", "warning", fmt.Sprintf("%s stops getting security updates on %s", platform.Name, date.Format("2 Jan 2006")))
-		}
-	}
-	if sentence := platform.Unverified(); sentence != "" {
-		add("os-unverified", "note", sentence)
-	}
 	if !e.automaticUpdates(ctx, platform.Family) {
 		add("updates-off", "warning", "Security updates are not installed automatically")
 	}
@@ -192,20 +183,7 @@ func (e Executor) automaticUpdates(ctx context.Context, family recipes.Family) b
 		return (classic || five) && applyUpdates.Match(config)
 	}
 	status, ok := e.output(ctx, "dpkg-query", "-W", "-f", "${Status}", "unattended-upgrades")
-	if !ok || !strings.Contains(status, "install ok installed") {
-		return false
-	}
-	entries, err := os.ReadDir(e.path("/etc/apt/apt.conf.d"))
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		body, err := os.ReadFile(filepath.Join(e.path("/etc/apt/apt.conf.d"), entry.Name()))
-		if err == nil && strings.Contains(string(body), `APT::Periodic::Unattended-Upgrade "1"`) {
-			return true
-		}
-	}
-	return false
+	return ok && strings.Contains(status, "install ok installed") && recipes.UnattendedOn(ctx, e.recipeEnv()) == nil
 }
 
 func (e Executor) securityUpdates(ctx context.Context, family recipes.Family) int {
@@ -236,17 +214,20 @@ func (e Executor) securityUpdates(ctx context.Context, family recipes.Family) in
 }
 
 func platformReport(platform recipes.Platform) *reporter.Platform {
-	name := platform.Name
-	for len(name) > 120 {
-		_, size := utf8.DecodeLastRuneInString(name)
-		name = name[:len(name)-size]
-	}
-	report := &reporter.Platform{Name: name, Verified: platform.Verified, Checked: platform.Checked}
+	report := &reporter.Platform{Name: clip(platform.Name, 120), ID: clip(platform.ID, 40), Version: clip(platform.Version, 40)}
 	if platform.Family != "" {
 		family := string(platform.Family)
 		report.Family = &family
 	}
 	return report
+}
+
+func clip(text string, limit int) string {
+	for len(text) > limit {
+		_, size := utf8.DecodeLastRuneInString(text)
+		text = text[:len(text)-size]
+	}
+	return text
 }
 
 func (e Executor) fullAccess(project string) bool {

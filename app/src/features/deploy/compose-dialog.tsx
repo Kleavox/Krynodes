@@ -1,7 +1,8 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Busy, Waiting } from "@/components/busy";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,20 +13,34 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/http";
 import { privateIpProblem } from "@/lib/network";
 import { seal } from "@/lib/seal";
-import { parseHostPorts } from "@/lib/stacks";
+import {
+  nameOwner,
+  parseHostPorts,
+  sameTitle,
+  titleProblem,
+} from "@/lib/stacks";
+import type { ServicesResponse } from "@/types";
 
+import {
+  ContainerNames,
+  renameNote,
+  useContainerNames,
+} from "./container-names";
 import {
   AccessChoice,
   FullAccessSummary,
   HeldSecrets,
+  NetworkBoxes,
   NetworkSection,
   ReachField,
   SecretsEditor,
   heldProblem,
+  useNetworkBoxes,
   useStackNetwork,
   sealSecrets,
   secretChange,
@@ -45,6 +60,11 @@ export interface StackTarget {
   project: string;
   sealKey: string | null;
   reach: boolean;
+  title: string;
+  names?: Record<string, string> | null;
+  named?: boolean;
+  entry?: ServicesResponse["nodes"][number];
+  containers?: string[];
 }
 
 const AREA =
@@ -71,7 +91,7 @@ export function Reading({
   ) : (
     <p className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
       <StatusDot tone="warn" pulse />
-      Reading the compose file from {server}…
+      <Busy>{`Reading the compose file from ${server}`}</Busy>
     </p>
   );
 }
@@ -119,8 +139,30 @@ function ComposeForm({
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
   const [kept, setKept] = useState<HeldSecret[] | null>(null);
   const [reach, setReach] = useState<string | null>(null);
+  const [title, setTitle] = useState<string | null>(null);
   const [sealing, setSealing] = useState(false);
   const current = text ?? read?.compose ?? "";
+  const shownTitle = title ?? target.title;
+  const titleWrong = target.named
+    ? (titleProblem(shownTitle.trim()) ??
+      (shownTitle.trim() !== target.title
+        ? sameTitle(
+            shownTitle,
+            target.entry?.stacks ?? [],
+            target.nodeName,
+            target.project,
+          )
+        : null))
+    : null;
+  const names = useContainerNames({
+    text: current,
+    project: target.project,
+    saved: target.names,
+    original: read?.compose,
+    owner: nameOwner(target.entry, target.project, target.nodeName),
+    running: target.containers,
+  });
+  const note = editable && target.named ? renameNote(names.renamed) : null;
   const chosen: Access =
     access ?? (read?.access === "full" ? "full" : "contained");
   const reaching = target.reach && chosen === "contained";
@@ -129,6 +171,13 @@ function ComposeForm({
   );
   const network = useStackNetwork(target.nodeId, current, read ?? undefined);
   const serving = network.member !== null && chosen === "contained";
+  const boxes = useNetworkBoxes(
+    { id: target.nodeId, name: target.nodeName },
+    current,
+    target.project,
+    chosen,
+  );
+  const joining = boxes.boxes.length > 0;
   const privateWrong = privateIpProblem(
     current,
     target.nodeName,
@@ -138,10 +187,13 @@ function ComposeForm({
   const held = kept ?? (before ?? []).map((name) => ({ name, value: null }));
   const secretsWrong = heldProblem(held, secrets);
   const problem =
+    titleWrong ??
+    (target.named ? names.problem : null) ??
     secretsWrong ??
     hostPorts.problem ??
     privateWrong ??
-    (serving ? (network.placesProblem ?? network.servesProblem) : null);
+    (serving ? (network.placesProblem ?? network.servesProblem) : null) ??
+    boxes.problem;
 
   const sealed = async (sealKey: string) => {
     if (!before) return sealSecrets(sealKey, secrets);
@@ -161,6 +213,13 @@ function ComposeForm({
     } finally {
       setSealing(false);
     }
+    const args = {
+      ...(reaching ? { hostPorts: hostPorts.ports.join(",") } : {}),
+      ...(serving ? network.args : {}),
+      ...(joining ? boxes.args : {}),
+      ...(target.named ? { title: shownTitle.trim() } : {}),
+      ...(target.named && names.rows.length > 0 ? { names: names.arg } : {}),
+    };
     run.mutate(
       {
         action: "edit",
@@ -172,22 +231,13 @@ function ComposeForm({
             compose: current,
             access: chosen,
             ...(locked ? { secrets: locked } : {}),
-            ...(reaching || serving
-              ? {
-                  args: {
-                    ...(reaching
-                      ? { hostPorts: hostPorts.ports.join(",") }
-                      : {}),
-                    ...(serving ? network.args : {}),
-                  },
-                }
-              : {}),
+            ...(Object.keys(args).length > 0 ? { args } : {}),
           },
         ],
       },
       {
         onSuccess: () => {
-          toast.success(`Updating ${target.project} on ${target.nodeName}.`);
+          toast.success(`Updating ${target.title} on ${target.nodeName}.`);
           onClose();
         },
       },
@@ -198,7 +248,7 @@ function ComposeForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          {editable ? "Edit Compose" : "Compose File"} · {target.project} on{" "}
+          {editable ? "Edit Compose" : "Compose File"} · {target.title} on{" "}
           {target.nodeName}
         </DialogTitle>
         <DialogDescription>
@@ -211,6 +261,30 @@ function ComposeForm({
         <Reading server={target.nodeName} failure={failure} retry={retry} />
       ) : (
         <div className="space-y-4">
+          {editable && target.named && (
+            <div className="space-y-1.5">
+              <Label htmlFor="stack-title">Name</Label>
+              <Input
+                id="stack-title"
+                value={shownTitle}
+                autoComplete="off"
+                aria-invalid={titleWrong !== null}
+                aria-describedby={
+                  titleWrong ? "stack-title-problem" : undefined
+                }
+                onChange={(event) => setTitle(event.target.value)}
+              />
+              {titleWrong && (
+                <p
+                  id="stack-title-problem"
+                  className="text-xs text-destructive"
+                >
+                  {titleWrong}
+                </p>
+              )}
+              <ContainerNames names={names} />
+            </div>
+          )}
           <textarea
             aria-label="Compose File"
             value={current}
@@ -244,6 +318,7 @@ function ComposeForm({
                 />
               )}
               {serving && <NetworkSection network={network} />}
+              <NetworkBoxes network={boxes} />
               <div className="space-y-1.5">
                 <Label>Secrets</Label>
                 {before && <HeldSecrets rows={held} onChange={setKept} />}
@@ -261,6 +336,7 @@ function ComposeForm({
           )}
         </div>
       )}
+      {note && <p className="text-sm text-muted-foreground">{note}</p>}
       {run.error && (
         <p role="alert" className="text-sm text-destructive">
           {errorMessage(run.error)}
@@ -275,8 +351,8 @@ function ComposeForm({
             disabled={!read || sealing || run.isPending || problem !== null}
             onClick={() => void save()}
           >
-            {!run.isPending && <Fingerprint aria-hidden="true" />}
-            {run.isPending ? "Waiting for the Fingerprint…" : "Save"}
+            <KeyRound aria-hidden="true" />
+            {run.isPending ? <Waiting /> : "Save"}
           </Button>
         )}
       </DialogFooter>

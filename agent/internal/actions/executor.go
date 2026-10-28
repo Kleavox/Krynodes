@@ -126,6 +126,8 @@ run:
 					result, forwarded = e.apt(ctx, item.request)
 				case item.request.Kind == "network":
 					result, forwarded = e.network(ctx, item.request)
+				case item.request.Kind == "bridge":
+					result = e.bridge(ctx, item.request)
 				case item.request.Kind == "host":
 					result, forwarded = e.host(ctx, item.request)
 					reboot = reboot || (result.OK && item.request.Action == "reboot")
@@ -171,12 +173,18 @@ run:
 	var security *reporter.SecurityReport
 	var packages *reporter.PackagesReport
 	var tailnet *reporter.TailscaleReport
+	var bridges *reporter.Bridges
+	var leftovers []string
 	if e.Audit {
+		leftovers = e.leftovers(ctx, snapshot)
 		security = e.security(ctx, scanned)
 		packages = e.packages(ctx)
 		tailnet = e.tailnet(ctx)
+		if snapshot.Docker != "missing" {
+			bridges = e.bridgesReport(ctx)
+		}
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, SealKey: sealKey, Security: security, Vault: e.vaultReport("cloudflare"), TailscaleVault: e.vaultReport("tailscale"), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot)}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, Leftovers: leftovers, SealKey: sealKey, Security: security, Vault: e.vaultReport("cloudflare"), TailscaleVault: e.vaultReport("tailscale"), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot), Bridges: bridges}, e.Now())
 	if err != nil {
 		return err
 	}
@@ -369,15 +377,23 @@ func (e Executor) stackEntries(snapshot Snapshot) []reporter.StackEntry {
 			Project: stack.Project, Directory: stack.Directory, Running: stack.Running, Total: stack.Total,
 			Compose: snapshot.Compose, Rollback: len(record.Previous) > 0,
 			Access: e.accessOf(stack.Directory), Public: stack.Public, Containers: stack.Containers,
+			Services: stack.Services,
 		}
-		if own != "" {
+		var stored stackMeta
+		if e.ownStack(stack.Directory) {
+			stored = e.metaOf(stack.Directory)
+		}
+		entry.Title, entry.Names = stored.Title, stored.Names
+		if own != "" || len(stored.Offers) > 0 || len(stored.Peers) > 0 {
 			var meta stackMeta
 			if entry.Access == "contained" {
-				meta = e.metaOf(stack.Directory)
+				meta = stored
 			}
-			public, private := splitBindings(stack.Bindings, own)
-			entry.Public = public
-			entry.Network = &reporter.StackNetwork{Serves: append([]network.Serve{}, meta.Serves...), Reaches: append([]string{}, meta.Reaches...), Private: private}
+			private := []string{}
+			if own != "" {
+				entry.Public, private = splitBindings(stack.Bindings, own)
+			}
+			entry.Network = &reporter.StackNetwork{Serves: append([]network.Serve{}, meta.Serves...), Reaches: append([]string{}, meta.Reaches...), Private: private, Offers: append([]string{}, stored.Offers...), Peers: append([]string{}, meta.Peers...)}
 		}
 		entries = append(entries, entry)
 	}

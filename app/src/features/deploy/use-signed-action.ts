@@ -23,7 +23,7 @@ import type { ActionVerb, BatchMode } from "@/types";
 import { useDeploySession } from "./use-deploy-session";
 
 export const NO_SIGNER =
-  "None of your devices has access to every server here. Change access in Trusted devices.";
+  "None of your passkeys has access to every server here. Change access in Passkeys.";
 
 export function useSignedAction(toastErrors = true) {
   const devices = useDevices();

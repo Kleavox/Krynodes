@@ -482,7 +482,7 @@ describe("the Network page once connected", () => {
       {
         id: "b",
         title:
-          "Your policy was changed with Krynodes' credential at 03:14, without your fingerprint",
+          "Your policy was changed with Krynodes' credential at 03:14, without your passkey",
         detail: null,
         tag: null,
         text: "Someone else has the credential. Delete it in Tailscale's admin console, then connect a new one. Krynodes cannot undo the change on its own.",
@@ -584,7 +584,7 @@ describe("the steps", () => {
     expect(await connectSteps({ ...input, holders: one })).toEqual({
       ok: false,
       reason:
-        "Connect needs two servers with agent 0.7.0 that this device reaches; 1 is.",
+        "Connect needs two servers with agent 0.7.0 that your passkey reaches; 1 is.",
     });
     const two = await connectSteps({
       ...input,

@@ -49,7 +49,7 @@ function setup() {
     seedNode(sqlite, { id, owner });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.6.14', last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.0', last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(id);
   }
@@ -230,6 +230,11 @@ describe("compose actions", () => {
       }),
       A,
     );
+    sqlite
+      .prepare(
+        "UPDATE stacks SET title = 'Listmonk', names = ? WHERE project = 'listmonk'",
+      )
+      .run(JSON.stringify({ app: "listmonk" }));
     const body = await reply(call("GET", "/api/services"));
     const a = body.nodes!.find((node) => node.id === A)!;
     expect(a.stacks).toEqual([
@@ -244,6 +249,9 @@ describe("compose actions", () => {
         public: [],
         containers: [],
         network: null,
+        title: "Listmonk",
+        names: { app: "listmonk" },
+        services: [],
       },
     ]);
     expect(a.trust).toEqual({

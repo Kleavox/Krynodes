@@ -86,10 +86,10 @@ func TestASecurityCheckNamesWhatIsWrong(t *testing.T) {
 	}
 	found := findingsOf(t, executor)
 	want := map[string]string{
-		"ssh-password": "serious", "ssh-root": "serious", "ssh-no-keys": "warning", "os-eol": "serious",
+		"ssh-password": "serious", "ssh-root": "serious", "ssh-no-keys": "warning",
 		"updates-off": "warning", "updates-pending": "warning", "reboot-pending": "warning", "risky-container": "serious",
 		"public-ports": "warning", "firewall-off": "note", "fail2ban-off": "note", "dns-stub": "note",
-		"os-unverified": "note",
+		"root-login": "note",
 	}
 	for id, severity := range want {
 		if found[id].Severity != severity {
@@ -110,6 +110,30 @@ func TestASecurityCheckNamesWhatIsWrong(t *testing.T) {
 	}
 }
 
+const rootProbe = "sshd -T -C user=root,host=krynodes.invalid,addr=192.0.2.1"
+
+func sshTakesEffect(run *fakeRun, users ...string) {
+	off := "passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin no\nport 22\n"
+	if run.effects == nil {
+		run.effects = map[string]func(){}
+	}
+	run.effects["sshd -t"] = func() {
+		run.respond["sshd -T"] = off
+		for _, user := range users {
+			run.respond["sshd -T -C user="+user+",host=krynodes.invalid,addr=192.0.2.1"] = off
+		}
+	}
+}
+
+func ufwComesUp(run *fakeRun) {
+	if run.effects == nil {
+		run.effects = map[string]func(){}
+	}
+	run.effects["ufw --force enable"] = func() {
+		run.respond["ufw status"] = "Status: active\n\n22/tcp ALLOW Anywhere # krynodes\n"
+	}
+}
+
 func healthyServer(t *testing.T, executor Executor, run *fakeRun) {
 	t.Helper()
 	rootFile(t, executor, "/etc/os-release", "ID=debian\nVERSION_ID=\"12\"\n")
@@ -117,7 +141,9 @@ func healthyServer(t *testing.T, executor Executor, run *fakeRun) {
 	rootFile(t, executor, "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA laptop\n")
 	rootFile(t, executor, "/etc/apt/apt.conf.d/20auto-upgrades", "APT::Periodic::Unattended-Upgrade \"1\";\n")
 	run.respond["sshd -T"] = "passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin without-password\nport 22\n"
+	run.respond[rootProbe] = run.respond["sshd -T"]
 	run.respond["dpkg-query -W -f ${Status} unattended-upgrades"] = "install ok installed"
+	run.respond["apt-config shell UU APT::Periodic::Unattended-Upgrade"] = "UU='1'"
 	run.respond[listening] = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n"
 	rootFile(t, executor, "/etc/ufw/ufw.conf", "# comment\nENABLED=yes\nLOGLEVEL=low\n")
 }
@@ -151,7 +177,7 @@ func TestAHealthyServerHasOnlyNotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := findingsOf(t, executor)
-	if len(found) != 1 || found["ssh-keys"].Severity != "note" || found["ssh-keys"].Detail != "SSH keys for root" {
+	if len(found) != 2 || found["ssh-keys"].Severity != "note" || found["ssh-keys"].Detail != "SSH keys for root" || found["root-login"].Severity != "note" {
 		t.Fatalf("findings %#v", found)
 	}
 }
@@ -172,7 +198,7 @@ func TestFullAccessStacksMayHoldDockerButTheirPortsAreNamed(t *testing.T) {
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if found := findingsOf(t, executor); len(found) != 2 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (adguard-dns-1)" {
+	if found := findingsOf(t, executor); len(found) != 3 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (adguard-dns-1)" {
 		t.Fatalf("findings %#v", found)
 	}
 }
@@ -426,9 +452,22 @@ func TestHostApplyRefusesARequestThatWasChanged(t *testing.T) {
 	}
 }
 
+func TestRestartWhenNeededWaitsForSomethingThatMarksARestart(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	result := runRequest(t, executor, hostRequest(t, idA, "reboot-window", "apply", map[string]string{"hour": "3"}))
+	if result.OK || result.Output != "refused: Nothing on this server marks when a restart is needed. Turn on Security updates first." {
+		t.Fatalf("result %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "reboot.json")); err == nil {
+		t.Fatal("no window without a marker")
+	}
+}
+
 func TestTheRebootWindowRestartsOnlyWhenNeededAndOnceADay(t *testing.T) {
 	executor, run := securityExecutor(t)
 	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/kernel/postinst.d/unattended-upgrades", "")
 	now := executorNow
 	executor.Now = func() time.Time { return now }
 	window := hostRequest(t, idA, "reboot-window", "apply", map[string]string{"hour": "11"})
@@ -740,7 +779,7 @@ func TestARHELServerIsCheckedWithItsOwnTools(t *testing.T) {
 	}
 }
 
-func TestTheReportNamesThePlatformAndAnUnverifiedVersion(t *testing.T) {
+func TestTheReportNamesThePlatformByIDAndVersion(t *testing.T) {
 	executor, run := securityExecutor(t)
 	rhelServer(t, executor, run)
 	rootFile(t, executor, "/etc/os-release", strings.ReplaceAll(rockyRelease, "9.4", "11.0"))
@@ -752,10 +791,10 @@ func TestTheReportNamesThePlatformAndAnUnverifiedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	platform := inventory.Security.Platform
-	if platform == nil || platform.Family == nil || *platform.Family != "rhel" || platform.Name != "Rocky Linux 11.0" || platform.Verified || platform.Checked != "8 to 10" {
+	if platform == nil || platform.Family == nil || *platform.Family != "rhel" || platform.Name != "Rocky Linux 11.0" || platform.ID != "rocky" || platform.Version != "11" {
 		t.Fatalf("platform %#v", platform)
 	}
-	if found := findingsOf(t, executor)["os-unverified"]; found.Severity != "note" || found.Detail != "Rocky Linux 11 is newer than the versions Krynodes has checked (8 to 10)." {
+	if found, ok := findingsOf(t, executor)["os-unverified"]; ok {
 		t.Fatalf("finding %#v", found)
 	}
 	executor, run = securityExecutor(t)
@@ -767,19 +806,19 @@ func TestTheReportNamesThePlatformAndAnUnverifiedVersion(t *testing.T) {
 	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if platform := inventory.Security.Platform; platform == nil || platform.Family != nil || platform.Name != "Alpine Linux 3.20.3" {
+	if platform := inventory.Security.Platform; platform == nil || platform.Family != nil || platform.Name != "Alpine Linux 3.20.3" || platform.ID != "alpine" || platform.Version != "3.20.3" {
 		t.Fatalf("platform %#v", platform)
 	}
 }
 
-func TestEndOfLifeComesFromTheSharedTable(t *testing.T) {
+func TestTheAgentLeavesEndOfLifeToTheWorker(t *testing.T) {
 	executor, run := securityExecutor(t)
 	healthyServer(t, executor, run)
 	rootFile(t, executor, "/etc/os-release", "NAME=\"Ubuntu\"\nVERSION_ID=\"25.10\"\nID=ubuntu\nID_LIKE=debian\n")
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if found := findingsOf(t, executor)["os-eol"]; found.Severity != "serious" || found.Detail != "Ubuntu 25.10 no longer gets security updates (since 1 Jul 2026)" {
+	if found, ok := findingsOf(t, executor)["os-eol"]; ok {
 		t.Fatalf("finding %#v", found)
 	}
 }
@@ -890,7 +929,7 @@ func TestInstallDockerRunsInTheHostUnit(t *testing.T) {
 	run.failing["docker --version"] = ""
 	run.respond["dpkg --print-architecture"] = "amd64\n"
 	run.respond["docker version --format {{.Client.Version}}"] = "28.4.0\n"
-	executor.Fetch = func(context.Context, string) ([]byte, error) { return []byte("KEY"), nil }
+	executor.Fetch = dockerFetch
 	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "docker", "install", nil))
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)

@@ -1,8 +1,9 @@
 import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -31,6 +32,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useNetwork, useOverview, useServices } from "@/lib/api";
+import { moveLines } from "@/lib/bridges";
 import { moveCompose, servicesOf } from "@/lib/compose";
 import { agentCurrent } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
@@ -43,7 +45,7 @@ import {
   readServes,
   servesArg,
 } from "@/lib/network";
-import { moveBlocker, moveConfirmed } from "@/lib/stacks";
+import { moveBlocker, moveClash, moveConfirmed } from "@/lib/stacks";
 import { cn } from "@/lib/utils";
 import { moveSteps } from "@/lib/vault";
 import type { WebAddress } from "@/types";
@@ -179,13 +181,28 @@ function MoveForm({
           hostingOf(services.data?.nodes ?? [], overview.data?.nodes ?? []),
         )
       : null;
+  const bridging = stack
+    ? moveLines(
+        stack,
+        {
+          name: source.nodeName,
+          bridges: entries.get(source.nodeId)?.bridges ?? null,
+          stacks: entries.get(source.nodeId)?.stacks ?? [],
+        },
+        { name: targetName, bridges: entries.get(chosen)?.bridges ?? null },
+      )
+    : { lines: [], refusal: null, creates: [] };
   const changes = (block?.changes ?? []).filter(
     (change) => !skipped.includes(`${change.nodeId}:${change.project}`),
   );
   const secretsWrong = secretsProblem(secrets);
   const privateWrong = privateIpProblem(text, targetName, there !== null);
   const tooMany = block && !block.red ? moveProblem(changes) : null;
-  const problem = secretsWrong ?? privateWrong ?? tooMany;
+  const clash = stack
+    ? moveClash(stack, entries.get(chosen), targetName)
+    : null;
+  const problem =
+    clash ?? secretsWrong ?? privateWrong ?? tooMany ?? bridging.refusal;
   const carried = chosenAccess === "contained" ? (read?.hostPorts ?? []) : [];
   const blocked = moveBlocker(addresses, original);
   const targetKey = entries.get(chosen)?.sealKey ?? "";
@@ -235,6 +252,16 @@ function MoveForm({
             access: chosenAccess,
             ...(sealed ? { secrets: sealed } : {}),
             hostPorts: carried,
+            networks: bridging.creates,
+            offers: stack?.network?.offers?.join(",") ?? "",
+            title: stack?.title ?? "",
+            names: Object.entries(stack?.names ?? {})
+              .map(([service, name]) => `${service}=${name}`)
+              .join(","),
+            peers:
+              chosenAccess === "contained"
+                ? (stack?.network?.peers?.join(",") ?? "")
+                : "",
             ...(block && !block.red
               ? {
                   serves: servesArg(
@@ -252,7 +279,7 @@ function MoveForm({
       },
       {
         onSuccess: () => {
-          toast.success(`Moving ${source.project}.`);
+          toast.success(`Moving ${source.title}.`);
           onClose();
         },
       },
@@ -263,7 +290,7 @@ function MoveForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          Move {source.project} from {source.nodeName}
+          Move {source.title} from {source.nodeName}
         </DialogTitle>
         <DialogDescription>
           The compose file, its secrets and small files beside it move; app data
@@ -293,6 +320,7 @@ function MoveForm({
                 ))}
               </SelectContent>
             </Select>
+            {clash && <p className="text-xs text-destructive">{clash}</p>}
           </div>
           <div className="space-y-1.5">
             <Label>Access There</Label>
@@ -379,6 +407,28 @@ function MoveForm({
               )}
             </div>
           )}
+          {(bridging.lines.length > 0 || bridging.refusal) && (
+            <div
+              className={cn(
+                "space-y-2 rounded-md border p-3 text-xs",
+                bridging.refusal && "border-destructive/40 bg-destructive/5",
+              )}
+            >
+              <p className="text-sm font-medium">Docker Networks</p>
+              {bridging.refusal ? (
+                <p className="text-destructive">{bridging.refusal}</p>
+              ) : (
+                bridging.lines.map((line) => (
+                  <p
+                    key={line}
+                    className={line.startsWith("+") ? "" : "text-warning"}
+                  >
+                    {line}
+                  </p>
+                ))
+              )}
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>More Secrets</Label>
             <SecretsEditor rows={secrets} onChange={setSecrets} />
@@ -454,8 +504,8 @@ function MoveForm({
           }
           onClick={() => void move()}
         >
-          {!operate.isPending && <Fingerprint aria-hidden="true" />}
-          {operate.isPending ? "Waiting for the Fingerprint…" : "Move"}
+          <KeyRound aria-hidden="true" />
+          {operate.isPending ? <Waiting /> : "Move"}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -512,9 +562,7 @@ export function AdoptDialog({
               )
             }
           >
-            {run.isPending
-              ? "Waiting for the Fingerprint…"
-              : "Move into Krynodes"}
+            {run.isPending ? <Waiting /> : "Move into Krynodes"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

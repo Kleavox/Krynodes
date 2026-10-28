@@ -49,3 +49,12 @@ export function invalidRequest(context: KrynodesContext) {
 export function agentOrigin(env: Env): string {
   return env.AGENT_ORIGIN ?? env.PUBLIC_ORIGIN;
 }
+
+export function leftoversOf(node: { leftovers: string | null }): string[] {
+  return node.leftovers ? (JSON.parse(node.leftovers) as string[]) : [];
+}
+
+export const leftoversRefusal = (name: string, server: string) => ({
+  code: "LEFTOVERS",
+  message: `Files left from an earlier ${name} are still on ${server}. Delete them first.`,
+});

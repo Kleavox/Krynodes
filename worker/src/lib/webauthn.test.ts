@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { testPassphrase, testPasskey } from "../test/passkeys";
-import { fromB64url } from "./b64url";
-import { fingerprint, verifyAssertion } from "./webauthn";
+import { fromB64url, toB64url } from "./b64url";
+import { assertionSynced, fingerprint, verifyAssertion } from "./webauthn";
 
 const ORIGIN = "https://kry.example.test";
 const RP = "kry.example.test";
@@ -24,6 +24,16 @@ describe("webauthn", () => {
     await expect(
       verifyAssertion(laptop, touch, { origin: ORIGIN, rpId: RP, challenge }),
     ).resolves.toEqual({ uv: false });
+  });
+
+  it("tells a synced passkey from one that stays on its device", () => {
+    const data = (flags: number) => {
+      const bytes = new Uint8Array(37);
+      bytes[32] = flags;
+      return toB64url(bytes);
+    };
+    expect(assertionSynced(data(0x1d))).toBe(true);
+    expect(assertionSynced(data(0x05))).toBe(false);
   });
 
   it("refuses another challenge, origin, rp id or key", async () => {

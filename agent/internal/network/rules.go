@@ -3,6 +3,7 @@ package network
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/netip"
 	"regexp"
 	"slices"
@@ -15,6 +16,8 @@ const (
 	ReachChain  = "KRY-REACH"
 	DropChain   = "KRY-DROP"
 	KnockChain  = "KRY-KNOCK"
+	PeersChain  = "KRY-PEERS"
+	PortsChain  = "KRY-PORTS"
 	logRule     = " -m limit --limit 600/min -j LOG --log-prefix \"%s\" --log-level 6"
 	multiports  = 15
 	Variable    = "KRY_PRIVATE_IP"
@@ -33,6 +36,18 @@ type Serve struct {
 	Port string   `json:"port"`
 	All  bool     `json:"all,omitempty"`
 	To   []string `json:"to,omitempty"`
+}
+
+var PortsJump = []string{"-i", "krc+", "-m", "conntrack", "--ctstate", "DNAT", "--ctdir", "ORIGINAL", "-j", PortsChain}
+
+type PeerRule struct {
+	From, To, Proto string
+	Port            int
+}
+
+type PeerNetwork struct {
+	Bridge string
+	Allow  []PeerRule
 }
 
 type StackRules struct {
@@ -200,4 +215,34 @@ func Restore(serve, reach, drop, knock []string) string {
 	}
 	text.WriteString("COMMIT\n")
 	return text.String()
+}
+
+func Peers(networks []PeerNetwork) []string {
+	rules := []string{"-A " + PeersChain + " -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"}
+	for _, network := range networks {
+		for _, allow := range network.Allow {
+			rules = append(rules, fmt.Sprintf("-A %s -s %s/32 -d %s/32 -i %s -p %s -m %s --dport %d -j ACCEPT", PeersChain, allow.From, allow.To, network.Bridge, allow.Proto, allow.Proto, allow.Port))
+		}
+		rules = append(rules, fmt.Sprintf("-A %s -i %s"+logRule, PeersChain, network.Bridge, ReachPrefix), fmt.Sprintf("-A %s -i %s -j DROP", PeersChain, network.Bridge))
+	}
+	return rules
+}
+
+func PeersRestore(rules []string) string {
+	return "*filter\n:" + PeersChain + " - [0:0]\n" + strings.Join(rules, "\n") + "\nCOMMIT\n"
+}
+
+func PeersJump(bridge string) []string {
+	return []string{"-i", bridge, "-o", bridge, "-j", PeersChain}
+}
+
+func Ports(own map[string][]string) [][]string {
+	var rules [][]string
+	for _, bridge := range slices.Sorted(maps.Keys(own)) {
+		for _, port := range own[bridge] {
+			number, protocol, _ := strings.Cut(port, "/")
+			rules = append(rules, []string{"-i", bridge, "-p", protocol, "-m", "conntrack", "--ctorigdstport", number, "-j", "RETURN"})
+		}
+	}
+	return rules
 }

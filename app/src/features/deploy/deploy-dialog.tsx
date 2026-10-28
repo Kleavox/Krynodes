@@ -1,7 +1,8 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { Busy, Waiting } from "@/components/busy";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -85,9 +86,10 @@ function DeployForm({
   const several = targets.length > 1;
   const word = rollback ? "Roll Back" : "Deploy";
   const [first] = targets;
+  const shown = (first ?? request.members[0])?.stack.title ?? request.project;
   const title = several
-    ? `${word} ${request.project} on ${targets.length} servers?`
-    : `${word} ${request.project} on ${first?.node.name ?? request.members[0]?.node.name ?? ""}?`;
+    ? `${word} ${shown} on ${targets.length} servers?`
+    : `${word} ${shown} on ${first?.node.name ?? request.members[0]?.node.name ?? ""}?`;
   const list = devices.data?.devices;
   const ids = list?.map((device) => device.id) ?? [];
   const signers = signersFor(
@@ -124,14 +126,14 @@ function DeployForm({
       {list && (ids.length === 0 || signers.length === 0) ? (
         <p className="text-sm">
           {ids.length === 0
-            ? "Deploys need a trusted device. "
-            : "None of your devices has access to every server here. "}
+            ? "Deploys need a trusted passkey. "
+            : "None of your passkeys has access to every server here. "}
           <Link
             to="/devices"
             className="underline underline-offset-4"
             onClick={onClose}
           >
-            {ids.length === 0 ? "Set Up Trusted Devices" : "Change Access"}
+            {ids.length === 0 ? "Set Up Passkeys" : "Change Access"}
           </Link>
           .
         </p>
@@ -195,12 +197,8 @@ function DeployForm({
           disabled={working || signers.length === 0 || targets.length === 0}
           onClick={submit}
         >
-          {!working && <Fingerprint aria-hidden="true" />}
-          {working
-            ? state
-              ? "Sending…"
-              : "Waiting for the Fingerprint…"
-            : word}
+          {!(working && state) && <KeyRound aria-hidden="true" />}
+          {working ? state ? <Busy>Sending</Busy> : <Waiting /> : word}
         </Button>
       </AlertDialogFooter>
     </AlertDialogContent>

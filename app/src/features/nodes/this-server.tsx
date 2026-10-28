@@ -140,7 +140,7 @@ export function ThisServer({
               <Link
                 to="/devices"
                 className="underline-offset-4 hover:underline"
-                title="Change access in Trusted devices"
+                title="Change access in Passkeys"
               >
                 {reachedBy(trust, devices.data.devices)}
               </Link>

@@ -20,6 +20,7 @@ import {
 import { ReleaseDialog } from "@/features/nodes/release-dialog";
 import { SecurityPanel } from "@/features/nodes/security-panel";
 import { ThisServer } from "@/features/nodes/this-server";
+import { DockerNetworks } from "@/features/nodes/docker-networks";
 import { WhatRuns } from "@/features/nodes/what-runs";
 import { RecentActions } from "@/features/services/node-sections";
 import { useDevices, useOverview, useQuarantine, useServices } from "@/lib/api";
@@ -166,6 +167,7 @@ export function NodeDetailPage() {
             </>
           )}
           <WhatRuns node={node} seen={seen} />
+          <DockerNetworks node={node} />
         </div>
         <aside className="min-w-0 space-y-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
           <MachineTiles

@@ -34,7 +34,7 @@ export function ChangeDetails({
         return (
           <section
             key={key.id}
-            aria-label={`New device ${key.name}`}
+            aria-label={`New passkey ${key.name}`}
             className="rounded-md border bg-card p-3"
           >
             <p className="font-medium">
@@ -101,7 +101,7 @@ export function ChangeDetails({
       )}
       {empty && (
         <p className="text-muted-foreground">
-          Nothing changes for your devices. Servers that missed an earlier
+          Nothing changes for your passkeys. Servers that missed an earlier
           change catch up with the current core and access.
         </p>
       )}

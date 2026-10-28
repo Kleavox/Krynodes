@@ -357,7 +357,7 @@ describe("the Tailscale webhook", () => {
       lines: [`+ ${WEB}`],
     });
     expect(t.mail.map((message) => message.subject)).toEqual([
-      "[Krynodes] Your Tailscale policy was changed without your fingerprint",
+      "[Krynodes] Your Tailscale policy was changed without your passkey",
     ]);
     const text = t.mail[0]!.text;
     expect(text).toContain(

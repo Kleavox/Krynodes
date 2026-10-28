@@ -67,7 +67,7 @@ func verified(uv bool) error {
 	if uv {
 		return nil
 	}
-	return errors.New("the passkey did not verify a fingerprint; every server requires one")
+	return errors.New("the passkey was opened without a fingerprint, face or PIN; every server requires one")
 }
 
 func settled(t Trust) Trust {

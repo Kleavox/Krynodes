@@ -23,11 +23,7 @@ async function verifyIntent(
 ): Promise<void> {
   if (fleet.core.length === 0) return;
   if (!header) {
-    throw new Refusal(
-      403,
-      "PROOF_NEEDED",
-      "Confirm with the passkey of a trusted device.",
-    );
+    throw new Refusal(403, "PROOF_NEEDED", "Confirm with a trusted passkey.");
   }
   const signed = signedCommandSchema.safeParse(decodeJson(header));
   if (!signed.success) throw bad("The confirmation is malformed.");
@@ -109,7 +105,7 @@ export async function confirmed(
       throw new Refusal(
         403,
         "NO_DEVICE_OF_YOURS",
-        "None of the trusted devices is yours. Ask someone who has one to approve a device of yours under Trusted devices.",
+        "None of the trusted passkeys is yours. Ask someone who has one to approve a passkey of yours under Passkeys.",
       );
     }
     await verifyIntent(

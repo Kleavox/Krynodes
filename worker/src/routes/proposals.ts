@@ -14,7 +14,12 @@ import type { Env } from "../env";
 import { fromB64url } from "../lib/b64url";
 import { sendProposalEmail } from "../lib/mail";
 import { Refusal, verifyApproval } from "../trust/approval";
-import { agentCurrent, loadFleet, type Fleet } from "../trust/fleet";
+import {
+  agentCurrent,
+  loadFleet,
+  syncedUpdates,
+  type Fleet,
+} from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
@@ -173,7 +178,7 @@ function checkChange(env: Env, fleet: Fleet, change: TrustChange, now: number) {
       throw new Refusal(
         400,
         "INCOMPLETE",
-        "Adding or removing a device, the passphrase or the fingerprint rule must reach every server.",
+        "Adding or removing a passkey, the passphrase or the unlock rule must reach every server.",
       );
     }
   }
@@ -184,7 +189,7 @@ function checkFingerprints(fleet: Fleet, change: TrustChange) {
     throw new Refusal(
       400,
       "NO_PASSPHRASE",
-      "Krynodes no longer uses a passphrase; fingerprints confirm every change.",
+      "Krynodes no longer uses a passphrase; passkeys confirm every change.",
     );
   }
   for (const key of change.core ?? []) {
@@ -193,7 +198,7 @@ function checkFingerprints(fleet: Fleet, change: TrustChange) {
       throw new Refusal(
         422,
         "CANNOT_VERIFY",
-        `${device?.name ?? "A device"} has not shown it can verify a fingerprint, so it cannot join.`,
+        `${device?.name ?? "A passkey"} has not shown it asks for a fingerprint, face or PIN, so it cannot join.`,
       );
     }
   }
@@ -301,6 +306,7 @@ async function apply(
         ),
         guard,
       ),
+    ...syncedUpdates(db, input.ownerId, input.approvals),
   ];
   if (input.change.core) {
     statements.push(
@@ -338,7 +344,7 @@ async function apply(
     throw new Refusal(
       409,
       "ACTION_PENDING",
-      "A device change is still on its way to a server. Try again in a minute.",
+      "A passkey change is still on its way to a server. Try again in a minute.",
     );
   }
   await pokeNodes(env, input.ownerId, Object.keys(input.change.access));
@@ -556,7 +562,7 @@ export function registerProposalRoutes(
         throw new Refusal(
           409,
           "ALREADY_APPROVED",
-          "This device already approved the change. Approve on another trusted device.",
+          "This passkey already approved the change. Approve with another trusted passkey.",
         );
       }
       const fleet = await loadFleet(context.env.DB, identity.id);

@@ -5,11 +5,35 @@ import {
   networkInventorySchema,
   stackNetworkSchema,
 } from "./network";
+import { bridgesReportSchema } from "./bridges";
 import { eventSchema, releaseSchema } from "./quarantine";
 import { reachSchema } from "./tailscale";
-import { isValidTarget, RECIPES } from "./targets";
+import {
+  isValidTarget,
+  RECIPES,
+  SERVICE_NAME,
+  stackNamesValid,
+  stackTitleValid,
+} from "./targets";
 
-export { isProtectedTarget, isValidTarget, RECIPES } from "./targets";
+export {
+  CONTAINER_NAME,
+  isProtectedTarget,
+  isValidTarget,
+  parseStackNames,
+  RECIPES,
+  stackNamesValid,
+  stackTitleValid,
+} from "./targets";
+export {
+  ADMIN_KEY_ARG,
+  ADMIN_NAME,
+  BRIDGE_NAME,
+  bridgesReportSchema,
+  OFFER_ENTRY,
+  PEER_ENTRY,
+  type BridgesReport,
+} from "./bridges";
 export {
   portSchema,
   reachSchema,
@@ -68,11 +92,9 @@ export { summarizeChange, type ChangeSummary } from "./summary";
 export {
   agentHasFeatures,
   agentSupported,
-  agentUpdatable,
   compareVersions,
   FEATURE_AGENT,
   MIN_AGENT_VERSION,
-  UPDATABLE_FROM,
 } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
 export {
@@ -265,6 +287,7 @@ export const KIND_VERBS = {
     "unblock",
     "join",
     "inspect",
+    "admin",
   ],
   trust: ["trust"],
   vault: [
@@ -300,6 +323,7 @@ export const KIND_VERBS = {
     "drop",
     "tighten",
   ],
+  bridge: ["create", "remove"],
 } as const;
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
@@ -343,6 +367,7 @@ export const agentActionSchema = z
       "vault",
       "apt",
       "network",
+      "bridge",
     ]),
     name: z.string(),
     action: z.enum([
@@ -403,6 +428,7 @@ export const agentActionSchema = z
       "save",
       "key",
       "join",
+      "admin",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -462,7 +488,14 @@ export const serviceEntrySchema = z
   .strictObject({
     kind: serviceKindSchema,
     name: z.string(),
-    state: z.enum(["running", "stopped", "failed", "starting"]),
+    state: z.enum([
+      "running",
+      "stopped",
+      "failed",
+      "starting",
+      "boot",
+      "unneeded",
+    ]),
     since: z.string().datetime().nullable(),
     system: z.boolean(),
   })
@@ -486,6 +519,9 @@ export const stackEntrySchema = z
       .max(500)
       .optional(),
     network: stackNetworkSchema.optional(),
+    title: z.string().refine(stackTitleValid).optional(),
+    names: z.record(z.string(), z.string()).refine(stackNamesValid).optional(),
+    services: z.array(z.string().regex(SERVICE_NAME)).max(64).optional(),
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 
@@ -507,8 +543,10 @@ export const securityReportSchema = z.strictObject({
     .strictObject({
       family: z.enum(["debian", "rhel"]).nullable(),
       name: z.string().max(120),
-      verified: z.boolean(),
-      checked: z.string().max(40),
+      id: z.string().max(40).optional(),
+      version: z.string().max(40).optional(),
+      verified: z.boolean().optional(),
+      checked: z.string().max(40).optional(),
     })
     .optional(),
   listeners: z
@@ -662,6 +700,10 @@ export const agentActionsRequestSchema = z
         hash: z.string().regex(/^[0-9a-f]{64}$/u),
         docker: z.enum(["ready", "no-compose", "missing"]).optional(),
         removed: z.array(removedStackSchema).max(50).optional(),
+        leftovers: z
+          .array(z.string().refine((name) => isValidTarget("compose", name)))
+          .max(50)
+          .optional(),
         sealKey: z
           .string()
           .regex(/^[A-Za-z0-9_-]{87}$/u)
@@ -675,6 +717,7 @@ export const agentActionsRequestSchema = z
         packages: packagesReportSchema.optional(),
         tailscale: tailscaleReportSchema.optional(),
         network: networkInventorySchema.optional(),
+        bridges: bridgesReportSchema.nullable().optional(),
       })
       .optional(),
     progress: z.array(progressSchema).max(10).optional(),

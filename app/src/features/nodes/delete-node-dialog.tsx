@@ -1,8 +1,9 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
+import { Busy, Waiting } from "@/components/busy";
 import { GuardIcon } from "@/components/confirm-dialog";
 import {
   AlertDialog,
@@ -332,7 +333,7 @@ export function DeleteNodeDialog({
                 <p>
                   {node.name} holds a piece of the Tailscale credential.
                   Krynodes first shares it again among your other servers, with
-                  the same fingerprint.
+                  the same passkey.
                 </p>
               )}
               {!tailnetPlan.ok && (
@@ -344,8 +345,8 @@ export function DeleteNodeDialog({
               )}
               {background && (
                 <p>
-                  It runs on its own after your fingerprint, so you can close
-                  this. {node.name} shows as deleting until it is gone.
+                  It runs on its own after your passkey, so you can close this.{" "}
+                  {node.name} shows as deleting until it is gone.
                 </p>
               )}
               {!plan.ok && (
@@ -419,7 +420,7 @@ export function DeleteNodeDialog({
               onClick={() => first(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
-              {remove.isPending ? "Working…" : "Delete Anyway"}
+              {remove.isPending ? <Busy>Working</Busy> : "Delete Anyway"}
             </Button>
           ) : holds && plan.ok ? (
             <Button
@@ -427,12 +428,14 @@ export function DeleteNodeDialog({
               disabled={busy}
               onClick={() => first(spread)}
             >
-              {!operate.isPending && <Fingerprint aria-hidden="true" />}
-              {operate.isPending
-                ? "Waiting for the Fingerprint…"
-                : piece
-                  ? "Spread and Delete"
-                  : "Clean Up and Delete"}
+              <KeyRound aria-hidden="true" />
+              {operate.isPending ? (
+                <Waiting />
+              ) : piece ? (
+                "Spread and Delete"
+              ) : (
+                "Clean Up and Delete"
+              )}
             </Button>
           ) : leaving ? (
             <Button
@@ -440,10 +443,8 @@ export function DeleteNodeDialog({
               disabled={busy}
               onClick={() => first(removeAndDelete)}
             >
-              {!run.isPending && <Fingerprint aria-hidden="true" />}
-              {run.isPending
-                ? "Waiting for the Fingerprint…"
-                : "Remove and Delete"}
+              <KeyRound aria-hidden="true" />
+              {run.isPending ? <Waiting /> : "Remove and Delete"}
             </Button>
           ) : (
             <Button
@@ -452,11 +453,13 @@ export function DeleteNodeDialog({
               onClick={() => first(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
-              {remove.isPending
-                ? "Working…"
-                : holds || stopped
-                  ? "Delete Anyway"
-                  : "Delete Node"}
+              {remove.isPending ? (
+                <Busy>Working</Busy>
+              ) : holds || stopped ? (
+                "Delete Anyway"
+              ) : (
+                "Delete Node"
+              )}
             </Button>
           )}
         </AlertDialogFooter>

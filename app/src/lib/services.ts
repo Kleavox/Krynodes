@@ -11,12 +11,9 @@ import type {
   ServiceState,
 } from "../types";
 import { isProtectedTarget } from "@krynodes/protocol/targets";
-import {
-  MIN_AGENT_VERSION,
-  compareVersions,
-} from "@krynodes/protocol/versions";
+import { compareVersions } from "@krynodes/protocol/versions";
 
-import { agentCurrent } from "./devices";
+import { agentGap } from "./devices";
 
 import { clockTime, nodeState, parseTimestamp, timeAgo } from "./format";
 import { untilWindowSettles } from "./series";
@@ -151,12 +148,30 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
     save: { verb: "Save", doing: "Saving…", done: "Saved" },
     key: { verb: "Make a Key", doing: "Making a key…", done: "Made a key" },
     join: { verb: "Sign In", doing: "Signing in…", done: "Signed in" },
+    admin: {
+      verb: "Get an Admin User Command",
+      doing: "Getting the command…",
+      done: "Command ready",
+    },
   };
+
+export const STATE_LABEL: Record<ServiceState, string> = {
+  running: "Running",
+  stopped: "Stopped",
+  failed: "Failed",
+  starting: "Starting",
+  boot: "Ran at Boot",
+  unneeded: "Not Needed Here",
+};
+
+export const resting = (state: ServiceState) =>
+  state === "boot" || state === "unneeded";
 
 export const RECIPE_TITLES: Record<string, string> = {
   "security-updates": "Automatic Security Updates",
   "reboot-window": "Restart When Needed",
   "ssh-keys-only": "SSH keys only",
+  "no-root-login": "No root login",
   fail2ban: "Block Repeated Login Failures",
   firewall: "Firewall",
   "free-port-53": "Free port 53",
@@ -190,7 +205,7 @@ export interface ServerGroup {
 }
 
 export function displayName(kind: ActionKind, name: string): string {
-  if (kind === "trust") return "Trusted Devices";
+  if (kind === "trust") return "Passkeys";
   if (kind === "vault") {
     return name === "tailscale"
       ? "the Tailscale credential"
@@ -226,7 +241,11 @@ export function toTarget(member: ServiceMember): ActionTarget {
   };
 }
 
-const troubled = (member: ServiceMember) => member.entry.state !== "running";
+const troubled = (member: ServiceMember) =>
+  member.entry.state !== "running" && !resting(member.entry.state);
+
+const rank = (member: ServiceMember) =>
+  troubled(member) ? 0 : resting(member.entry.state) ? 2 : 1;
 
 export function groupByServer(
   data: ServicesResponse,
@@ -260,7 +279,7 @@ export function groupByServer(
       .filter((member) => !options.notRunning || troubled(member))
       .sort(
         (a, b) =>
-          Number(troubled(b)) - Number(troubled(a)) ||
+          rank(a) - rank(b) ||
           displayName(a.entry.kind, a.entry.name).localeCompare(
             displayName(b.entry.kind, b.entry.name),
           ),
@@ -416,7 +435,9 @@ export function autoRestartBlocker(
   node: NodeRecord | undefined,
   data: ServicesResponse | undefined,
 ): string | null {
-  if (!node || !agentCurrent(node)) return `Needs agent ${MIN_AGENT_VERSION}`;
+  if (!node) return "Server Not Found";
+  const gap = agentGap(node.agent_version);
+  if (gap !== null) return gap;
   const unit = check.target.endsWith(".service")
     ? check.target
     : `${check.target}.service`;

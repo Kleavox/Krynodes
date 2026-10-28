@@ -331,12 +331,17 @@ describe("older agents", () => {
         upgrade: "websocket",
         "user-agent": agent,
       });
-    const old = await open("kry-agent/0.4.1");
-    expect(old.status).toBe(426);
-    expect(await old.json()).toMatchObject({ code: "AGENT_UPDATE_REQUIRED" });
+    for (const agent of [
+      "kry-agent/0.4.1",
+      "kry-agent/0.5.1",
+      "kry-agent/0.6.14",
+    ]) {
+      const old = await open(agent);
+      expect(old.status).toBe(426);
+      expect(await old.json()).toMatchObject({ code: "AGENT_UPDATE_REQUIRED" });
+    }
     expect(t.hub).toHaveLength(0);
-    expect(await (await open("kry-agent/0.5.1")).text()).toBe("from hub");
-    expect(await (await open("kry-agent/0.6.0")).text()).toBe("from hub");
+    expect(await (await open("kry-agent/0.7.0")).text()).toBe("from hub");
     expect(await (await open("kry-agent/dev")).text()).toBe("from hub");
   });
 

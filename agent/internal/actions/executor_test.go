@@ -31,11 +31,15 @@ type fakeRun struct {
 	respond  map[string]string
 	failing  map[string]string
 	sequence map[string][]string
+	effects  map[string]func()
 }
 
 func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, int, error) {
 	call := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, call)
+	if effect := f.effects[call]; effect != nil {
+		effect()
+	}
 	if answer, ok := f.respond[call]; ok {
 		return []byte(answer), 0, nil
 	}

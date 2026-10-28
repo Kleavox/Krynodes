@@ -1,7 +1,8 @@
 import { TAILSCALE } from "@krynodes/protocol";
-import { FEATURE_AGENT } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { useState } from "react";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -106,7 +107,7 @@ export function ConnectTailscaleSheet({
   const problem = !tailnet
     ? "No server is on a tailnet yet. Sign one in from its Packages page first."
     : holders.length < 2
-      ? `Connect needs two servers with agent ${FEATURE_AGENT} that this device reaches; ${holders.length} is.`
+      ? `Connect needs two servers with agent ${MIN_AGENT_VERSION} that your passkey reaches; ${holders.length} is.`
       : null;
   const ready =
     problem === null &&
@@ -212,17 +213,19 @@ export function ConnectTailscaleSheet({
           <p className="font-medium">Where the Secret Goes</p>
           <p className="text-xs text-muted-foreground">
             {holders.length > 0
-              ? `Your browser splits it into ${holders.length} pieces, one for each of ${listOf(names)}. Any two rebuild it, only for a change you sign with your fingerprint, and the server erases it after. Krynodes' Worker never sees it.`
-              : `No server with agent ${FEATURE_AGENT} that this device reaches can hold a piece yet.`}
+              ? `Your browser splits it into ${holders.length} pieces, one for each of ${listOf(names)}. Any two rebuild it, only for a change you sign with your passkey, and the server erases it after. Krynodes' Worker never sees it.`
+              : `No server with agent ${MIN_AGENT_VERSION} that your passkey reaches can hold a piece yet.`}
           </p>
         </div>
         <Said text={problem} />
         <Said text={connect.error?.message ?? null} />
         {connect.isPending && (
           <p role="status" className="text-sm text-muted-foreground">
-            {change
-              ? "Your servers are storing the pieces…"
-              : "Your servers are storing the pieces, then reading your policy file. This takes up to a minute."}
+            {change ? (
+              <Busy>Your servers are storing the pieces</Busy>
+            ) : (
+              "Your servers are storing the pieces, then reading your policy file. This takes up to a minute."
+            )}
           </p>
         )}
         <DialogFooter>

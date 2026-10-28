@@ -12,9 +12,11 @@ import type {
 } from "../types";
 import {
   autoRestartLine,
+  checkBucket,
   checkLive,
   checksByServer,
   checkTargetProblem,
+  dockerKindBlocker,
   failuresText,
   incidentLine,
   pickedKind,
@@ -188,6 +190,26 @@ describe("checks by server", () => {
       ["calisto", ["MinIO console", "postgresql"]],
       ["old", ["Old"]],
     ]);
+  });
+
+  it("puts a quarantined server last", () => {
+    const quarantined = {
+      ...server("pv", "pivox"),
+      quarantine: { at: before(60_000), why: "scan" },
+    };
+    expect(
+      checksByServer(checks, [quarantined, server("io", "io")], NOW).map(
+        (group) => group.node.name,
+      ),
+    ).toEqual(["io", "pivox"]);
+  });
+
+  it("files each check under one status filter", () => {
+    expect(checkBucket("UNTRUSTED", "off")).toBe("quarantined");
+    expect(checkBucket("OFFLINE", "off")).toBe("offline");
+    expect(checkBucket("DOWN", "work")).toBeNull();
+    expect(checkBucket("DOWN", "bad")).toBe("down");
+    expect(checkBucket("UP", "ok")).toBe("up");
   });
 
   it("heads each server with its count", () => {
@@ -385,5 +407,28 @@ describe("a check's live status", () => {
     expect(live({})).toEqual({ label: "--", tone: "ok" });
     expect(live({ display: "UNKNOWN" })).toEqual({ label: "--", tone: "idle" });
     expect(live({ display: "STALE" })).toEqual({ label: "--", tone: "idle" });
+  });
+});
+
+describe("dockerKindBlocker", () => {
+  it("names why Docker is not offered", () => {
+    const io = (agent_version: string | null) => ({
+      name: "io",
+      agent_version,
+    });
+    expect(dockerKindBlocker("", undefined, undefined)).toBe(
+      "Choose a Server First",
+    );
+    expect(dockerKindBlocker("n1", io(null), undefined)).toBe(
+      "Waiting for First Report",
+    );
+    expect(dockerKindBlocker("n1", io("0.6.14"), "ready")).toBe(
+      "Needs agent 0.7.0",
+    );
+    expect(dockerKindBlocker("n1", io("0.7.1"), "missing")).toBe(
+      "No Docker on io",
+    );
+    expect(dockerKindBlocker("n1", io("0.7.1"), "no-compose")).toBeNull();
+    expect(dockerKindBlocker("n1", io("0.7.1"), null)).toBeNull();
   });
 });

@@ -36,6 +36,7 @@ const deviceSchema = z.strictObject({
   alg: z.union([z.literal(-7), z.literal(-257)]),
   publicKey: b64url,
   verifies: z.boolean().optional(),
+  synced: z.boolean().optional(),
 });
 
 const renameSchema = z.strictObject({
@@ -101,6 +102,7 @@ export function registerDeviceRoutes(
           createdAt: device.createdAt,
           lastUsedAt: device.lastUsedAt,
           verifies: device.verifies,
+          synced: device.synced,
           fingerprint: device.fingerprint,
           core: fleet.core.includes(device.id),
           owner: device.account,
@@ -120,7 +122,7 @@ export function registerDeviceRoutes(
       return {
         fleet,
         refused: context.json(
-          { code: "NOT_FOUND", message: "The device was not found." },
+          { code: "NOT_FOUND", message: "The passkey was not found." },
           404,
         ),
       };
@@ -158,15 +160,15 @@ export function registerDeviceRoutes(
         {
           code: "CANNOT_VERIFY",
           message:
-            "This passkey cannot verify a fingerprint. Choose Use a phone or a security key instead.",
+            "This passkey does not ask for a fingerprint, face or PIN. Choose Use a phone or a security key instead.",
         },
         422,
       );
     }
     try {
       await context.env.DB.prepare(
-        `INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at, verifies, account)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at, verifies, synced, account)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           device.id,
@@ -176,6 +178,7 @@ export function registerDeviceRoutes(
           device.publicKey,
           new Date().toISOString(),
           device.verifies === undefined ? null : device.verifies ? 1 : 0,
+          device.synced === undefined ? null : device.synced ? 1 : 0,
           context.get("identity").email,
         )
         .run();
@@ -184,7 +187,7 @@ export function registerDeviceRoutes(
       return context.json(
         {
           code: "DEVICE_EXISTS",
-          message: "This device is already registered.",
+          message: "This passkey is already registered.",
         },
         409,
       );
@@ -208,7 +211,7 @@ export function registerDeviceRoutes(
       .run();
     if (result.meta.changes === 0) {
       return context.json(
-        { code: "NOT_FOUND", message: "The device was not found." },
+        { code: "NOT_FOUND", message: "The passkey was not found." },
         404,
       );
     }
@@ -224,7 +227,7 @@ export function registerDeviceRoutes(
       return context.json(
         {
           code: "CORE_DEVICE",
-          message: "A trusted device leaves only through an approved change.",
+          message: "A trusted passkey leaves only through an approved change.",
         },
         409,
       );
@@ -236,7 +239,7 @@ export function registerDeviceRoutes(
       .run();
     if (result.meta.changes === 0) {
       return context.json(
-        { code: "NOT_FOUND", message: "The device was not found." },
+        { code: "NOT_FOUND", message: "The passkey was not found." },
         404,
       );
     }
@@ -322,7 +325,7 @@ export function registerDeviceRoutes(
       return context.json(
         {
           code: "ACTION_PENDING",
-          message: "A device change is still on its way to a server.",
+          message: "A passkey change is still on its way to a server.",
         },
         409,
       );

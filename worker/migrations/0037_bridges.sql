@@ -1,0 +1,85 @@
+ALTER TABLE nodes ADD COLUMN bridges TEXT;
+
+PRAGMA defer_foreign_keys = true;
+
+CREATE TABLE services_next (
+  node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('systemd', 'docker')),
+  name TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN
+    ('running', 'stopped', 'failed', 'starting', 'boot', 'unneeded')),
+  since TEXT,
+  system INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (node_id, kind, name)
+);
+
+INSERT INTO services_next (node_id, kind, name, state, since, system, updated_at)
+SELECT node_id, kind, name, state, since, system, updated_at FROM services;
+
+DROP TABLE services;
+ALTER TABLE services_next RENAME TO services;
+
+CREATE TABLE actions_next (
+  id TEXT PRIMARY KEY,
+  batch_id TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('rolling', 'parallel')),
+  node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN
+    ('systemd', 'docker', 'compose', 'trust', 'host', 'vault', 'apt', 'network',
+     'bridge')),
+  name TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN
+    ('start', 'stop', 'restart', 'deploy', 'rollback', 'trust', 'reboot', 'logs',
+     'remove', 'purge', 'restore', 'create', 'autorestart', 'manual', 'heal',
+     'edit', 'read', 'export', 'expose', 'unexpose', 'adopt', 'reach',
+     'apply', 'undo', 'lockdown', 'unlock', 'scan',
+     'store', 'release', 'reshare', 'forget', 'install', 'uninstall',
+     'signin', 'refresh', 'find', 'preview', 'upgrade', 'hold', 'unhold',
+     'addrepo', 'droprepo',
+     'inspect', 'probe', 'test', 'prepare', 'unprepare', 'rekey',
+     'accept', 'block', 'unblock', 'drop', 'tighten',
+     'policy', 'save', 'key', 'join', 'admin')),
+  status TEXT NOT NULL CHECK (status IN
+    ('queued', 'sent', 'done', 'failed', 'expired', 'cancelled', 'skipped')),
+  requested_by TEXT NOT NULL,
+  requested_at TEXT NOT NULL,
+  deliverable_at TEXT,
+  sent_at TEXT,
+  finished_at TEXT,
+  exit_code INTEGER,
+  output TEXT,
+  signed TEXT,
+  device_id TEXT,
+  attachment TEXT,
+  attach_from INTEGER,
+  attach_key TEXT,
+  hidden_at TEXT,
+  hidden_by TEXT,
+  progress TEXT
+);
+
+INSERT INTO actions_next (id, batch_id, position, mode, node_id, kind, name,
+  action, status, requested_by, requested_at, deliverable_at, sent_at,
+  finished_at, exit_code, output, signed, device_id, attachment, attach_from,
+  attach_key, hidden_at, hidden_by, progress)
+SELECT id, batch_id, position, mode, node_id, kind, name, action, status,
+  requested_by, requested_at, deliverable_at, sent_at, finished_at, exit_code,
+  output, signed, device_id, attachment, attach_from, attach_key, hidden_at,
+  hidden_by, progress
+FROM actions;
+
+DROP TABLE actions;
+ALTER TABLE actions_next RENAME TO actions;
+
+CREATE INDEX idx_actions_status_node ON actions(status, node_id);
+CREATE INDEX idx_actions_node_requested ON actions(node_id, requested_at);
+CREATE INDEX idx_actions_batch ON actions(batch_id, position);
+CREATE UNIQUE INDEX idx_actions_one_pending
+  ON actions(node_id, kind, name)
+  WHERE status IN ('queued', 'sent')
+    AND action NOT IN ('logs', 'read', 'export', 'expose', 'unexpose', 'scan',
+      'store', 'release', 'reshare', 'forget', 'refresh', 'find', 'preview',
+      'inspect', 'probe', 'test',
+      'lockdown', 'accept', 'block', 'unblock', 'drop', 'tighten');

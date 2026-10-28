@@ -14,7 +14,7 @@ import type {
   NodeRecord,
 } from "../types";
 import { usePrivateAddress } from "./compose";
-import { historyText } from "./history";
+import { actionLine, historyText } from "./history";
 import {
   buildDocument,
   candidateState,
@@ -25,6 +25,7 @@ import {
   fixLabel,
   moveBlock,
   moveProblem,
+  networkActionText,
   networkHint,
   opensBox,
   parsePlaces,
@@ -479,6 +480,7 @@ describe("before a server joins", () => {
       details: false,
       joinable: false,
     });
+    expect(candidateState(null, null).text).toBe("Waiting for First Report");
     expect(candidateState("0.7.0", null)).toEqual({
       text: "Checking",
       details: false,
@@ -628,8 +630,6 @@ describe("reading the candidates", () => {
           platform: {
             family: "debian",
             name: "Debian 12",
-            verified: true,
-            checked: "",
           },
         },
       }),
@@ -2018,5 +2018,33 @@ describe("stacks on the private network", () => {
         { ...aside[0]!, reaches: ["10.88.0.3:8000/tcp"] },
       ]).map((suggestion) => suggestion.project),
     ).toEqual(["backup"]);
+  });
+});
+
+describe("the link a test checks", () => {
+  it("names both servers when the peer is known", () => {
+    const test = {
+      kind: "network",
+      name: "kry0",
+      action: "test",
+      nodeId: "n1",
+      peer: "n2",
+      output: null,
+    } as unknown as ActionRecord;
+    const names = { n1: "io", n2: "pivox" };
+    expect(networkActionText(test, names)).toBe("Test the link io ↔ pivox");
+    expect(networkActionText({ ...test, peer: "n9" }, names)).toBe(
+      "Test a private network link",
+    );
+    expect(networkActionText({ ...test, peer: null }, names)).toBe(
+      "Test a private network link",
+    );
+    expect(historyText(test, [], "io", names)).toBe("Test the link io ↔ pivox");
+    expect(
+      actionLine(
+        { ...test, requestedAt: "2026-10-28T03:00:00.000Z" },
+        { nodeName: "io", names },
+      ).text,
+    ).toBe("Test the link io ↔ pivox");
   });
 });

@@ -238,11 +238,17 @@ export async function statusVersion(db: D1Database): Promise<string> {
   const row = await db
     .prepare(
       `SELECT COUNT(*) AS count, MAX(updated_at) AS changed,
-         (SELECT COUNT(*) || ':' || COALESCE(MAX(created_at), '') FROM incident_updates) AS said
+         (SELECT COUNT(*) || ':' || COALESCE(MAX(created_at), '') FROM incident_updates) AS said,
+         (SELECT COUNT(*) || ':' || COUNT(released_at) FROM quarantines) AS held
        FROM checks WHERE public = 1`,
     )
-    .first<{ count: number; changed: string | null; said: string | null }>();
-  return `${row?.count ?? 0}:${row?.changed ?? ""}:${row?.said ?? ""}`;
+    .first<{
+      count: number;
+      changed: string | null;
+      said: string | null;
+      held: string | null;
+    }>();
+  return `${row?.count ?? 0}:${row?.changed ?? ""}:${row?.said ?? ""}:${row?.held ?? ""}`;
 }
 
 export async function loadStatus(
@@ -256,7 +262,10 @@ export async function loadStatus(
   const [checks, incidents, results, updates] = await Promise.all([
     db
       .prepare(
-        `SELECT c.id, c.name, c.public_note, c.status, n.last_seen_at, c.created_at,
+        `SELECT c.id, c.name, c.public_note,
+                CASE WHEN EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = c.node_id AND q.released_at IS NULL)
+                  THEN 'UNTRUSTED' ELSE c.status END AS status,
+                n.last_seen_at, c.created_at,
                 n.interval_seconds
          FROM checks c LEFT JOIN nodes n ON n.id = c.node_id
          WHERE c.public = 1 AND c.enabled = 1 ORDER BY c.name`,

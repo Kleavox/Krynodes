@@ -1,8 +1,4 @@
-import {
-  agentHasFeatures,
-  FEATURE_AGENT,
-  MIN_AGENT_VERSION,
-} from "@krynodes/protocol/versions";
+import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import type {
   ActionRecord,
   ActionVerb,
@@ -40,7 +36,7 @@ const WORDS = {
   tailscale: {
     thing: "the credential",
     again: "Change the credential to share it again.",
-    agent: FEATURE_AGENT,
+    agent: MIN_AGENT_VERSION,
   },
 } as const;
 
@@ -252,6 +248,11 @@ export function moveSteps(input: {
   serves?: string;
   reaches?: string;
   reach?: { nodeId: string; project: string; reaches: string[] }[];
+  networks?: { name: string; kind: string; subnet: string }[];
+  offers?: string;
+  peers?: string;
+  title?: string;
+  names?: string;
   original: "now" | "later" | "keep";
 }): OperationTarget[] {
   const args = Object.fromEntries(
@@ -259,6 +260,10 @@ export function moveSteps(input: {
       ["hostPorts", input.hostPorts?.join(",") ?? ""],
       ["serves", input.serves ?? ""],
       ["reaches", input.reaches ?? ""],
+      ["offers", input.offers ?? ""],
+      ["peers", input.peers ?? ""],
+      ["title", input.title ?? ""],
+      ["names", input.names ?? ""],
     ].filter(([, value]) => value !== ""),
   );
   return [
@@ -269,6 +274,13 @@ export function moveSteps(input: {
       action: "export",
       args: { to: input.target, key: input.targetKey },
     },
+    ...(input.networks ?? []).map((network) => ({
+      nodeId: input.target,
+      kind: "bridge" as const,
+      name: network.name,
+      action: "create" as const,
+      args: { kind: network.kind, subnet: network.subnet },
+    })),
     {
       nodeId: input.target,
       kind: "compose",
@@ -344,7 +356,7 @@ export const splitHolders = (
       (node) =>
         usable(node) &&
         node.sealKey &&
-        (name === "cloudflare" || agentHasFeatures(node.version)),
+        (name === "cloudflare" || agentSupported(node.version)),
     )
     .map((node) => ({ nodeId: node.id, sealKey: node.sealKey! }));
 
@@ -371,7 +383,7 @@ export function planSpread(
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `This device reaches no online server with agent ${words.agent}.`,
+      reason: `Your passkey reaches no online server with agent ${words.agent}.`,
     };
   }
   const online = current.filter(usable);
@@ -450,13 +462,13 @@ export function planRemoval(
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `No other server with agent ${WORDS[name].agent} that this device reaches can take ${WORDS[name].thing}.`,
+      reason: `No other server with agent ${WORDS[name].agent} that your passkey reaches can take ${WORDS[name].thing}.`,
     };
   }
   if (name === "tailscale" && holders.length < 2) {
     return {
       ok: false,
-      reason: `Only one other server with agent ${WORDS[name].agent} that this device reaches can take ${WORDS[name].thing}, and it needs two.`,
+      reason: `Only one other server with agent ${WORDS[name].agent} that your passkey reaches can take ${WORDS[name].thing}, and it needs two.`,
     };
   }
   return {

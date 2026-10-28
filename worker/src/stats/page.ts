@@ -83,14 +83,14 @@ function dateTime(ms: number): string {
 const MONO = `ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace`;
 
 const STYLE = `
-:root{color-scheme:dark;--bg:#0c0c0e;--card:#141417;--border:#27272d;--fg:#ededf0;--muted:#8a8a94;--up:#34d399;--partial:#f5b544;--down:#f0616d}
+:root{color-scheme:dark;--bg:#0c0c10;--card:#14141a;--border:#282831;--fg:#ececf1;--muted:#92929f;--up:#5dcb9a;--partial:#ebba62;--down:#ed7477}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 main{max-width:760px;margin:0 auto;padding:40px 16px 56px}
 h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-0.01em}
 .banner{margin:16px 0 0;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-weight:500}
-.banner-up{color:var(--up);border-color:rgba(52,211,153,.35)}
-.banner-down{color:var(--down);border-color:rgba(240,97,109,.45)}
+.banner-up{color:var(--up);border-color:rgba(93,203,154,.35)}
+.banner-down{color:var(--down);border-color:rgba(237,116,119,.45)}
 .banner-nodata{color:var(--muted)}
 h2{margin:40px 0 12px;font:500 13px/1.4 ${MONO};color:var(--muted)}
 .services,.incidents{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--card)}
@@ -104,7 +104,7 @@ h3{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
 .latency{font:12px/1 ${MONO};color:var(--muted)}
 .state{flex:none;padding:5px 8px;border:1px solid var(--border);border-radius:999px;font:500 12px/1 ${MONO}}
 .state-up{color:var(--up)}
-.state-down{color:var(--down);border-color:rgba(240,97,109,.45)}
+.state-down{color:var(--down);border-color:rgba(237,116,119,.45)}
 .state-nodata{color:var(--muted)}
 .range{position:absolute;opacity:0;pointer-events:none}
 .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:40px 0 12px}
@@ -120,7 +120,7 @@ h3{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
 .bars{display:flex;gap:2px;height:28px;margin-top:12px}
 .bar{position:relative;flex:1;min-width:0;border-radius:2px}
 .bar:hover{filter:brightness(1.3)}
-.bar:hover::after,.tip:hover::after,.tip:focus::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);z-index:2;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:#1e1e23;color:var(--fg);font:12px/1.3 ${MONO};white-space:nowrap;pointer-events:none}
+.bar:hover::after,.tip:hover::after,.tip:focus::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);z-index:2;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:#1e1e26;color:var(--fg);font:12px/1.3 ${MONO};white-space:nowrap;pointer-events:none}
 .bar:nth-child(-n+8):hover::after{left:0;transform:none}
 .bar:nth-last-child(-n+8):hover::after{left:auto;right:0;transform:none}
 .tip{position:relative;border-radius:4px;cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
@@ -128,7 +128,7 @@ h3{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
 .tip:hover::after,.tip:focus::after{white-space:pre;text-align:left}
 .tip:focus{outline:none}
 .tip:focus-visible{outline:2px solid #8b7bff;outline-offset:2px}
-.bar-up{background:rgba(52,211,153,.85)}
+.bar-up{background:rgba(93,203,154,.85)}
 .bar-partial{background:var(--partial)}
 .bar-down{background:var(--down)}
 .bar-none,.bar-nodata{background:var(--border)}
@@ -150,7 +150,7 @@ footer{margin-top:40px;color:var(--muted);font:12px/1.5 ${MONO}}
 .paused{margin:16px 0 0;padding:14px 16px;border:1px solid rgba(139,123,255,.45);border-radius:10px;background:var(--card)}
 .paused p{margin:0;color:var(--muted);font-size:14px}
 .paused strong{color:var(--fg)}
-.resume{display:inline-block;margin-top:12px;padding:8px 14px;border-radius:8px;background:#8b7bff;color:#0c0c0e;font-weight:600;text-decoration:none}
+.resume{display:inline-block;margin-top:12px;padding:8px 14px;border-radius:8px;background:#8b7bff;color:#0c0c10;font-weight:600;text-decoration:none}
 .resume:hover{background:#9d8fff}
 @media (max-width:560px){.view-90 .bar:nth-child(-n+60){display:none}.view-90 .bar:nth-child(n+61):nth-child(-n+68):hover::after{left:0;transform:none}.wide{display:none}.narrow{display:inline}}
 `;
@@ -299,7 +299,7 @@ const UPDATE_LABEL: Record<string, string> = {
 };
 
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#0c0c0e"/><rect x="8" y="8" width="16" height="16" rx="4" fill="#8b7bff"/></svg>',
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><style>path{stroke:#5b47e6}circle{fill:#8b7bff}@media (prefers-color-scheme:dark){path{stroke:#8b7bff}circle{fill:#bab8ff}}</style><path d="M6 3.75v16.5M6 12 17.75 5M6 12l11.75 7" fill="none" stroke-width="3" stroke-linecap="round"/><circle cx="6" cy="12" r="3.1"/><circle cx="17.75" cy="5" r="2.75"/><circle cx="17.75" cy="19" r="2.75"/></svg>',
 )}`;
 
 export const REFRESH_ROUNDS = 2;

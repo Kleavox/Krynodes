@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { seedCheck, seedNode, seedResult } from "../test/seed";
@@ -349,6 +350,43 @@ describe("loadStatus", () => {
     ).toEqual(["nodata", "nodata"]);
   });
 
+  it("shows no data for a quarantined server's checks until it is released", async () => {
+    const { db, sqlite } = fleet();
+    publish(sqlite, "a", { name: "Steady" });
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', ?, 'why', '2026-09-28T11:00:00.000Z', '{}')",
+      )
+      .run(NODE);
+    const state = async () =>
+      (await loadStatus(db, NOW)).services.map((service) => service.state);
+
+    expect(await state()).toEqual(["nodata"]);
+    sqlite
+      .prepare("UPDATE quarantines SET released_at = ? WHERE id = 'q1'")
+      .run("2026-09-28T11:30:00.000Z");
+    expect(await state()).toEqual(["up"]);
+  });
+
+  it("changes the version when a server is quarantined or released", async () => {
+    const { db, sqlite } = fleet();
+    publish(sqlite, "a", { name: "Steady" });
+    const clean = await statusVersion(db);
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', ?, 'why', '2026-09-28T11:00:00.000Z', '{}')",
+      )
+      .run(NODE);
+    const quarantined = await statusVersion(db);
+    sqlite
+      .prepare("UPDATE quarantines SET released_at = ? WHERE id = 'q1'")
+      .run("2026-09-28T11:30:00.000Z");
+    const released = await statusVersion(db);
+
+    expect(quarantined).not.toBe(clean);
+    expect(released).not.toBe(quarantined);
+  });
+
   it("reads incidents through the public checks instead of scanning the table", async () => {
     const { db, sqlite } = fleet();
     const statements: string[] = [];
@@ -601,9 +639,18 @@ describe("serveStats", () => {
     expect(html).toContain("Main website");
     expect(html).toContain('content="600;url=/?r=1"');
     expect(html).not.toContain("Updates paused");
-    expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
     expect(html).toContain(
-      '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,',
+      "--bg:#0c0c10;--card:#14141a;--border:#282831;--fg:#ececf1;--muted:#92929f;--up:#5dcb9a;--partial:#ebba62;--down:#ed7477",
+    );
+    expect(html).not.toMatch(/52,211,153|240,97,109/u);
+    expect(html).toContain(".bar-up{background:rgba(93,203,154,.85)}");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
+    const favicon = readFileSync(
+      new URL("../../../tooling/vite-config/favicon.svg", import.meta.url),
+      "utf8",
+    ).trim();
+    expect(html).toContain(
+      `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(favicon)}">`,
     );
     expect(html).toContain("100.00% uptime");
     expect(html).toContain(

@@ -7,33 +7,36 @@
 
 :root {
   --radius: 0.5rem;
-  --background: #0c0c0e;
-  --foreground: #ededf0;
-  --card: #141417;
-  --card-foreground: #ededf0;
-  --popover: #141417;
-  --popover-foreground: #ededf0;
+  --background: #0c0c10;
+  --foreground: #ececf1;
+  --card: #14141a;
+  --card-foreground: #ececf1;
+  --popover: #14141a;
+  --popover-foreground: #ececf1;
   --primary: #8b7bff;
-  --primary-foreground: #0c0c0e;
-  --secondary: #1e1e23;
-  --secondary-foreground: #ededf0;
-  --muted: #1e1e23;
-  --muted-foreground: #8a8a94;
-  --accent: #1e1e23;
-  --accent-foreground: #ededf0;
-  --destructive: #f0616d;
-  --success: #34d399;
-  --warning: #f5b544;
-  --info: #38bdf8;
-  --border: #27272d;
-  --border-strong: #3a3a42;
-  --card-hover: #18181c;
-  --input: #27272d;
+  --primary-foreground: #0c0c10;
+  --primary-subtle: #211f3a;
+  --primary-line: #564c9f;
+  --primary-text: #bab8ff;
+  --secondary: #1e1e26;
+  --secondary-foreground: #ececf1;
+  --muted: #1e1e26;
+  --muted-foreground: #92929f;
+  --accent: #1e1e26;
+  --accent-foreground: #ececf1;
+  --destructive: #ed7477;
+  --success: #5dcb9a;
+  --warning: #ebba62;
+  --info: #64b9da;
+  --border: #282831;
+  --border-strong: #3c3c46;
+  --card-hover: #18181f;
+  --input: #282831;
   --ring: #8b7bff;
   --chart-1: #8b7bff;
-  --chart-2: #b9b0ff;
-  --chart-3: #6f6f7a;
-  --dot: #1f1f24;
+  --chart-2: #32a0c5;
+  --chart-3: #6e6e7c;
+  --dot: #1a1a21;
 }
 
 @theme inline {
@@ -47,6 +50,9 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-primary-line: var(--primary-line);
+  --color-primary-text: var(--primary-text);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -69,6 +75,39 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 8px;
+  --animate-busy-1: busy-1 1.2s steps(1, end) infinite;
+  --animate-busy-2: busy-2 1.2s steps(1, end) infinite;
+  --animate-busy-3: busy-3 1.2s steps(1, end) infinite;
+
+  @keyframes busy-1 {
+    0% {
+      opacity: 0;
+    }
+    25%,
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes busy-2 {
+    0%,
+    25% {
+      opacity: 0;
+    }
+    50%,
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes busy-3 {
+    0%,
+    50% {
+      opacity: 0;
+    }
+    75%,
+    100% {
+      opacity: 1;
+    }
+  }
 }
 
 @utility canvas-dots {

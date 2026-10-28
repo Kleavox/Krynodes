@@ -110,9 +110,7 @@ export function AutoRestartDialog({
             Once per incident, at most 3 times an hour, and never after you
             stopped it from Krynodes.
           </li>
-          <li>
-            Turning it on needs your fingerprint; turning it off does not.
-          </li>
+          <li>Turning it on needs your passkey; turning it off does not.</li>
         </ul>
       </DialogContent>
     </Dialog>

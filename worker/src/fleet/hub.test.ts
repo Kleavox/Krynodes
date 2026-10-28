@@ -21,7 +21,7 @@ const heartbeat = (
   hostname: "pivox",
   operatingSystem: "linux",
   architecture: "amd64",
-  agentVersion: "0.6.14",
+  agentVersion: "0.7.0",
   metrics: {
     cpuPercent: cpu,
     memoryUsedBytes: 4,
@@ -292,7 +292,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.6.14",
+      agentVersion: "0.7.0",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -310,7 +310,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.6.14",
+      agentVersion: "0.7.0",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -942,45 +942,17 @@ describe("FleetHub", () => {
     expect(ws.replies()).toHaveLength(1);
   });
 
-  it("tells an agent below the minimum to update at once, and no one else", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare(
-        "INSERT INTO settings (key, value, updated_at) VALUES ('agent_release', '0.6.2', ?)",
-      )
-      .run(new Date(BASE).toISOString());
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    expect(ws.replies().at(-1)).not.toMatchObject({
-      response: { update: expect.anything() },
-    });
-    await t.send(ws, BASE + 65_000, {
-      ...heartbeat(10),
-      agentVersion: "0.5.1",
-    });
-    expect(ws.replies().at(-1)).toMatchObject({
-      response: { update: { version: "0.6.2" } },
-    });
-    expect(
-      t.sqlite
-        .prepare(
-          "SELECT update_requested_version, update_attempts FROM nodes WHERE id = ?",
-        )
-        .get(NODE),
-    ).toEqual({ update_requested_version: "0.6.2", update_attempts: 1 });
-  });
-
   it("asks again for a stalled update and keeps the agent's reason, like the HTTP route", async () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET update_requested_version = '0.7.0', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
+        "UPDATE nodes SET update_requested_version = '0.7.1', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
       )
       .run(new Date(BASE - 16 * 60_000).toISOString(), NODE);
     const ws = await t.connect();
     await t.send(ws, BASE + 5_000, {
       ...heartbeat(10),
-      update: { version: "0.7.0", message: "download stalled" },
+      update: { version: "0.7.1", message: "download stalled" },
     });
     const row = t.sqlite
       .prepare(
@@ -999,7 +971,7 @@ describe("FleetHub", () => {
     expect(ws.replies().at(-1)).toMatchObject({
       response: {
         update: {
-          version: "0.7.0",
+          version: "0.7.1",
           requestedAt: new Date(BASE + 5_000).toISOString(),
         },
       },

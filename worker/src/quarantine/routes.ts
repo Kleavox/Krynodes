@@ -1,5 +1,5 @@
 import {
-  agentHasFeatures,
+  agentSupported,
   codeOf,
   looser,
   QUARANTINE,
@@ -24,7 +24,7 @@ import {
   type KrynodesEnv,
 } from "../routes/shared";
 import { ownersRefusal } from "../trust/approval";
-import { loadFleet } from "../trust/fleet";
+import { loadFleet, syncedUpdates } from "../trust/fleet";
 import { confirmed, confirmingDevice } from "../trust/intent";
 import { warningOf } from "./events";
 import { quarantine, trustedBy, type Timeline } from "./quarantine";
@@ -120,7 +120,8 @@ async function verified(
       return context.json(
         {
           code: "FINGERPRINT_NEEDED",
-          message: "This passkey did not verify a fingerprint.",
+          message:
+            "This passkey was opened without your fingerprint, face or PIN.",
         },
         400,
       );
@@ -586,6 +587,7 @@ export function registerQuarantineRoutes(
             "UPDATE devices SET last_used_at = ? WHERE id = ? AND owner_user_id = ?",
           )
           .bind(at, device, identity.id),
+        ...syncedUpdates(db, identity.id, [steps[0]!.signed.grant]),
       ]);
     } catch (error) {
       if (!String(error).includes("UNIQUE")) throw error;
@@ -642,7 +644,7 @@ export function registerQuarantineRoutes(
               .bind(identity.id)
               .all<{ node_id: string; agent_version: string | null }>()
           ).results
-            .filter((member) => agentHasFeatures(member.agent_version))
+            .filter((member) => agentSupported(member.agent_version))
             .map((member) => member.node_id)
         : [];
     if (members.length > 0) {

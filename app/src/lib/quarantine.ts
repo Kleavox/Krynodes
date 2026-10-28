@@ -21,7 +21,7 @@ import { planRemoval, type VaultName, type VaultNode } from "./vault";
 export const REPORTED = "Reported by the server itself, may not be true";
 
 export const QUARANTINE_INTRO =
-  "What Krynodes does on its own when a server looks broken into. It only ever takes access away; giving it back always asks for your fingerprint.";
+  "What Krynodes does on its own when a server looks broken into. It only ever takes access away; giving it back always asks for your passkey.";
 
 const QUARANTINED_REASON = "Quarantined · release it from the server";
 
@@ -72,7 +72,9 @@ function warningWords(warning: NodeWarning, now: number) {
       };
     case "port":
       return {
-        title: `${value("port")} opened on a public address, not through Krynodes`,
+        title: value("port").includes("-")
+          ? `Temporary UDP ports ${value("port").replace(/\/udp$/u, "")} on a public address, not through Krynodes`
+          : `${value("port")} opened on a public address, not through Krynodes`,
         detail: `Process ${value("process")}`,
       };
     case "rule":

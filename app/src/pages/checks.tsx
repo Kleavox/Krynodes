@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import {
   autoRestartLine,
+  checkBucket,
   checksByServer,
   serverChecksText,
 } from "@/lib/checks";
@@ -38,13 +39,17 @@ import {
   hostingOf,
   type CheckSuggestion,
 } from "@/lib/network";
+import { fleetQuarantine } from "@/lib/quarantine";
 import { cn } from "@/lib/utils";
 import type { CheckRecord } from "@/types";
 
-type Filter = "all" | "down" | "offline" | "up";
+type Filter = "all" | "down" | "offline" | "quarantined" | "up";
 
 function readFilter(value: string | null): Filter {
-  return value === "down" || value === "offline" || value === "up"
+  return value === "down" ||
+    value === "offline" ||
+    value === "quarantined" ||
+    value === "up"
     ? value
     : "all";
 }
@@ -109,14 +114,15 @@ export function ChecksPage() {
   const { checks, incidents } = overview.data;
   const { display } = view;
   const groups = checksByServer(checks, nodes, overview.dataUpdatedAt);
-  const isDown = (check: CheckRecord) =>
-    display(check) === "DOWN" && view.live(check).tone !== "work";
-  const isOffline = (check: CheckRecord) =>
-    display(check) === "UNTRUSTED" ||
-    (display(check) === "OFFLINE" && view.live(check).tone === "off");
-  const isUp = (check: CheckRecord) => display(check) === "UP";
+  const bucket = (check: CheckRecord) =>
+    checkBucket(display(check), view.live(check).tone);
+  const isDown = (check: CheckRecord) => bucket(check) === "down";
+  const isOffline = (check: CheckRecord) => bucket(check) === "offline";
+  const isQuarantined = (check: CheckRecord) => bucket(check) === "quarantined";
+  const isUp = (check: CheckRecord) => bucket(check) === "up";
   const down = checks.filter(isDown);
   const offline = checks.filter(isOffline);
+  const quarantined = checks.filter(isQuarantined);
   const up = checks.filter(isUp);
   const downItems: DownItem[] = groups.flatMap((group) =>
     group.checks.filter(isDown).map((check) => {
@@ -142,6 +148,7 @@ export function ChecksPage() {
     all: () => true,
     down: isDown,
     offline: isOffline,
+    quarantined: isQuarantined,
     up: isUp,
   };
   const shown = (check: CheckRecord, serverName: string) =>
@@ -279,6 +286,14 @@ export function ChecksPage() {
                           },
                         ]
                       : []),
+                    ...(quarantined.length > 0 || filter === "quarantined"
+                      ? [
+                          {
+                            value: "quarantined" as const,
+                            label: `Quarantined ${quarantined.length}`,
+                          },
+                        ]
+                      : []),
                     { value: "up", label: `Up ${up.length}` },
                   ]}
                 />
@@ -290,10 +305,13 @@ export function ChecksPage() {
                 </p>
               ) : (
                 visible.map((group) => {
+                  const held = fleetQuarantine(group.node, view.now);
                   const quiet = group.checks.find(
                     (check) => display(check) === "OFFLINE",
                   );
-                  const state = quiet && view.live(quiet);
+                  const state = held
+                    ? { tone: "bad" as const, label: held.chip }
+                    : quiet && view.live(quiet);
                   return (
                     <section
                       key={group.node.id}
@@ -319,6 +337,12 @@ export function ChecksPage() {
                         >
                           Open Server →
                         </Link>
+                        {held && (
+                          <p className="basis-full text-xs text-muted-foreground">
+                            Results from this server are not used until you
+                            release it. Not counted against uptime.
+                          </p>
+                        )}
                       </div>
                       <ul className="divide-y">
                         {group.checks.map((check) => {

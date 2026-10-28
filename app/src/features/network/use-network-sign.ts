@@ -258,7 +258,7 @@ export interface Change {
 async function signChange(input: Change) {
   if (input.signers.length === 0) {
     throw new Error(
-      "None of your devices has access to every server in the network. Change access in Trusted devices.",
+      "None of your passkeys has access to every server in the network. Change access in Passkeys.",
     );
   }
   const session = await openSession(input.signers);

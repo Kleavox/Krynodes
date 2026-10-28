@@ -1,7 +1,7 @@
-import { useState, type PointerEvent } from "react";
+import { Fragment, useState, type PointerEvent } from "react";
 
 import { clockTime } from "@/lib/format";
-import { sparklineSegments } from "@/lib/series";
+import { sparklineArea, sparklineSegments } from "@/lib/series";
 import { cn } from "@/lib/utils";
 
 const percent = (value: number) => `${Math.round(value)}%`;
@@ -54,15 +54,22 @@ export function Sparkline({
         className="h-full w-full overflow-visible"
       >
         {segments.map((points) => (
-          <polyline
-            key={points}
-            points={points}
-            fill="none"
-            stroke="var(--color-primary)"
-            strokeWidth={new Set(points.split(" ")).size === 1 ? 3 : 1.5}
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
+          <Fragment key={points}>
+            <polygon
+              points={sparklineArea(points)}
+              fill="var(--color-primary)"
+              fillOpacity={0.22}
+              stroke="none"
+            />
+            <polyline
+              points={points}
+              fill="none"
+              stroke="var(--color-primary)"
+              strokeWidth={new Set(points.split(" ")).size === 1 ? 3 : 1.5}
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          </Fragment>
         ))}
       </svg>
       {time !== undefined && (

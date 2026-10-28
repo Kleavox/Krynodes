@@ -14,8 +14,13 @@ func withFetch(env Env) (Env, *[]string) {
 	fetched := &[]string{}
 	env.Fetch = func(_ context.Context, url string) ([]byte, error) {
 		*fetched = append(*fetched, url)
-		if strings.HasSuffix(url, "/gpg") {
+		switch {
+		case strings.HasSuffix(url, "/gpg"):
 			return []byte("KEY"), nil
+		case strings.HasSuffix(url, "/Release"):
+			return []byte("Origin: Docker\nArchitectures: amd64 arm64 armhf ppc64el s390x\n"), nil
+		case strings.HasSuffix(url, "/repomd.xml"):
+			return []byte("<repomd/>"), nil
 		}
 		return []byte("[docker-ce-stable]\nbaseurl=https://download.docker.com\n"), nil
 	}
@@ -26,6 +31,78 @@ func freshServer(run *fakeRun) {
 	run.failing["docker --version"] = true
 	run.failing["rpm -q podman"] = true
 	run.respond["docker version --format {{.Client.Version}}"] = "28.4.0\n"
+	run.respond["uname -m"] = "x86_64\n"
+}
+
+func notPublished(env Env, suffix string) (Env, *[]string) {
+	env, fetched := withFetch(env)
+	inner := env.Fetch
+	env.Fetch = func(ctx context.Context, url string) ([]byte, error) {
+		if strings.HasSuffix(url, suffix) {
+			*fetched = append(*fetched, url)
+			return nil, httpAnswer{URL: url, Status: "404 Not Found", Code: 404}
+		}
+		return inner(ctx, url)
+	}
+	return env, fetched
+}
+
+func nothingWritten(t *testing.T, env Env, run *fakeRun) {
+	t.Helper()
+	for _, path := range []string{"/etc/apt/keyrings/docker.asc", "/etc/apt/sources.list.d/docker.list", "/etc/yum.repos.d/docker-ce.repo"} {
+		if exists(env, path) {
+			t.Fatalf("%s was written", path)
+		}
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, " install ") }) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestDockerWaitsForDockerToPublishTheRelease(t *testing.T) {
+	env, run := onRelease(t, "ubuntu new")
+	env, _ = notPublished(env, "/Release")
+	freshServer(run)
+	run.respond["dpkg --print-architecture"] = "amd64\n"
+	_, err := InstallDocker(context.Background(), env, nil)
+	if err == nil || err.Error() != "Docker has not published packages for Ubuntu 26.10 (stonking) yet." {
+		t.Fatalf("err %v", err)
+	}
+	nothingWritten(t, env, run)
+}
+
+func TestDockerNeedsPackagesForTheArchitecture(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env, _ = withFetch(env)
+	freshServer(run)
+	run.respond["dpkg --print-architecture"] = "riscv64\n"
+	_, err := InstallDocker(context.Background(), env, nil)
+	if err == nil || err.Error() != "Docker publishes no riscv64 packages for Debian GNU/Linux 13." {
+		t.Fatalf("err %v", err)
+	}
+	nothingWritten(t, env, run)
+}
+
+func TestDockerNeedsACodename(t *testing.T) {
+	env, run := onRelease(t, "debian sid")
+	env, fetched := withFetch(env)
+	freshServer(run)
+	run.respond["dpkg --print-architecture"] = "amd64\n"
+	_, err := InstallDocker(context.Background(), env, nil)
+	if err == nil || err.Error() != "This server names no codename, so Docker's repository cannot be chosen." || len(*fetched) != 0 {
+		t.Fatalf("err %v fetched %q", err, *fetched)
+	}
+}
+
+func TestDockerOnRHELWaitsForTheRelease(t *testing.T) {
+	env, run := onRelease(t, "rocky new")
+	env, _ = notPublished(env, "/repomd.xml")
+	freshServer(run)
+	_, err := InstallDocker(context.Background(), env, nil)
+	if err == nil || err.Error() != "Docker has not published packages for Rocky Linux 11.0 (x86_64) yet." {
+		t.Fatalf("err %v", err)
+	}
+	nothingWritten(t, env, run)
 }
 
 func TestDockerOnDebianUsesDockersRepository(t *testing.T) {
@@ -38,18 +115,18 @@ func TestDockerOnDebianUsesDockersRepository(t *testing.T) {
 		env, fetched := withFetch(env)
 		freshServer(run)
 		run.respond["dpkg --print-architecture"] = "arm64\n"
-		result, err := InstallDocker(context.Background(), env, map[string]string{"anyway": "yes"})
+		result, err := InstallDocker(context.Background(), env, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", key, err)
 		}
 		if result != (DockerResult{Message: "Docker 28.4.0 with Compose", Installed: true}) {
 			t.Fatalf("%s: %+v", key, result)
 		}
-		base := "debian"
+		base, codename := "debian", "trixie"
 		if key != "debian 13" {
-			base = "ubuntu"
+			base, codename = "ubuntu", "noble"
 		}
-		if !slices.Equal(*fetched, []string{"https://download.docker.com/linux/" + base + "/gpg"}) || read(env, "/etc/apt/keyrings/docker.asc") != "KEY" {
+		if !slices.Equal(*fetched, []string{"https://download.docker.com/linux/" + base + "/dists/" + codename + "/Release", "https://download.docker.com/linux/" + base + "/gpg"}) || read(env, "/etc/apt/keyrings/docker.asc") != "KEY" {
 			t.Fatalf("%s: fetched %q", key, *fetched)
 		}
 		if got := read(env, "/etc/apt/sources.list.d/docker.list"); got != want {
@@ -94,14 +171,15 @@ func TestDockerLeavesARepositoryTheOwnerAddedAlone(t *testing.T) {
 }
 
 func TestDockerOnRHELUsesDockersRepoFile(t *testing.T) {
-	for key, base := range map[string]string{"rocky": "centos", "almalinux": "centos", "oracle": "centos", "centos": "centos", "rhel": "rhel", "fedora": "fedora"} {
+	for key, base := range map[string]string{"rocky": "centos", "almalinux": "centos", "oracle": "centos", "centos": "centos", "rhel": "rhel"} {
 		env, run := onRelease(t, key)
 		env, fetched := withFetch(env)
 		freshServer(run)
 		if _, err := InstallDocker(context.Background(), env, nil); err != nil {
 			t.Fatalf("%s: %v", key, err)
 		}
-		if !slices.Equal(*fetched, []string{"https://download.docker.com/linux/" + base + "/docker-ce.repo"}) || !strings.Contains(read(env, "/etc/yum.repos.d/docker-ce.repo"), "[docker-ce-stable]") {
+		major := strings.Split(Detect(env).Version, ".")[0]
+		if !slices.Equal(*fetched, []string{"https://download.docker.com/linux/" + base + "/" + major + "/x86_64/stable/repodata/repomd.xml", "https://download.docker.com/linux/" + base + "/docker-ce.repo"}) || !strings.Contains(read(env, "/etc/yum.repos.d/docker-ce.repo"), "[docker-ce-stable]") {
 			t.Fatalf("%s: fetched %q", key, *fetched)
 		}
 		mustCall(t, run, "dnf install -y -q "+dockerLine, "systemctl enable --now docker")
@@ -151,12 +229,8 @@ func TestDockerAlreadyThereIsLeftAlone(t *testing.T) {
 	}
 }
 
-func TestDockerWaitsOnAnUnverifiedVersionAndReportsADownloadFailure(t *testing.T) {
-	env, run := onRelease(t, "rocky new")
-	if _, err := InstallDocker(context.Background(), env, nil); err == nil || !strings.HasSuffix(err.Error(), "Confirm to run it anyway.") || len(run.calls) != 0 {
-		t.Fatalf("err %v calls %q", err, run.calls)
-	}
-	env, run = onRelease(t, "rocky")
+func TestDockerReportsADownloadFailure(t *testing.T) {
+	env, run := onRelease(t, "rocky")
 	freshServer(run)
 	env.Fetch = func(context.Context, string) ([]byte, error) { return nil, errors.New("no route to host") }
 	if _, err := InstallDocker(context.Background(), env, nil); err == nil || !strings.Contains(err.Error(), "no route to host") {

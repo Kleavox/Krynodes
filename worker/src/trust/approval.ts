@@ -52,7 +52,7 @@ export async function verifyApproval(
     (entry) => entry.id === approval.credentialId && entry.removedAt === null,
   );
   if (!device || !fleet.core.includes(device.id)) {
-    throw new Refusal(403, "NOT_CORE", "Use the passkey of a trusted device.");
+    throw new Refusal(403, "NOT_CORE", "Use a trusted passkey.");
   }
   const refused = notYours(device, email);
   if (refused) throw refused;
@@ -75,7 +75,7 @@ export async function verifyApproval(
     throw new Refusal(
       400,
       "FINGERPRINT_NEEDED",
-      "This passkey did not verify a fingerprint. Use the fingerprint, or choose Use a phone in the passkey window.",
+      "This passkey was opened without your fingerprint, face or PIN. Open it with one of those, or choose Use a phone in the passkey window.",
     );
   }
   if (device.account === null) {

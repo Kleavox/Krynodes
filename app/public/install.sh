@@ -13,6 +13,8 @@ main() {
   setup=""
   reboot_hour=""
   network=""
+  admin=""
+  admin_keys=""
   if [ "$mode" = "enroll" ] && [ $# -ge 2 ]; then
     shift 2
     if [ "${1:-}" = "--trust" ]; then
@@ -30,7 +32,7 @@ main() {
       shift
       index=$((index + 1))
       case "$arg" in
-        --setup | --reboot-hour | --network)
+        --setup | --reboot-hour | --network | --admin | --admin-key)
           if [ "$index" -ge "$count" ]; then
             echo "$arg needs a value" >&2
             exit 1
@@ -38,6 +40,16 @@ main() {
           case "$arg" in
             --setup) setup="$1" ;;
             --reboot-hour) reboot_hour="$1" ;;
+            --admin) admin="$1" ;;
+            --admin-key)
+              case "$1" in
+                "" | *[!A-Za-z0-9+/=:._-]*)
+                  echo "--admin-key takes a key such as AAAA...:laptop" >&2
+                  exit 1
+                  ;;
+              esac
+              admin_keys="$admin_keys --admin-key $1"
+              ;;
             *) network="$1" ;;
           esac
           shift
@@ -95,6 +107,15 @@ main() {
       exit 1
     fi
     setup_flags="$setup_flags --network $network"
+  fi
+  if [ -n "$admin" ]; then
+    case "$admin" in
+      root | [!a-z_]* | *[!a-z0-9_-]*)
+        echo "--admin takes a user name such as musyaf, not root" >&2
+        exit 1
+        ;;
+    esac
+    setup_flags="$setup_flags --admin $admin$admin_keys"
   fi
   base="${KRY_DOWNLOAD_BASE:-https://github.com/Kleavox/Krynodes/releases/latest/download}"
   bin="${KRY_BIN:-/usr/local/bin/kry}"
@@ -172,7 +193,7 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
   if [ -n "$trust_origin" ]; then
     "$bin" trust --initial --origin "$trust_origin" "$@"
   fi
-  if [ -n "$setup" ] || [ -n "$network" ]; then
+  if [ -n "$setup" ] || [ -n "$network" ] || [ -n "$admin" ]; then
     if ! "$bin" setup $setup_flags; then
       echo "Setup did not finish; turn the rest on from the dashboard."
     fi

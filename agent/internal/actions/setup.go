@@ -16,10 +16,11 @@ import (
 type SetupOptions struct {
 	Recommended bool
 	Docker      bool
-	Anyway      bool
 	RebootHour  *int
 	Network     string
-	Command     string
+	Admin       string
+	AdminKeys   []recipes.AdminKey
+	Terminal    recipes.Terminal
 }
 
 type Asker func(question string) (yes bool, asked bool)
@@ -79,24 +80,19 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	}
 	fmt.Fprintf(out, "Detected: %s (%s)\n", name, tools)
 	args := map[string]string{}
-	if sentence := platform.Unverified(); sentence != "" {
-		fmt.Fprintln(out, sentence)
-		if !options.Anyway {
-			if yes, _ := ask("Run the setup anyway? [y/N] "); !yes {
-				fmt.Fprintf(out, "Setup held. Run it later with: sudo %s --anyway\n", options.Command)
-				return nil
-			}
-		}
-		args["anyway"] = "yes"
-	}
 	mark := func(sign, title, rest string) {
 		fmt.Fprintf(out, "%s %s%s\n", sign, title, rest)
+	}
+	defer e.holdWatch()()
+	admin := false
+	if options.Admin != "" {
+		_, admin = e.addAdmin(ctx, options.Admin, options.AdminKeys, options.Terminal, mark)
 	}
 	if options.Recommended {
 		state := e.readRecipes()
 		for _, step := range setupSteps {
 			if step.id == "reboot-window" {
-				e.setupRebootWindow(options.RebootHour, step.title, mark)
+				e.setupRebootWindow(ctx, env, options.RebootHour, step.title, mark)
 				continue
 			}
 			if _, on := state.Applied[step.id]; on {
@@ -153,11 +149,15 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			mark("✓", "Private network ready", " · it joins when you press Join on the dashboard")
 		}
 	}
+	if admin {
+		e.noRootLogin(ctx, options.Admin, mark)
+	}
+	e.retake(ctx, true)
 	os.Remove(filepath.Join(e.StateDir, "security.json"))
 	return nil
 }
 
-func (e Executor) setupRebootWindow(hour *int, title string, mark func(sign, title, rest string)) {
+func (e Executor) setupRebootWindow(ctx context.Context, env recipes.Env, hour *int, title string, mark func(sign, title, rest string)) {
 	window, _ := readState[rebootWindow](e.StateDir, "reboot.json")
 	switch {
 	case window.Hour != nil:
@@ -165,6 +165,10 @@ func (e Executor) setupRebootWindow(hour *int, title string, mark func(sign, tit
 	case hour == nil:
 		mark("–", title, " skipped: no restart hour was given")
 	default:
+		if err := recipes.RestartMarked(ctx, env); err != nil {
+			mark("✗", title, ": "+err.Error())
+			return
+		}
 		chosen := *hour
 		if err := writeJSON(e.StateDir, "reboot.json", rebootWindow{Hour: &chosen}, 0o640); err != nil {
 			mark("✗", title, ": "+err.Error())

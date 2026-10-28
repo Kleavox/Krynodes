@@ -17,7 +17,9 @@ import {
   SESSION_MS,
   TRUST_CHANGE_MS,
   isValidTarget,
+  parseStackNames,
   stackEntrySchema,
+  stackTitleValid,
 } from "./index";
 
 describe("Krynodes Agent protocol v1", () => {
@@ -920,6 +922,21 @@ describe("orchestration messages of agent 0.5.0", () => {
         security: { ...security, platform: { ...platform, family: "arch" } },
       }),
     ).toBe(false);
+    const named = {
+      family: "debian",
+      name: "Debian GNU/Linux 12",
+      id: "debian",
+      version: "12",
+    };
+    expect(request({ security: { ...security, platform: named } })).toBe(true);
+    expect(
+      request({
+        security: {
+          ...security,
+          platform: { ...named, endOfLife: "2028-06-30" },
+        },
+      }),
+    ).toBe(false);
     const listener = {
       address: "100.79.66.29",
       port: 57969,
@@ -998,6 +1015,85 @@ describe("orchestration messages of agent 0.5.0", () => {
     expect(accepts(undefined)).toBe(true);
     expect(accepts(["bad;name"])).toBe(false);
     expect(accepts(Array(501).fill("listmonk_app"))).toBe(false);
+  });
+
+  it("carries a stack's display name and container names", () => {
+    const stack = {
+      project: "adguard-home",
+      directory: "/var/lib/kry-exec/compose/adguard-home",
+      running: 1,
+      total: 1,
+      compose: true,
+      rollback: false,
+    };
+    const accepts = (extra: Record<string, unknown>) =>
+      stackEntrySchema.safeParse({ ...stack, ...extra }).success;
+    expect(
+      accepts({ title: "AdGuard Home", names: { adguard: "adguard-home" } }),
+    ).toBe(true);
+    expect(accepts({ title: " AdGuard" })).toBe(false);
+    expect(accepts({ title: "x".repeat(65) })).toBe(false);
+    expect(accepts({ names: { adguard: "bad name" } })).toBe(false);
+    expect(accepts({ names: { "bad service": "adguard-home" } })).toBe(false);
+  });
+
+  it("carries a stack's service names and a server's leftovers", () => {
+    const stack = {
+      project: "monitoring",
+      directory: "/var/lib/kry-exec/compose/monitoring",
+      running: 2,
+      total: 2,
+      compose: true,
+      rollback: false,
+    };
+    const accepts = (services: unknown) =>
+      stackEntrySchema.safeParse({ ...stack, services }).success;
+    expect(accepts(["uptime-kuma", "db"])).toBe(true);
+    expect(accepts(["bad service"])).toBe(false);
+    expect(accepts(Array(65).fill("db"))).toBe(false);
+    const leftovers = (names: unknown) =>
+      agentActionsRequestSchema.safeParse({
+        nodeId: "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
+        inventory: { hash: "a".repeat(64), leftovers: names },
+      }).success;
+    expect(leftovers(["adguard-home"])).toBe(true);
+    expect(leftovers(["Bad Name"])).toBe(false);
+    expect(leftovers(Array(51).fill("x"))).toBe(false);
+  });
+});
+
+describe("stack names", () => {
+  it("takes a display name with capitals and spaces", () => {
+    expect(stackTitleValid("AdGuard Home")).toBe(true);
+    expect(stackTitleValid("Pi-hole · DNS")).toBe(true);
+    expect(stackTitleValid("x".repeat(64))).toBe(true);
+    expect(stackTitleValid("")).toBe(false);
+    expect(stackTitleValid(" AdGuard")).toBe(false);
+    expect(stackTitleValid("AdGuard ")).toBe(false);
+    expect(stackTitleValid("x".repeat(65))).toBe(false);
+    expect(stackTitleValid("Ad\nGuard")).toBe(false);
+  });
+
+  it("reads service=container pairs", () => {
+    expect(
+      parseStackNames("webserver=paperless,db=paperless-db,broker=redis.1"),
+    ).toEqual({
+      webserver: "paperless",
+      db: "paperless-db",
+      broker: "redis.1",
+    });
+    expect(parseStackNames("")).toEqual({});
+    expect(parseStackNames("web=a")).toBeNull();
+    expect(parseStackNames("web=-web")).toBeNull();
+    expect(parseStackNames("web=my web")).toBeNull();
+    expect(parseStackNames("web")).toBeNull();
+    expect(parseStackNames("web=one,web=two")).toBeNull();
+    expect(parseStackNames("web=same,db=same")).toBeNull();
+    expect(
+      parseStackNames(
+        Array.from({ length: 65 }, (_, n) => `s${n}=c${n}x`).join(","),
+      ),
+    ).toBeNull();
   });
 });
 

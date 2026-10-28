@@ -1,6 +1,8 @@
-import { Fingerprint } from "lucide-react";
+import { FEATURE_AGENT } from "@krynodes/protocol";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
+import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,26 +22,36 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAction, useServices } from "@/lib/api";
-import { agentCurrent } from "@/lib/devices";
+import { agentCurrent, agentGap } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import { toast } from "sonner";
 import { privateIpProblem } from "@/lib/network";
 import { isPending } from "@/lib/services";
 import {
+  nameOwner,
   newStackBlocker,
   parseHostPorts,
+  sameTitle,
   stackNameProblem,
+  stackSlug,
 } from "@/lib/stacks";
 import type { NodeRecord } from "@/types";
 
+import { ContainerNames, useContainerNames } from "./container-names";
+import {
+  StackActionDialog,
+  type StackActionRequest,
+} from "./stack-action-dialog";
 import {
   AccessChoice,
   FullAccessSummary,
+  NetworkBoxes,
   NetworkSection,
   ReachField,
   SecretsEditor,
   sealSecrets,
   secretsProblem,
+  useNetworkBoxes,
   useStackNetwork,
   type Access,
   type SecretRow,
@@ -96,15 +108,34 @@ function NewStackForm({
   const [reach, setReach] = useState("");
   const [sealing, setSealing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState<StackActionRequest | null>(null);
   const action = useAction(actionId).data?.action;
 
   const chosen = choices.find((choice) => choice.node.id === nodeId);
   const sealKey = entries.get(nodeId)?.sealKey ?? null;
   const modern = chosen !== undefined && agentCurrent(chosen.node);
+  const named =
+    chosen !== undefined &&
+    agentGap(chosen.node.agent_version, FEATURE_AGENT) === null;
+  const title = name.trim();
+  const project = stackSlug(title);
+  const serverName = chosen?.node.name ?? "This server";
+  const names = useContainerNames({
+    text,
+    project,
+    owner: nameOwner(entries.get(nodeId), project, serverName),
+  });
   const reaching = modern && access === "contained";
   const hostPorts = parseHostPorts(reaching ? reach : "");
   const network = useStackNetwork(nodeId, text);
   const serving = reaching && network.member !== null;
+  const boxes = useNetworkBoxes(
+    { id: nodeId, name: chosen?.node.name ?? "This server" },
+    text,
+    project,
+    access,
+  );
+  const joining = modern && boxes.boxes.length > 0;
   const privateWrong = privateIpProblem(
     text,
     chosen?.node.name ?? "This server",
@@ -119,7 +150,15 @@ function NewStackForm({
   const waiting = (entries.get(nodeId)?.removed ?? []).map(
     (stack) => stack.project,
   );
-  const nameProblem = stackNameProblem(name.trim(), taken, waiting);
+  const nameProblem =
+    stackNameProblem(title, taken, waiting) ??
+    (named
+      ? sameTitle(title, entries.get(nodeId)?.stacks ?? [], serverName)
+      : null);
+  const leftover =
+    project !== "" &&
+    nameProblem === null &&
+    (entries.get(nodeId)?.leftovers ?? []).includes(project);
   const size = new TextEncoder().encode(text).length;
   const textProblem = !text.trim()
     ? "Paste the compose file."
@@ -130,10 +169,13 @@ function NewStackForm({
     chosen !== undefined &&
     chosen.blocker === null &&
     nameProblem === null &&
+    !leftover &&
     textProblem === null &&
     hostPorts.problem === null &&
     privateWrong === null &&
     networkWrong === null &&
+    (!joining || boxes.problem === null) &&
+    (!named || names.problem === null) &&
     (!modern || secretsProblem(secrets) === null);
 
   const create = async () => {
@@ -150,6 +192,15 @@ function NewStackForm({
     } finally {
       setSealing(false);
     }
+    const args = {
+      ...(hostPorts.ports.length > 0
+        ? { hostPorts: hostPorts.ports.join(",") }
+        : {}),
+      ...(serving ? network.args : {}),
+      ...(joining ? boxes.args : {}),
+      ...(named ? { title } : {}),
+      ...(named && names.rows.length > 0 ? { names: names.arg } : {}),
+    };
     run.mutate(
       {
         action: "create",
@@ -157,20 +208,11 @@ function NewStackForm({
           {
             nodeId,
             kind: "compose",
-            name: name.trim(),
+            name: project,
             compose: text,
             ...(modern ? { access } : {}),
             ...(sealed ? { secrets: sealed } : {}),
-            ...(hostPorts.ports.length > 0 || serving
-              ? {
-                  args: {
-                    ...(hostPorts.ports.length > 0
-                      ? { hostPorts: hostPorts.ports.join(",") }
-                      : {}),
-                    ...(serving ? network.args : {}),
-                  },
-                }
-              : {}),
+            ...(Object.keys(args).length > 0 ? { args } : {}),
           },
         ],
       },
@@ -237,7 +279,7 @@ function NewStackForm({
           <Input
             id="stack-name"
             value={name}
-            placeholder="uptime-kuma"
+            placeholder="Uptime Kuma"
             autoComplete="off"
             aria-invalid={touched && nameProblem !== null}
             aria-describedby={
@@ -250,6 +292,28 @@ function NewStackForm({
               {nameProblem}
             </p>
           )}
+          {leftover && chosen && (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs text-destructive">
+                Files left from an earlier {project} are still on {serverName}.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setClearing({
+                    action: "leftovers",
+                    project,
+                    node: chosen.node,
+                    directory: "",
+                  })
+                }
+              >
+                Delete Leftovers
+              </Button>
+            </div>
+          )}
+          {named && <ContainerNames names={names} />}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="stack-server">Server</Label>
@@ -342,6 +406,7 @@ function NewStackForm({
               />
             )}
             {serving && <NetworkSection network={network} />}
+            <NetworkBoxes network={boxes} />
             <div className="space-y-1.5">
               <Label>Secrets</Label>
               <SecretsEditor rows={secrets} onChange={setSecrets} />
@@ -367,10 +432,11 @@ function NewStackForm({
           disabled={sealing || run.isPending || (touched && !ready)}
           onClick={() => void create()}
         >
-          {!run.isPending && <Fingerprint aria-hidden="true" />}
-          {run.isPending ? "Waiting for the Fingerprint…" : "Create"}
+          <KeyRound aria-hidden="true" />
+          {run.isPending ? <Waiting /> : "Create"}
         </Button>
       </DialogFooter>
+      <StackActionDialog request={clearing} onClose={() => setClearing(null)} />
     </DialogContent>
   );
 }

@@ -65,7 +65,7 @@ function routes() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.6.14', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.0', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(keyOf(id), JSON.stringify({ set: SET, holders: 3 }), id);
   }
@@ -173,6 +173,15 @@ describe("operations in steps", () => {
     ]);
   });
 
+  it("refuses a move to a server that still holds files of that name", async () => {
+    const t = routes();
+    t.sqlite
+      .prepare("UPDATE nodes SET leftovers = '[\"listmonk\"]' WHERE id = ?")
+      .run(B);
+    expect(await code(await t.operate("move", moveSteps()))).toBe("LEFTOVERS");
+    expect(t.rows()).toEqual([]);
+  });
+
   it("refuses a move to a name that is taken, from a stack that is gone, or to an old key", async () => {
     const t = routes();
     t.sqlite
@@ -262,7 +271,84 @@ describe("operations in steps", () => {
     ).toBe("AGENT_TOO_OLD");
   });
 
-  it("needs agent 0.6.14 on every server in the operation", async () => {
+  it("creates the stack's networks on the target first, as the source has them", async () => {
+    const t = routes();
+    t.sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.7.1' WHERE id = ?")
+      .run(B);
+    t.sqlite.prepare("UPDATE nodes SET bridges = ? WHERE id = ?").run(
+      JSON.stringify({
+        networks: [
+          {
+            name: "apps-inner",
+            kind: "contained",
+            subnet: "172.24.0.0/24",
+            members: [],
+          },
+          { name: "proxy", kind: "outside", subnet: null, members: [] },
+        ],
+        taken: [],
+        claimed: [],
+      }),
+      A,
+    );
+    const network = (
+      name = "apps-inner",
+      args = { kind: "contained", subnet: "172.24.0.0/24" },
+      nodeId = B,
+    ) => step({ nodeId, kind: "bridge", name, action: "create", args });
+    const [exported, created, removed] = moveSteps();
+    const accepted = await t.operate("move", [
+      exported!,
+      network(),
+      created!,
+      removed!,
+    ]);
+    expect(accepted.status).toBe(201);
+    expect(t.rows().map((row) => [row.nodeId, row.action])).toEqual([
+      [A, "export"],
+      [B, "create"],
+      [B, "create"],
+      [A, "remove"],
+    ]);
+    t.sqlite.prepare("DELETE FROM actions").run();
+    for (const steps of [
+      [
+        exported!,
+        network("apps-inner", { kind: "contained", subnet: "172.24.1.0/24" }),
+        created!,
+      ],
+      [
+        exported!,
+        network("apps-inner", { kind: "full", subnet: "172.24.0.0/24" }),
+        created!,
+      ],
+      [
+        exported!,
+        network("proxy", { kind: "full", subnet: "172.25.0.0/24" }),
+        created!,
+      ],
+      [exported!, ...Array.from({ length: 5 }, () => network()), created!],
+    ]) {
+      const refused = await t.operate("move", steps);
+      expect(refused.status).toBe(422);
+      expect(await code(refused)).toBe("INVALID_REQUEST");
+    }
+    for (const steps of [
+      [exported!, network("apps-inner", undefined, A), created!],
+      [exported!, created!, network()],
+    ]) {
+      expect((await t.operate("move", steps)).status).toBe(400);
+    }
+    t.sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.7.0' WHERE id = ?")
+      .run(B);
+    expect(
+      await code(await t.operate("move", [exported!, network(), created!])),
+    ).toBe("AGENT_TOO_OLD");
+  });
+
+  it("needs agent 0.7.0 on every server in the operation", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -664,7 +750,7 @@ describe("operations in steps", () => {
   });
 });
 
-describe("single steps of agent 0.6.14", () => {
+describe("single steps of agent 0.7.0", () => {
   const single = (
     t: ReturnType<typeof routes>,
     target: Step,
@@ -894,7 +980,7 @@ describe("single steps of agent 0.6.14", () => {
     ).toBe(201);
   });
 
-  it("needs agent 0.6.14 for a stack with an access level or secrets", async () => {
+  it("needs agent 0.7.0 for a stack with an access level or secrets", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -930,7 +1016,7 @@ async function hub() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.6.14', docker = 'ready', seal_key = ? WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.0', docker = 'ready', seal_key = ? WHERE id = ?",
       )
       .run(keyOf(id), id);
   }
@@ -961,7 +1047,7 @@ async function hub() {
           hostname: "web-01",
           operatingSystem: "Debian 12.10",
           architecture: "amd64",
-          agentVersion: "0.6.14",
+          agentVersion: "0.7.0",
           metrics: {
             cpuPercent: 1,
             memoryUsedBytes: 1,
@@ -1257,7 +1343,7 @@ describe("steps that feed the next", () => {
   });
 });
 
-describe("the inventory of agent 0.6.14", () => {
+describe("the inventory of agent 0.7.0", () => {
   it("keeps the seal key, the security report, the vault and stack access", async () => {
     const t = await hub();
     const security = {

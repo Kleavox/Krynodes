@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { RowMenu } from "@/components/row-menu";
 import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -94,7 +95,7 @@ export function MarkRows({
               disabled={againing}
               onClick={onAgain}
             >
-              {againing ? "Checking…" : "Check Again"}
+              {againing ? <Busy>Checking</Busy> : "Check Again"}
             </Button>
           )}
         </li>

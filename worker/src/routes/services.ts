@@ -17,6 +17,14 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import { requestRefresh } from "../actions/inventory";
+import {
+  adminArgsValid,
+  bridgeArgsValid,
+  hasStackNameArgs,
+  hasStackNetworkArgs,
+  stackNameArgsValid,
+  stackNetworkArgsValid,
+} from "../bridges/args";
 import { assertionUv } from "../lib/webauthn";
 import {
   cancelStatement,
@@ -28,15 +36,23 @@ import {
   type ActionRow,
 } from "../actions/store";
 import { decodeJson, toB64url } from "../lib/b64url";
+import {
+  endOfLifeDate,
+  eolFinding,
+  readEndOfLife,
+  type EndOfLife,
+} from "../agent/end-of-life";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
 import { liveRange, readNetwork } from "../network/document";
 import { quarantineRefusal } from "../quarantine/quarantine";
 import { networkMember } from "./admin";
 import { readPrivateRanges } from "./settings";
 import { ownersRefusal } from "../trust/approval";
-import { loadFleet, readReport } from "../trust/fleet";
+import { loadFleet, readReport, syncedUpdates } from "../trust/fleet";
 import {
   invalidRequest,
+  leftoversOf,
+  leftoversRefusal,
   readJson,
   type KrynodesApp,
   type KrynodesEnv,
@@ -85,6 +101,7 @@ const actionRequestSchema = z.object({
     "unprepare",
     "rekey",
     "unblock",
+    "admin",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -99,6 +116,7 @@ const actionRequestSchema = z.object({
           "host",
           "apt",
           "network",
+          "bridge",
         ]),
         name: z.string().min(1).max(128),
         signed: signedCommandSchema.optional(),
@@ -132,10 +150,27 @@ const askedAttachment = (args: Record<string, string> | undefined) => {
   return bytes.length > MAX_ASKED_BYTES ? null : toB64url(bytes);
 };
 
-const needsFeatures = (target: { kind: string; name: string }) =>
-  target.kind === "apt" ||
-  target.kind === "network" ||
-  (target.kind === "host" && target.name === "tailscale");
+const needsFeatures = (
+  target: { kind: string; name: string },
+  action: string,
+  args: Record<string, string>,
+) =>
+  target.kind === "bridge" ||
+  (target.kind === "host" && action === "admin") ||
+  (target.kind === "compose" &&
+    (hasStackNetworkArgs(args) || hasStackNameArgs(args)));
+
+const signedArgsFit = (
+  kind: string,
+  action: string,
+  args: Record<string, string>,
+) =>
+  kind === "bridge"
+    ? bridgeArgsValid(action, args)
+    : kind === "host" && action === "admin"
+      ? adminArgsValid(args)
+      : kind !== "compose" ||
+        (stackNetworkArgsValid(args) && stackNameArgsValid(args));
 
 const askedFits = (
   kind: string,
@@ -152,11 +187,25 @@ const commandSchema = z.object({
   kind: z.string(),
   name: z.string(),
   action: z.string(),
+  args: z.record(z.string(), z.string()).optional(),
 });
 
 const refreshSchema = z.object({
   nodeIds: z.array(z.string().uuid()).max(100).optional(),
 });
+
+function peerOf(row: ActionRow): string | null {
+  if (row.kind !== "network" || row.action !== "test" || !row.attachment) {
+    return null;
+  }
+  try {
+    const peer = (decodeJson(row.attachment) as { peer?: unknown } | null)
+      ?.peer;
+    return typeof peer === "string" ? peer : null;
+  } catch {
+    return null;
+  }
+}
 
 export function toActionRecord(row: ActionRow) {
   if (SEALED_VERBS.includes(row.action)) row = { ...row, output: null };
@@ -179,6 +228,7 @@ export function toActionRecord(row: ActionRow) {
     output: row.output,
     deviceId: row.device_id,
     progress: parsed(row.progress ?? null),
+    peer: peerOf(row),
   };
 }
 
@@ -186,12 +236,32 @@ function securityReport(
   text: string | null,
   ranges: string[],
   network: string | null,
+  endOfLife: EndOfLife,
+  now: number,
 ): unknown {
   const report = parsed(text) as {
     findings?: unknown;
     listeners?: Listener[];
+    platform?: {
+      name: string;
+      id?: unknown;
+      version?: unknown;
+      endOfLife?: string | null;
+    };
   } | null;
   if (!report) return report;
+  const platform = report.platform;
+  if (typeof platform?.id === "string") {
+    const date = endOfLifeDate(
+      endOfLife,
+      platform.id,
+      typeof platform.version === "string" ? platform.version : "",
+    );
+    platform.endOfLife = date;
+    const finding = eolFinding(platform.name, date, now);
+    if (finding && Array.isArray(report.findings))
+      report.findings.push(finding);
+  }
   const { listeners: _, ...shown } = Array.isArray(report.findings)
     ? filterListeners(
         report as { findings: Finding[]; listeners?: Listener[] },
@@ -223,15 +293,16 @@ export function registerServiceRoutes(
     const owner = context.get("identity").id;
     const now = Date.now();
     await db.batch(sweepStatements(db, now));
-    const [ranges, network] = await Promise.all([
+    const [ranges, network, endOfLife] = await Promise.all([
       readPrivateRanges(db, owner),
       readNetwork(db, owner).then(liveRange),
+      readEndOfLife(db),
     ]);
     const [nodes, services, actions] = await Promise.all([
       db
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
-                  seal_key, security, vault, tailscale_vault
+                  seal_key, security, vault, tailscale_vault, bridges, leftovers
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
@@ -245,6 +316,8 @@ export function registerServiceRoutes(
           security: string | null;
           vault: string | null;
           tailscale_vault: string | null;
+          bridges: string | null;
+          leftovers: string | null;
         }>(),
       db
         .prepare(
@@ -274,7 +347,7 @@ export function registerServiceRoutes(
     const [stacks, removed, addresses] = await Promise.all([
       db
         .prepare(
-          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network FROM stacks
+          `SELECT node_id, project, directory, running, total, compose, rollback, access, public, containers, network, title, names, services FROM stacks
            WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
            ORDER BY node_id, project`,
         )
@@ -291,6 +364,9 @@ export function registerServiceRoutes(
           public: string | null;
           containers: string | null;
           network: string | null;
+          title: string | null;
+          names: string | null;
+          services: string | null;
         }>(),
       db
         .prepare(
@@ -330,9 +406,17 @@ export function registerServiceRoutes(
         trust: readReport(node.trust_report),
         docker: node.docker,
         sealKey: node.seal_key,
-        security: securityReport(node.security, ranges, network),
+        security: securityReport(
+          node.security,
+          ranges,
+          network,
+          endOfLife,
+          now,
+        ),
         vault: parsed(node.vault),
         tailscaleVault: parsed(node.tailscale_vault),
+        bridges: parsed(node.bridges),
+        leftovers: (parsed(node.leftovers) as string[] | null) ?? [],
         webAddresses: addresses.results
           .filter((address) => address.node_id === node.id)
           .map(({ node_id: _, ...address }) => address),
@@ -349,6 +433,9 @@ export function registerServiceRoutes(
             public: (parsed(stack.public) as string[] | null) ?? [],
             containers: (parsed(stack.containers) as string[] | null) ?? [],
             network: parsed(stack.network),
+            title: stack.title,
+            names: parsed(stack.names),
+            services: (parsed(stack.services) as string[] | null) ?? [],
           })),
         removed: removed.results
           .filter((stack) => stack.node_id === node.id)
@@ -487,12 +574,16 @@ export function registerServiceRoutes(
     ) {
       return invalidRequest(context);
     }
+    const signedArgs = new Map<string, Record<string, string>>();
     if (
       !unsigned &&
       targets.some((target) => {
         const command = commandSchema.safeParse(
           decodeJson(target.signed!.command),
         );
+        if (command.success) {
+          signedArgs.set(targetKey(target), command.data.args ?? {});
+        }
         return (
           !command.success ||
           command.data.id !== target.id ||
@@ -511,6 +602,19 @@ export function registerServiceRoutes(
         400,
       );
     }
+    const argsOf = (target: { nodeId: string; kind: string; name: string }) =>
+      signedArgs.get(targetKey(target)) ?? {};
+    if (
+      targets.some(
+        (target) =>
+          (target.kind === "bridge" ||
+            (target.kind === "host" && action === "admin") ||
+            target.kind === "compose") &&
+          !signedArgsFit(target.kind, action, argsOf(target)),
+      )
+    ) {
+      return invalidRequest(context);
+    }
     if (
       !unsigned &&
       targets.some(
@@ -521,7 +625,7 @@ export function registerServiceRoutes(
         {
           code: "FINGERPRINT_NEEDED",
           message:
-            "This passkey did not verify a fingerprint. Use the fingerprint, or choose Use a phone in the passkey window.",
+            "This passkey was opened without your fingerprint, face or PIN. Open it with one of those, or choose Use a phone in the passkey window.",
         },
         400,
       );
@@ -580,7 +684,7 @@ export function registerServiceRoutes(
     const nodeIds = JSON.stringify([...wanted]);
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker, tailscale,
+        `SELECT id, name, agent_version, docker, tailscale, leftovers,
                 (SELECT json_extract(report, '$.apt') FROM packages
                  WHERE node_id = nodes.id) AS apt
          FROM nodes
@@ -594,6 +698,7 @@ export function registerServiceRoutes(
         agent_version: string | null;
         docker: string | null;
         tailscale: string | null;
+        leftovers: string | null;
         apt: number | null;
       }>();
     if (nodes.results.length !== wanted.size) {
@@ -617,7 +722,7 @@ export function registerServiceRoutes(
     }
     const behind = targets.find(
       (target) =>
-        needsFeatures(target) &&
+        needsFeatures(target, action, argsOf(target)) &&
         !agentHasFeatures(byId.get(target.nodeId)!.agent_version),
     );
     if (behind) {
@@ -724,6 +829,15 @@ export function registerServiceRoutes(
           409,
         );
       }
+      const left = targets.find((target) =>
+        leftoversOf(byId.get(target.nodeId)!).includes(target.name),
+      );
+      if (left) {
+        return context.json(
+          leftoversRefusal(left.name, byId.get(left.nodeId)!.name),
+          409,
+        );
+      }
       const bare = targets.find(
         (target) => byId.get(target.nodeId)!.docker !== "ready",
       );
@@ -756,6 +870,13 @@ export function registerServiceRoutes(
               name: stack.name,
             }),
           ),
+        ...(action === "purge"
+          ? nodes.results.flatMap((node) =>
+              leftoversOf(node).map((name) =>
+                targetKey({ nodeId: node.id, kind: "compose", name }),
+              ),
+            )
+          : []),
         ...nodes.results.flatMap((node) =>
           [
             "server",
@@ -774,6 +895,7 @@ export function registerServiceRoutes(
           (target) =>
             target.kind !== "apt" &&
             target.kind !== "network" &&
+            target.kind !== "bridge" &&
             !present.has(targetKey(target)),
         )
       ) {
@@ -834,6 +956,7 @@ export function registerServiceRoutes(
               "UPDATE devices SET last_used_at = ? WHERE id = ? AND owner_user_id = ?",
             )
             .bind(new Date(now).toISOString(), credential, identity.id),
+          ...syncedUpdates(db, identity.id, [targets[0]!.signed!.grant]),
         ]
       : [];
     const deleting = then

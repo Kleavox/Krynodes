@@ -28,6 +28,7 @@ const OFF_FINDING: Record<string, string> = {
   "security-updates": "updates-off",
   fail2ban: "fail2ban-off",
   firewall: "firewall-off",
+  "no-root-login": "root-login",
 };
 
 export const findingTone = (finding: Finding) =>
@@ -43,6 +44,7 @@ const ORDER = [
   "security-updates",
   "reboot-window",
   "ssh-keys-only",
+  "no-root-login",
   "fail2ban",
   "firewall",
   "free-port-53",
@@ -58,6 +60,25 @@ const RECOMMENDED = [
 
 const has = (report: SecurityReport, id: string) =>
   report.findings.some((finding) => finding.id === id);
+
+const keyedUsers = (report: SecurityReport) =>
+  report.findings
+    .find((finding) => finding.id === "ssh-keys")
+    ?.detail.replace(/^SSH keys for /u, "")
+    .split(", ");
+
+function blockedText(id: string, report: SecurityReport): string | null {
+  if (id === "ssh-keys-only" && has(report, "ssh-no-keys")) {
+    return "First let root or a sudo user log in over SSH with a key.";
+  }
+  if (
+    id === "no-root-login" &&
+    !(keyedUsers(report) ?? []).some((user) => user !== "root")
+  ) {
+    return "First let a sudo user other than root log in over SSH with a key.";
+  }
+  return null;
+}
 
 export function worst(
   report: SecurityReport | null | undefined,
@@ -85,12 +106,18 @@ export function recipeChoices(report: SecurityReport): RecipeChoice[] {
       id,
       title: RECIPE_TITLES[id] ?? id,
       applied,
-      outside: !applied && off !== undefined && !has(report, off),
-      blocked:
-        id === "ssh-keys-only" && !applied && has(report, "ssh-no-keys")
-          ? "First let root or a sudo user log in over SSH with a key."
-          : null,
-      hint: HINTS[id] ?? null,
+      outside:
+        !applied &&
+        off !== undefined &&
+        !has(report, off) &&
+        (id !== "no-root-login" || has(report, "ssh-keys")),
+      blocked: applied ? null : blockedText(id, report),
+      hint:
+        id === "no-root-login"
+          ? applied
+            ? null
+            : protectionDetail(id, report)
+          : (HINTS[id] ?? null),
     };
   });
 }
@@ -143,16 +170,32 @@ export const toUtcHour = (hour: number, offsetMinutes: number) =>
 export const fromUtcHour = (hour: number, offsetMinutes: number) =>
   ((((hour * 60 - offsetMinutes) / 60) % 24) + 24) % 24;
 
-export function protectionsNotice(report: SecurityReport): string | null {
-  const platform = report.platform;
-  if (!platform || platform.verified) return null;
-  if (platform.family === null) {
-    return "Protections support Debian, Ubuntu and RHEL-family servers.";
-  }
-  const sentence =
-    report.findings.find((finding) => finding.id === "os-unverified")?.detail ??
-    `Krynodes has not checked ${platform.name}.`;
-  return `${sentence} Turning a protection on asks you to confirm.`;
+export const protectionsNotice = (report: SecurityReport) =>
+  report.platform?.family === null
+    ? "Protections support Debian, Ubuntu and RHEL-family servers."
+    : null;
+
+const MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+export function updatesUntil(report: SecurityReport): string | null {
+  if (!report.platform?.id) return null;
+  const [year, month, day] = report.platform.endOfLife?.split("-") ?? [];
+  return year && month && day
+    ? `Updates until ${Number(day)} ${MONTHS[Number(month) - 1]} ${year}`
+    : "Updates until --";
 }
 
 export const firewallName = (report: SecurityReport) =>
@@ -160,10 +203,8 @@ export const firewallName = (report: SecurityReport) =>
 
 export function protectionDetail(id: string, report: SecurityReport): string {
   const rhel = report.platform?.family === "rhel";
-  const keyed = report.findings
-    .find((finding) => finding.id === "ssh-keys")
-    ?.detail.replace(/^SSH keys for /u, "")
-    .split(", ");
+  const keyed = keyedUsers(report);
+  const admins = (keyed ?? []).filter((user) => user !== "root");
   const details: Record<string, string> = {
     "security-updates": `Installs security updates every day with ${rhel ? "dnf" : "unattended-upgrades"}.`,
     "reboot-window":
@@ -173,6 +214,11 @@ export function protectionDetail(id: string, report: SecurityReport): string {
         ? `SSH stops accepting passwords. ${new Intl.ListFormat("en").format(keyed)} keep logging in with their keys; an account without a key loses SSH.`
         : "SSH stops accepting passwords; keys keep working."
     } If you get locked out, Krynodes can turn passwords back on.`,
+    "no-root-login": `SSH stops letting root log in.${
+      admins.length > 0
+        ? ` ${new Intl.ListFormat("en").format(admins)} ${admins.length === 1 ? "keeps logging in with a key and uses sudo" : "keep logging in with a key and use sudo"}.`
+        : ""
+    } If you get locked out, Krynodes can turn root login back on.`,
     fail2ban: rhel
       ? "Blocks addresses that keep failing to log in over SSH. Installs fail2ban from EPEL where the system needs it."
       : "Blocks addresses that keep failing to log in over SSH.",

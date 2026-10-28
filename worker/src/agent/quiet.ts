@@ -4,7 +4,7 @@ import { windowSize } from "./windows";
 export interface QuietSpan {
   from: string;
   to: string | null;
-  why: "offline" | "routine";
+  why: "offline" | "routine" | "quarantined";
 }
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -96,6 +96,30 @@ const epochOf = (value: string) =>
       : value,
   );
 
+function quarantinedSpans(
+  quarantines: string | null | undefined,
+  from: number,
+): QuietSpan[] {
+  try {
+    const entries = JSON.parse(quarantines ?? "[]") as {
+      at: string;
+      releasedAt: string | null;
+    }[];
+    return entries
+      .filter(
+        (entry) =>
+          entry.releasedAt === null || epochOf(entry.releasedAt) > from,
+      )
+      .map((entry) => ({
+        from: iso(Math.max(epochOf(entry.at), from)),
+        to: entry.releasedAt === null ? null : iso(epochOf(entry.releasedAt)),
+        why: "quarantined" as const,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function quietByNode(
   windows: {
     node_id: string;
@@ -108,6 +132,7 @@ export function quietByNode(
     last_seen_at: string | null;
     security: string | null;
     grace_seconds?: number;
+    quarantines?: string | null;
   }[],
   from: number,
   now: number,
@@ -118,23 +143,26 @@ export function quietByNode(
       return [
         node.id,
         {
-          quiet: quietSpans({
-            windows: windows
-              .filter((window) => window.node_id === node.id)
-              .map((window) => ({
-                start: epochOf(window.window_start),
-                uptimeSeconds: window.uptime_seconds,
-              })),
-            windowMs: windowSize(node.interval_seconds),
-            from,
-            now,
-            lastSeen: node.last_seen_at ? epochOf(node.last_seen_at) : null,
-            graceMs:
-              (node.grace_seconds ?? Math.max(90, 3 * node.interval_seconds)) *
-              1000,
-            rebootHour: restart.hour,
-            rebootPending: restart.pending,
-          }),
+          quiet: [
+            ...quietSpans({
+              windows: windows
+                .filter((window) => window.node_id === node.id)
+                .map((window) => ({
+                  start: epochOf(window.window_start),
+                  uptimeSeconds: window.uptime_seconds,
+                })),
+              windowMs: windowSize(node.interval_seconds),
+              from,
+              now,
+              lastSeen: node.last_seen_at ? epochOf(node.last_seen_at) : null,
+              graceMs:
+                (node.grace_seconds ??
+                  Math.max(90, 3 * node.interval_seconds)) * 1000,
+              rebootHour: restart.hour,
+              rebootPending: restart.pending,
+            }),
+            ...quarantinedSpans(node.quarantines, from),
+          ],
         },
       ];
     }),

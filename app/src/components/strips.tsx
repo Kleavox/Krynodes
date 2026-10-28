@@ -19,6 +19,7 @@ const SLOT_CLASS: Record<SlotState, string> = {
   work: "bg-primary/80",
   routine: "bg-info/80",
   offline: "bg-muted-foreground/70",
+  quarantined: "bg-destructive/35",
 };
 
 const BAR_CLASS: Record<BarTone, string> = {
@@ -29,6 +30,7 @@ const BAR_CLASS: Record<BarTone, string> = {
   work: "bg-primary/80",
   routine: "bg-info/80",
   offline: "bg-muted-foreground/70",
+  quarantined: "bg-destructive/35",
   empty: "bg-border",
 };
 
@@ -40,6 +42,7 @@ const SLOT_LABEL: Record<SlotState, string> = {
   work: "By You",
   routine: "Routine Restart",
   offline: "Offline",
+  quarantined: "Quarantined",
 };
 
 export function ReportStrip({

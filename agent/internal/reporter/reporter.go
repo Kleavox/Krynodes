@@ -138,22 +138,27 @@ type ServiceEntry struct {
 }
 
 type StackEntry struct {
-	Access     string        `json:"access,omitempty"`
-	Public     []string      `json:"public,omitempty"`
-	Project    string        `json:"project"`
-	Directory  string        `json:"directory"`
-	Running    int           `json:"running"`
-	Total      int           `json:"total"`
-	Compose    bool          `json:"compose"`
-	Rollback   bool          `json:"rollback"`
-	Containers []string      `json:"containers,omitempty"`
-	Network    *StackNetwork `json:"network,omitempty"`
+	Access     string            `json:"access,omitempty"`
+	Public     []string          `json:"public,omitempty"`
+	Project    string            `json:"project"`
+	Directory  string            `json:"directory"`
+	Running    int               `json:"running"`
+	Total      int               `json:"total"`
+	Compose    bool              `json:"compose"`
+	Rollback   bool              `json:"rollback"`
+	Containers []string          `json:"containers,omitempty"`
+	Network    *StackNetwork     `json:"network,omitempty"`
+	Title      string            `json:"title,omitempty"`
+	Names      map[string]string `json:"names,omitempty"`
+	Services   []string          `json:"services,omitempty"`
 }
 
 type StackNetwork struct {
 	Serves  []network.Serve `json:"serves"`
 	Reaches []string        `json:"reaches"`
 	Private []string        `json:"private"`
+	Offers  []string        `json:"offers"`
+	Peers   []string        `json:"peers"`
 }
 
 type TrustReport struct {
@@ -177,10 +182,10 @@ type Finding struct {
 }
 
 type Platform struct {
-	Family   *string `json:"family"`
-	Name     string  `json:"name"`
-	Verified bool    `json:"verified"`
-	Checked  string  `json:"checked"`
+	Family  *string `json:"family"`
+	Name    string  `json:"name"`
+	ID      string  `json:"id"`
+	Version string  `json:"version"`
 }
 
 type SecurityReport struct {
@@ -329,7 +334,43 @@ type InventoryReport struct {
 	Tailscale *TailscaleReport  `json:"tailscale,omitempty"`
 	Network   *NetworkInventory `json:"network,omitempty"`
 
-	TailscaleVault *VaultSlot `json:"tailscaleVault,omitempty"`
+	TailscaleVault *VaultSlot   `json:"tailscaleVault,omitempty"`
+	Bridges        *BridgesSlot `json:"bridges,omitempty"`
+}
+
+type Bridges struct {
+	Networks []BridgeNetwork `json:"networks"`
+	Taken    []Taken         `json:"taken"`
+	Claimed  []string        `json:"claimed"`
+}
+
+type BridgeNetwork struct {
+	Name    string         `json:"name"`
+	Kind    string         `json:"kind"`
+	Subnet  *string        `json:"subnet"`
+	Members []BridgeMember `json:"members"`
+}
+
+type BridgeMember struct {
+	Project string   `json:"project"`
+	Service string   `json:"service"`
+	Address *string  `json:"address"`
+	Offers  []string `json:"offers"`
+	Guest   bool     `json:"guest"`
+}
+
+type Taken struct {
+	Range string `json:"range"`
+	By    string `json:"by"`
+	Own   bool   `json:"own,omitempty"`
+}
+
+type BridgesSlot struct {
+	Report *Bridges
+}
+
+func (s BridgesSlot) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.Report)
 }
 
 type NetworkInventory struct {

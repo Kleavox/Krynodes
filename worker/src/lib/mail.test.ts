@@ -143,11 +143,15 @@ describe("quarantine mail", () => {
       "Added: 2026-10-27 21:04 UTC",
       "Cut off: 2026-10-27 21:19 UTC, unless you say it was you",
       "Open vps-1: https://kry.example.test/nodes/n1",
-      "It Was Me is on the server page and asks for your fingerprint. Nothing in this mail can answer for you.",
+      "It Was Me is on the server page and asks for your passkey. Nothing in this mail can answer for you.",
     ]) {
       expect(text).toContain(line);
     }
-    expect(html).toContain("#f5b544");
+    expect(html).toContain("#ebba62");
+    expect(html).toMatch(
+      /font-weight:600;color:#ececf1">\s*Krynodes\s*<\/td>/u,
+    );
+    expect(html).not.toContain("width:10px;height:10px");
     expect(html).toContain("Warning</span>");
     expect(buttons(html)).toBe(1);
     expect(html).not.toContain("uppercase");
@@ -191,6 +195,16 @@ describe("quarantine mail", () => {
         ["Port: 0.0.0.0:4444/tcp", "Process: nc"],
       ],
       [
+        "port",
+        { port: "32768-60999/udp", process: "tailscaled" },
+        "vps-1: temporary UDP ports were opened outside Krynodes",
+        [
+          "tailscaled uses temporary UDP ports (32768-60999/udp) on a public address and not through Krynodes. If you did not start it",
+          "Port: 32768-60999/udp",
+          "Process: tailscaled",
+        ],
+      ],
+      [
         "quiet",
         { lastReport: "2026-10-27T20:58:00.000Z", seenBy: "vps-2, vps-3" },
         "vps-1: the agent went quiet while the server is up",
@@ -229,12 +243,12 @@ describe("quarantine mail", () => {
       "Cut off: 2026-10-27 21:18 UTC",
       "Dropped by: vps-2 and vps-3",
       "Change: The secrets of 2 stacks, 1 Cloudflare token piece and 1 service that trusted it, and its place on your tailnet, listed on the server page",
-      "Reinstall vps-1 if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your fingerprint.",
+      "Reinstall vps-1 if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your passkey.",
     ]) {
       expect(text).toContain(line);
     }
     expect(html).toContain("Quarantined</span>");
-    expect(html).toContain("#f0616d");
+    expect(html).toContain("#ed7477");
     expect(buttons(html)).toBe(1);
   });
 
@@ -280,7 +294,7 @@ describe("quarantine mail", () => {
       "Tried: 10.88.0.2:22/tcp, 10.88.0.2:80/tcp, 10.88.0.3:22/tcp, 10.88.0.3:5432/tcp and 10 more",
       "Stopped: 2026-10-27 21:04 UTC",
       "Change: The secrets of app, listed on the server page",
-      "Change its secrets before you start it again. Start asks for your fingerprint.",
+      "Change its secrets before you start it again. Start asks for your passkey.",
     ]) {
       expect(text).toContain(line);
     }

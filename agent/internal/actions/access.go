@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,10 +28,15 @@ const (
 )
 
 type stackMeta struct {
-	Access    string          `json:"access"`
-	HostPorts []string        `json:"hostPorts,omitempty"`
-	Serves    []network.Serve `json:"serves,omitempty"`
-	Reaches   []string        `json:"reaches,omitempty"`
+	Access    string            `json:"access"`
+	HostPorts []string          `json:"hostPorts,omitempty"`
+	Serves    []network.Serve   `json:"serves,omitempty"`
+	Reaches   []string          `json:"reaches,omitempty"`
+	Offers    []string          `json:"offers,omitempty"`
+	Peers     []string          `json:"peers,omitempty"`
+	Networks  map[string]string `json:"networks,omitempty"`
+	Title     string            `json:"title,omitempty"`
+	Names     map[string]string `json:"names,omitempty"`
 }
 
 const maxHostPorts = 16
@@ -176,6 +182,49 @@ func (e Executor) guard(ctx context.Context) {
 			e.firewall(ctx, tool, append([]string{"-D", "INPUT"}, oldDropRule...)...)
 		}
 	}
+	e.ports(ctx, e.hostPortTable())
+}
+
+var portsLog = []string{"-m", "limit", "--limit", "600/min", "-j", "LOG", "--log-prefix", network.ReachPrefix, "--log-level", "6"}
+
+func (e Executor) ports(ctx context.Context, table map[string][]string) {
+	e.firewall(ctx, "iptables", "-N", network.PortsChain)
+	wanted := network.Ports(table)
+	for _, rule := range wanted {
+		e.ensure(ctx, "iptables", []string{"-I", network.PortsChain, "1"}, network.PortsChain, rule)
+	}
+	listed, _ := e.output(ctx, "iptables", "-S", network.PortsChain)
+	prefix := "-A " + network.PortsChain + " "
+	for line := range strings.SplitSeq(listed, "\n") {
+		rule, found := strings.CutPrefix(strings.TrimSpace(line), prefix)
+		if !found || !strings.HasPrefix(rule, "-i krc") || !strings.HasSuffix(rule, "-j RETURN") {
+			continue
+		}
+		if !slices.ContainsFunc(wanted, func(want []string) bool { return strings.Join(want, " ") == rule }) {
+			e.firewall(ctx, "iptables", append([]string{"-D", network.PortsChain}, strings.Fields(rule)...)...)
+		}
+	}
+	e.ensure(ctx, "iptables", []string{"-A", network.PortsChain}, network.PortsChain, portsLog)
+	e.ensure(ctx, "iptables", []string{"-A", network.PortsChain}, network.PortsChain, []string{"-j", "DROP"})
+	e.ensure(ctx, "iptables", []string{"-I", "DOCKER-USER", "1"}, "DOCKER-USER", network.PortsJump)
+}
+
+func (e Executor) hostPortTable() map[string][]string {
+	table := map[string][]string{}
+	for _, directory := range e.stackDirectories() {
+		ports := e.hostPortsOf(directory)
+		if len(ports) == 0 || e.accessOf(directory) != "contained" {
+			continue
+		}
+		var config map[string]any
+		if readJSON(filepath.Join(directory, "compose.krynodes.json"), &config) != nil {
+			continue
+		}
+		for _, bridge := range bridgesOf(config) {
+			table[bridge] = ports
+		}
+	}
+	return table
 }
 
 func (e Executor) reach(ctx context.Context, tool string) {
@@ -197,35 +246,29 @@ func (e Executor) reach(ctx context.Context, tool string) {
 }
 
 func (e Executor) reachRules() [][]string {
-	entries, err := os.ReadDir(filepath.Join(e.StateDir, "compose"))
-	if err != nil {
-		return nil
-	}
+	table := e.hostPortTable()
 	var rules [][]string
-	for _, entry := range entries {
-		directory := filepath.Join(e.StateDir, "compose", entry.Name())
-		ports := e.hostPortsOf(directory)
-		if !entry.IsDir() || len(ports) == 0 || e.accessOf(directory) != "contained" {
-			continue
-		}
-		var config map[string]any
-		if readJSON(filepath.Join(directory, "compose.krynodes.json"), &config) != nil {
-			continue
-		}
-		rules = append(rules, reachFor(config, ports)...)
+	for _, bridge := range slices.Sorted(maps.Keys(table)) {
+		rules = append(rules, reachOn(bridge, table[bridge])...)
 	}
 	return rules
 }
 
-func reachFor(config map[string]any, ports []string) [][]string {
+func reachOn(bridge string, ports []string) [][]string {
 	var rules [][]string
-	for _, bridge := range bridgesOf(config) {
-		for _, port := range ports {
-			number, protocol, _ := strings.Cut(port, "/")
-			rules = append(rules, []string{"-i", bridge, "-p", protocol, "-m", protocol, "--dport", number, "-j", "ACCEPT"})
-		}
+	for _, port := range ports {
+		number, protocol, _ := strings.Cut(port, "/")
+		rules = append(rules, []string{"-i", bridge, "-p", protocol, "-m", protocol, "--dport", number, "-j", "ACCEPT"})
 	}
 	return rules
+}
+
+func ownPorts(config map[string]any, ports []string) map[string][]string {
+	table := map[string][]string{}
+	for _, bridge := range bridgesOf(config) {
+		table[bridge] = ports
+	}
+	return table
 }
 
 func (e Executor) openReach(ctx context.Context, config map[string]any, ports []string) {
@@ -234,9 +277,14 @@ func (e Executor) openReach(ctx context.Context, config map[string]any, ports []
 	}
 	e.guard(ctx)
 	for _, tool := range containTools {
-		for _, rule := range reachFor(config, ports) {
-			e.ensure(ctx, tool, []string{"-I", containChain, "1"}, containChain, rule)
+		for _, bridge := range bridgesOf(config) {
+			for _, rule := range reachOn(bridge, ports) {
+				e.ensure(ctx, tool, []string{"-I", containChain, "1"}, containChain, rule)
+			}
 		}
+	}
+	for _, rule := range network.Ports(ownPorts(config, ports)) {
+		e.ensure(ctx, "iptables", []string{"-I", network.PortsChain, "1"}, network.PortsChain, rule)
 	}
 }
 
@@ -312,6 +360,9 @@ func contain(config map[string]any, project string) error {
 		if network == nil {
 			network = map[string]any{}
 			networks[name] = network
+		}
+		if network["external"] == true {
+			continue
 		}
 		if driver := asText(network["driver"]); driver != "" && driver != "bridge" {
 			return fmt.Errorf("network %s uses the %s driver; a Contained stack uses bridge networks", name, driver)

@@ -343,7 +343,7 @@ describe("passkeys", () => {
     authenticator(0x19);
     await expect(
       createSession(["ZGV2aWNl"], "kry.example.test", T),
-    ).rejects.toThrow(/did not verify a fingerprint/u);
+    ).rejects.toThrow(/was opened without your fingerprint, face or PIN/u);
   });
 
   it("stops at once when the passkey was not touched", async () => {
@@ -372,11 +372,33 @@ describe("passkeys", () => {
     vi.stubGlobal("navigator", { credentials: created(0x59) });
     await expect(
       registerDevice("Laptop", "kry.example.test", user, []),
-    ).rejects.toThrow(/did not verify a fingerprint/u);
+    ).rejects.toThrow(/was opened without your fingerprint, face or PIN/u);
     vi.stubGlobal("navigator", { credentials: created(0x45) });
     await expect(
       registerDevice("Laptop", "kry.example.test", user, []),
     ).resolves.toMatchObject({ id: "bmV3", alg: -7, verifies: true });
+  });
+
+  it("tells a synced passkey from one that stays on this device", async () => {
+    const created = (flags: number) => ({
+      create: async () => ({
+        id: "bmV3",
+        response: {
+          getAuthenticatorData: () => authData(flags),
+          getPublicKey: () => new Uint8Array([9, 9]).buffer,
+          getPublicKeyAlgorithm: () => -7,
+        },
+      }),
+    });
+    const user = { id: "operator", name: "operator" };
+    vi.stubGlobal("navigator", { credentials: created(0x5d) });
+    await expect(
+      registerDevice("Laptop", "kry.example.test", user, []),
+    ).resolves.toMatchObject({ synced: true });
+    vi.stubGlobal("navigator", { credentials: created(0x45) });
+    await expect(
+      registerDevice("Laptop", "kry.example.test", user, []),
+    ).resolves.toMatchObject({ synced: false });
   });
 });
 
@@ -403,7 +425,7 @@ describe("fingerprint, always", () => {
     answer(0x01);
     await expect(
       createSession(["ZGV2aWNl"], "kry.example.test", T),
-    ).rejects.toThrow(/did not verify a fingerprint/u);
+    ).rejects.toThrow(/was opened without your fingerprint, face or PIN/u);
     expect(asked[0]?.publicKey?.userVerification).toBe("required");
     await expect(
       approveChange(
@@ -411,7 +433,7 @@ describe("fingerprint, always", () => {
         ["ZGV2aWNl"],
         "kry.example.test",
       ),
-    ).rejects.toThrow(/did not verify a fingerprint/u);
+    ).rejects.toThrow(/was opened without your fingerprint, face or PIN/u);
     answer(0x05);
     const approval = await approveChange(
       b64url(new Uint8Array([1])),
@@ -450,7 +472,7 @@ describe("fingerprint, always", () => {
       registerDevice("Laptop", "kry.example.test", user, [], {
         guessed: true,
       }),
-    ).rejects.toThrow(/did not verify a fingerprint/u);
+    ).rejects.toThrow(/was opened without your fingerprint, face or PIN/u);
     vi.stubGlobal("navigator", { credentials: created(0x05, ["hybrid"]) });
     await expect(
       registerDevice("Laptop", "kry.example.test", user, [], {

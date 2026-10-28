@@ -1,8 +1,9 @@
-import { Fingerprint } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
+import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -219,7 +220,7 @@ function OpenForm({
     <DialogContent className={SHEET}>
       <DialogHeader>
         <DialogTitle>
-          Web Address · {target.project} on {target.nodeName}
+          Web Address · {target.title} on {target.nodeName}
         </DialogTitle>
         <DialogDescription>
           Krynodes makes an HTTPS address through a Cloudflare Tunnel. No port
@@ -376,12 +377,8 @@ function OpenForm({
           }
           onClick={submit}
         >
-          {!operate.isPending && <Fingerprint aria-hidden="true" />}
-          {operate.isPending
-            ? "Waiting for the Fingerprint…"
-            : existing
-              ? "Save"
-              : "Open"}
+          <KeyRound aria-hidden="true" />
+          {operate.isPending ? <Waiting /> : existing ? "Save" : "Open"}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -464,7 +461,7 @@ function CloseForm({
     }
     toast.success(
       disposal
-        ? `Closing the addresses of ${target.project}.`
+        ? `Closing the addresses of ${target.title}.`
         : `Closing ${hostname}.`,
     );
     onClose();
@@ -475,8 +472,8 @@ function CloseForm({
       <DialogHeader>
         <DialogTitle>
           {disposal
-            ? `${disposal === "purge" ? "Delete" : "Remove"} ${target.project} and close its web addresses`
-            : `Close a web address of ${target.project}`}
+            ? `${disposal === "purge" ? "Delete" : "Remove"} ${target.title} and close its web addresses`
+            : `Close a web address of ${target.title}`}
         </DialogTitle>
         <DialogDescription>
           {disposal
@@ -527,13 +524,17 @@ function CloseForm({
           disabled={blocked !== null || operate.isPending}
           onClick={() => void close()}
         >
-          {operate.isPending
-            ? "Waiting for the Fingerprint…"
-            : disposal
-              ? disposal === "purge"
-                ? "Delete Permanently"
-                : "Remove"
-              : "Close Address"}
+          {operate.isPending ? (
+            <Waiting />
+          ) : disposal ? (
+            disposal === "purge" ? (
+              "Delete Permanently"
+            ) : (
+              "Remove"
+            )
+          ) : (
+            "Close Address"
+          )}
         </Button>
       </DialogFooter>
     </DialogContent>

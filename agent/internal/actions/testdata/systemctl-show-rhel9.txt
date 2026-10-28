@@ -1,0 +1,23 @@
+Type=oneshot
+Result=success
+ExecMainExitTimestamp=
+ExecMainCode=0
+ExecMainStatus=0
+Id=sshd-keygen@rsa.service
+ConditionResult=no
+
+Type=oneshot
+Result=success
+ExecMainExitTimestamp=Tue 2026-10-28 01:02:03 UTC
+ExecMainCode=1
+ExecMainStatus=0
+Id=dracut-shutdown.service
+ConditionResult=yes
+
+Type=oneshot
+Result=success
+ExecMainExitTimestamp=
+ExecMainCode=0
+ExecMainStatus=0
+Id=never-run.service
+ConditionResult=yes

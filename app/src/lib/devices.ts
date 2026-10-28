@@ -6,7 +6,13 @@ import {
 } from "@krynodes/protocol/summary";
 
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
-import { agentSupported, compareVersions } from "@krynodes/protocol/versions";
+import {
+  agentHasFeatures,
+  agentSupported,
+  compareVersions,
+  FEATURE_AGENT,
+  MIN_AGENT_VERSION,
+} from "@krynodes/protocol/versions";
 import { b64url, fromB64url } from "./passkeys";
 import { serverNow } from "./http";
 
@@ -29,7 +35,7 @@ export interface Plan {
   access: Record<string, string[]>;
 }
 
-export type ServerState = "update" | "empty" | "behind" | "current";
+export type ServerState = "waiting" | "update" | "empty" | "behind" | "current";
 
 export async function fingerprint(publicKey: string): Promise<string> {
   const digest = new Uint8Array(
@@ -43,8 +49,25 @@ export async function fingerprint(publicKey: string): Promise<string> {
 export const formatPrint = (print: string) =>
   (print.toUpperCase().match(/.{1,4}/gu) ?? []).join(" ");
 
+export const syncText = (synced: boolean | null | undefined) =>
+  synced == null ? "--" : synced ? "Synced" : "This Device Only";
+
 export const agentCurrent = (node: Pick<NodeRecord, "agent_version">) =>
   agentSupported(node.agent_version);
+
+export const FIRST_REPORT = "Waiting for First Report";
+
+export function agentGap(
+  version: string | null | undefined,
+  floor: typeof MIN_AGENT_VERSION | typeof FEATURE_AGENT = MIN_AGENT_VERSION,
+): string | null {
+  if (!version) return FIRST_REPORT;
+  const reached =
+    floor === FEATURE_AGENT
+      ? agentHasFeatures(version)
+      : agentSupported(version);
+  return reached ? null : `Needs agent ${floor}`;
+}
 
 export function canRestartServer(
   node: Pick<NodeRecord, "agent_version">,
@@ -101,6 +124,7 @@ export const trustedServers = (view: FleetView) =>
   view.servers.filter((server) => (server.trust?.core.length ?? 0) > 0);
 
 export function serverState(view: FleetView, server: FleetServer): ServerState {
+  if (!server.node.agent_version) return "waiting";
   if (!agentCurrent(server.node)) return "update";
   if (!server.trust || server.trust.core.length === 0) return "empty";
   const core = coreOf(view).map((device) => device.fingerprint);

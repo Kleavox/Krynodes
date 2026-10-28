@@ -333,17 +333,22 @@ func TestSetupChecksItsFlagsBeforeAnythingElse(t *testing.T) {
 		"--recommended --reboot-hour 24": "--reboot-hour is 0 to 23",
 		"--docker extra":                 `unexpected argument "extra"`,
 		"--recommended --docker":         "root",
+		"--admin root --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "--admin takes a user name such as musyaf, not root",
+		"--admin musyaf":                  "--admin needs one to four --admin-key",
+		"--admin musyaf --admin-key AAAA": "is not a key such as",
+		"--admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop":                "--admin-key needs --admin",
+		"--admin musyaf --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "root",
 	} {
 		err := run(append([]string{"setup"}, strings.Fields(args)...))
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: %v", args, err)
 		}
 	}
-	if got := setupCommandLine(true, true, 20); got != "kry setup --recommended --docker --reboot-hour 20" {
-		t.Fatalf("command %q", got)
-	}
-	if got := setupCommandLine(false, true, 20); got != "kry setup --docker" {
-		t.Fatalf("command %q", got)
+}
+
+func TestSetupRefusesTheOldAnywayFlag(t *testing.T) {
+	if err := setupCommand([]string{"--recommended", "--anyway"}); err == nil || !strings.Contains(err.Error(), "anyway") {
+		t.Fatalf("err %v", err)
 	}
 }
 
@@ -384,6 +389,15 @@ func TestTheHostUnitRunsOnlyTheFixedRecipesWhenAsked(t *testing.T) {
 	}
 	if !slices.Contains(enabledUnits(), "krynodes-host.path") || !slices.Contains(uninstallCommands()[0], "krynodes-host.path") {
 		t.Fatalf("enabled %v uninstall %v", enabledUnits(), uninstallCommands())
+	}
+}
+
+func TestAdminUserIsACommandForOneName(t *testing.T) {
+	if err := run([]string{"admin-user"}); err == nil || err.Error() != "usage: kry admin-user <name>" {
+		t.Fatalf("err %v", err)
+	}
+	if err := run([]string{"admin-user", "musyaf"}); err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("admin-user must need root on Linux: %v", err)
 	}
 }
 

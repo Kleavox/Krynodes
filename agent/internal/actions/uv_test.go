@@ -55,7 +55,7 @@ func TestOnceFingerprintsAreRequiredATouchOnlyGrantIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.assertion.flags = flagPresent
-	refused(t, c.verify(t, testNow), "did not verify a fingerprint")
+	refused(t, c.verify(t, testNow), "was opened without a fingerprint, face or PIN")
 }
 
 func TestTheFingerprintRuleRoundTripsThroughTheStateDirectory(t *testing.T) {
@@ -101,7 +101,7 @@ func TestTheBrowsersTouchApprovalIsRefusedAndItsFingerprintDeployVerifies(t *tes
 		t.Fatal(err)
 	}
 	_, err = ApplyTrustChange(trust, fixture.Admit, issuedAt(t, fixture.Admit))
-	refused(t, err, "did not verify a fingerprint")
+	refused(t, err, "was opened without a fingerprint, face or PIN")
 
 	var signed signedTrust
 	if err := json.Unmarshal(fixture.Enable.Signed, &signed); err != nil {

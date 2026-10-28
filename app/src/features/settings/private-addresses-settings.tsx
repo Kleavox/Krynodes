@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { Busy } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import { usePrivateRanges, useSavePrivateRanges } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
@@ -33,7 +34,7 @@ export function PrivateAddressesSettings() {
         <RangesForm initial={current.data.ranges} />
       ) : (
         <p className="text-sm text-muted-foreground">
-          {current.error ? errorMessage(current.error) : "Loading…"}
+          {current.error ? errorMessage(current.error) : <Busy>Loading</Busy>}
         </p>
       )}
     </SettingsSection>
@@ -76,7 +77,7 @@ function RangesForm({ initial }: { initial: string[] }) {
           </span>
         )}
         <Button type="submit" size="sm" disabled={!changed || save.isPending}>
-          {save.isPending ? "Saving…" : "Save"}
+          {save.isPending ? <Busy>Saving</Busy> : "Save"}
         </Button>
       </div>
     </form>
