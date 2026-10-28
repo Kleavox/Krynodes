@@ -32,6 +32,7 @@ import {
   useRefreshServices,
   useServices,
 } from "@/lib/api";
+import { incidentReason } from "@/lib/format";
 import { serverOperation } from "@/lib/operations";
 import { refreshPending } from "@/lib/services";
 import {
@@ -42,6 +43,7 @@ import {
 } from "@/lib/stacks";
 import { cn } from "@/lib/utils";
 import {
+  foldedStatesText,
   foldedUnitsText,
   incidentNote,
   whatRuns,
@@ -95,7 +97,7 @@ function FoldedUnits({
         </span>
         <KindLabel kind="systemd" />
         <span className="shrink-0 font-mono text-xs text-muted-foreground">
-          All Running
+          {foldedStatesText(members.map((member) => member.entry.state))}
         </span>
       </button>
       {open && (
@@ -150,7 +152,7 @@ function Card({
     <article
       className={cn(
         "rounded-lg border bg-card",
-        card.problem && "border-destructive/40",
+        card.alarm && "border-destructive/40",
       )}
     >
       {stack ? (
@@ -210,7 +212,8 @@ function Card({
         >
           <span className="min-w-0 truncate">
             {incidentNote(card.incident, view.now)}
-            {card.incident.summary && ` · ${card.incident.summary}`}
+            {incidentReason(card.incident.summary) &&
+              ` · ${incidentReason(card.incident.summary)}`}
           </span>
           <span className="shrink-0 text-primary">Incident →</span>
         </Link>

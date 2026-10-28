@@ -791,7 +791,7 @@ function NodeCard({
       {live ? (
         <>
           {state === "online" ? (
-            <div>
+            <div onClick={onSelect}>
               <p className="font-mono text-[10px] text-muted-foreground">
                 {quarantined?.meters ?? `CPU · Last ${spanOf(laid)}`}
               </p>

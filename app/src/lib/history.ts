@@ -10,6 +10,7 @@ import type {
 import {
   clockTime,
   formatDuration,
+  incidentReason,
   parseTimestamp,
   shortDate,
   stampTime,
@@ -74,7 +75,33 @@ export function dayGroups(
   const yesterday = dayOf(now, -1);
   const groups: { label: string; counts: string; entries: HistoryEntry[] }[] =
     [];
+  const recovered = new Set(
+    entries.flatMap((entry) =>
+      entry.type === "incident" && entry.event === "resolved"
+        ? [entry.incident.id]
+        : [],
+    ),
+  );
+  const owned = new Set(
+    entries.flatMap((entry) =>
+      entry.type === "network" && entry.change.change.startsWith("It was me:")
+        ? [entry.at]
+        : [],
+    ),
+  );
   for (const entry of entries) {
+    if (
+      (entry.type === "incident" &&
+        entry.event === "opened" &&
+        recovered.has(entry.incident.id)) ||
+      (entry.type === "action" &&
+        entry.action.kind === "host" &&
+        entry.action.action === "accept" &&
+        entry.action.status === "done" &&
+        owned.has(entry.action.requestedAt))
+    ) {
+      continue;
+    }
     const day = dayOf(Date.parse(entry.at));
     const label =
       day === today
@@ -105,7 +132,7 @@ export function causedText(
 ): string {
   return [
     `${incident.checkName} down since ${clockTime(incident.startedAt)}`,
-    incident.summary,
+    incidentReason(incident.summary),
     formatDuration(now - parseTimestamp(incident.startedAt)),
   ]
     .filter(Boolean)

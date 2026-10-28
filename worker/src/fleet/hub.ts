@@ -4,6 +4,7 @@ import {
   heartbeatActions,
   plannedNodes,
   REBOOT_MS,
+  stoppedChecks,
   workingChecks,
 } from "../actions/store";
 import {
@@ -88,6 +89,7 @@ const MAIL = "mail";
 const ROSTER = "roster";
 const MAIL_STATE = "mailState";
 const MESSAGES_PER_MINUTE = 60;
+const STOPPED_MS = 10 * 60_000;
 const MAILS_AT_ONCE = 5;
 const WATCHDOG_RETRY_MS = 60_000;
 const RECHECK_MS = 60_000;
@@ -132,6 +134,10 @@ export class FleetHub {
     { since: number; count: number }
   >();
   private readonly network: HubNetwork;
+  private readonly stopped = new Map<
+    string,
+    { at: number; checks: Set<string> }
+  >();
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
@@ -353,6 +359,7 @@ export class FleetHub {
         }
         const node = await this.node(ws, state);
         if (!node) return;
+        this.stopped.delete(node.id);
         const { alerts, next, deleted, ...response } = await receiveReport(
           this.env.DB,
           node,
@@ -797,17 +804,16 @@ export class FleetHub {
     const accepted = trusted
       ? acceptResults(agent.checks, beat.results ?? [])
       : [];
+    const owned = {
+      id: node.id,
+      ownerId: current.ownerId,
+      connectedAt: current.connectedAt,
+    };
     const working = accepted.some((result) => result.status === "DOWN")
-      ? await workingChecks(
-          db,
-          {
-            id: node.id,
-            ownerId: current.ownerId,
-            connectedAt: current.connectedAt,
-          },
-          agent.checks,
-          now,
-        )
+      ? new Set([
+          ...(await workingChecks(db, owned, agent.checks, now)),
+          ...(await this.stoppedChecks(owned, agent.checks, now)),
+        ])
       : new Set<string>();
     const ingestion = resultStatements(
       db,
@@ -947,6 +953,18 @@ export class FleetHub {
         quarantined: [...cloned, ...(taken?.quarantined ?? [])],
       });
     }
+  }
+
+  private async stoppedChecks(
+    node: { id: string; ownerId: string },
+    checks: { id: string; kind: string; target: string }[],
+    now: number,
+  ) {
+    const kept = this.stopped.get(node.id);
+    if (kept && now - kept.at < STOPPED_MS) return kept.checks;
+    const found = await stoppedChecks(this.env.DB, node, checks);
+    this.stopped.set(node.id, { at: now, checks: found });
+    return found;
   }
 
   private async disk(

@@ -50,7 +50,7 @@ const COMPACT = new Intl.NumberFormat("en", {
 });
 
 export function formatThousands(value: number): string {
-  return COMPACT.format(value).toLowerCase();
+  return COMPACT.format(value).replace("K", "k");
 }
 
 export function formatBytes(bytes: number): string {

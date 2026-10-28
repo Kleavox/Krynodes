@@ -99,6 +99,65 @@ describe("history", () => {
     ]);
   });
 
+  it("shows an incident once: its recovery stands in for the time it went down", () => {
+    const groups = dayGroups(
+      [
+        incident("resolved", "Blog", at(24, 7, 8), at(24, 7, 20)),
+        incident("opened", "Blog", at(24, 7, 8), at(24, 7, 20)),
+        incident("opened", "Umami", at(24, 6, 0)),
+      ],
+      new Date(2026, 9, 24, 15, 0).getTime(),
+    );
+    expect(
+      groups[0]!.entries.map((entry) =>
+        entry.type === "incident" ? incidentText(entry) : entry.type,
+      ),
+    ).toEqual(["Blog recovered after 12m", "Umami went down"]);
+    expect(groups[0]!.counts).toBe("2 incidents");
+  });
+
+  it("shows It was me once, unless the accept it sent failed", () => {
+    const said = (id: string, when: string) =>
+      ({
+        type: "network",
+        at: when,
+        change: {
+          id,
+          at: when,
+          change: "It was me: the new port on pivox",
+          detail: "43112/udp",
+          requestedBy: "owner@example.test",
+          deviceId: null,
+        },
+      }) as const;
+    const accept = (id: string, when: string, status: ActionRecord["status"]) =>
+      done(id, when, {
+        kind: "host",
+        name: "server",
+        action: "accept",
+        status,
+      });
+    const groups = dayGroups(
+      [
+        said("w1", at(24, 9, 0)),
+        accept("a1", at(24, 9, 0), "done"),
+        said("w2", at(24, 8, 0)),
+        accept("a2", at(24, 8, 0), "failed"),
+      ],
+      new Date(2026, 9, 24, 15, 0).getTime(),
+    );
+    expect(
+      groups[0]!.entries.map((entry) =>
+        entry.type === "network"
+          ? entry.change.id
+          : entry.type === "action"
+            ? entry.action.id
+            : "",
+      ),
+    ).toEqual(["w1", "w2", "a2"]);
+    expect(groups[0]!.counts).toBe("3 actions · 1 failed");
+  });
+
   it("counts a private network change with the day's actions", () => {
     const groups = dayGroups(
       [

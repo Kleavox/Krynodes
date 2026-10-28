@@ -19,7 +19,7 @@ const SLOT_CLASS: Record<SlotState, string> = {
   work: "bg-primary/80",
   routine: "bg-info/80",
   offline: "bg-muted-foreground/70",
-  quarantined: "bg-destructive/35",
+  quarantined: "bg-muted-foreground/35",
 };
 
 const BAR_CLASS: Record<BarTone, string> = {
@@ -30,7 +30,7 @@ const BAR_CLASS: Record<BarTone, string> = {
   work: "bg-primary/80",
   routine: "bg-info/80",
   offline: "bg-muted-foreground/70",
-  quarantined: "bg-destructive/35",
+  quarantined: "bg-muted-foreground/35",
   empty: "bg-border",
 };
 

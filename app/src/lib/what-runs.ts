@@ -5,10 +5,11 @@ import type {
   CheckRecord,
   Incident,
   ServiceEntry,
+  ServiceState,
   ServicesResponse,
 } from "../types";
 import { formatDuration, parseTimestamp, shortDate } from "./format";
-import { displayName, resting } from "./services";
+import { displayName, resting, STATE_LABEL } from "./services";
 import { stackOf } from "./stacks";
 
 type ServiceNode = ServicesResponse["nodes"][number];
@@ -19,6 +20,7 @@ export interface RunCard {
   name: string;
   units: string[];
   problem: boolean;
+  alarm: boolean;
   checks: CheckRecord[];
   incident: Incident | null;
   notFixed: AttentionItem | null;
@@ -92,7 +94,12 @@ export function whatRuns(
         mine.some((check) => check.enabled && check.status === "DOWN"),
     };
   };
-  const card = (kind: CardKind, name: string, unhealthy: boolean): RunCard => {
+  const card = (
+    kind: CardKind,
+    name: string,
+    unhealthy: boolean,
+    alarming = unhealthy,
+  ): RunCard => {
     const owner = cardOwner(kind, name);
     const { down, ...gathered } = gather([ownerKey(owner)]);
     const notFixed = newest(
@@ -108,6 +115,7 @@ export function whatRuns(
       ...gathered,
       notFixed,
       problem: unhealthy || down || notFixed !== null,
+      alarm: alarming || down || notFixed !== null,
     };
   };
 
@@ -120,13 +128,25 @@ export function whatRuns(
         (service) =>
           service.kind === "docker" && !stackOf(entry.stacks, service.name),
       )
-      .map((service) => card("docker", service.name, stopped(service))),
+      .map((service) =>
+        card(
+          "docker",
+          service.name,
+          stopped(service),
+          service.state === "failed",
+        ),
+      ),
   ];
   const folded: ServiceEntry[] = [];
   for (const unit of entry.services.filter(
     (service) => service.kind === "systemd",
   )) {
-    const single = card("systemd", unit.name, stopped(unit));
+    const single = card(
+      "systemd",
+      unit.name,
+      stopped(unit),
+      unit.state === "failed",
+    );
     if (single.problem) cards.push(single);
     else {
       for (const check of single.checks) claimed.delete(check.id);
@@ -155,6 +175,7 @@ export function whatRuns(
       name: "",
       ...gathered,
       problem: false,
+      alarm: false,
       notFixed: null,
     });
   }
@@ -168,9 +189,23 @@ export function foldedUnitsText(units: string[]): string {
   return `${shown.join(" · ")}${more > 0 ? ` + ${more} more` : ""}`;
 }
 
+export function foldedStatesText(states: ServiceState[]): string {
+  const counts = (["running", "starting", "boot", "unneeded"] as const)
+    .map((state) => ({
+      state,
+      count: states.filter((each) => each === state).length,
+    }))
+    .filter(({ count }) => count > 0);
+  return counts.length === 1 && counts[0]!.state === "running"
+    ? "All Running"
+    : counts
+        .map(({ state, count }) => `${count} ${STATE_LABEL[state]}`)
+        .join(" · ");
+}
+
 export function incidentNote(incident: Incident, now: number): string {
   const start = parseTimestamp(incident.started_at);
   return incident.resolved_at
-    ? `Last Incident ${shortDate(start)}, ${formatDuration(parseTimestamp(incident.resolved_at) - start)}`
+    ? `Last Incident ${shortDate(start)} · ${formatDuration(parseTimestamp(incident.resolved_at) - start)}`
     : `Incident Open · Down ${formatDuration(now - start)}`;
 }

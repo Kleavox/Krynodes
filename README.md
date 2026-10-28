@@ -1033,7 +1033,10 @@ agent 0.7.0.
   from Network and Delete Node.
 - **Release Server.** Really broken into? Reinstall it and enroll it again. A
   false alarm: run `sudo kry release-code` on the server, type the code it
-  shows (it works for 10 minutes) and sign. The server makes new keys
+  shows (it works for 10 minutes) and sign. From agent 0.7.2 the code reaches
+  Krynodes within seconds; an older agent sends it with its next report, up to
+  a minute later, and needs `sudo chmod 644 /var/lib/kry-exec/release.json`
+  after each `release-code`. The server makes new keys
   (WireGuard, sealing and its sign-in to Krynodes); the old ones stay blocked.
   The same passkey releases it, lifts the Tailscale block and sends its new
   keys to the network. The code shows you were on the server; it does not show

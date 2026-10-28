@@ -369,6 +369,37 @@ func TestAPendingReleaseIsReportedUntilItEnds(t *testing.T) {
 	}
 }
 
+func TestANewReleaseCodeWakesTheHeartbeatOnce(t *testing.T) {
+	relay := watchingRelay(t)
+	relay.Released = make(chan struct{}, 1)
+	relay.noticeRelease()
+	if len(relay.Released) != 0 {
+		t.Fatal("woke the heartbeat with no release code made")
+	}
+	pending := reporter.Release{Key: "a2V5", Signer: "c2lnbmVy", Seal: "c2VhbA", Token: strings.Repeat("a", 64), Expires: executorNow.Add(5 * time.Minute).Format(time.RFC3339)}
+	if err := writeJSON(relay.StateDir, releaseFile, pending, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relay.noticeRelease()
+	relay.noticeRelease()
+	if len(relay.Released) != 1 {
+		t.Fatalf("a new code woke the heartbeat %d times", len(relay.Released))
+	}
+	<-relay.Released
+	relay.noticeRelease()
+	if len(relay.Released) != 0 {
+		t.Fatal("the same code woke the heartbeat again; it would beat every two seconds for ten minutes")
+	}
+	pending.Token = strings.Repeat("b", 64)
+	if err := writeJSON(relay.StateDir, releaseFile, pending, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relay.noticeRelease()
+	if len(relay.Released) != 1 {
+		t.Fatal("a second code did not wake the heartbeat")
+	}
+}
+
 func TestTheRelayMarksTheServerQuarantinedWhileTheWorkerSaysSo(t *testing.T) {
 	relay := watchingRelay(t)
 	mark := filepath.Join(relay.Dir, quarantinedFile)

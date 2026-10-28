@@ -133,6 +133,9 @@ func parseUnits(units, files string, remembered []string) []Service {
 		if active == "inactive" && !on[name] {
 			continue
 		}
+		if active == "active" && fields[3] == "exited" {
+			state = "boot"
+		}
 		listed[name] = true
 		services = append(services, Service{Kind: "systemd", Name: name, State: state, System: systemUnit(name)})
 	}
@@ -402,7 +405,7 @@ func Collect(ctx context.Context, run Runner, remembered []string) (Snapshot, er
 	snapshot := Snapshot{Services: parseUnits(string(units), string(files), remembered), Docker: "missing"}
 	var stopped []string
 	for _, service := range snapshot.Services {
-		if service.State == "stopped" {
+		if service.State == "stopped" || service.State == "boot" {
 			stopped = append(stopped, service.Name)
 		}
 	}
@@ -410,7 +413,7 @@ func Collect(ctx context.Context, run Runner, remembered []string) (Snapshot, er
 		if show, err := step("systemctl", append([]string{"show", "--property=Id,Type,Result,ConditionResult,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp", "--no-pager"}, stopped...)...); err == nil {
 			states := bootStates(string(show))
 			for index, service := range snapshot.Services {
-				if found, ok := states[service.Name]; ok && service.State == "stopped" {
+				if found, ok := states[service.Name]; ok && (service.State == "stopped" || found.State == "boot") {
 					snapshot.Services[index].State, snapshot.Services[index].Since = found.State, found.Since
 				}
 			}

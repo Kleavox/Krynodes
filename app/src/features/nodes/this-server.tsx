@@ -114,7 +114,7 @@ export function ThisServer({
               <dt className="self-start leading-8 text-muted-foreground">
                 Private
               </dt>
-              <dd className="min-w-0 py-2 leading-4">
+              <dd className="col-span-2 min-w-0 py-2 leading-4">
                 <span className="block truncate">
                   {node.network.address ?? "--"} ·{" "}
                   {node.quarantine ? "cut off" : `${dnsName(node.name)}.kry`}
@@ -131,11 +131,10 @@ export function ThisServer({
                   </span>
                 </Link>
               </dd>
-              <dd />
             </>
           )}
           <dt className="leading-8 text-muted-foreground">Reached by</dt>
-          <dd className="min-w-0 truncate">
+          <dd className="col-span-2 min-w-0 truncate">
             {services.data && devices.data ? (
               <Link
                 to="/devices"
@@ -148,14 +147,12 @@ export function ThisServer({
               "--"
             )}
           </dd>
-          <dd />
           <dt className="leading-8 text-muted-foreground">Enrolled</dt>
-          <dd className="min-w-0 truncate">
+          <dd className="col-span-2 min-w-0 truncate">
             {node.enrolled_at
               ? shortDate(parseTimestamp(node.enrolled_at))
               : "--"}
           </dd>
-          <dd />
           {updates && (
             <>
               <dt className="leading-8 text-muted-foreground">Updates</dt>
@@ -180,7 +177,7 @@ export function ThisServer({
               <dt className="leading-8 text-muted-foreground">Tailscale</dt>
               <dd
                 className={cn(
-                  "min-w-0 py-1.5 break-words",
+                  "col-span-2 min-w-0 py-1.5 break-words",
                   tailnet.warn && "text-warning",
                 )}
               >
@@ -240,7 +237,6 @@ export function ThisServer({
                   </Link>
                 )}
               </dd>
-              <dd />
             </>
           )}
           <dt className="leading-8 text-muted-foreground">Agent</dt>

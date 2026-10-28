@@ -29,6 +29,7 @@ import {
 import {
   downLatest,
   incidentRowLine,
+  incidentsByCheck,
   incidentsRedirect,
   last30Parts,
   lastIncidentLine,
@@ -432,7 +433,7 @@ export function ChecksPage() {
                 </div>
                 {recent.length > 0 && (
                   <ul className="hidden divide-y border-t lg:block">
-                    {recent.map((incident) => (
+                    {incidentsByCheck(recent).map(({ incident, count }) => (
                       <li key={incident.id}>
                         <Link
                           to={`/incidents/${incident.id}`}
@@ -449,6 +450,7 @@ export function ChecksPage() {
                               </span>
                               <span className="shrink-0 text-xs text-muted-foreground">
                                 {incident.node_name}
+                                {count > 1 && ` · ${count} incidents`}
                               </span>
                             </span>
                             <span className="block truncate font-mono text-xs text-muted-foreground">

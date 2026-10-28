@@ -714,6 +714,59 @@ describe("FleetHub", () => {
     ).toEqual({ n: 1 });
   });
 
+  it("opens no incident on what the owner stopped, until it is started again", async () => {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE checks SET kind = 'CONTAINER', target = 'nginx' WHERE id = ?",
+      )
+      .run(CHECK);
+    t.sqlite
+      .prepare(
+        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', 'nginx', 'stopped')",
+      )
+      .run(NODE);
+    const done = (id: string, action: string, at: number) =>
+      t.sqlite
+        .prepare(
+          `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+             status, requested_by, requested_at, deliverable_at, sent_at, finished_at)
+           VALUES (?, ?, 0, 'rolling', ?, 'docker', 'nginx', ?, 'done', 'budi@example.test', ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          id,
+          NODE,
+          action,
+          ...Array(4).fill(new Date(at).toISOString()),
+        );
+    const incidents = () =>
+      (
+        t.sqlite.prepare("SELECT COUNT(*) AS n FROM incidents").get() as {
+          n: number;
+        }
+      ).n;
+    done("s1", "stop", BASE - 86_400_000);
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
+    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
+    await t.send(ws, BASE + 125_000, heartbeat(10, [result("DOWN")]));
+    expect(incidents()).toBe(0);
+    done("s2", "start", BASE + 150_000);
+    await t.hub.webSocketMessage(
+      ws as unknown as WebSocket,
+      JSON.stringify({
+        id: 9,
+        type: "actions",
+        report: { nodeId: NODE, results: [] },
+      }),
+    );
+    await t.send(ws, BASE + 185_000, heartbeat(10, [result("DOWN")]));
+    expect(incidents()).toBe(0);
+    await t.send(ws, BASE + 305_000, heartbeat(10, [result("DOWN")]));
+    expect(incidents()).toBe(1);
+  });
+
   it("opens no incident during planned work on the server, then one at the next failure", async () => {
     const t = setup();
     t.sqlite

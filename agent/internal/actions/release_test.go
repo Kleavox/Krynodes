@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -57,6 +58,21 @@ func (r releasing) code(t *testing.T) (reporter.Release, string) {
 func releaseRequest(t *testing.T, id string, pending reporter.Release, code string) Request {
 	t.Helper()
 	return hostRequest(t, id, "server", "release", map[string]string{"key": pending.Key, "signer": pending.Signer, "seal": pending.Seal, "token": pending.Token, "code": code})
+}
+
+func TestTheAgentCanReadTheReleaseFileThatRootWroteFromATerminal(t *testing.T) {
+	r := quarantinedServer(t)
+	if err := os.WriteFile(r.mark, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	r.code(t)
+	info, err := os.Stat(filepath.Join(r.executor.StateDir, releaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o644 {
+		t.Fatalf("release.json is %v; sudo gives it root's group, so the agent reads it only as others", info.Mode().Perm())
+	}
 }
 
 func TestTheReleaseCodeIsMadeOnlyOnAServerThatIsCutOff(t *testing.T) {

@@ -33,6 +33,7 @@ import {
   repoName,
   restartFacts,
   restartLine,
+  restartOnYou,
   retryDialog,
   runningJob,
   runningPackages,
@@ -1358,6 +1359,9 @@ describe("Fleet", () => {
     expect(restartLine(on, -420)).toBe(
       "Restarts at 03:00 by Restart When Needed",
     );
+    expect(restartOnYou(on)).toBe(false);
+    expect(restartOnYou(off)).toBe(true);
+    expect(restartOnYou(null)).toBe(true);
   });
 
   it("raises an expired Tailscale key and notes one about to expire", () => {

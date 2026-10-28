@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { LATER_DONE_SQL } from "../actions/attention";
 import { app } from "../app";
 import type { Env } from "../env";
 import { seedNode } from "../test/seed";
@@ -317,6 +318,66 @@ describe("failed, not fixed", () => {
         },
       }),
     ]);
+  });
+
+  it("counts a later done action on the same target as the fix, never one on another target", async () => {
+    const t = setup();
+    for (const name of ["adguard", "nginx"]) {
+      t.sqlite
+        .prepare(
+          "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', ?, 'stopped')",
+        )
+        .run(A, name);
+    }
+    t.act("f1", { at: at(10), name: "adguard", status: "failed" });
+    t.act("d1", { at: at(11), name: "adguard", status: "done" });
+    t.act("f2", { at: at(12), name: "nginx", status: "failed" });
+    t.act("d2", { at: at(13), name: "adguard", status: "done" });
+    t.act("d3", { at: at(9), name: "nginx", status: "done" });
+    const items = (
+      (await (await t.call("GET", "/api/history/attention")).json()) as {
+        items: { action: { id: string } }[];
+      }
+    ).items;
+    expect(items.map((item) => item.action.id)).toEqual(["f2"]);
+  });
+
+  it("looks for a fix only among later actions on the failed target", () => {
+    const t = setup();
+    const plan = (
+      t.sqlite
+        .prepare(`EXPLAIN QUERY PLAN ${LATER_DONE_SQL.replace(/\?\d/gu, "?")}`)
+        .all("owner", "2026-07-01T00:00:00.000Z") as { detail: string }[]
+    ).map((row) => row.detail);
+    const searches = plan.filter(
+      (step) => step.startsWith("SEARCH f") || step.startsWith("SEARCH d"),
+    );
+    expect(searches[0]).toMatch(
+      /^SEARCH f USING INDEX idx_actions_status_node/u,
+    );
+    expect(searches[1]).toMatch(/^SEARCH d USING INDEX idx_actions_target/u);
+    expect(plan.filter((step) => step.startsWith("SCAN"))).toEqual([]);
+  });
+
+  it("counts a one-shot unit that ran to the end after a failed restart as fixed", async () => {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "INSERT INTO services (node_id, kind, name, state, since, system) VALUES (?, 'systemd', 'kdump-tools.service', 'boot', NULL, 0)",
+      )
+      .run(A);
+    t.act("restart", {
+      at: at(24),
+      kind: "systemd",
+      name: "kdump-tools.service",
+      status: "failed",
+    });
+    const items = (
+      (await (await t.call("GET", "/api/history/attention")).json()) as {
+        items: unknown[];
+      }
+    ).items;
+    expect(items).toEqual([]);
   });
 
   it("answers 404 when hiding another owner's action and leaves it alone", async () => {

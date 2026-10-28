@@ -320,6 +320,10 @@ const rebootAt = (
     ? `${String(fromUtcHour(security.rebootHour, offsetMinutes)).padStart(2, "0")}:00`
     : null;
 
+export const restartOnYou = (
+  security: Pick<SecurityReport, "recipes" | "rebootHour"> | null | undefined,
+) => rebootAt(security, 0) === null;
+
 export function restartFacts(
   restart: RestartFacts,
   now: number,

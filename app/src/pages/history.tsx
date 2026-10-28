@@ -30,6 +30,13 @@ import type { HistoryShow } from "@/types";
 
 const ALL = "all";
 
+const SHOW_TITLE: Record<HistoryShow, string> = {
+  everything: "Everything",
+  actions: "Actions",
+  incidents: "Incidents",
+  failed: "Failed",
+};
+
 const EMPTY: Record<HistoryShow, string> = {
   everything: "Nothing Happened",
   actions: "No Actions",
@@ -121,7 +128,7 @@ export function HistoryPage() {
             id="everything"
             className="text-xs font-medium text-muted-foreground"
           >
-            Everything
+            {SHOW_TITLE[show]}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
             <Input

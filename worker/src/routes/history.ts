@@ -1,7 +1,7 @@
 import { ownerOf, touches } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 
-import { loadEstate, notFixed } from "../actions/attention";
+import { laterDone, loadEstate, notFixed } from "../actions/attention";
 import { QUESTIONS, SEALED_VERBS, type ActionRow } from "../actions/store";
 import { READ_ONLY, toActionRecord } from "./services";
 import type { KrynodesApp, KrynodesEnv } from "./shared";
@@ -240,17 +240,7 @@ export function registerHistoryRoutes(
         )
         .bind(owner, UNLISTED)
         .all<ActionRow>(),
-      db
-        .prepare(
-          `SELECT a.* FROM actions a
-           WHERE a.${owned} AND a.status = 'done'
-             AND EXISTS (SELECT 1 FROM actions f
-                         WHERE f.node_id = a.node_id AND f.kind = a.kind AND f.name = a.name
-                           AND f.status IN ('failed', 'expired') AND f.hidden_at IS NULL
-                           AND f.requested_at < a.requested_at)`,
-        )
-        .bind(owner)
-        .all<ActionRow>(),
+      laterDone(db, owner, Date.now()),
       db
         .prepare(
           `SELECT i.id, i.summary, i.started_at, c.name AS check_name, c.kind, c.target, c.node_id
@@ -271,30 +261,27 @@ export function registerHistoryRoutes(
       loadEstate(db, owner),
     ]);
     return context.json({
-      items: notFixed(
-        failed.results,
-        done.results,
-        estate.health,
-        Date.now(),
-      ).map((row) => {
-        const server = estate.server(row.node_id);
-        const incident = open.results.find((entry) => {
-          const watched =
-            entry.node_id === row.node_id ? ownerOf(entry, server) : null;
-          return watched !== null && touches(watched, row, server);
-        });
-        return {
-          action: record(row),
-          incident: incident
-            ? {
-                id: incident.id,
-                checkName: incident.check_name,
-                summary: incident.summary,
-                startedAt: incident.started_at,
-              }
-            : null,
-        };
-      }),
+      items: notFixed(failed.results, done, estate.health, Date.now()).map(
+        (row) => {
+          const server = estate.server(row.node_id);
+          const incident = open.results.find((entry) => {
+            const watched =
+              entry.node_id === row.node_id ? ownerOf(entry, server) : null;
+            return watched !== null && touches(watched, row, server);
+          });
+          return {
+            action: record(row),
+            incident: incident
+              ? {
+                  id: incident.id,
+                  checkName: incident.check_name,
+                  summary: incident.summary,
+                  startedAt: incident.started_at,
+                }
+              : null,
+          };
+        },
+      ),
     });
   });
 

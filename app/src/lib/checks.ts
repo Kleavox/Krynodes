@@ -275,3 +275,17 @@ export function checkLive(view: {
   const latency = view.latest?.results.at(-1)?.latencyMs ?? null;
   return { label: latency === null ? "--" : `${latency}ms`, tone: "ok" };
 }
+
+export const checkCommands = (
+  checks: Pick<CheckRecord, "id" | "name" | "target" | "node_id">[],
+  nodes: Pick<NodeRecord, "id" | "name">[],
+) =>
+  checks.map((check) => {
+    const server = nodes.find((node) => node.id === check.node_id)?.name ?? "";
+    return {
+      key: check.id,
+      value: `${check.name} check ${check.target} ${server}`,
+      label: `${check.name} · ${server}`,
+      to: `/checks?q=${encodeURIComponent(check.name)}`,
+    };
+  });
