@@ -61,6 +61,42 @@ func TestAProbeOnATakenPortOnlySends(t *testing.T) {
 	}
 }
 
+func TestAProbeOnATakenPortSendsFromOneSocketPerPeer(t *testing.T) {
+	taken, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	var peers []netip.AddrPort
+	var listeners []*net.UDPConn
+	for range 2 {
+		listener, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		listener.SetReadDeadline(time.Now().Add(2 * time.Second))
+		listeners = append(listeners, listener)
+		peers = append(peers, listener.LocalAddr().(*net.UDPAddr).AddrPort())
+	}
+	heard, listened := Probe(context.Background(), taken.LocalAddr().(*net.UDPAddr).AddrPort(), peers, 50*time.Millisecond)
+	if listened || len(heard) != 0 {
+		t.Fatalf("heard %v listened %v", heard, listened)
+	}
+	sources := map[uint16]bool{}
+	for _, listener := range listeners {
+		buffer := make([]byte, 64)
+		count, from, err := listener.ReadFromUDPAddrPort(buffer)
+		if err != nil || count != 32 || !strings.HasPrefix(string(buffer[:count]), probeMagic) {
+			t.Fatalf("a peer got %q from %v (%v)", buffer[:count], from, err)
+		}
+		sources[from.Port()] = true
+	}
+	if len(sources) != 2 {
+		t.Fatalf("one socket sent to every peer: %v", sources)
+	}
+}
+
 func TestProbeArgsAreLimited(t *testing.T) {
 	peers := func(count, port int) string {
 		list := make([]string, count)

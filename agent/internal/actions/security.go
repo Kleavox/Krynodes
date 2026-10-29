@@ -294,6 +294,7 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 			wireguard = entry.Port
 		}
 	}
+	probe, _ := readState[probeMark](e.StateDir, probeFile)
 	public := []reporter.Listener{}
 	stub := false
 	for line := range strings.SplitSeq(output, "\n") {
@@ -313,10 +314,13 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 		if (host == "127.0.0.53" || host == "127.0.0.54") && port == "53" {
 			stub = true
 		}
-		process := ""
+		process, pid := "", ""
 		if len(fields) > 6 {
 			if start := strings.Index(fields[6], `(("`); start >= 0 {
 				process, _, _ = strings.Cut(fields[6][start+3:], `"`)
+			}
+			if _, rest, ok := strings.Cut(fields[6], "pid="); ok {
+				pid, _, _ = strings.Cut(rest, ",")
 			}
 		}
 		if strings.HasPrefix(host, "127.") || host == "::1" || process == "docker-proxy" || (fields[0] == "tcp" && slices.Contains(ssh, port)) {
@@ -324,6 +328,9 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 		}
 		number, err := strconv.Atoi(port)
 		if err != nil || (fields[0] != "tcp" && fields[0] != "udp") {
+			continue
+		}
+		if fields[0] == "udp" && number == probe.Port && pid == strconv.Itoa(probe.PID) && e.Now().Before(probe.Until) {
 			continue
 		}
 		if fields[0] == "udp" && process == "" && wireguard != 0 && number == wireguard {

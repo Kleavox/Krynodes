@@ -49,6 +49,14 @@ type preparedNetwork struct {
 	MTU   *int   `json:"mtu"`
 }
 
+const probeFile = "probe.json"
+
+type probeMark struct {
+	Port  int       `json:"port"`
+	PID   int       `json:"pid"`
+	Until time.Time `json:"until"`
+}
+
 type networkRecord struct {
 	Applied   network.Applied           `json:"applied"`
 	Document  *network.Document         `json:"document,omitempty"`
@@ -120,6 +128,10 @@ func (e Executor) networkRead(ctx context.Context, request Request, args map[str
 		if err != nil {
 			return e.refuse(request.ID, err)
 		}
+		if err := writeJSON(e.StateDir, probeFile, probeMark{Port: port, PID: os.Getpid(), Until: e.Now().Add(probeListen + 10*time.Second)}, 0o600); err != nil {
+			return e.failed(request, err, "")
+		}
+		defer os.Remove(filepath.Join(e.StateDir, probeFile))
 		arrived, listened := network.Probe(ctx, netip.AddrPortFrom(probeOn, uint16(port)), peers, probeListen)
 		return e.answer(request, map[string]any{"listened": listened, "arrived": arrived}, true)
 	case "test":
@@ -378,7 +390,6 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 			delete(record.Announced, node)
 		}
 	}
-	joining := !record.Joined
 	if err := e.writeNetwork(ctx, &record, document, self, keys, psk); err != nil {
 		return e.failed(request, err, "")
 	}
@@ -394,9 +405,6 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 		return e.failed(request, err, "")
 	}
 	e.syncRules(ctx)
-	if joining {
-		e.retake(ctx, true)
-	}
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("applied version %d", document.Version), FinishedAt: e.stamp()}
 }
 

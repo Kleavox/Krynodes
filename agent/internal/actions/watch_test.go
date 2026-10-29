@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/watch"
@@ -106,7 +107,7 @@ func TestItWasMeAcceptsTheItemAndTheNextNewKeyStillWarns(t *testing.T) {
 	}
 }
 
-func TestAJoinTakesTheStartingPointAgain(t *testing.T) {
+func TestAJoinKeepsTheStartingPoint(t *testing.T) {
 	executor, run := networkExecutor(t)
 	rootFile(t, executor, "/etc/passwd", "root:x:0:0:root:/root:/bin/bash\n")
 	rootFile(t, executor, "/etc/group", "sudo:x:27:\n")
@@ -120,8 +121,8 @@ func TestAJoinTakesTheStartingPointAgain(t *testing.T) {
 		t.Fatalf("join: %+v", result)
 	}
 	start, _ := readState[watch.State](executor.StateDir, watchFile)
-	if !slices.Equal(start.Users, []string{"root"}) || !slices.Equal(start.Ports, []string{"8080/tcp nginx"}) {
-		t.Fatalf("start %+v", start)
+	if !slices.Equal(start.Users, []string{"old"}) || len(start.Ports) != 0 {
+		t.Fatalf("a join took what it found as the starting point: %+v", start)
 	}
 }
 
@@ -216,6 +217,40 @@ func portEvents(t *testing.T, executor Executor) []string {
 		}
 	}
 	return ports
+}
+
+func TestOnlyTheProbesOwnSocketPassesWhileItsMarkLasts(t *testing.T) {
+	executor, run := watchedServer(t)
+	executor.watchServer(context.Background())
+	probe := "udp UNCONN 0 0 *:51820 *:* users:((\"kry\",pid=4242,fd=7))\n"
+	mark := func(until time.Time) {
+		if err := writeJSON(executor.StateDir, probeFile, probeMark{Port: 51820, PID: 4242, Until: until}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ports := func(listeners string) []string {
+		run.respond["ss -H -tulnp"] = nginxListener + listeners
+		now, _ := executor.watchNow(context.Background())
+		return now.Ports
+	}
+	mark(executorNow.Add(30 * time.Second))
+	if seen := ports(probe); !slices.Equal(seen, []string{"8080/tcp nginx"}) {
+		t.Fatalf("the probe's socket %q", seen)
+	}
+	executor.watchServer(context.Background())
+	if events := portEvents(t, executor); len(events) != 0 {
+		t.Fatalf("the probe's socket warned: %q", events)
+	}
+	if seen := ports("udp UNCONN 0 0 *:51821 *:* users:((\"kry\",pid=4242,fd=8))\n"); !slices.Equal(seen, []string{"32768-60999/udp kry", "8080/tcp nginx"}) {
+		t.Fatalf("another port of the probe %q", seen)
+	}
+	if seen := ports("udp UNCONN 0 0 *:51820 *:* users:((\"nc\",pid=666,fd=3))\n"); !slices.Equal(seen, []string{"32768-60999/udp nc", "8080/tcp nginx"}) {
+		t.Fatalf("another process on the probe's port %q", seen)
+	}
+	mark(executorNow.Add(-time.Second))
+	if seen := ports(probe); !slices.Equal(seen, []string{"32768-60999/udp kry", "8080/tcp nginx"}) {
+		t.Fatalf("the probe's socket after its mark %q", seen)
+	}
 }
 
 func TestTemporaryUDPPortsAreOneItemPerProcess(t *testing.T) {

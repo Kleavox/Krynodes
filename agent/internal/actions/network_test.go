@@ -423,6 +423,32 @@ func TestAProbeIsLimitedAndSaysWhetherItListened(t *testing.T) {
 	}
 }
 
+func TestAProbeMarksItsSocketForTheWatchWhileItRuns(t *testing.T) {
+	executor, _ := networkExecutor(t)
+	probeListen, probeOn = 300*time.Millisecond, netip.MustParseAddr("127.0.0.1")
+	t.Cleanup(func() { probeListen, probeOn = 20*time.Second, netip.IPv6Unspecified() })
+	writeRequest(t, executor.RequestDir, idA+".json", askNetwork(t, idA, "probe", map[string]string{"port": "51900", "peers": "127.0.0.1:51901"}))
+	done := make(chan error, 1)
+	go func() { done <- executor.Execute(context.Background()) }()
+	var mark probeMark
+	for range 100 {
+		if found, err := readState[probeMark](executor.StateDir, probeFile); err == nil && found.Port != 0 {
+			mark = found
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if mark.Port != 51900 || mark.PID != os.Getpid() || !mark.Until.After(executorNow.Add(probeListen)) || mark.Until.After(executorNow.Add(probeListen+30*time.Second)) {
+		t.Fatalf("mark %+v", mark)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, probeFile)); !os.IsNotExist(err) {
+		t.Fatalf("the mark stays after the probe: %v", err)
+	}
+}
+
 func TestATestCountsBeforeAndAfterAndWalksLargeSizesDown(t *testing.T) {
 	executor, run, _, peer, _ := joinedServer(t)
 	line := func(handshake, rx, tx string) string {

@@ -357,7 +357,8 @@ min ago: port 53 is already allocated`), Logs and the button that fits (Roll
   a kind picker replace the old tabs, system units fold into `+ 3 system
 services` until **System services** is on, and **Removed n** lists removed
   stacks. An enabled unit that is not running is **Ran at Boot** when it is a
-  one-shot that finished well, **Not Needed Here** when its condition is not met
+  one-shot that finished well, or any service that ended well within 15 minutes
+  of boot (agent 0.7.3), **Not Needed Here** when its condition is not met
   on this server (agent 0.7.1), else **Stopped**; the first two are grey, sorted
   last and left out of the counts and Needs attention.
 - **Checks** (incidents included): **Down** first, each with its reason, how
@@ -913,7 +914,11 @@ only its own links. From agent 0.7.0.
   fix. The range is a free `/24` in `10.88.0.0/16` that no interface, Docker
   network, Tailscale or **Private addresses** range uses; the port is
   `51820/udp`, or the next free one on a server where it is taken. Both are
-  fixed after creation. A hand-made `wg0` is left alone and avoided.
+  fixed after creation. A hand-made `wg0` is left alone and avoided. The UDP
+  port test listens for 20 seconds only on a server where that port is free; a
+  server whose port is taken only sends. The server watch keeps running through
+  it and lets only the test's own socket pass, by port and process, until its
+  time is up (agent 0.7.3).
 - **Each server makes its own key**; only the public half leaves it. The
   preshared key of each pair is made in the browser and sealed to both servers.
   The member list is a **network document signed with a trusted
@@ -1026,7 +1031,9 @@ agent 0.7.0.
   still see the server: the server page shows an amber strip and a mail goes
   out. **Cut Off Now** quarantines it at once; **It Was Me** (passkey)
   takes the change as yours. Unanswered, the server is cut off after the time
-  in Settings, Quarantine (15 minutes by default, or Warn Only).
+  in Settings, Quarantine (15 minutes by default, or Warn Only). Joining or
+  changing the private network takes nothing it finds as normal; anything new
+  still warns (agent 0.7.3).
 - **A scan.** A member that knocks on more closed ports or servers in one
   minute than **Counts as a Scan** is dropped at once by every server it
   knocked on, and quarantined when enough servers agree. One wrong port knocked

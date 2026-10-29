@@ -360,6 +360,46 @@ func TestBootUnitsAreReadFromSystemd(t *testing.T) {
 	}
 }
 
+const lateShow = `Type=notify
+Result=success
+ExecMainExitTimestamp=Sat 2026-10-24 08:07:30 UTC
+ExecMainExitTimestampMonotonic=48123456
+ExecMainCode=1
+ExecMainStatus=0
+Id=cloud-init-main.service
+ConditionResult=yes
+
+Type=simple
+Result=success
+ExecMainExitTimestamp=Sat 2026-10-24 09:31:52 UTC
+ExecMainExitTimestampMonotonic=5070000000
+ExecMainCode=1
+ExecMainStatus=0
+Id=late.service
+ConditionResult=yes
+
+Type=notify
+Result=exit-code
+ExecMainExitTimestamp=Sat 2026-10-24 08:07:31 UTC
+ExecMainExitTimestampMonotonic=49000000
+ExecMainCode=1
+ExecMainStatus=1
+Id=broken.service
+ConditionResult=yes
+`
+
+func TestAnyServiceThatEndedWellSoonAfterBootRanAtBoot(t *testing.T) {
+	since := "2026-10-24T08:07:30Z"
+	want := map[string]Service{
+		"cloud-init-main.service": {State: "boot", Since: &since},
+		"late.service":            {State: "stopped"},
+		"broken.service":          {State: "stopped"},
+	}
+	if states := bootStates(lateShow); !reflect.DeepEqual(states, want) {
+		t.Fatalf("states %#v", states)
+	}
+}
+
 const bootList = `nginx.service loaded active running A high performance web server
 e2scrub_reap.service loaded inactive dead Remove Stale Online ext4 Metadata Check Snapshots
 sshd-keygen.service loaded inactive dead OpenSSH Server Key Generation
@@ -382,7 +422,7 @@ sshd-keygen.service enabled enabled
 shadowsocks-libev.service enabled enabled
 `
 
-const showCall = "systemctl show --property=Id,Type,Result,ConditionResult,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp --no-pager "
+const showCall = "systemctl show --property=Id,Type,Result,ConditionResult,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp,ExecMainExitTimestampMonotonic --no-pager "
 
 func TestCollectAsksSystemdOnceAboutUnitsThatDoNotRun(t *testing.T) {
 	collect := func(units, show string, fail bool) ([]Service, []string) {
