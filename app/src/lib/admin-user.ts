@@ -11,11 +11,6 @@ export interface AdminKey {
   label: string;
 }
 
-export interface EnrollAdmin {
-  name: string;
-  keys: AdminKey[];
-}
-
 const TYPES: Record<string, string> = {
   "ssh-ed25519": "ED25519",
   "ecdsa-sha2-nistp256": "ECDSA",
@@ -83,49 +78,68 @@ export async function keyRow(
 export const adminNameProblem = (name: string) =>
   name === "" || (ADMIN_NAME.test(name) && name !== "root") ? null : NAME_HINT;
 
-export function adminProblem(name: string, keys: AdminKey[]): string | null {
-  const named = name.trim();
-  if (named === "" && keys.length === 0) return null;
-  if (named === "") return "Type the admin user's name.";
-  if (keys.length === 0) return "Add at least one SSH public key.";
-  return adminNameProblem(named);
+export async function addKeys(
+  text: string,
+  keys: AdminKey[],
+): Promise<{ keys: AdminKey[]; rest: string; note: string | null }> {
+  const next = [...keys];
+  const wrong: string[] = [];
+  let repeated = 0;
+  let over = 0;
+  for (const line of text.split("\n").map((part) => part.trim())) {
+    if (line === "" || line.startsWith("#")) continue;
+    const row = await keyRow(line, next.length);
+    if (!row) wrong.push(line);
+    else if (next.some((key) => key.fingerprint === row.fingerprint)) {
+      repeated += 1;
+    } else if (next.length >= MAX_ADMIN_KEYS) over += 1;
+    else next.push(row);
+  }
+  const notes = [
+    wrong.length === 1 && "1 line is not a public key.",
+    wrong.length > 1 && `${wrong.length} lines are not public keys.`,
+    over > 0 && `Up to ${MAX_ADMIN_KEYS} keys: ${over} left out.`,
+    next.length === keys.length &&
+      wrong.length === 0 &&
+      over === 0 &&
+      repeated > 0 &&
+      (repeated === 1
+        ? "That key is already here."
+        : "Those keys are already here."),
+  ].filter((note) => typeof note === "string");
+  return {
+    keys: next,
+    rest: wrong.join("\n"),
+    note: notes.length > 0 ? notes.join(" ") : null,
+  };
 }
 
-const linesOf = (admin: EnrollAdmin | null) =>
-  admin ? [admin.name, ...admin.keys.map((key) => key.line)].join("\n") : "";
+const linesOf = (keys: AdminKey[]) => keys.map((key) => key.line).join("\n");
 
-export const adminChanged = (
-  before: EnrollAdmin | null,
-  after: EnrollAdmin | null,
-) => linesOf(before) !== linesOf(after);
+export const keysChanged = (before: AdminKey[], after: AdminKey[]) =>
+  linesOf(before) !== linesOf(after);
 
-export async function adminDigest(
-  admin: { name: string; keys: string[] } | null,
-): Promise<string> {
-  const text = admin ? `${admin.name}\n${admin.keys.join("\n")}` : "";
+export async function keysDigest(lines: string[]): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(text),
+    new TextEncoder().encode(lines.join("\n")),
   );
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
 
-export function adminOption(admin: EnrollAdmin | null): {
+const NO_KEYS = "Add your SSH public keys in Enroll Defaults first.";
+
+export function adminOption(keys: AdminKey[]): {
   available: boolean;
   text: string;
 } {
-  if (!admin || admin.keys.length === 0) {
-    return {
-      available: false,
-      text: "Set an admin user in Enroll Defaults first.",
-    };
-  }
-  const count = admin.keys.length;
+  if (keys.length === 0) return { available: false, text: NO_KEYS };
+  const count = keys.length;
   return {
     available: true,
-    text: `${admin.name}, with sudo and ${count} SSH ${count === 1 ? "key" : "keys"} from Enroll Defaults. The server asks for its password on its own screen, then turns root login off.`,
+    text: `A sudo user that logs in with your ${count} SSH ${count === 1 ? "key" : "keys"} from Enroll Defaults. The server asks for its password on its own screen, then turns root login off.`,
   };
 }
 
@@ -140,15 +154,12 @@ export const adminCommand = (name: string) => `sudo kry admin-user ${name}`;
 
 export function adminBlocker(
   node: Pick<NodeRecord, "name" | "agent_version">,
-  admin: EnrollAdmin | null,
+  keys: AdminKey[],
 ): string | null {
   const gap = agentGap(node.agent_version, FEATURE_AGENT);
   if (gap === FIRST_REPORT) return gap;
   if (gap !== null) return `${gap} · ${node.name} runs ${node.agent_version}`;
-  if (!admin || admin.keys.length === 0) {
-    return "Add your SSH public keys in Enroll Defaults first.";
-  }
-  return null;
+  return keys.length === 0 ? NO_KEYS : null;
 }
 
 export const loginLine = (name: string, address: string | null) =>

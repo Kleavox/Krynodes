@@ -27,7 +27,7 @@ import {
   useUpdateEnrollment,
   type SetupChoice,
 } from "@/lib/api";
-import { loginLine } from "@/lib/admin-user";
+import { adminNameProblem, loginLine } from "@/lib/admin-user";
 import { enrollSetup } from "@/lib/enroll";
 import { enrollmentStep } from "@/lib/enrollment";
 import { errorMessage } from "@/lib/http";
@@ -57,12 +57,16 @@ export function EnrollDialog({
   const update = useUpdateEnrollment();
   const defaults = useEnrollDefaults(open);
   const [chosen, setChosen] = useState<SetupChoice | null>(null);
-  const admin = defaults.data?.admin ?? null;
+  const keys = defaults.data?.keys ?? [];
   const setup =
     chosen ??
     (defaults.data
-      ? { ...defaults.data, adminUser: (admin?.keys.length ?? 0) > 0 }
+      ? { ...defaults.data, adminUser: keys.length > 0, adminName: "" }
       : FALLBACK);
+  const adminName = (setup.adminName ?? "").trim();
+  const adding = setup.adminUser === true && keys.length > 0;
+  const unnamed =
+    adding && (adminName === "" || adminNameProblem(adminName) !== null);
   const deviceCount = useDevices().data?.devices.length ?? 0;
   const status = useEnrollmentStatus(open ? create.data?.id : undefined);
   const step = enrollmentStep(Boolean(create.data), status.data);
@@ -72,9 +76,9 @@ export function EnrollDialog({
   const next = useNetworkNext(waiting ? [waiting.nodeId] : []);
   const gets = next.data?.addresses[0]?.address ?? null;
   const overview = useOverview();
-  const login = admin
+  const login = adding
     ? loginLine(
-        admin.name,
+        adminName,
         overview.data?.nodes
           .find((entry) => entry.id === node?.id)
           ?.addresses?.find(
@@ -124,7 +128,7 @@ export function EnrollDialog({
                   : "No trusted passkey yet. Set one up first (Passkeys in the account menu) so this server trusts it from the start; until then it takes the first passkeys the dashboard sends."}
               </p>
             </DialogHeader>
-            <SetupOptions value={setup} onChange={change} admin={admin} />
+            <SetupOptions value={setup} onChange={change} keys={keys} />
             {create.error && (
               <p role="alert" className="text-sm text-destructive">
                 {errorMessage(create.error)}
@@ -134,7 +138,11 @@ export function EnrollDialog({
               <Button variant="ghost" onClick={() => close(false)}>
                 Cancel
               </Button>
-              <Button onClick={start} disabled={create.isPending} autoFocus>
+              <Button
+                onClick={start}
+                disabled={create.isPending || unnamed}
+                autoFocus
+              >
                 {!create.isPending && <GuardIcon />}
                 {create.isPending ? (
                   <Busy>Creating</Busy>
@@ -159,7 +167,7 @@ export function EnrollDialog({
               enrollment={create.data}
               setup={setup}
               onSetupChange={change}
-              admin={admin}
+              keys={keys}
             />
             {update.error && (
               <p role="alert" className="text-sm text-destructive">
@@ -217,9 +225,9 @@ export function EnrollDialog({
                 )}
               </div>
             )}
-            {setup.adminUser && admin && node && (
+            {adding && node && (
               <div className="space-y-2 rounded-lg border px-3.5 py-3 text-sm">
-                <p className="font-medium">Log In as {admin.name} Now</p>
+                <p className="font-medium">Log In as {adminName} Now</p>
                 <p className="text-xs text-muted-foreground">
                   Root can no longer log in over SSH. Check this works before
                   you close the root session.

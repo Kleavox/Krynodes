@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CheckDialog } from "@/features/checks/check-dialog";
+import { ServerPasskeys } from "@/features/devices/server-passkeys";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import {
   useOverview,
@@ -41,6 +42,8 @@ type OpenDialog =
   | "docker"
   | "release"
   | "admin"
+  | "passkeys"
+  | "unpass"
   | null;
 
 export function NodeActions({
@@ -72,6 +75,7 @@ export function NodeActions({
   const busy =
     operation !== null && !(operation.kind === "deleting" && operation.stopped);
   const restartable = canRestartServer(node, trust) && !busy;
+  const keyed = agentCurrent(node) && (trust?.core.length ?? 0) > 0;
   const lockable =
     agentCurrent(node) && trust !== null && !!entry?.security && !busy;
   const platform = entry?.security?.platform;
@@ -168,6 +172,11 @@ export function NodeActions({
                 Add Admin User
               </DropdownMenuItem>
             )}
+            {keyed && (
+              <DropdownMenuItem onSelect={() => setDialog("passkeys")}>
+                Passkeys
+              </DropdownMenuItem>
+            )}
             {lockable && (
               <DropdownMenuItem
                 variant={locked ? "default" : "destructive"}
@@ -182,6 +191,14 @@ export function NodeActions({
                 onSelect={() => setDialog("restart")}
               >
                 Restart Server
+              </DropdownMenuItem>
+            )}
+            {keyed && (trust?.access.length ?? 0) > 0 && (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => setDialog("unpass")}
+              >
+                Remove Every Passkey
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
@@ -202,6 +219,13 @@ export function NodeActions({
         />
       )}
 
+      {!limited && (dialog === "passkeys" || dialog === "unpass") && (
+        <ServerPasskeys
+          node={node}
+          removing={dialog === "unpass"}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {!limited && (
         <AdminUserDialog
           node={node}

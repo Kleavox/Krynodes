@@ -37,4 +37,20 @@ describe("setup sent with the enroll command", () => {
       network: true,
     });
   });
+
+  it("sends the admin user's name only when Add Admin User is ticked", () => {
+    const base = { recommended: false, docker: false, hour: 3, network: false };
+    expect(
+      enrollSetup({ ...base, adminUser: true, adminName: " musyaf " }, 0),
+    ).toEqual({
+      recommended: false,
+      docker: false,
+      rebootHour: null,
+      adminUser: true,
+      adminName: "musyaf",
+    });
+    expect(
+      enrollSetup({ ...base, adminUser: false, adminName: "musyaf" }, 0),
+    ).toEqual({ recommended: false, docker: false, rebootHour: null });
+  });
 });

@@ -1,4 +1,3 @@
-import { ADMIN_NAME } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
@@ -13,31 +12,35 @@ import type { KrynodesApp, KrynodesEnv } from "./shared";
 const KEY = "private_ranges";
 const ENROLL_KEY = "enroll_defaults";
 
-const adminSchema = z.object({
-  name: z
-    .string()
-    .regex(ADMIN_NAME)
-    .refine((name) => name !== "root"),
-  keys: z
-    .array(
-      z
-        .string()
-        .max(16384)
-        .refine((line) => parseKeyLine(line) !== null),
-    )
-    .min(1)
-    .max(4),
-});
+const keysSchema = z
+  .array(
+    z
+      .string()
+      .max(16384)
+      .refine((line) => parseKeyLine(line) !== null),
+  )
+  .max(4);
 
-type EnrollAdmin = z.infer<typeof adminSchema>;
-
-const enrollDefaultsSchema = z.object({
-  recommended: z.boolean(),
-  docker: z.boolean(),
-  hour: z.number().int().min(0).max(23),
-  network: z.boolean().default(false),
-  admin: adminSchema.nullable().default(null),
-});
+const enrollDefaultsSchema = z.preprocess(
+  (value) =>
+    value !== null &&
+    typeof value === "object" &&
+    !("keys" in value) &&
+    "admin" in value
+      ? {
+          ...value,
+          keys:
+            (value as { admin: { keys?: unknown } | null }).admin?.keys ?? [],
+        }
+      : value,
+  z.object({
+    recommended: z.boolean(),
+    docker: z.boolean(),
+    hour: z.number().int().min(0).max(23),
+    network: z.boolean().default(false),
+    keys: keysSchema.default([]),
+  }),
+);
 
 type EnrollDefaults = z.infer<typeof enrollDefaultsSchema>;
 
@@ -46,11 +49,8 @@ const ENROLL_DEFAULTS: EnrollDefaults = {
   docker: true,
   hour: 3,
   network: false,
-  admin: null,
+  keys: [],
 };
-
-const adminText = (admin: EnrollAdmin | null) =>
-  admin ? `${admin.name}\n${admin.keys.join("\n")}` : "";
 
 export async function readEnrollDefaults(
   db: D1Database,
@@ -107,20 +107,17 @@ export function registerSettingRoutes(
 ): void {
   const shown = async (defaults: EnrollDefaults) => ({
     ...defaults,
-    admin: defaults.admin && {
-      name: defaults.admin.name,
-      keys: await Promise.all(
-        defaults.admin.keys.map(async (line, index) => {
-          const key = parseKeyLine(line, index)!;
-          return {
-            line,
-            type: key.type,
-            fingerprint: await fingerprint(key.blob),
-            label: key.label,
-          };
-        }),
-      ),
-    },
+    keys: await Promise.all(
+      defaults.keys.map(async (line, index) => {
+        const key = parseKeyLine(line, index)!;
+        return {
+          line,
+          type: key.type,
+          fingerprint: await fingerprint(key.blob),
+          label: key.label,
+        };
+      }),
+    ),
   });
 
   app.get("/api/settings/enroll-defaults", requireOperator, async (context) =>
@@ -131,8 +128,8 @@ export function registerSettingRoutes(
     const body = enrollDefaultsSchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
     const db = context.env.DB;
-    const wanted = adminText(body.data.admin);
-    if (wanted !== adminText((await readEnrollDefaults(db)).admin)) {
+    const wanted = body.data.keys.join("\n");
+    if (wanted !== (await readEnrollDefaults(db)).keys.join("\n")) {
       const refused = await confirmed(
         context,
         "enroll.admin",

@@ -42,7 +42,7 @@ import type {
   UsageResponse,
   UsageShare,
 } from "../types";
-import { adminDigest, type EnrollAdmin } from "./admin-user";
+import { keysDigest, type AdminKey } from "./admin-user";
 import type { EnrollSetup } from "./enroll";
 import { pollEnrollment } from "./enrollment";
 import { historyPath } from "./history";
@@ -240,6 +240,7 @@ export interface SetupChoice {
   hour: number;
   network: boolean;
   adminUser?: boolean;
+  adminName?: string;
 }
 
 export interface EnrollDefaults {
@@ -247,7 +248,7 @@ export interface EnrollDefaults {
   docker: boolean;
   hour: number;
   network: boolean;
-  admin: EnrollAdmin | null;
+  keys: AdminKey[];
 }
 
 export function useEnrollDefaults(enabled: boolean) {
@@ -261,14 +262,11 @@ export function useEnrollDefaults(enabled: boolean) {
 export const useSaveEnrollDefaults = () =>
   useApiMutation(
     async (defaults: EnrollDefaults) => {
-      const admin = defaults.admin && {
-        name: defaults.admin.name,
-        keys: defaults.admin.keys.map((key) => key.line),
-      };
+      const keys = defaults.keys.map((key) => key.line);
       return guardedFetch<EnrollDefaults>(
         "/api/settings/enroll-defaults",
-        send("PUT", { ...defaults, admin }),
-        { op: "enroll.admin", target: await adminDigest(admin) },
+        send("PUT", { ...defaults, keys }),
+        { op: "enroll.admin", target: await keysDigest(keys) },
       );
     },
     [queryKeys.enrollDefaults],

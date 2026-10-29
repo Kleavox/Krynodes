@@ -293,19 +293,17 @@ describe("dashboard actions that destroy or hide", () => {
   });
 });
 
-describe("the admin user in enroll defaults", () => {
+describe("the SSH keys in enroll defaults", () => {
   const defaults = { recommended: true, docker: true, hour: 3, network: false };
-  const digest = async (name: string, keys: string[]) =>
+  const digest = async (keys: string[]) =>
     Array.from(
-      await sha256(
-        new Uint8Array(encoder.encode(`${name}\n${keys.join("\n")}`)),
-      ),
+      await sha256(new Uint8Array(encoder.encode(keys.join("\n")))),
       (byte) => byte.toString(16).padStart(2, "0"),
     ).join("");
 
-  it("asks for the fingerprint only when the name or the keys change", async () => {
+  it("asks for the fingerprint only when the keys change", async () => {
     const t = await setup();
-    const admin = { name: "musyaf", keys: [LAPTOP] };
+    const keys = [LAPTOP];
     expect(
       (
         await t.call("PUT", "/api/settings/enroll-defaults", {
@@ -316,26 +314,26 @@ describe("the admin user in enroll defaults", () => {
     ).toBe(200);
     const bare = await t.call("PUT", "/api/settings/enroll-defaults", {
       ...defaults,
-      admin,
+      keys,
     });
     expect(bare.status).toBe(403);
     expect(await bare.json()).toMatchObject({
       code: "PROOF_NEEDED",
       op: "enroll.admin",
-      target: await digest("musyaf", [LAPTOP]),
+      target: await digest([LAPTOP]),
     });
     const other = await t.call(
       "PUT",
       "/api/settings/enroll-defaults",
-      { ...defaults, admin },
-      await proof(t.phone, "enroll.admin", await digest("musyaf", [PHONE])),
+      { ...defaults, keys },
+      await proof(t.phone, "enroll.admin", await digest([PHONE])),
     );
     expect(other.status).toBe(400);
     const good = await t.call(
       "PUT",
       "/api/settings/enroll-defaults",
-      { ...defaults, admin },
-      await proof(t.phone, "enroll.admin", await digest("musyaf", [LAPTOP])),
+      { ...defaults, keys },
+      await proof(t.phone, "enroll.admin", await digest([LAPTOP])),
     );
     expect(good.status).toBe(200);
     expect(
@@ -343,13 +341,13 @@ describe("the admin user in enroll defaults", () => {
         await t.call("PUT", "/api/settings/enroll-defaults", {
           ...defaults,
           hour: 6,
-          admin,
+          keys,
         })
       ).status,
     ).toBe(200);
     const removing = await t.call("PUT", "/api/settings/enroll-defaults", {
       ...defaults,
-      admin: null,
+      keys: [],
     });
     expect(await removing.json()).toMatchObject({
       code: "PROOF_NEEDED",

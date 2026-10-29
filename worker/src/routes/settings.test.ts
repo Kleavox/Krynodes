@@ -68,7 +68,7 @@ describe("enroll defaults", () => {
       docker: true,
       hour: 3,
       network: false,
-      admin: null,
+      keys: [],
     });
     const saved = await call("PUT", "/api/settings/enroll-defaults", {
       recommended: true,
@@ -83,7 +83,7 @@ describe("enroll defaults", () => {
       docker: false,
       hour: 22,
       network: false,
-      admin: null,
+      keys: [],
     });
   });
 
@@ -103,55 +103,65 @@ describe("enroll defaults", () => {
   });
 });
 
-describe("the admin user in enroll defaults", () => {
+describe("the SSH keys in enroll defaults", () => {
   const defaults = { recommended: true, docker: true, hour: 3, network: false };
 
-  it("keeps a name and its keys and shows each key's fingerprint", async () => {
+  it("keeps the keys without a user name and shows each key's fingerprint", async () => {
     const { call } = setup();
     const saved = await call("PUT", "/api/settings/enroll-defaults", {
       ...defaults,
-      admin: { name: "musyaf", keys: [LAPTOP, PHONE] },
+      keys: [LAPTOP, PHONE],
     });
     expect(saved.status).toBe(200);
     const read = (await (
       await call("GET", "/api/settings/enroll-defaults")
-    ).json()) as { admin: { name: string; keys: unknown[] } };
-    expect(read.admin).toEqual({
-      name: "musyaf",
-      keys: [
-        {
-          line: LAPTOP,
-          type: "ssh-ed25519",
-          fingerprint: LAPTOP_PRINT,
-          label: "j5mus-laptop",
-        },
-        {
-          line: PHONE,
-          type: "ssh-ed25519",
-          fingerprint: "SHA256:8N+1D7dUMegVjJ9iFeI8fD+W16LUuALxq/zyJv66bQk",
-          label: "phone",
-        },
-      ],
-    });
+    ).json()) as Record<string, unknown>;
+    expect(read).not.toHaveProperty("admin");
+    expect(read.keys).toEqual([
+      {
+        line: LAPTOP,
+        type: "ssh-ed25519",
+        fingerprint: LAPTOP_PRINT,
+        label: "j5mus-laptop",
+      },
+      {
+        line: PHONE,
+        type: "ssh-ed25519",
+        fingerprint: "SHA256:8N+1D7dUMegVjJ9iFeI8fD+W16LUuALxq/zyJv66bQk",
+        label: "phone",
+      },
+    ]);
   });
 
-  it("refuses root, a bad name, a key it cannot read and more than four keys", async () => {
+  it("keeps the keys saved with the user name they used to have", async () => {
+    const { call, sqlite } = setup();
+    sqlite
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('enroll_defaults', ?, '2026-10-28T00:00:00.000Z')",
+      )
+      .run(
+        JSON.stringify({
+          ...defaults,
+          admin: { name: "musyaf", keys: [LAPTOP] },
+        }),
+      );
+    const read = (await (
+      await call("GET", "/api/settings/enroll-defaults")
+    ).json()) as { keys: { line: string }[] };
+    expect(read.keys.map((key) => key.line)).toEqual([LAPTOP]);
+  });
+
+  it("refuses a key it cannot read and more than four keys", async () => {
     const { call } = setup();
-    for (const admin of [
-      { name: "root", keys: [LAPTOP] },
-      { name: "Musyaf", keys: [LAPTOP] },
-      { name: "musyaf", keys: [] },
-      { name: "musyaf", keys: ["ssh-ed25519 AAAA laptop"] },
-      { name: "musyaf", keys: Array(5).fill(LAPTOP) },
-    ]) {
+    for (const keys of [["ssh-ed25519 AAAA laptop"], Array(5).fill(LAPTOP)]) {
       expect(
         (
           await call("PUT", "/api/settings/enroll-defaults", {
             ...defaults,
-            admin,
+            keys,
           })
         ).status,
-        JSON.stringify(admin.name),
+        String(keys.length),
       ).toBe(400);
     }
   });

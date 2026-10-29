@@ -7,6 +7,7 @@ export interface EnrollSetup {
   rebootHour: number | null;
   network?: true;
   adminUser?: true;
+  adminName?: string;
 }
 
 export const enrollSetup = (
@@ -19,5 +20,7 @@ export const enrollSetup = (
     ? Math.floor(toUtcHour(choice.hour, offset))
     : null,
   ...(choice.network ? { network: true as const } : {}),
-  ...(choice.adminUser ? { adminUser: true as const } : {}),
+  ...(choice.adminUser
+    ? { adminUser: true as const, adminName: (choice.adminName ?? "").trim() }
+    : {}),
 });

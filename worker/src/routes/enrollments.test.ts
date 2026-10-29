@@ -165,11 +165,15 @@ describe("enrollment tokens", () => {
           recommended: true,
           docker: true,
           hour: 3,
-          admin: { name: "musyaf", keys: [LAPTOP, PHONE] },
+          keys: [LAPTOP, PHONE],
         })
       ).status,
     ).toBe(200);
-    const { id, token } = await create({ docker: true, adminUser: true });
+    const { id, token } = await create({
+      docker: true,
+      adminUser: true,
+      adminName: "musyaf",
+    });
     const flags = `--admin musyaf --admin-key ${blob(LAPTOP)}:j5mus-laptop --admin-key ${blob(PHONE)}:phone`;
     expect(tail((await script(token)).text)).toBe(
       `{\n  kry_args='https://kry.example.test ${token} --setup docker ${flags}'\n  main $kry_args\n}\n`,
@@ -178,13 +182,14 @@ describe("enrollment tokens", () => {
       recommended: true,
       docker: true,
       hour: 3,
-      admin: { name: "intruder", keys: [PHONE] },
+      keys: [PHONE],
     });
     expect(
       (
         await request("PATCH", `/api/enrollments/${id}`, {
           docker: true,
           adminUser: true,
+          adminName: "intruder",
           admin: { name: "intruder", keys: [PHONE] },
         })
       ).status,
@@ -199,10 +204,33 @@ describe("enrollment tokens", () => {
     expect(tail((await script(token)).text)).toContain(flags);
   });
 
-  it("adds no admin user when Enroll Defaults has none", async () => {
+  it("adds no admin user when Enroll Defaults has no keys", async () => {
     const { create, script } = fleet();
-    const { token } = await create({ adminUser: true });
+    const { token } = await create({ adminUser: true, adminName: "musyaf" });
     expect(tail((await script(token)).text)).not.toContain("--admin");
+    const unnamed = await create({ adminUser: true });
+    expect(tail((await script(unnamed.token)).text)).not.toContain("--admin");
+  });
+
+  it("refuses an admin user without a usable name while keys are set", async () => {
+    const { request } = fleet();
+    await request("PUT", "/api/settings/enroll-defaults", {
+      recommended: true,
+      docker: true,
+      hour: 3,
+      keys: [LAPTOP],
+    });
+    for (const adminName of [undefined, "", "root", "Musyaf", "bad name"]) {
+      expect(
+        (
+          await request("POST", "/api/enrollments", {
+            adminUser: true,
+            adminName,
+          })
+        ).status,
+        String(adminName),
+      ).toBe(400);
+    }
   });
 
   it("gets the server ready for the private network only while one exists", async () => {
