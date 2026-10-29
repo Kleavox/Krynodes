@@ -101,11 +101,13 @@ sudo systemctl status krynodes
 sudo kry status
 ```
 
-The Enroll dialog can also set the server up in the same command: **Apply
-recommended protections** (with a restart hour in your time) and **Install
-Docker**. They start from **Settings → Enroll defaults** and can change until
-the server enrolls. After enrolling, the script runs `kry setup`, which prints
-what it found and did:
+The Enroll dialog can also set the server up in the same command: **Install
+Docker**, **Join Private Network** and **Add Admin User** (with this server's
+user name). They start from **Settings → Enroll defaults**, and Docker and the
+private network can change until the server enrolls. **Apply recommended
+protections** (with a restart hour in your time) is set only in Enroll
+defaults and applies to every new server. After enrolling, the script runs
+`kry setup`, which prints what it found and did:
 
 ```text
 Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
@@ -573,8 +575,8 @@ these:
 - **Passkeys** (account menu) are the trusted passkeys every server knows.
   Each one reaches (may run actions on) only the servers it is given. A
   passkey someone registers waits until it is approved, and you get an email.
-- Each passkey belongs to the Access account that registered it, and the
-  Passkeys page says whose it is ("Yours", "Owner: budi"). Nobody signs with
+- Each passkey belongs to the Access account that registered it, and a
+  passkey's dialog names its owner when it is not yours. Nobody signs with
   someone else's passkey: the Worker refuses it, and the passkey prompt offers
   only your own. Only the owner renames or forgets a passkey. Passkeys from
   before owners existed belong to whoever last used them, and one never used
@@ -584,17 +586,24 @@ these:
   every server enrolled then.
 - With one or two trusted passkeys, one approval adds or removes a passkey.
   With more than two, two approvals from two different passkeys.
-- A passkey's ⋯ **Servers** chooses the servers it reaches; a server's ⋯
-  **Passkeys** shows who reaches it, and **Remove every passkey** takes them all
-  away. A server is given to a passkey only by another passkey that already
-  reaches it, never by the passkey itself; when nobody else reaches it, by one
-  other trusted passkey (two when there are more than two). Servers enrolled
-  later start with the passkeys and nobody reaching them.
+- Each passkey is one line saying where it acts ("All Servers", "io, pivox").
+  Clicking it (or its ⋯ **Servers**) shows its fingerprint, whether it is
+  synced, when it was last used, and a checklist of the servers it reaches.
+  A server's own ⋯ menu, on Fleet and on the server page, has **Passkeys**, the
+  same checklist from the server's side, and **Remove Every Passkey**. A server
+  is given to a passkey only by another passkey that already reaches it, never
+  by the passkey itself, so giving another passkey a server you reach takes
+  just your approval; when nobody else reaches it, by one other trusted passkey
+  (two when there are more than two). Servers enrolled later start with the
+  passkeys and nobody reaching them.
+- The Passkeys page shows a server only when it needs you: **Trust** when it
+  knows no passkey yet, **Choose Passkeys** when nobody reaches it, **Sync**
+  when its list is older, and an agent update when it runs an old agent.
 - A passkey already registered, under any name, cannot be set up again.
 - Changes wait under **Waiting for approval** for up to 24 hours. Each approval
   signs the exact change; the dialog shows new passkeys' key fingerprints for
   you to compare with the new device's screen.
-- **Recent changes**, under the devices and servers, lists every closed change
+- **Recent changes**, under the devices, lists every closed change
   newest first ("Give Budi access to pivox"): its outcome, who opened and
   approved it and when, and any server that has not taken it yet.
 - Every approval, session and confirmation needs a passkey that you unlock
@@ -849,8 +858,10 @@ port is in its Reach this server on. Check those stacks before you update.
 
 ### Admin user
 
-Enroll defaults hold an admin user name and up to 4 SSH public keys (changing
-them asks for your passkey). **Add Admin User** at enroll, or Actions →
+Enroll defaults hold up to 4 SSH public keys, pasted several at once or read
+from a `.pub` or `authorized_keys` file (changing them asks for your passkey).
+The user name is typed for each server: in the Enroll dialog, where it is set
+when the command is made, or in Add Admin User. **Add Admin User** at enroll, or Actions →
 Add Admin User on a server (agent 0.7.1), makes a sudo user (`sudo` or
 `wheel`) that logs in with exactly those keys, then turns on SSH keys only and
 No root login once key login works for it. On an enrolled server your

@@ -123,6 +123,18 @@ const sameSet = (a: string[], b: string[]) =>
 export const trustedServers = (view: FleetView) =>
   view.servers.filter((server) => (server.trust?.core.length ?? 0) > 0);
 
+export const unreached = (view: FleetView) =>
+  trustedServers(view).filter(
+    (server) => agentCurrent(server.node) && server.trust?.access.length === 0,
+  );
+
+export function reachText(reached: string[], total: number): string {
+  if (reached.length === 0) return "No Servers";
+  if (reached.length === total) return "All Servers";
+  if (reached.length <= 2) return reached.join(", ");
+  return `${reached.length} of ${total} Servers`;
+}
+
 export function serverState(view: FleetView, server: FleetServer): ServerState {
   if (!server.node.agent_version) return "waiting";
   if (!agentCurrent(server.node)) return "update";

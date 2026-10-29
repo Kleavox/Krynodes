@@ -52,7 +52,6 @@ import {
   useSession,
 } from "@/lib/api";
 import {
-  accessIds,
   admitChange,
   buildChange,
   decodeChange,
@@ -60,35 +59,24 @@ import {
   fingerprint,
   firstTrusts,
   formatPrint,
-  syncText,
-  accessChange,
   agentCurrent,
-  FIRST_REPORT,
+  reachText,
   removeChange,
   serverState,
   syncChange,
   twinOf,
+  unreached,
   usable,
   type FleetServer,
-  type ServerState,
 } from "@/lib/devices";
-import { displayHandle, timeAgo } from "@/lib/format";
 import { registerDevice, thisBrowser } from "@/lib/passkeys";
 import { cn } from "@/lib/utils";
 import type { DeviceRecord, ProposalRecord } from "@/types";
 
 const SECTION = "rounded-lg border bg-card";
 
-const STATE: Record<ServerState, { label: string; tone: string }> = {
-  waiting: { label: FIRST_REPORT, tone: "text-muted-foreground" },
-  update: {
-    label: `Needs agent ${MIN_AGENT_VERSION}`,
-    tone: "text-muted-foreground",
-  },
-  empty: { label: "Not Trusted Yet", tone: "text-warning" },
-  behind: { label: "Behind", tone: "text-warning" },
-  current: { label: "Up to Date", tone: "text-success" },
-};
+const names = (servers: FleetServer[]) =>
+  servers.map((server) => server.node.name).join(", ");
 
 function guessName(): string {
   return /Android|iPhone|iPad/u.test(navigator.userAgent) ? "Phone" : "Laptop";
@@ -296,19 +284,12 @@ function NewDevice({ fleet, device }: { fleet: Fleet; device: DeviceRecord }) {
 }
 
 function serversText(fleet: Fleet, device: DeviceRecord): string {
-  const total = fleet.trusted.length;
-  const count = fleet.trusted.filter((server) =>
-    server.trust?.access.includes(device.fingerprint),
-  ).length;
-  if (count === 0) return "No Servers";
-  return count === total
-    ? `All ${plural(total, "server")}`
-    : `${count} of ${plural(total, "server")}`;
-}
-
-function proofText(device: DeviceRecord): string | null {
-  if (device.verifies === null) return null;
-  return device.verifies ? "Can Sign" : "Cannot Sign";
+  return reachText(
+    fleet.trusted
+      .filter((server) => server.trust?.access.includes(device.fingerprint))
+      .map((server) => server.node.name),
+    fleet.trusted.length,
+  );
 }
 
 function DeviceRow({
@@ -332,9 +313,8 @@ function DeviceRow({
     destructive?: boolean;
   }[] = [];
   const own = usable(device);
-  if (device.core && fleet.trusted.length > 0) {
-    items.push({ label: "Servers", onSelect: onServers });
-  }
+  const opens = device.core && fleet.trusted.length > 0;
+  if (opens) items.push({ label: "Servers", onSelect: onServers });
   if (own) items.push({ label: "Rename", onSelect: onRename });
   if (device.core) {
     if (fleet.core.length > 1) {
@@ -343,92 +323,58 @@ function DeviceRow({
   } else if (own) {
     items.push({ label: "Forget", onSelect: onForget, destructive: true });
   }
-  const facts = [
-    device.mine
-      ? "Yours"
-      : device.owner
-        ? `Owner: ${displayHandle(null, device.owner)}`
-        : "Not Claimed Yet",
-    formatPrint(device.fingerprint),
-    proofText(device),
-    syncText(device.synced),
-    device.core ? serversText(fleet, device) : null,
-    device.lastUsedAt ? `Used ${timeAgo(device.lastUsedAt)}` : "Never Used",
-  ].filter(Boolean);
+  const touchOnly = device.verifies === false;
+  const where = touchOnly
+    ? "Cannot Sign"
+    : device.core
+      ? serversText(fleet, device)
+      : null;
+  const line = (
+    <>
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="min-w-0 truncate font-medium">{device.name}</span>
+        {fleet.mine.includes(device.id) && (
+          <Badge variant="outline">This Browser</Badge>
+        )}
+        {!device.core && (
+          <Badge variant="secondary" className="text-warning">
+            {fleet.joining.includes(device.id)
+              ? "Joining"
+              : "Waiting for Approval"}
+          </Badge>
+        )}
+      </span>
+      {where && (
+        <span
+          className={cn(
+            "shrink-0 font-mono text-xs",
+            touchOnly ? "text-warning" : "text-muted-foreground",
+          )}
+        >
+          {where}
+        </span>
+      )}
+    </>
+  );
   return (
-    <li className="flex items-start gap-3 px-4 py-3 text-sm">
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="min-w-0 truncate font-medium">{device.name}</span>
-          {fleet.mine.includes(device.id) && (
-            <Badge variant="outline">This Browser</Badge>
-          )}
-          {!device.core && (
-            <Badge variant="secondary" className="text-warning">
-              {fleet.joining.includes(device.id)
-                ? "Joining"
-                : "Waiting for Approval"}
-            </Badge>
-          )}
+    <li className="flex min-h-14 items-center gap-1 pr-3 text-sm">
+      {opens ? (
+        <button
+          type="button"
+          onClick={onServers}
+          className="flex min-w-0 flex-1 items-center gap-3 self-stretch py-3 pl-4 text-left transition-colors outline-none hover:bg-card-hover focus-visible:bg-card-hover"
+        >
+          {line}
+        </button>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4">
+          {line}
         </div>
-        <p className="mt-1 font-mono text-xs text-muted-foreground">
-          {facts.join(" · ")}
-        </p>
-      </div>
+      )}
       {items.length > 0 ? (
         <RowMenu label={`Options for ${device.name}`} items={items} />
       ) : (
         <span className="size-9 md:size-8" />
-      )}
-    </li>
-  );
-}
-
-function ServerRow({
-  fleet,
-  server,
-  onDevices,
-  onRemoveAll,
-  onSync,
-}: {
-  fleet: Fleet;
-  server: FleetServer;
-  onDevices: () => void;
-  onRemoveAll: () => void;
-  onSync: () => void;
-}) {
-  const kind = serverState(fleet.view, server);
-  const state = STATE[kind];
-  const trusted = (server.trust?.core.length ?? 0) > 0;
-  const reaching = accessIds(fleet.devices, server.trust).length;
-  const items: {
-    label: string;
-    onSelect: () => void;
-    destructive?: boolean;
-  }[] = [];
-  if (trusted && agentCurrent(server.node)) {
-    items.push({ label: "Passkeys", onSelect: onDevices });
-    if (kind === "behind") items.push({ label: "Sync", onSelect: onSync });
-    if (reaching > 0) {
-      items.push({
-        label: "Remove Every Passkey",
-        onSelect: onRemoveAll,
-        destructive: true,
-      });
-    }
-  }
-  return (
-    <li className="flex min-h-12 items-center gap-3 px-4 py-2 text-sm">
-      <span className="min-w-0 flex-1 truncate font-medium">
-        {server.node.name}
-      </span>
-      <span className={cn("shrink-0 font-mono text-xs", state.tone)}>
-        {state.label}
-      </span>
-      {items.length > 0 ? (
-        <RowMenu label={`Options for ${server.node.name}`} items={items} />
-      ) : (
-        <span aria-hidden="true" className="size-8 shrink-0" />
       )}
     </li>
   );
@@ -629,7 +575,7 @@ function FirstTrustDialog({
             {servers.length === 1 ? "trusts" : "trust"} no device yet.{" "}
             {founding
               ? "They take this passkey as their first trusted passkey, and it reaches them."
-              : "They take your trusted passkeys; choose which ones reach them from each server's menu."}
+              : "They take your trusted passkeys. Then choose which ones run actions there."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <ul className="divide-y rounded-md border text-sm">
@@ -749,11 +695,12 @@ function Manage({ fleet }: { fleet: Fleet }) {
       Add Passkey
     </Button>
   );
-  let notice: ReactNode = null;
+  const notices: ReactNode[] = [];
   if (fleet.core.length === 0) {
-    notice =
+    notices.push(
       empty.length > 0 ? (
         <Notice
+          key="first"
           action={
             <Button
               size="sm"
@@ -768,38 +715,109 @@ function Manage({ fleet }: { fleet: Fleet }) {
           your first trusted passkey.
         </Notice>
       ) : (
-        <Notice tone="warning">
+        <Notice key="first" tone="warning">
           Update your servers to agent {MIN_AGENT_VERSION}, then trust this
           device on them.
         </Notice>
+      ),
+    );
+  } else {
+    if (old.length > 0) {
+      notices.push(
+        <Notice key="old" tone="warning">
+          Update {names(old)} to agent {MIN_AGENT_VERSION}. Devices cannot be
+          added or removed until every server runs it.
+        </Notice>,
       );
-  } else if (old.length > 0) {
-    notice = (
-      <Notice tone="warning">
-        Update {old.map((server) => server.node.name).join(", ")} to agent{" "}
-        {MIN_AGENT_VERSION}. Devices cannot be added or removed until every
-        server runs it.
-      </Notice>
-    );
-  } else if (fleet.core.length === 1 && fleet.pending.length === 0) {
-    notice = (
-      <Notice action={addButton}>
-        Add a second passkey as a backup, such as one on your phone or a
-        security key. It gets access to your servers.
-      </Notice>
-    );
-  } else if (touchOnly.length > 0) {
-    notice = (
-      <Notice tone="warning">
-        {touchOnly.join(", ")} cannot sign:{" "}
-        {touchOnly.length === 1
-          ? "its passkey only takes"
-          : "their passkeys only take"}{" "}
-        a touch. Remove {touchOnly.length === 1 ? "it" : "them"} and set{" "}
-        {touchOnly.length === 1 ? "it" : "them"} up again with a passkey that
-        asks for your fingerprint, face or PIN.
-      </Notice>
-    );
+    }
+    if (empty.length > 0) {
+      notices.push(
+        <Notice
+          key="empty"
+          action={
+            <Button
+              size="sm"
+              className="h-9 md:h-8"
+              onClick={() => setTrusting(true)}
+            >
+              {empty.length === 1
+                ? `Trust on ${empty[0]!.node.name}`
+                : `Trust on ${empty.length} Servers`}
+            </Button>
+          }
+        >
+          {names(empty)} {empty.length === 1 ? "does" : "do"} not know your
+          passkeys yet. Trust {empty.length === 1 ? "it" : "them"}, then choose
+          which passkeys run actions there.
+        </Notice>,
+      );
+    }
+    for (const server of unreached(fleet.view)) {
+      notices.push(
+        <Notice
+          key={`reach-${server.node.id}`}
+          action={
+            <Button
+              size="sm"
+              className="h-9 md:h-8"
+              onClick={() => setScope({ server })}
+            >
+              Choose Passkeys
+            </Button>
+          }
+        >
+          No passkey runs actions on {server.node.name}.
+        </Notice>,
+      );
+    }
+    if (behind.length > 0 && old.length === 0) {
+      notices.push(
+        <Notice
+          key="behind"
+          tone="warning"
+          action={
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-9 md:h-8"
+              onClick={() =>
+                openReview(buildChange(fleet.view, syncChange(fleet.view)))
+              }
+            >
+              Sync
+            </Button>
+          }
+        >
+          {names(behind)} {behind.length === 1 ? "has" : "have"} an older list
+          of your passkeys.
+        </Notice>,
+      );
+    }
+    if (
+      old.length === 0 &&
+      fleet.core.length === 1 &&
+      fleet.pending.length === 0
+    ) {
+      notices.push(
+        <Notice key="backup" action={addButton}>
+          Add a second passkey as a backup, such as one on your phone or a
+          security key. It gets access to your servers.
+        </Notice>,
+      );
+    }
+    if (old.length === 0 && touchOnly.length > 0) {
+      notices.push(
+        <Notice key="touch" tone="warning">
+          {touchOnly.join(", ")} cannot sign:{" "}
+          {touchOnly.length === 1
+            ? "its passkey only takes"
+            : "their passkeys only take"}{" "}
+          a touch. Remove {touchOnly.length === 1 ? "it" : "them"} and set{" "}
+          {touchOnly.length === 1 ? "it" : "them"} up again with a passkey that
+          asks for your fingerprint, face or PIN.
+        </Notice>,
+      );
+    }
   }
 
   const waiting = fleet.open.length + unasked.length;
@@ -814,7 +832,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
           </span>
         }
       />
-      {notice}
+      {notices}
 
       {waiting > 0 && (
         <section aria-labelledby="waiting-heading" className="mb-5">
@@ -848,104 +866,50 @@ function Manage({ fleet }: { fleet: Fleet }) {
         </section>
       )}
 
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-        <section aria-labelledby="devices-heading" className={SECTION}>
-          <div className="flex min-h-12 items-center gap-2 border-b px-4">
-            <h2 id="devices-heading" className="text-sm font-medium">
-              Devices · {fleet.devices.length}
-            </h2>
-            <Button
-              variant="outline"
-              size="sm"
-              className="ml-auto h-9 md:h-8"
-              onClick={() => setAdding((value) => !value)}
-            >
-              {adding ? "Close" : "Add Passkey"}
-            </Button>
+      <section aria-labelledby="devices-heading" className={SECTION}>
+        <div className="flex min-h-12 items-center gap-2 border-b px-4">
+          <h2 id="devices-heading" className="text-sm font-medium">
+            Devices · {fleet.devices.length}
+          </h2>
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto h-9 md:h-8"
+            onClick={() => setAdding((value) => !value)}
+          >
+            {adding ? "Close" : "Add Passkey"}
+          </Button>
+        </div>
+        {adding && (
+          <div className="space-y-2 border-b px-4 py-3">
+            <SetUpForm setup={setup} label="Set Up Passkey" />
+            <HowToVerify
+              waiting={`It waits until ${fleet.core.length > 2 ? "two of your passkeys approve" : "one of your passkeys approves"} it.`}
+            />
           </div>
-          {adding && (
-            <div className="space-y-2 border-b px-4 py-3">
-              <SetUpForm setup={setup} label="Set Up Passkey" />
-              <HowToVerify
-                waiting={`It waits until ${fleet.core.length > 2 ? "two of your passkeys approve" : "one of your passkeys approves"} it.`}
-              />
-            </div>
-          )}
-          <ul className="divide-y">
-            {fleet.devices.map((device) => (
-              <DeviceRow
-                key={device.id}
-                fleet={fleet}
-                device={device}
-                onRename={() => setRenaming(device)}
-                onServers={() => setScope({ device })}
-                onRemove={() =>
-                  openReview(
-                    buildChange(fleet.view, removeChange(fleet.view, device)),
-                  )
-                }
-                onForget={() => setForgetting(device)}
-              />
-            ))}
-          </ul>
-          <p className="border-t px-4 py-3 text-xs text-muted-foreground">
-            The last device leaves only over SSH:{" "}
-            <code className="font-mono">sudo kry trust --reset</code>.
-          </p>
-        </section>
-
-        <section aria-labelledby="servers-heading" className={SECTION}>
-          <div className="flex min-h-12 flex-wrap items-center gap-2 border-b px-4 py-2">
-            <h2 id="servers-heading" className="text-sm font-medium">
-              Servers · {fleet.servers.length}
-            </h2>
-            <div className="ml-auto flex flex-wrap gap-2">
-              {fleet.core.length > 0 && empty.length > 0 && (
-                <Button
-                  size="sm"
-                  className="h-9 md:h-8"
-                  onClick={() => setTrusting(true)}
-                >
-                  Trust on {plural(empty.length, "server")}
-                </Button>
-              )}
-              {behind.length > 0 && old.length === 0 && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-9 md:h-8"
-                  onClick={() =>
-                    openReview(buildChange(fleet.view, syncChange(fleet.view)))
-                  }
-                >
-                  Sync {plural(behind.length, "server")}
-                </Button>
-              )}
-            </div>
-          </div>
-          <ul className="divide-y">
-            {fleet.servers.map((server) => (
-              <ServerRow
-                key={server.node.id}
-                fleet={fleet}
-                server={server}
-                onDevices={() => setScope({ server })}
-                onSync={() =>
-                  openReview(buildChange(fleet.view, syncChange(fleet.view)))
-                }
-                onRemoveAll={() =>
-                  openReview(
-                    buildChange(
-                      fleet.view,
-                      accessChange(fleet.view, { [server.node.id]: [] }),
-                    ),
-                  )
-                }
-              />
-            ))}
-          </ul>
-        </section>
-      </div>
+        )}
+        <ul className="divide-y">
+          {fleet.devices.map((device) => (
+            <DeviceRow
+              key={device.id}
+              fleet={fleet}
+              device={device}
+              onRename={() => setRenaming(device)}
+              onServers={() => setScope({ device })}
+              onRemove={() =>
+                openReview(
+                  buildChange(fleet.view, removeChange(fleet.view, device)),
+                )
+              }
+              onForget={() => setForgetting(device)}
+            />
+          ))}
+        </ul>
+        <p className="border-t px-4 py-3 text-xs text-muted-foreground">
+          The last device leaves only over SSH:{" "}
+          <code className="font-mono">sudo kry trust --reset</code>.
+        </p>
+      </section>
 
       <RecentChanges fleet={fleet} />
 

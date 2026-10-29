@@ -20,7 +20,7 @@ import {
   adminCommand,
   adminNameProblem,
   keyText,
-  type EnrollAdmin,
+  type AdminKey,
 } from "@/lib/admin-user";
 import { agentState } from "@/lib/agent";
 import {
@@ -35,7 +35,7 @@ const SHEET =
   "max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0 max-sm:rounded-b-none";
 
 export function AdminUserForm({
-  admin,
+  keys,
   name,
   onName,
   blocker,
@@ -45,7 +45,7 @@ export function AdminUserForm({
   onCancel,
   onUpdate,
 }: {
-  admin: EnrollAdmin | null;
+  keys: AdminKey[];
   name: string;
   onName: (name: string) => void;
   blocker: string | null;
@@ -75,9 +75,9 @@ export function AdminUserForm({
       </div>
       <div className="grid gap-1.5">
         <span className="text-sm font-medium">SSH Public Keys</span>
-        {admin && admin.keys.length > 0 && (
+        {keys.length > 0 && (
           <ul className="space-y-0.5 font-mono text-xs text-muted-foreground">
-            {admin.keys.map((key) => (
+            {keys.map((key) => (
               <li key={key.line} className="truncate">
                 {keyText(key)}
               </li>
@@ -150,15 +150,15 @@ export function AdminUserDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const defaults = useEnrollDefaults(open);
-  const admin = defaults.data?.admin ?? null;
+  const keys = defaults.data?.keys ?? [];
   const run = useSignedAction(false);
   const update = useRequestAgentUpdate();
   const release = useOverview().data?.agentRelease.version ?? null;
   const [typed, setTyped] = useState<string | null>(null);
   const [sent, setSent] = useState<string | null>(null);
-  const name = typed ?? admin?.name ?? "";
+  const name = typed ?? "";
   const blocker = defaults.data
-    ? adminBlocker(node, admin)
+    ? adminBlocker(node, keys)
     : defaults.error
       ? errorMessage(defaults.error)
       : "Loading…";
@@ -175,7 +175,6 @@ export function AdminUserDialog({
     onOpenChange(next);
   };
   const get = () => {
-    if (!admin) return;
     const chosen = name.trim();
     run.mutate(
       {
@@ -185,7 +184,7 @@ export function AdminUserDialog({
             nodeId: node.id,
             kind: "host",
             name: "server",
-            args: adminArgs(chosen, admin.keys),
+            args: adminArgs(chosen, keys),
           },
         ],
       },
@@ -214,7 +213,7 @@ export function AdminUserDialog({
           </>
         ) : (
           <AdminUserForm
-            admin={admin}
+            keys={keys}
             name={name}
             onName={setTyped}
             blocker={blocker}

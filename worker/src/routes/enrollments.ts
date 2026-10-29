@@ -1,3 +1,4 @@
+import { ADMIN_NAME } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
@@ -25,6 +26,14 @@ const setupSchema = z.object({
   rebootHour: z.number().int().min(0).max(23).nullable().default(null),
   network: z.boolean().default(false),
   adminUser: z.boolean().default(false),
+});
+
+const createSchema = setupSchema.extend({
+  adminName: z
+    .string()
+    .regex(ADMIN_NAME)
+    .refine((name) => name !== "root")
+    .optional(),
 });
 
 const storedSchema = setupSchema.extend({
@@ -110,8 +119,13 @@ export function registerEnrollmentRoutes(
   requireOperator: MiddlewareHandler<KrynodesEnv>,
 ): void {
   app.post("/api/enrollments", requireOperator, async (context) => {
-    const setup = setupSchema.safeParse((await readJson(context)) ?? {});
-    if (!setup.success) return invalidRequest(context);
+    const body = createSchema.safeParse((await readJson(context)) ?? {});
+    if (!body.success) return invalidRequest(context);
+    const { adminName, ...setup } = body.data;
+    const { keys } = await readEnrollDefaults(context.env.DB);
+    if (setup.adminUser && keys.length > 0 && adminName === undefined) {
+      return invalidRequest(context);
+    }
     const fleet = await loadFleet(context.env.DB, context.get("identity").id);
     const refused = await confirmed(context, "enrollment.create", "new", fleet);
     if (refused) return refused;
@@ -128,8 +142,11 @@ export function registerEnrollmentRoutes(
         await sha256(token),
         expiresAt,
         JSON.stringify({
-          ...setup.data,
-          admin: (await readEnrollDefaults(context.env.DB)).admin,
+          ...setup,
+          admin:
+            setup.adminUser && adminName && keys.length > 0
+              ? { name: adminName, keys }
+              : null,
         }),
         confirmingDevice(context),
       )

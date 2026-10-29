@@ -1,5 +1,5 @@
 import { CopyCommand } from "@/components/copy-command";
-import type { EnrollAdmin } from "@/lib/admin-user";
+import type { AdminKey } from "@/lib/admin-user";
 import type { SetupChoice } from "@/lib/api";
 import { countdown } from "@/lib/format";
 import { useNow } from "@/lib/use-now";
@@ -11,12 +11,12 @@ export function EnrollmentCommand({
   enrollment,
   setup,
   onSetupChange,
-  admin,
+  keys,
 }: {
   enrollment: Enrollment;
   setup: SetupChoice;
   onSetupChange: (next: SetupChoice) => void;
-  admin: EnrollAdmin | null;
+  keys: AdminKey[];
 }) {
   const now = useNow();
   const remaining = Date.parse(enrollment.enrollmentExpiresAt) - now;
@@ -25,7 +25,8 @@ export function EnrollmentCommand({
       <SetupOptions
         value={setup}
         onChange={onSetupChange}
-        admin={admin}
+        keys={keys}
+        adminLocked
         disabled={remaining <= 0}
       />
       <CopyCommand command={enrollment.command} />

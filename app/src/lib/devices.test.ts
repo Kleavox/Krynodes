@@ -20,12 +20,14 @@ import {
   formatPrint,
   nextVersion,
   predictMissing,
+  reachText,
   removeChange,
   serverState,
   twinOf,
   signersFor,
   syncChange,
   syncText,
+  unreached,
   type FleetView,
 } from "./devices";
 
@@ -98,6 +100,33 @@ describe("synced", () => {
     expect(syncText(null)).toBe("--");
     expect(syncText(true)).toBe("Synced");
     expect(syncText(false)).toBe("This Device Only");
+  });
+});
+
+describe("where a passkey acts", () => {
+  it("says all, none, up to two names, or a count", () => {
+    expect(reachText(["io", "pivox", "calisto"], 3)).toBe("All Servers");
+    expect(reachText([], 3)).toBe("No Servers");
+    expect(reachText(["io"], 3)).toBe("io");
+    expect(reachText(["io", "pivox"], 3)).toBe("io, pivox");
+    expect(reachText(["io", "pivox", "calisto"], 5)).toBe("3 of 5 Servers");
+  });
+
+  it("finds trusted servers no passkey reaches", () => {
+    const fleet = view(
+      [laptop, phone],
+      [
+        { node: node(N1), trust: trust(2, [laptop, phone], [laptop]) },
+        { node: node(N2), trust: trust(1, [laptop, phone], []) },
+        { node: node(N3), trust: null },
+      ],
+    );
+    expect(unreached(fleet).map((server) => server.node.id)).toEqual([N2]);
+    const old = view(
+      [laptop, phone],
+      [{ node: node(N2, "0.2.0"), trust: trust(1, [laptop, phone], []) }],
+    );
+    expect(unreached(old)).toEqual([]);
   });
 });
 
