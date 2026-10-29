@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	adminFile    = "admin-user.json"
-	setupLock    = "setup.lock"
-	adminWindow  = 30 * time.Minute
-	maxAdminKeys = 4
+	adminFile     = "admin-user.json"
+	adminMarkFile = "admin-mark.json"
+	adminWindow   = 30 * time.Minute
+	maxAdminKeys  = 4
 )
 
 var errAdminAgain = errors.New("Open this server in Krynodes, choose Actions → Add Admin User and run the command it gives within 30 minutes.")
@@ -31,18 +31,37 @@ type adminTicket struct {
 	Until time.Time `json:"until"`
 }
 
-type setupMark struct {
-	At time.Time `json:"at"`
+type adminMark struct {
+	Name  string    `json:"name"`
+	Keys  []string  `json:"keys"`
+	Until time.Time `json:"until"`
 }
 
-func (e Executor) holdWatch() func() {
-	writeJSON(e.StateDir, setupLock, setupMark{At: e.Now()}, 0o600)
-	return func() { os.Remove(filepath.Join(e.StateDir, setupLock)) }
+func (e Executor) markAdmin(name string, keys []recipes.AdminKey) func() {
+	mark := adminMark{Name: name, Until: e.Now().Add(adminWindow)}
+	for _, key := range keys {
+		mark.Keys = append(mark.Keys, key.Fingerprint())
+	}
+	writeJSON(e.StateDir, adminMarkFile, mark, 0o600)
+	return func() { os.Remove(filepath.Join(e.StateDir, adminMarkFile)) }
 }
 
-func (e Executor) watchHeld() bool {
-	mark, err := readState[setupMark](e.StateDir, setupLock)
-	return err == nil && e.Now().Sub(mark.At) < time.Hour
+func (mark adminMark) covers(now time.Time, change watch.Change) bool {
+	if mark.Name == "" || !now.Before(mark.Until) {
+		return false
+	}
+	switch change.Kind {
+	case "user":
+		return change.Item == mark.Name
+	case "sudo":
+		parts := strings.SplitN(change.Item, ":", 3)
+		return len(parts) == 3 && parts[0] == "group" && parts[2] == mark.Name
+	case "ssh-key":
+		return strings.HasPrefix(change.Item, mark.Name+":") && slices.ContainsFunc(mark.Keys, func(print string) bool {
+			return strings.HasSuffix(change.Item, ":"+print)
+		})
+	}
+	return false
 }
 
 func parseAdminKeys(list []string) ([]recipes.AdminKey, error) {
@@ -128,7 +147,7 @@ func (e Executor) AdminUser(ctx context.Context, name string, out io.Writer, tty
 	if err != nil {
 		return errAdminAgain
 	}
-	defer e.holdWatch()()
+	defer e.markAdmin(name, keys)()
 	defer os.Remove(filepath.Join(e.StateDir, "security.json"))
 	mark := func(sign, title, rest string) {
 		fmt.Fprintf(out, "%s %s%s\n", sign, title, rest)

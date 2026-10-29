@@ -205,7 +205,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 		return err
 	}
 	defer root.Close()
-	processed := false
+	processed, takes := false, false
 	for _, entry := range entries {
 		name := entry.Name()
 		if !requestName.MatchString(name) {
@@ -220,6 +220,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 		result := e.refuse(id, readErr)
 		if readErr == nil && request.ID == id {
 			result = e.applyHost(ctx, request)
+			takes = takes || request.Kind != "network"
 		}
 		if err := writeJSON(filepath.Join(e.StateDir, "results"), id+".json", result, 0o640); err != nil {
 			return err
@@ -229,6 +230,8 @@ func (e Executor) HostApply(ctx context.Context) error {
 	}
 	if processed {
 		os.Remove(filepath.Join(e.StateDir, "security.json"))
+	}
+	if takes {
 		e.retake(ctx, false)
 	}
 	return nil

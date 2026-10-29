@@ -48,12 +48,24 @@ func Probe(ctx context.Context, local netip.AddrPort, peers []netip.AddrPort, li
 	if !local.Addr().IsUnspecified() {
 		ip = local.Addr().AsSlice()
 	}
+	payload := make([]byte, 32)
+	copy(payload, probeMagic)
+	rand.Read(payload[len(probeMagic):])
 	socket, err := net.ListenUDP("udp", &net.UDPAddr{IP: ip, Port: int(local.Port())})
-	listened := err == nil
-	if !listened {
-		if socket, err = net.ListenUDP("udp", &net.UDPAddr{IP: ip}); err != nil {
-			return []string{}, false
+	if err != nil {
+		var senders []*net.UDPConn
+		for _, peer := range peers {
+			if sender, err := net.DialUDP("udp", &net.UDPAddr{IP: ip}, net.UDPAddrFromAddrPort(peer)); err == nil {
+				defer sender.Close()
+				senders = append(senders, sender)
+			}
 		}
+		sendRounds(ctx, listen, func() {
+			for _, sender := range senders {
+				sender.Write(payload)
+			}
+		})
+		return []string{}, false
 	}
 	defer socket.Close()
 	wanted := map[netip.Addr]bool{}
@@ -72,30 +84,33 @@ func Probe(ctx context.Context, local netip.AddrPort, peers []netip.AddrPort, li
 			if err != nil {
 				return
 			}
-			if listened && count == 32 && string(buffer[:len(probeMagic)]) == probeMagic && wanted[from.Addr().Unmap()] {
+			if count == 32 && string(buffer[:len(probeMagic)]) == probeMagic && wanted[from.Addr().Unmap()] {
 				lock.Lock()
 				heard[from.Addr().Unmap().String()] = true
 				lock.Unlock()
 			}
 		}
 	}()
-	payload := make([]byte, 32)
-	copy(payload, probeMagic)
-	rand.Read(payload[len(probeMagic):])
-	for range 5 {
+	sendRounds(ctx, listen, func() {
 		for _, peer := range peers {
 			socket.WriteToUDPAddrPort(payload, peer)
 		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(listen / 10):
-		}
-	}
+	})
 	<-done
 	arrived := []string{}
 	for address := range heard {
 		arrived = append(arrived, address)
 	}
 	slices.Sort(arrived)
-	return arrived, listened
+	return arrived, true
+}
+
+func sendRounds(ctx context.Context, listen time.Duration, round func()) {
+	for range 5 {
+		round()
+		select {
+		case <-ctx.Done():
+		case <-time.After(listen / 10):
+		}
+	}
 }

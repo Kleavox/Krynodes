@@ -16,8 +16,10 @@ import (
 )
 
 const (
-	adminBlob  = "AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q"
-	adminAgain = "Open this server in Krynodes, choose Actions → Add Admin User and run the command it gives within 30 minutes."
+	intruderBlob = "AAAAC3NzaC1lZDI1NTE5AAAAIGVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVl"
+	intruderKey  = "ssh-ed25519 " + intruderBlob + " eve"
+	adminBlob    = "AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q"
+	adminAgain   = "Open this server in Krynodes, choose Actions → Add Admin User and run the command it gives within 30 minutes."
 )
 
 type adminTerminal struct {
@@ -84,6 +86,15 @@ func adminKey(t *testing.T) recipes.AdminKey {
 		t.Fatal(err)
 	}
 	return key
+}
+
+func intruderPrint(t *testing.T) string {
+	t.Helper()
+	key, err := recipes.ParseAdminKey(intruderBlob + ":eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key.Fingerprint()
 }
 
 func stateFileGone(t *testing.T, executor Executor, names ...string) {
@@ -161,7 +172,7 @@ func TestAdminUserMakesTheUserAndQuietsOnlyItsOwnItems(t *testing.T) {
 	if applied := executor.appliedRecipes(); !slices.Equal(applied, []string{"no-root-login", "ssh-keys-only"}) {
 		t.Fatalf("applied %q", applied)
 	}
-	stateFileGone(t, executor, adminFile, "security.json", setupLock)
+	stateFileGone(t, executor, adminFile, "security.json", adminMarkFile)
 	executor.watchServer(context.Background())
 	if events := readEvents(t, executor); len(events) != 0 {
 		t.Fatalf("the admin user warned: %+v", events)
@@ -187,7 +198,10 @@ func TestSetupMakesTheAdminUserFirstAndTurnsRootLoginOffLast(t *testing.T) {
 	executor.watchServer(context.Background())
 	var out strings.Builder
 	tty := &adminTerminal{out: &out, answer: true}
-	tty.during = func() { executor.watchServer(context.Background()) }
+	tty.during = func() {
+		rootFile(t, executor, "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA laptop\n"+intruderKey+"\n")
+		executor.watchServer(context.Background())
+	}
 	options := SetupOptions{Recommended: true, Docker: true, RebootHour: hour(20), Network: "10.88.0.0/24", Admin: "musyaf", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
 	if err := executor.Setup(context.Background(), options, &out, func(string) (bool, bool) { return false, false }); err != nil {
 		t.Fatal(err)
@@ -201,14 +215,15 @@ func TestSetupMakesTheAdminUserFirstAndTurnsRootLoginOffLast(t *testing.T) {
 		}
 		last = at
 	}
-	if events := readEvents(t, executor); len(events) != 0 {
-		t.Fatalf("the watch warned during setup: %+v", events)
+	executor.watchServer(context.Background())
+	if events := readEvents(t, executor); len(events) != 1 || events[0].Kind != "ssh-key" || events[0].Detail["user"] != "root" {
+		t.Fatalf("during setup only the key slipped in may warn: %+v", events)
 	}
 	start, _ := readState[watch.State](executor.StateDir, watchFile)
 	if !slices.Contains(start.Users, "musyaf") || !slices.Contains(start.Sudo, "group:sudo:musyaf") {
 		t.Fatalf("start %+v", start)
 	}
-	stateFileGone(t, executor, setupLock)
+	stateFileGone(t, executor, adminMarkFile)
 }
 
 func TestSetupSkipsTheAdminUserAndRootLoginWithoutAYes(t *testing.T) {
@@ -227,20 +242,50 @@ func TestSetupSkipsTheAdminUserAndRootLoginWithoutAYes(t *testing.T) {
 	}
 }
 
-func TestTheWatchWaitsWhileSetupRuns(t *testing.T) {
+func TestOnlyTheAdminBeingMadePassesWhileItsMarkLasts(t *testing.T) {
 	executor, _ := watchedServer(t)
 	executor.watchServer(context.Background())
-	body, _ := os.ReadFile(executor.path("/etc/passwd"))
-	rootFile(t, executor, "/etc/passwd", string(body)+"eve:x:1002:1002::/home/eve:/bin/bash\n")
-	writeJSON(executor.StateDir, setupLock, setupMark{At: executorNow.Add(-59 * time.Minute)}, 0o600)
-	executor.watchServer(context.Background())
-	if events := readEvents(t, executor); len(events) != 0 {
-		t.Fatalf("warned while setup runs: %+v", events)
+	mark := func(until time.Time) {
+		if err := writeJSON(executor.StateDir, adminMarkFile, adminMark{Name: "musyaf", Keys: []string{adminKey(t).Fingerprint()}, Until: until}, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	writeJSON(executor.StateDir, setupLock, setupMark{At: executorNow.Add(-61 * time.Minute)}, 0o600)
+	mark(executorNow.Add(time.Minute))
+	body, _ := os.ReadFile(executor.path("/etc/passwd"))
+	rootFile(t, executor, "/etc/passwd", string(body)+"musyaf:x:1001:1001::/home/musyaf:/bin/bash\neve:x:1002:1002::/home/eve:/bin/bash\n")
+	joinGroup(t, executor, "sudo", "musyaf")
+	rootFile(t, executor, "/home/musyaf/.ssh/authorized_keys", "ssh-ed25519 "+adminBlob+" laptop\n"+intruderKey+"\n")
 	executor.watchServer(context.Background())
-	if events := readEvents(t, executor); len(events) != 1 {
-		t.Fatalf("an old marker does not hold the watch: %+v", events)
+	if events := readEvents(t, executor); len(events) != 2 || events[0].Detail["key"] != "ED25519 "+intruderPrint(t)+" eve" || events[1].Detail["user"] != "eve" {
+		t.Fatalf("only the admin's own items pass: %+v", events)
+	}
+	mark(executorNow.Add(-time.Second))
+	executor.watchServer(context.Background())
+	if kinds := eventKinds(t, executor); !slices.Equal(kinds, []string{"ssh-key", "user", "ssh-key", "user", "sudo"}) {
+		t.Fatalf("after its mark the admin's items warn: %v", kinds)
+	}
+}
+
+func TestSetupTakesTheStartingPointBeforeItChangesAnything(t *testing.T) {
+	executor, run := setupServer(t)
+	adminRunner(t, &executor, run)
+	sshTakesEffect(run, "root", "musyaf")
+	var out strings.Builder
+	tty := &adminTerminal{out: &out, answer: true}
+	tty.during = func() {
+		rootFile(t, executor, "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA laptop\n"+intruderKey+"\n")
+	}
+	options := SetupOptions{Recommended: true, Admin: "musyaf", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
+	if err := executor.Setup(context.Background(), options, &out, func(string) (bool, bool) { return false, false }); err != nil {
+		t.Fatal(err)
+	}
+	start, _ := readState[watch.State](executor.StateDir, watchFile)
+	if !slices.Contains(start.Users, "musyaf") || slices.ContainsFunc(start.Keys, func(key watch.Key) bool { return key.Fingerprint == intruderPrint(t) }) {
+		t.Fatalf("start %+v", start)
+	}
+	executor.watchServer(context.Background())
+	if events := readEvents(t, executor); len(events) != 1 || events[0].Kind != "ssh-key" || events[0].Detail["user"] != "root" {
+		t.Fatalf("a key slipped in during setup must warn: %+v", events)
 	}
 }
 

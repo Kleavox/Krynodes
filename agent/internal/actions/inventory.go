@@ -33,6 +33,8 @@ var collectTimeout = 30 * time.Second
 
 var copyTimeout = 15 * time.Minute
 
+const bootWindow = 15 * time.Minute
+
 const createdLayout = "2006-01-02 15:04:05 -0700"
 
 const containerFormat = "{{.Names}}\t{{.State}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.project.config_files\"}}\t{{.CreatedAt}}\t{{.Ports}}\t{{.Label \"com.docker.compose.service\"}}"
@@ -162,10 +164,12 @@ func bootStates(show string) map[string]Service {
 			continue
 		}
 		state := Service{State: "stopped"}
+		exited, _ := strconv.ParseInt(fields["ExecMainExitTimestampMonotonic"], 10, 64)
+		early := exited > 0 && exited <= bootWindow.Microseconds()
 		switch {
 		case fields["ConditionResult"] == "no":
 			state.State = "unneeded"
-		case fields["Type"] == "oneshot" && fields["Result"] == "success" && fields["ExecMainCode"] == "1" && fields["ExecMainStatus"] == "0":
+		case (fields["Type"] == "oneshot" || early) && fields["Result"] == "success" && fields["ExecMainCode"] == "1" && fields["ExecMainStatus"] == "0":
 			state.State = "boot"
 			if at, err := time.ParseInLocation("Mon 2006-01-02 15:04:05 MST", fields["ExecMainExitTimestamp"], time.Local); err == nil {
 				since := at.UTC().Format(time.RFC3339)
@@ -410,7 +414,7 @@ func Collect(ctx context.Context, run Runner, remembered []string) (Snapshot, er
 		}
 	}
 	if len(stopped) > 0 {
-		if show, err := step("systemctl", append([]string{"show", "--property=Id,Type,Result,ConditionResult,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp", "--no-pager"}, stopped...)...); err == nil {
+		if show, err := step("systemctl", append([]string{"show", "--property=Id,Type,Result,ConditionResult,ExecMainCode,ExecMainStatus,ExecMainExitTimestamp,ExecMainExitTimestampMonotonic", "--no-pager"}, stopped...)...); err == nil {
 			states := bootStates(string(show))
 			for index, service := range snapshot.Services {
 				if found, ok := states[service.Name]; ok && (service.State == "stopped" || found.State == "boot") {
