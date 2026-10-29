@@ -126,6 +126,22 @@ func TestAJoinKeepsTheStartingPoint(t *testing.T) {
 	}
 }
 
+func TestWireGuardOnThePreparedPortIsNotANewPortWhileItJoins(t *testing.T) {
+	executor, run := networkExecutor(t)
+	rootFile(t, executor, "/etc/passwd", "root:x:0:0:root:/root:/bin/bash\n")
+	rootFile(t, executor, "/etc/group", "sudo:x:27:\n")
+	prepared(t, executor)
+	kernel := func(port int) string { return fmt.Sprintf("udp UNCONN 0 0 0.0.0.0:%d 0.0.0.0:*\n", port) }
+	run.respond["ss -H -tulnp"] = nginxListener + kernel(51821)
+	if now, _ := executor.watchNow(context.Background()); !slices.Equal(now.Ports, []string{"8080/tcp nginx"}) {
+		t.Fatalf("WireGuard on the prepared port %q", now.Ports)
+	}
+	run.respond["ss -H -tulnp"] = nginxListener + kernel(51822)
+	if now, _ := executor.watchNow(context.Background()); !slices.Equal(now.Ports, []string{"32768-60999/udp", "8080/tcp nginx"}) {
+		t.Fatalf("a kernel socket on another port %q", now.Ports)
+	}
+}
+
 func TestAKrynodesActionTakesItsPortsIntoTheStartingPointButNotKeys(t *testing.T) {
 	executor, run := watchedServer(t)
 	executor.watchServer(context.Background())

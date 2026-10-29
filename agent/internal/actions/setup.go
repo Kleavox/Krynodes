@@ -83,10 +83,15 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	mark := func(sign, title, rest string) {
 		fmt.Fprintf(out, "%s %s%s\n", sign, title, rest)
 	}
-	defer e.holdWatch()()
+	e.startWatch(ctx)
 	admin := false
 	if options.Admin != "" {
-		_, admin = e.addAdmin(ctx, options.Admin, options.AdminKeys, options.Terminal, mark)
+		defer e.markAdmin(options.Admin, options.AdminKeys)()
+		var result recipes.AdminResult
+		result, admin = e.addAdmin(ctx, options.Admin, options.AdminKeys, options.Terminal, mark)
+		if result.Group != "" {
+			e.acceptAdmin(options.Admin, result, options.AdminKeys)
+		}
 	}
 	if options.Recommended {
 		state := e.readRecipes()
@@ -152,7 +157,6 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	if admin {
 		e.noRootLogin(ctx, options.Admin, mark)
 	}
-	e.retake(ctx, true)
 	os.Remove(filepath.Join(e.StateDir, "security.json"))
 	return nil
 }

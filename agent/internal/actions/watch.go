@@ -89,10 +89,15 @@ func collapse(ports []string, low, high int) []string {
 	return collapsed
 }
 
-func (e Executor) watchServer(ctx context.Context) {
-	if e.watchHeld() {
-		return
+func (e Executor) startWatch(ctx context.Context) {
+	if _, err := os.Stat(filepath.Join(e.StateDir, watchFile)); errors.Is(err, os.ErrNotExist) {
+		if now, ok := e.watchNow(ctx); ok {
+			writeJSON(e.StateDir, watchFile, now, 0o640)
+		}
 	}
+}
+
+func (e Executor) watchServer(ctx context.Context) {
 	now, ok := e.watchNow(ctx)
 	if !ok {
 		return
@@ -108,7 +113,11 @@ func (e Executor) watchServer(ctx context.Context) {
 	low, high := ephemeral(e.Root)
 	start.Ports = collapse(start.Ports, low, high)
 	journal, _ := e.output(ctx, "journalctl", "-t", "sshd", "-t", "sshd-session", "--since=@"+strconv.FormatInt(e.Now().Add(-network.KnockWindow).Unix(), 10), "-o", "short-unix", "--no-pager", "-q")
+	making, _ := readState[adminMark](e.StateDir, adminMarkFile)
 	for _, change := range append(watch.Compare(start, now), watch.Logins(journal, start, now)...) {
+		if making.covers(e.Now(), change) {
+			continue
+		}
 		parts := []string{change.Item}
 		if change.Kind == "ssh-login" {
 			parts = append(parts, change.Detail["user"], change.Detail["from"], change.Detail["at"])

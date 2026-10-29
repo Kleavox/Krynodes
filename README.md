@@ -870,7 +870,11 @@ passkey gets a command, `sudo kry admin-user <name>`, to run within 30
 minutes. The server shows the keys before writing anything, and the password
 is typed into `passwd` on the server's own terminal: it never passes through
 Krynodes, the agent, an argument, the environment or a file. The changes it
-makes are taken as yours and do not warn.
+makes are taken as yours and do not warn. The server watch keeps running while
+it works and lets through only that user, its sudo group and the keys shown;
+anything else, a key added beside them included, still warns. Setup takes the
+server's starting point before it changes anything and keeps no other change
+as normal (agent 0.7.3).
 
 ### Packages
 

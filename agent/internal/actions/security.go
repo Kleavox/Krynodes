@@ -294,6 +294,9 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 			wireguard = entry.Port
 		}
 	}
+	if prepared := e.readNetwork().Prepared; wireguard == 0 && prepared != nil {
+		wireguard = prepared.Port
+	}
 	probe, _ := readState[probeMark](e.StateDir, probeFile)
 	public := []reporter.Listener{}
 	stub := false
