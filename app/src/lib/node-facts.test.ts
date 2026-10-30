@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { rangeText, systemFacts } from "./node-facts";
 import type { NodeRecord } from "@/types";
 
-const io = (change: Partial<NodeRecord> = {}): NodeRecord => ({
+const serverTwo = (change: Partial<NodeRecord> = {}): NodeRecord => ({
   id: "n1",
-  name: "io",
-  hostname: "io",
+  name: "server-2",
+  hostname: "server-2",
   architecture: "amd64",
   operating_system: "Debian 12",
   agent_version: "0.6.13",
@@ -31,37 +31,41 @@ const io = (change: Partial<NodeRecord> = {}): NodeRecord => ({
 
 describe("the server page's facts", () => {
   it("say what the server is in one line of words", () => {
-    expect(systemFacts(io())).toBe(
+    expect(systemFacts(serverTwo())).toBe(
       "Debian 12 · amd64 · Up 37 days · Reports every minute · Agent 0.6.13",
     );
   });
 
   it("name the host only when it differs from the server", () => {
-    expect(systemFacts(io({ hostname: "io-sg1" }))).toBe(
-      "Debian 12 · amd64 · Up 37 days · Reports every minute · Agent 0.6.13 · Host io-sg1",
+    expect(systemFacts(serverTwo({ hostname: "host-2" }))).toBe(
+      "Debian 12 · amd64 · Up 37 days · Reports every minute · Agent 0.6.13 · Host host-2",
     );
   });
 
   it("never say Not connected or Live since", () => {
-    const line = systemFacts(io({ connected_at: undefined }));
+    const line = systemFacts(serverTwo({ connected_at: undefined }));
     expect(line).not.toContain("Not connected");
     expect(line).not.toContain("Live since");
   });
 
   it("count short spans in hours and minutes, intervals in words", () => {
     expect(
-      systemFacts(io({ uptime_seconds: 1, interval_seconds: 300 })),
+      systemFacts(serverTwo({ uptime_seconds: 1, interval_seconds: 300 })),
     ).toContain("Up 1 second · Reports every 5 minutes");
     expect(
-      systemFacts(io({ uptime_seconds: 5 * 3_600, interval_seconds: 30 })),
+      systemFacts(
+        serverTwo({ uptime_seconds: 5 * 3_600, interval_seconds: 30 }),
+      ),
     ).toContain("Up 5 hours · Reports every 30 seconds");
-    expect(systemFacts(io({ uptime_seconds: 90 * 60 }))).toContain("Up 1 hour");
+    expect(systemFacts(serverTwo({ uptime_seconds: 90 * 60 }))).toContain(
+      "Up 1 hour",
+    );
   });
 
   it("leave out what it does not know", () => {
     expect(
       systemFacts(
-        io({
+        serverTwo({
           uptime_seconds: null,
           agent_version: null,
           operating_system: null,

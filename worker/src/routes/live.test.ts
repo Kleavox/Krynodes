@@ -11,6 +11,7 @@ function setup(bound = true) {
   const { db, sqlite } = createTestDb();
   seedNode(sqlite, { id: NODE });
   const hub: { path: string; body: string | null; owner: string }[] = [];
+  const bumped = { count: 0 };
   const env = {
     DB: db,
     ...(bound
@@ -25,6 +26,10 @@ function setup(bound = true) {
                   body: request.method === "POST" ? await request.text() : null,
                   owner: id.name,
                 });
+                if (request.method !== "GET") {
+                  await new Promise((resolve) => setTimeout(resolve, 5));
+                  bumped.count += 1;
+                }
                 return new Response("from hub");
               },
             }),
@@ -47,7 +52,7 @@ function setup(bound = true) {
       },
       env,
     );
-  return { call, hub };
+  return { call, hub, bumped };
 }
 
 describe("live updates for dashboards", () => {
@@ -92,9 +97,21 @@ describe("live updates for dashboards", () => {
     ]);
   });
 
+  it("moves the hub's lists on before a change answers, so a refetch never gets a stale 304", async () => {
+    const t = setup();
+    const changed = await t.call(
+      "PATCH",
+      `/api/nodes/${NODE}`,
+      {},
+      { name: "server-1-2" },
+    );
+    expect(changed.status).toBe(200);
+    expect(t.bumped.count).toBe(1);
+  });
+
   it("announces every successful dashboard change, and nothing else", async () => {
     const t = setup();
-    await t.call("PATCH", `/api/nodes/${NODE}`, {}, { name: "pivox-2" });
+    await t.call("PATCH", `/api/nodes/${NODE}`, {}, { name: "server-1-2" });
     await t.call(
       "PATCH",
       "/api/nodes/22222222-2222-4222-8222-222222222222",

@@ -35,6 +35,7 @@ import type {
   PackagesResponse,
   ProposalRecord,
   QuarantineView,
+  DenialsView,
   TailscaleResponse,
   RecentMetrics,
   ServicesResponse,
@@ -239,6 +240,7 @@ export interface SetupChoice {
   docker: boolean;
   hour: number;
   network: boolean;
+  confine?: boolean;
   adminUser?: boolean;
   adminName?: string;
 }
@@ -248,6 +250,7 @@ export interface EnrollDefaults {
   docker: boolean;
   hour: number;
   network: boolean;
+  confine: boolean;
   keys: AdminKey[];
 }
 
@@ -289,6 +292,15 @@ export const useSaveQuarantineSettings = () =>
       ),
     [queryKeys.quarantineSettings],
   );
+
+export function useDenials(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.denials(id),
+    queryFn: () =>
+      apiFetch<DenialsView>(`/api/nodes/${encodeURIComponent(id)}/denials`),
+    enabled,
+  });
+}
 
 export function useQuarantine(id: string, enabled = true) {
   return useQuery({

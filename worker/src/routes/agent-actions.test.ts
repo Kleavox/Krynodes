@@ -25,7 +25,7 @@ async function setup() {
       .run(id);
     sqlite
       .prepare(
-        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', 'adguard', 'running')",
+        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', 'resolver', 'running')",
       )
       .run(id);
   }
@@ -73,7 +73,7 @@ async function setup() {
       targets: nodes.map((nodeId) => ({
         nodeId,
         kind: "docker" as const,
-        name: "adguard",
+        name: "resolver",
       })),
       requestedBy: "owner@example.test",
       now: Date.now(),
@@ -110,7 +110,7 @@ describe("agent service actions", () => {
       expect.objectContaining({
         id: action!.id,
         kind: "docker",
-        name: "adguard",
+        name: "resolver",
         action: "restart",
       }),
     ]);
@@ -323,7 +323,7 @@ describe("removals from the dashboard", () => {
       .prepare(
         "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, ?, '/var/lib/kry-exec/compose/' || ?, 1, 1, 1, 0, datetime('now'))",
       )
-      .run(A, "kuma", "kuma");
+      .run(A, "panel", "panel");
     t.sqlite
       .prepare(
         "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, ?, '/opt/' || ?, 1, 1, 1, 0, datetime('now'))",
@@ -366,10 +366,10 @@ describe("removals from the dashboard", () => {
         )
         .all(A);
     await finish("purge", "compose", "shop", false);
-    expect(stacks()).toEqual([{ project: "kuma" }, { project: "shop" }]);
-    await finish("purge", "compose", "kuma", true);
+    expect(stacks()).toEqual([{ project: "panel" }, { project: "shop" }]);
+    await finish("purge", "compose", "panel", true);
     expect(stacks()).toEqual([{ project: "shop" }]);
-    await finish("remove", "docker", "adguard", true);
+    await finish("remove", "docker", "resolver", true);
     expect(containers()).toEqual([]);
   });
 });
@@ -384,8 +384,8 @@ describe("the Removed list", () => {
         services: [],
         removed: [
           {
-            project: "kuma",
-            directory: "/var/lib/kry-exec/compose/kuma",
+            project: "panel",
+            directory: "/var/lib/kry-exec/compose/panel",
             removedAt: "2026-10-05T10:00:00.000Z",
           },
         ],
@@ -397,8 +397,8 @@ describe("the Removed list", () => {
         .all(),
     ).toEqual([
       {
-        project: "kuma",
-        directory: "/var/lib/kry-exec/compose/kuma",
+        project: "panel",
+        directory: "/var/lib/kry-exec/compose/panel",
         removed_at: "2026-10-05T10:00:00.000Z",
       },
     ]);
@@ -408,14 +408,14 @@ describe("the Removed list", () => {
     const t = await setup();
     t.sqlite
       .prepare(
-        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'kuma', '/var/lib/kry-exec/compose/kuma', 1, 1, 1, 0, datetime('now'))",
+        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'panel', '/var/lib/kry-exec/compose/panel', 1, 1, 1, 0, datetime('now'))",
       )
       .run(A);
     const finish = async (action: "remove" | "restore" | "purge") => {
       const batch = createBatch(t.db, {
         action,
         mode: "parallel",
-        targets: [{ nodeId: A, kind: "compose", name: "kuma" }],
+        targets: [{ nodeId: A, kind: "compose", name: "panel" }],
         requestedBy: "owner@example.test",
         now: Date.now(),
       });
@@ -438,14 +438,14 @@ describe("the Removed list", () => {
       t.sqlite.prepare("SELECT project, directory FROM removed_stacks").all();
     await finish("remove");
     expect(removed()).toEqual([
-      { project: "kuma", directory: "/var/lib/kry-exec/compose/kuma" },
+      { project: "panel", directory: "/var/lib/kry-exec/compose/panel" },
     ]);
     expect(t.sqlite.prepare("SELECT project FROM stacks").all()).toEqual([]);
     await finish("restore");
     expect(removed()).toEqual([]);
     t.sqlite
       .prepare(
-        "INSERT INTO removed_stacks (node_id, project, directory, removed_at) VALUES (?, 'kuma', '/x', '2026-10-05T10:00:00.000Z')",
+        "INSERT INTO removed_stacks (node_id, project, directory, removed_at) VALUES (?, 'panel', '/x', '2026-10-05T10:00:00.000Z')",
       )
       .run(A);
     await finish("purge");

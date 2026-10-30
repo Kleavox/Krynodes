@@ -389,9 +389,14 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		}
 		return installed(fresh), nil
 	case "firewall":
+		if args["closed"] == "1" {
+			return closeFirewall(ctx, env, args["ports"], args[NetworkPort])
+		}
 		return firewall(ctx, env, args["ports"], args[NetworkPort])
 	case "free-port-53":
 		return freePort53(ctx, env)
+	case "confinement":
+		return confineOn(ctx, env)
 	}
 	return nil, fmt.Errorf("unknown recipe %q", id)
 }
@@ -626,7 +631,12 @@ func undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 			return err
 		}
 		return env.run(ctx, "systemctl", "disable", "--now", "fail2ban")
+	case "confinement":
+		return confineOff(ctx, env, saved)
 	case "firewall":
+		if saved["closed"] == "1" {
+			return undoClosed(ctx, env, saved)
+		}
 		if Detect(env).Family == RHEL {
 			return undoFirewalld(ctx, env, saved)
 		}

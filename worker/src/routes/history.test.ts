@@ -37,7 +37,7 @@ function setup() {
   const { db, sqlite } = createTestDb();
   for (const id of [A, B, C]) seedNode(sqlite, { id });
   seedNode(sqlite, { id: FOREIGN, owner: "someone-else" });
-  sqlite.prepare("UPDATE nodes SET name = 'pivox' WHERE id = ?").run(A);
+  sqlite.prepare("UPDATE nodes SET name = 'server-1' WHERE id = ?").run(A);
   const env = {
     DB: db,
     PUBLIC_ORIGIN: "https://kry.example.test",
@@ -72,7 +72,7 @@ function setup() {
         values.position ?? 0,
         values.node ?? A,
         values.kind ?? "docker",
-        values.name ?? "adguard",
+        values.name ?? "resolver",
         values.action ?? "restart",
         values.status ?? "done",
         values.at,
@@ -129,7 +129,7 @@ describe("GET /api/history", () => {
         id: "i1",
         checkName: "Blog",
         nodeId: A,
-        nodeName: "pivox",
+        nodeName: "server-1",
         summary: "Blog is down: HTTP 502",
       },
     });
@@ -168,14 +168,14 @@ describe("GET /api/history", () => {
     });
     t.act("named", { at: at(1), kind: "compose", name: "listmonk" });
     t.act("elsewhere", { at: at(2), node: B });
-    t.check("c1", "Umami", "HTTP", "https://umami.example.test");
-    t.incident("i1", "c1", at(3), null, "Umami is down: HTTP 502");
+    t.check("c1", "Tracker", "HTTP", "https://tracker.example.test");
+    t.incident("i1", "c1", at(3), null, "Tracker is down: HTTP 502");
     const find = async (q: string) =>
       keys(await t.page(`?q=${encodeURIComponent(q)}`));
     expect(await find("port 53")).toEqual(["port"]);
     expect(await find("LISTMONK")).toEqual(["named"]);
-    expect(await find("pivox")).toEqual(["i1:opened", "named", "port"]);
-    expect(await find("umami")).toEqual(["i1:opened"]);
+    expect(await find("server-1")).toEqual(["i1:opened", "named", "port"]);
+    expect(await find("tracker")).toEqual(["i1:opened"]);
     expect(await find("HTTP 502")).toEqual(["i1:opened"]);
   });
 
@@ -271,30 +271,30 @@ describe("GET /api/history", () => {
 });
 
 describe("failed, not fixed", () => {
-  function umami() {
+  function tracker() {
     const t = setup();
     t.sqlite
       .prepare(
         `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, containers)
-         VALUES (?, 'umami', '/var/lib/kry-exec/compose/umami', 1, 2, 1, 1, datetime('now'), '["umami-app-1","umami-db-1"]')`,
+         VALUES (?, 'tracker', '/var/lib/kry-exec/compose/tracker', 1, 2, 1, 1, datetime('now'), '["tracker-app-1","tracker-db-1"]')`,
       )
       .run(A);
     t.sqlite
       .prepare(
         `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at)
-         VALUES ('umami.example.test', ?, 'umami', 'app', 3000, 'allow', 'o', '2026-10-01')`,
+         VALUES ('tracker.example.test', ?, 'tracker', 'app', 3000, 'allow', 'o', '2026-10-01')`,
       )
       .run(A);
     t.act("deploy", {
       at: at(24),
       kind: "compose",
-      name: "umami",
+      name: "tracker",
       action: "deploy",
       status: "failed",
       output: "exit 1\nport 3000 is already allocated",
     });
-    t.check("web", "Umami", "HTTP", "https://umami.example.test/");
-    t.incident("i1", "web", at(26), null, "Umami is down: HTTP 502");
+    t.check("web", "Tracker", "HTTP", "https://tracker.example.test/");
+    t.incident("i1", "web", at(26), null, "Tracker is down: HTTP 502");
     const attention = async () =>
       (await (await t.call("GET", "/api/history/attention")).json()) as {
         items: {
@@ -306,14 +306,14 @@ describe("failed, not fixed", () => {
   }
 
   it("lists a failed deploy with the open incident on the stack's address", async () => {
-    const t = umami();
+    const t = tracker();
     expect((await t.attention()).items).toEqual([
       expect.objectContaining({
         action: expect.objectContaining({ id: "deploy" }),
         incident: {
           id: "i1",
-          checkName: "Umami",
-          summary: "Umami is down: HTTP 502",
+          checkName: "Tracker",
+          summary: "Tracker is down: HTTP 502",
           startedAt: at(26),
         },
       }),
@@ -322,17 +322,17 @@ describe("failed, not fixed", () => {
 
   it("counts a later done action on the same target as the fix, never one on another target", async () => {
     const t = setup();
-    for (const name of ["adguard", "nginx"]) {
+    for (const name of ["resolver", "nginx"]) {
       t.sqlite
         .prepare(
           "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', ?, 'stopped')",
         )
         .run(A, name);
     }
-    t.act("f1", { at: at(10), name: "adguard", status: "failed" });
-    t.act("d1", { at: at(11), name: "adguard", status: "done" });
+    t.act("f1", { at: at(10), name: "resolver", status: "failed" });
+    t.act("d1", { at: at(11), name: "resolver", status: "done" });
     t.act("f2", { at: at(12), name: "nginx", status: "failed" });
-    t.act("d2", { at: at(13), name: "adguard", status: "done" });
+    t.act("d2", { at: at(13), name: "resolver", status: "done" });
     t.act("d3", { at: at(9), name: "nginx", status: "done" });
     const items = (
       (await (await t.call("GET", "/api/history/attention")).json()) as {
@@ -381,7 +381,7 @@ describe("failed, not fixed", () => {
   });
 
   it("answers 404 when hiding another owner's action and leaves it alone", async () => {
-    const t = umami();
+    const t = tracker();
     t.act("theirs", { at: at(30), node: FOREIGN, status: "failed" });
     expect((await t.call("POST", "/api/history/theirs/hide")).status).toBe(404);
     expect(
@@ -392,7 +392,7 @@ describe("failed, not fixed", () => {
   });
 
   it("hides an action, recording who and when, and it leaves the list", async () => {
-    const t = umami();
+    const t = tracker();
     expect((await t.call("POST", "/api/history/deploy/hide")).status).toBe(204);
     const row = t.sqlite
       .prepare("SELECT hidden_at, hidden_by FROM actions WHERE id = 'deploy'")

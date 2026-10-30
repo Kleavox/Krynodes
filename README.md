@@ -48,7 +48,7 @@ pnpm native:check  # go test, vet, build, deadcode
 
 CI (`.github/workflows/ci.yml`) runs the same steps on every push to any
 branch. Only on `main` does its `deploy` job then ship the Worker to
-`kry.kleavox.xyz` when the app or Worker changed, and only `main` releases the
+your dashboard's domain when the app or Worker changed, and only `main` releases the
 agent. **Run workflow** on the Validate workflow deploys by hand.
 
 ## Production
@@ -105,9 +105,10 @@ The Enroll dialog can also set the server up in the same command: **Install
 Docker**, **Join Private Network** and **Add Admin User** (with this server's
 user name). They start from **Settings → Enroll defaults**, and Docker and the
 private network can change until the server enrolls. **Apply recommended
-protections** (with a restart hour in your time) is set only in Enroll
-defaults and applies to every new server. After enrolling, the script runs
-`kry setup`, which prints what it found and did:
+protections** (with a restart hour in your time) and **Turn On SELinux or
+AppArmor** (unticked at first) are set only in Enroll defaults and apply to
+every new server. After enrolling, the script runs `kry setup`, which prints
+what it found and did:
 
 ```text
 Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
@@ -115,19 +116,21 @@ Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
 ✓ Restart when needed · 20:00 UTC
 – SSH keys only skipped: first let root or a sudo user log in over SSH with a key
 ✓ Block repeated login failures
-Keep 80/tcp (nginx) open to everyone? [y/N] y
-✓ Firewall · also open: 80/tcp
+✓ Firewall · closed
+✓ SELinux · enforcing
 ✓ Docker 28.4.0 with Compose
 ```
 
-The firewall keeps SSH open and asks about every other port that listens on a
-public address. The DHCP client (68, 546/udp), mDNS (5353/udp) and LLMNR
-(5355) need no rule and are not asked about. Without a terminal to ask on, the
-open ports stay open. A firewall that is already on is left as it is.
+From agent 0.7.4 the firewall closes and asks nothing: only SSH, ICMP and the
+private network's port stay open, and ports Docker publishes close too. Open
+what a server needs afterwards in its Firewall section. A firewall that is
+already on is adopted: its allow rules stay open as open ports
+(`✓ Firewall · closed · kept open: 80/tcp`). A server whose SELinux is switched
+off prints `– SELinux: restart to finish`; Krynodes never restarts it itself.
 
 A step that fails is printed and the next one runs; the server is enrolled
 either way, and the dashboard can turn the rest on later. `sudo kry setup
---recommended --docker --reboot-hour 20` runs it again by hand.
+--recommended --confine --docker --reboot-hour 20` runs it again by hand.
 
 Supported systems:
 
@@ -210,11 +213,11 @@ command. One passkey confirmation covers 5 minutes of such work. An owner with
 no trusted passkey yet is not asked.
 
 Incident mail goes out the moment a failure is confirmed, one mail per server
-for that report ("pivox: 2 checks down — Health, API"). A server that stops
-reporting mails at once too ("pivox: offline"), at the moment the dashboard
+for that report ("<server>: 2 checks down — <check>, <check>"). A server that stops
+reporting mails at once too ("<server>: offline"), at the moment the dashboard
 turns it Offline: nothing heard for three intervals, at least 90 seconds. The
 agent's keepalive ping counts, so a report Krynodes fails to store does not
-make a live server offline. A disk that reaches 95% mails once ("pivox: disk
+make a live server offline. A disk that reaches 95% mails once ("<server>: disk
 96% full"), and again only after it went below 90%; the disk is the fullest of
 `/` and Docker's data folder (`/var/lib/docker`, or its `data-root`), so
 Docker on its own volume counts. Each
@@ -420,7 +423,7 @@ a restart in the middle of a package install leaves the package manager broken.
 Everything in flight is visible to everyone, named by the device that signed
 it (or by the person, when no device did): the server reads
 "Restarting · Owner laptop · 1:12" on every page until its agent reports
-again, its services wait with their buttons hidden ("Waiting for pivox to come
+again, its services wait with their buttons hidden ("Waiting for <server> to come
 back"), a service being restarted shows which device asked and for how long,
 and the hourglass button in the top bar lists what runs or waits now.
 **History** (above) keeps the actions of the last 90 days, with the device,
@@ -524,11 +527,11 @@ it pulls, starts and health-checks the stack like a deploy. Do not paste
 passwords you use elsewhere: the text is kept with the action in History.
 
 **Stack and container names.** The Name is what Services, its dialogs and the
-command palette show, written as you like (`AdGuard Home`, up to 64 characters);
-its dashed form (`adguard-home`) is the folder and the Docker project. Once the
+command palette show, written as you like (up to 64 characters);
+its dashed form (lower case, spaces as dashes) is the folder and the Docker project. Once the
 compose file is pasted, **Container Names** under the Name lists what each
 container will be called: the dashed name for a stack of one service,
-`<stack>-<service>` for several (`paperless-db`), or the file's own
+`<stack>-<service>` for several, or the file's own
 `container_name`. Change any of them; an empty box takes the suggestion. A
 service that runs more than one copy keeps Docker's numbers. The names live in
 the stack's `krynodes.json` and are written into Krynodes' own compose files,
@@ -541,7 +544,7 @@ follow, and a Web address keeps answering on the old name as an alias. Agent
 
 **A name belongs to one stack.** Container Names refuses a name that another
 stack on the server already uses for a container or a service, and says whose
-it is ("uptime-kuma is a service of Monitoring on io."); names ending in
+it is ("<name> is a service of <stack> on <server>."); names ending in
 `.<stack>` are kept for Krynodes. Every service also answers to
 `<service>.<stack>` on its networks, and Web addresses route to that name, so
 two stacks with a service of the same name never get each other's traffic. An
@@ -587,7 +590,7 @@ these:
   every server enrolled then.
 - With one or two trusted passkeys, one approval adds or removes a passkey.
   With more than two, two approvals from two different passkeys.
-- Each passkey is one line saying where it acts ("All Servers", "io, pivox").
+- Each passkey is one line saying where it acts ("All Servers", or the servers' names).
   Clicking it (or its ⋯ **Servers**) shows its fingerprint, whether it is
   synced, when it was last used, and a checklist of the servers it reaches.
   A server's own ⋯ menu, on Fleet and on the server page, has **Passkeys**, the
@@ -605,7 +608,7 @@ these:
   signs the exact change; the dialog shows new passkeys' key fingerprints for
   you to compare with the new device's screen.
 - **Recent changes**, under the devices, lists every closed change
-  newest first ("Give Budi access to pivox"): its outcome, who opened and
+  newest first ("Give <passkey> access to <server>"): its outcome, who opened and
   approved it and when, and any server that has not taken it yet.
 - Every approval, session and confirmation needs a passkey that you unlock
   with your fingerprint, your face or a PIN: Windows Hello, Google Password
@@ -664,7 +667,7 @@ stored data, not a live takeover.
   Published ports are bound to `127.0.0.1`, and the server can open them:
   replies to a connection the server started come back, but the stack cannot
   start one to the server. **Reach this server on**
-  lists the ports the stack may open on its server, such as `3000/tcp`, at
+  lists the ports the stack may open on its server, written as `number/tcp`, at
   most 16; the rule covers every network of that stack only, is signed with
   the compose file and goes when the list is emptied or the stack removed.
   The rule is in place before the stack starts, so an app
@@ -787,14 +790,14 @@ own address (`/settings/usage`).
 
 **Protections** on the server page, each with Turn off (Undo):
 
-| Protection                    | What it does                                                                                                                                               |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Automatic security updates    | `unattended-upgrades` (Debian, Ubuntu); a daily Krynodes timer running `dnf -y upgrade --security` (RHEL family)                                           |
-| Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action, a protection or a Docker install         |
-| SSH keys only                 | no password login over SSH; offered only when root or a sudo user can log in with a key                                                                    |
-| Block repeated login failures | fail2ban for SSH (from EPEL on RHEL, Rocky, AlmaLinux, Oracle Linux and CentOS Stream)                                                                     |
-| Firewall                      | ufw or firewalld: every port SSH listens on (its config, `ssh.socket`, its open sockets) and the ports you tick stay open; Docker's ports are not affected |
-| Free port 53                  | stops systemd-resolved holding port 53, for a DNS server such as AdGuard; refused when systemd-resolved knows no upstream DNS server                       |
+| Protection                    | What it does                                                                                                                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Automatic security updates    | `unattended-upgrades` (Debian, Ubuntu); a daily Krynodes timer running `dnf -y upgrade --security` (RHEL family)                                                                              |
+| Restart when needed           | restarts at the hour you pick (your time) when an update asks for it, at most once a day, never during an action, a protection or a Docker install                                            |
+| SSH keys only                 | no password login over SSH; offered only when root or a sudo user can log in with a key                                                                                                       |
+| Block repeated login failures | fail2ban for SSH (from EPEL on RHEL, Rocky, AlmaLinux, Oracle Linux and CentOS Stream)                                                                                                        |
+| Firewall                      | ufw or firewalld, closed: every port SSH listens on (its config, `ssh.socket`, its open sockets), the private network's port, ICMP and the ports you open; Docker's published ports close too |
+| Free port 53                  | stops systemd-resolved holding port 53, for a DNS server on the server; refused when systemd-resolved knows no upstream DNS server                                                            |
 
 Each one writes its own drop-in file and never edits yours; Turn off removes
 it, and the packages Krynodes installed for it. A protection that fails half
@@ -813,6 +816,95 @@ that will run a DNS server.
 and is offered only once a sudo user other than root logs in with a key. It is
 not part of Apply recommended, since root may be a server's only key login.
 While it is off, Security shows "Root can log in over SSH." as a note.
+
+**Firewall** (agent 0.7.4). Turn On closes the firewall: incoming connections
+are refused except every port SSH listens on, the private network's port, ICMP
+and the open ports you choose. Ports Docker publishes are closed too, by a
+Krynodes chain in `DOCKER-USER` (`KRY-PUBLISH`, put back at boot before Docker
+starts), unless that port is open from that source; replies, and connections
+containers make themselves, are untouched. A firewall turned on before 0.7.4,
+or by someone else, shows **On · open ports are not managed by Krynodes** and
+offers **Close Everything Else**: its allow rules are listed ticked (untick one
+to close it) and become open ports, and the dialog names every port Docker
+publishes that will close. Turn Off puts back the ufw or firewalld state
+Krynodes found and removes the chain. If SSH is not let in once the firewall is
+up, Krynodes turns it back off and says so.
+
+**Open Ports.** While the firewall is closed, the server page has a
+**Firewall** section under Security: one row per open port, who may reach it
+(Everyone, Tailscale, or one to eight addresses or ranges you type) and what
+listens on it. SSH and the private network's port are locked rows, always open.
+**Open Port**, **Change From** and **Close Port** each take your passkey and
+show in History. A rule added outside Krynodes (`ufw allow`,
+`firewall-cmd --add-port`) is a warning (see Quarantine); **It Was Me** keeps it
+as an open port, **Put Back** removes it. A Full access stack whose published
+port is closed says so under What This Stack Opens.
+
+**SELinux and AppArmor** (agent 0.7.4). Protections has one more row, named
+after what the server has: SELinux on RHEL-family servers, AppArmor on Debian
+and Ubuntu, never both. It is not part of Apply recommended. Permissive or off
+is a grey note on Security, not a finding.
+
+- **Let Krynodes Manage** (already enforcing) changes nothing on the server.
+  **Turn On** goes straight to enforcing: SELinux from Permissive at once; from
+  Disabled it is set to enforcing and finishes at the next restart (the first
+  boot labels every file and restarts once more). AppArmor enforces its
+  profiles in complain mode, is installed and started when it is missing, or
+  is turned on in the boot settings when the kernel starts without it. The row
+  says _restart to finish_; Krynodes never restarts the server.
+- Before SELinux enforces, Krynodes labels every SSH port other than 22 and
+  the home folders outside `/home` of users who log in with a key, installing
+  `semanage` (`policycoreutils-python-utils`) when it needs it, so SSH keeps
+  working. When it cannot, it refuses and says why. It edits only the
+  `SELINUX=` line of `/etc/selinux/config`, keeping the old value, and never
+  sets booleans, adds policy modules or runs `audit2allow`.
+- **Undo** is one click: SELinux goes back to how Krynodes found it
+  (permissive at most, or enforcing when it already was), AppArmor's profiles
+  go back to complain mode. AppArmor is never turned off.
+- **Docker under SELinux.** Docker installed while Krynodes manages SELinux
+  starts with `selinux-enabled`. On a server that runs Docker already,
+  **Confine Containers** (the row's ⋯) adds it to `daemon.json`, restarts
+  Docker and starts every stack again; the dialog names them. **Stop Confining
+  Containers** takes it out again. Where Docker confines, each stack gets its
+  own SELinux level and its folder is labelled for it. A Full access service
+  that needs the server (a folder outside its own, `privileged`, devices,
+  `pid: host`, `network_mode: host`, the Docker socket) runs with
+  `label=disable` and is listed under What This Stack Opens as _Not confined by
+  SELinux_. Krynodes never adds `:z` or `:Z`.
+- Security lists containers started outside Krynodes that run unconfined
+  (AppArmor or seccomp `unconfined`, or no SELinux label while Docker confines)
+  as a warning.
+- **Turn On SELinux or AppArmor** in Enroll defaults, and `kry setup
+--confine`, do the same while a server enrolls.
+
+**Denials.** Every 30 seconds the agent reads new denials, from
+`/var/log/audit/audit.log` (following rotation) or from the kernel log when
+auditd does not run. The first read starts at the end, so old denials never
+count. The row's ⋯ **Denials** lists the last 24 hours, at most 20 lines: time,
+program, what it wanted and the stack. They travel with the agent's heartbeat
+and the Worker holds them in memory; nothing about them is written to D1.
+Where Krynodes manages SELinux or AppArmor, a denial acts:
+
+| Denied                                                | What Krynodes does                                                                      |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| A container of a Contained stack                      | stops that stack, which stays stopped after a reboot; the server stays trusted          |
+| A container of a Full access stack                    | quarantines the server; within 10 minutes of that stack's start it stops only the stack |
+| A container Krynodes did not start                    | quarantines the server                                                                  |
+| A container that cannot be traced to a stack          | a warning                                                                               |
+| A host service (sshd, a web server installed by hand) | a warning; It Was Me accepts that program for good                                      |
+| Anything while a package manager runs, or snapd       | shown only                                                                              |
+
+SELinux set to permissive or off, a policy loaded outside a package install, a
+new local policy module (even during an update: packages install theirs at a
+lower priority), auditd stopped, AppArmor turned off, or a profile moved to
+complain or unloaded, each outside Krynodes, quarantine the server at once.
+`setsebool -P` and `semanage` load the policy, so they count too: to change a
+boolean or a label for good, Undo first, change it, then Let Krynodes Manage
+again. Krynodes' own Turn On, Undo and Confine Containers write a mark first,
+so they never count. One event per stack or program an hour. **Blind spots:**
+`dontaudit` rules hide some denials, unconfined processes raise none, and a
+boolean changed until the next restart (`setsebool` without `-P`) is not
+watched.
 
 **Lock down server** (server menu) stops containers that publish ports to the
 internet and the tunnel, and turns on SSH keys only when a key is set up.
@@ -1023,6 +1115,29 @@ agent 0.7.0.
   first. **Disconnect** erases every piece and leaves your rules in the policy
   file; delete the trust credential in the admin console too.
 
+### Exit Node and Tailscale DNS
+
+On a server where Tailscale runs, its card on the server page has two more
+rows (agent 0.7.4), each a checkbox, Review and your passkey.
+
+- **Exit Node** turns on IP forwarding in its own sysctl file, advertises the
+  server as an exit node, and lets forwarded traffic through a firewall
+  Krynodes closed (firewalld masquerades in the default-route zone). When
+  Tailscale is connected in Krynodes, its policy lines approve exit nodes
+  tagged `tag:kry`; otherwise approve it in Tailscale's admin console
+  (Machines → the server → Edit route settings). Traffic through it counts
+  against the server's bandwidth, and a device using it loses the internet
+  while the server is down, until it picks no exit node. Off takes it back;
+  forwarding stays on at runtime, since Docker needs it. A quarantined server
+  stops advertising.
+- **Tailscale DNS** lets the server look names up through Tailscale, so it
+  finds devices and servers by their tailnet names. It must still reach
+  Krynodes' own host within 20 seconds, or it is turned back off and says why.
+  A DNS server on the server keeps working; its own lookups go through
+  Tailscale. Sign In leaves Tailscale DNS off.
+
+Either row shows `--` when the server cannot read it.
+
 ### Quarantine
 
 What Krynodes does on its own when a server looks broken into. It only ever
@@ -1030,9 +1145,10 @@ takes access away; giving access back always asks for your passkey. From
 agent 0.7.0.
 
 - **A warning first.** A new SSH key, a sign-in with a key not from Krynodes, a
-  new user or sudo rule, a port opened on a public address outside Krynodes,
-  Krynodes' firewall rule removed, or an agent that goes quiet while its peers
-  still see the server: the server page shows an amber strip and a mail goes
+  new user or sudo rule, a port opened on a public address outside Krynodes, a
+  firewall rule added outside Krynodes, Krynodes' firewall rule removed, SELinux
+  or AppArmor denying a host service, or an agent that goes quiet while its
+  peers still see the server: the server page shows an amber strip and a mail goes
   out. **Cut Off Now** quarantines it at once; **It Was Me** (passkey)
   takes the change as yours. Unanswered, the server is cut off after the time
   in Settings, Quarantine (15 minutes by default, or Warn Only). Joining or
@@ -1065,7 +1181,11 @@ agent 0.7.0.
   the server is clean.
 - **A Contained stack that knocks** (tries places it was not given) is stopped
   and stays stopped after a reboot, while the server stays trusted. What Runs
-  shows what it tried, with Logs and Start; change its secrets first.
+  shows what it tried, with Logs and Start; change its secrets first. A stack
+  stopped because SELinux or AppArmor denied it shows what was wanted.
+- **SELinux or AppArmor changed outside Krynodes**, where Krynodes manages it,
+  quarantines the server at once, and so does a denial of a Full access stack
+  or of a container Krynodes did not start (see Denials).
 - **Settings, Quarantine** holds the four choices. A stricter one reaches the
   servers at once; a looser one asks for your passkey and travels in the
   next signed network document.
@@ -1103,8 +1223,8 @@ cleanup writes about 3,500 rows a day.
 
 ## Status page
 
-A second Worker, `stats` (`worker/wrangler.stats.jsonc`), serves a public page at
-`stats.kleavox.xyz` from the same D1 database. It lists only the checks turned
+A second Worker, `stats` (`worker/wrangler.stats.jsonc`), serves a public page on
+its own domain from the same D1 database. It lists only the checks turned
 on under **Status page** in a check's menu: name, optional public note, current
 state, 90 days of incident-based uptime, and recent incidents with the updates
 posted on them, newest first. It never shows a check's kind, target, server or

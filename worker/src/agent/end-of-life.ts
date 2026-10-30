@@ -75,6 +75,19 @@ export async function readEndOfLife(db: D1Database): Promise<EndOfLife> {
   }
 }
 
+const kept = new WeakMap<D1Database, { at: number; table: EndOfLife }>();
+
+export async function cachedEndOfLife(
+  db: D1Database,
+  now: number,
+): Promise<EndOfLife> {
+  const found = kept.get(db);
+  if (found && now - found.at < 10 * 60_000) return found.table;
+  const table = await readEndOfLife(db);
+  kept.set(db, { at: now, table });
+  return table;
+}
+
 export async function runEndOfLifeCheck(db: D1Database): Promise<void> {
   const table = await readEndOfLife(db);
   const products = Object.values(PRODUCTS);

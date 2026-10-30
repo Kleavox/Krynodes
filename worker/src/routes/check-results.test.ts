@@ -199,24 +199,24 @@ describe("GET /api/incidents/:id", () => {
     });
   });
 
-  function umami() {
+  function tracker() {
     const { db, sqlite } = createTestDb();
     seedNode(sqlite, { id: "n1" });
     sqlite
       .prepare(
-        "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('web', 'n1', 'Umami', 'HTTP', 'https://umami.example.test/')",
+        "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('web', 'n1', 'Tracker', 'HTTP', 'https://tracker.example.test/')",
       )
       .run();
     sqlite
       .prepare(
         `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, containers)
-         VALUES ('n1', 'umami', '/var/lib/kry-exec/compose/umami', 1, 2, 1, 1, datetime('now'), '["umami-app-1","umami-db-1"]')`,
+         VALUES ('n1', 'tracker', '/var/lib/kry-exec/compose/tracker', 1, 2, 1, 1, datetime('now'), '["tracker-app-1","tracker-db-1"]')`,
       )
       .run();
     sqlite
       .prepare(
         `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at)
-         VALUES ('umami.example.test', 'n1', 'umami', 'app', 3000, 'allow', 'o', '2026-10-01')`,
+         VALUES ('tracker.example.test', 'n1', 'tracker', 'app', 3000, 'allow', 'o', '2026-10-01')`,
       )
       .run();
     const opened = Date.now() - 30 * 60_000;
@@ -245,13 +245,13 @@ describe("GET /api/incidents/:id", () => {
   }
 
   it("lists the actions on what its check watches, oldest first", async () => {
-    const t = umami();
-    t.act("deploy", "compose", "umami", "deploy", -2);
+    const t = tracker();
+    t.act("deploy", "compose", "tracker", "deploy", -2);
     t.act("blog", "compose", "blog", "restart", 5);
     t.act("reboot", "host", "server", "reboot", 10);
-    t.act("logs", "compose", "umami", "logs", 12);
-    t.act("old", "compose", "umami", "restart", -120);
-    t.act("container", "docker", "umami-app-1", "restart", 15);
+    t.act("logs", "compose", "tracker", "logs", 12);
+    t.act("old", "compose", "tracker", "restart", -120);
+    t.act("container", "docker", "tracker-app-1", "restart", 15);
     const body = (await (await open(t.db, "i1")).json()) as {
       actions: { id: string }[];
     };
@@ -263,7 +263,7 @@ describe("GET /api/incidents/:id", () => {
   });
 
   it("tells its last good check before it opened", async () => {
-    const t = umami();
+    const t = tracker();
     seedResult(t.sqlite, "web", t.minutes(-12), "UP", 192);
     seedResult(t.sqlite, "web", t.minutes(-2), "DOWN", null);
     seedResult(t.sqlite, "web", t.minutes(10), "UP", 40);

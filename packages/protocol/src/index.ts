@@ -91,10 +91,12 @@ export {
 export { summarizeChange, type ChangeSummary } from "./summary";
 export {
   agentHasFeatures,
+  agentHasSecurity,
   agentSupported,
   compareVersions,
   FEATURE_AGENT,
   MIN_AGENT_VERSION,
+  SECURITY_AGENT,
 } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
 export {
@@ -135,6 +137,22 @@ export const checkResultSchema = z.object({
   since: z.string().datetime().nullable().optional(),
 });
 
+export const denialsSchema = z.strictObject({
+  count: z.number().int().nonnegative(),
+  lines: z
+    .array(
+      z.strictObject({
+        at: z.string().datetime(),
+        program: z.string().max(64),
+        wanted: z.string().max(300),
+        stack: z.string().max(64).optional(),
+      }),
+    )
+    .max(20),
+});
+
+export type Denials = z.infer<typeof denialsSchema>;
+
 export const agentHeartbeatSchema = agentHostSchema.extend({
   nodeId: z.string().uuid(),
   metrics: metricSnapshotSchema,
@@ -154,6 +172,7 @@ export const agentHeartbeatSchema = agentHostSchema.extend({
     .optional(),
   events: z.array(eventSchema).max(50).optional(),
   release: releaseSchema.optional(),
+  denials: denialsSchema.optional(),
 });
 
 export const enrollmentResponseSchema = z.object({
@@ -288,6 +307,12 @@ export const KIND_VERBS = {
     "join",
     "inspect",
     "admin",
+    "exitnode",
+    "dns",
+    "open",
+    "close",
+    "putback",
+    "containers",
   ],
   trust: ["trust"],
   vault: [
@@ -328,6 +353,8 @@ export const KIND_VERBS = {
 
 const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
 
+export const FIREWALL_VERBS: readonly string[] = ["open", "close", "putback"];
+
 const TOKEN_VERBS: readonly string[] = [
   "store",
   "release",
@@ -336,10 +363,20 @@ const TOKEN_VERBS: readonly string[] = [
 ];
 
 export function hostVerbFits(name: string, action: string): boolean {
-  const tailnet = ["signin", "block", "unblock", "join", "inspect"];
+  const tailnet = [
+    "signin",
+    "block",
+    "unblock",
+    "join",
+    "inspect",
+    "exitnode",
+    "dns",
+  ];
   if (name === "tailscale" || tailnet.includes(action)) {
     return name === "tailscale" && tailnet.includes(action);
   }
+  if (FIREWALL_VERBS.includes(action)) return name === "firewall";
+  if (action === "containers") return name === "confinement";
   if (action === "uninstall") return name === "server";
   if (name === "docker") return action === "install";
   const recipe = (RECIPES as readonly string[]).includes(name);
@@ -429,6 +466,12 @@ export const agentActionSchema = z
       "key",
       "join",
       "admin",
+      "exitnode",
+      "dns",
+      "open",
+      "close",
+      "putback",
+      "containers",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),
@@ -525,6 +568,23 @@ export const stackEntrySchema = z
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 
+export const FIREWALL_FROM = ["everyone", "tailscale", "addresses"] as const;
+
+export const MAX_FIREWALL_ADDRESSES = 8;
+
+export const firewallOpeningSchema = z.strictObject({
+  port: z.number().int().min(1).max(65_535),
+  protocol: z.enum(["tcp", "udp"]),
+  from: z.enum(FIREWALL_FROM),
+  addresses: z
+    .array(z.string().min(1).max(49))
+    .min(1)
+    .max(MAX_FIREWALL_ADDRESSES)
+    .optional(),
+});
+
+const firewallLines = z.array(z.string().min(1).max(300)).max(100);
+
 export const securityReportSchema = z.strictObject({
   checkedAt: z.string().datetime(),
   findings: z
@@ -559,6 +619,34 @@ export const securityReportSchema = z.strictObject({
       }),
     )
     .max(100)
+    .optional(),
+  firewall: z
+    .strictObject({
+      closed: z.boolean(),
+      open: z.array(firewallOpeningSchema).max(256),
+      other: firewallLines,
+      drift: firewallLines.optional(),
+    })
+    .optional(),
+  confinement: z
+    .strictObject({
+      system: z.enum(["selinux", "apparmor"]).nullable(),
+      mode: z
+        .enum([
+          "enforcing",
+          "permissive",
+          "disabled",
+          "on",
+          "off",
+          "kernel-off",
+        ])
+        .nullable(),
+      enforced: z.number().int().nonnegative().nullable(),
+      complain: z.number().int().nonnegative().nullable(),
+      managed: z.boolean(),
+      restart: z.boolean(),
+      docker: z.boolean().nullable(),
+    })
     .optional(),
 });
 
@@ -673,6 +761,11 @@ export const tailscaleReportSchema = z.strictObject({
     .record(z.string().max(64), z.string().max(63))
     .refine((names) => Object.keys(names).length <= 64)
     .optional(),
+  exitNode: z
+    .strictObject({ advertised: z.boolean(), approved: z.boolean() })
+    .nullable()
+    .optional(),
+  acceptDNS: z.boolean().nullable().optional(),
 });
 
 export const progressSchema = z.strictObject({

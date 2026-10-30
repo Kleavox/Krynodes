@@ -6,6 +6,7 @@ import { createTestDb } from "../test/sqlite-d1";
 import {
   endOfLifeDate,
   eolFinding,
+  cachedEndOfLife,
   readEndOfLife,
   runEndOfLifeCheck,
 } from "./end-of-life";
@@ -137,5 +138,18 @@ describe("end of life from endoflife.date", () => {
         "Debian GNU/Linux 12 no longer gets security updates (since 30 Jun 2028)",
     });
     expect(eolFinding("Debian GNU/Linux 12", null, end)).toBeNull();
+  });
+});
+
+describe("end of life on every dashboard read", () => {
+  it("reads the table once in ten minutes", async () => {
+    const { db } = createTestDb();
+    const prepare = vi.spyOn(db, "prepare");
+    const start = Date.parse("2026-10-29T00:00:00.000Z");
+    await cachedEndOfLife(db, start);
+    await cachedEndOfLife(db, start + 9 * 60_000);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    await cachedEndOfLife(db, start + 10 * 60_000);
+    expect(prepare).toHaveBeenCalledTimes(2);
   });
 });

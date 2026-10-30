@@ -241,6 +241,28 @@ export function namingOf(
   });
 }
 
+const outside = (source: string) =>
+  source.startsWith("/") || source.startsWith("~");
+
+export const unconfinedServices = (text: string) =>
+  Object.entries(load(text).services ?? {})
+    .filter(([, value]) => {
+      const service = record(value);
+      return (
+        service.privileged === true ||
+        list(service.devices).length > 0 ||
+        service.pid === "host" ||
+        service.network_mode === "host" ||
+        list(service.volumes).some((volume) =>
+          typeof volume === "string"
+            ? outside(volume.split(":")[0] ?? "")
+            : record(volume).type === "bind" &&
+              outside(String(record(volume).source ?? "")),
+        )
+      );
+    })
+    .map(([name]) => name);
+
 export function servicesOf(text: string): string[] {
   return Object.keys(load(text).services ?? {});
 }

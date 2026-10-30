@@ -8,7 +8,10 @@ import {
 } from "../agent/windows";
 
 type Metrics = AgentHeartbeat["metrics"];
-type Beat = Omit<AgentHeartbeat, "results" | "network" | "events" | "release">;
+type Beat = Omit<
+  AgentHeartbeat,
+  "results" | "network" | "events" | "release" | "denials"
+>;
 
 const AVERAGED = [
   "cpuPercent",
@@ -191,6 +194,7 @@ export function fold(
     network: _network,
     events: _events,
     release: _release,
+    denials: _denials,
     ...beat
   } = heartbeat;
   return {

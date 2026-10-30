@@ -43,6 +43,7 @@ export const RECIPES = [
   "fail2ban",
   "firewall",
   "free-port-53",
+  "confinement",
 ] as const;
 
 const PROTECTED_UNITS = [

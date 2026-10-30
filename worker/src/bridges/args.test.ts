@@ -10,7 +10,7 @@ import {
 } from "./args";
 
 const KEY =
-  "AAAAC3NzaC1lZDI1NTE5AAAAIN+aw2ekALRgy/qt38BoTs6eGn55s71g0oi0WM0vVl+z";
+  "AAAAC3NzaC1lZDI1NTE5AAAAIJQIdIFdIOrfxkgPwGXPHesM4bMreTr2K6zwvH2eRuGK";
 
 describe("a shared network's arguments", () => {
   it("creates a Contained or Full Access network on a private IPv4 subnet", () => {
@@ -46,26 +46,24 @@ describe("a shared network's arguments", () => {
 
 describe("an admin user's arguments", () => {
   it("names a user that is not root and one to four keys", () => {
-    expect(adminArgsValid({ name: "musyaf", keys: `${KEY}:laptop` })).toBe(
-      true,
-    );
+    expect(adminArgsValid({ name: "user1", keys: `${KEY}:laptop` })).toBe(true);
     expect(
       adminArgsValid({
-        name: "musyaf",
+        name: "user1",
         keys: [1, 2, 3, 4].map((n) => `${KEY}:k${n}`).join(","),
       }),
     ).toBe(true);
     for (const args of [
       { name: "root", keys: `${KEY}:laptop` } as Record<string, string>,
-      { name: "Musyaf", keys: `${KEY}:laptop` },
-      { name: "musyaf", keys: "" },
-      { name: "musyaf", keys: `${KEY}:j5mus@laptop` },
+      { name: "User1", keys: `${KEY}:laptop` },
+      { name: "user1", keys: "" },
+      { name: "user1", keys: `${KEY}:user1@laptop` },
       {
-        name: "musyaf",
+        name: "user1",
         keys: [1, 2, 3, 4, 5].map((n) => `${KEY}:k${n}`).join(","),
       },
-      { name: "musyaf" },
-      { name: "musyaf", keys: `${KEY}:laptop`, password: "x" },
+      { name: "user1" },
+      { name: "user1", keys: `${KEY}:laptop`, password: "x" },
     ]) {
       expect(adminArgsValid(args), JSON.stringify(args)).toBe(false);
     }
@@ -106,21 +104,21 @@ describe("a stack's display name and container names", () => {
     expect(stackNameArgsValid({})).toBe(true);
     expect(
       stackNameArgsValid({
-        title: "AdGuard Home",
-        names: "adguard=adguard-home",
+        title: "Resolver",
+        names: "resolver=resolver",
       }),
     ).toBe(true);
     expect(stackNameArgsValid({ names: "" })).toBe(true);
     expect(stackNameArgsValid({ title: "" })).toBe(false);
-    expect(stackNameArgsValid({ title: "AdGuard Home " })).toBe(false);
-    expect(stackNameArgsValid({ names: "adguard=adguard home" })).toBe(false);
+    expect(stackNameArgsValid({ title: "Resolver " })).toBe(false);
+    expect(stackNameArgsValid({ names: "resolver=resolver home" })).toBe(false);
     expect(stackNameArgsValid({ names: "web=same,db=same" })).toBe(false);
   });
 
   it("says when a stack uses them, so the 0.7.1 gate applies", () => {
     expect(hasStackNameArgs({ hostPorts: "3000/tcp" })).toBe(false);
     expect(hasStackNameArgs({ names: "" })).toBe(false);
-    expect(hasStackNameArgs({ title: "AdGuard Home" })).toBe(true);
-    expect(hasStackNameArgs({ names: "adguard=adguard-home" })).toBe(true);
+    expect(hasStackNameArgs({ title: "Resolver" })).toBe(true);
+    expect(hasStackNameArgs({ names: "resolver=resolver" })).toBe(true);
   });
 });

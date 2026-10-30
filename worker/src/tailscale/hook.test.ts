@@ -11,7 +11,7 @@ const NOW = Date.parse("2026-10-27T03:12:00Z");
 const MINUTE = 60_000;
 const A = "11111111-1111-4111-8111-111111111111";
 const C = "33333333-3333-4333-8333-333333333333";
-const TAILNET = "tail4d2a.ts.net";
+const TAILNET = "tail0000.ts.net";
 const CLIENT = "kQ1clientCNTRL";
 const SECRET = "tskey-webhook-s3cret";
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -255,7 +255,7 @@ describe("the Tailscale webhook", () => {
       due_at: null,
     });
     expect(JSON.parse(t.alarms()[0]!.detail)).toEqual({
-      name: "nas-7.tail4d2a.ts.net",
+      name: "nas-7.tail0000.ts.net",
       tag: "tag:kry",
     });
     await t.wake(NOW + 10 * MINUTE);
@@ -266,7 +266,7 @@ describe("the Tailscale webhook", () => {
     expect(text).toContain(
       "Krynodes did not sign it in. Your rules give it nothing, but someone may have your Tailscale credential.",
     );
-    expect(text).toContain("Device: nas-7.tail4d2a.ts.net");
+    expect(text).toContain("Device: nas-7.tail0000.ts.net");
     expect(text).toContain("Tag: tag:kry");
     expect(text).toContain("Joined: 2026-10-27 03:12 UTC");
     expect(text).toContain("Open Network: https://kry.example.test/network");

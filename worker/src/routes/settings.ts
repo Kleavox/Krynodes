@@ -38,6 +38,7 @@ const enrollDefaultsSchema = z.preprocess(
     docker: z.boolean(),
     hour: z.number().int().min(0).max(23),
     network: z.boolean().default(false),
+    confine: z.boolean().default(false),
     keys: keysSchema.default([]),
   }),
 );
@@ -49,6 +50,7 @@ const ENROLL_DEFAULTS: EnrollDefaults = {
   docker: true,
   hour: 3,
   network: false,
+  confine: false,
   keys: [],
 };
 
@@ -161,7 +163,7 @@ export function registerSettingRoutes(
         return context.json(
           {
             code: "INVALID_RANGE",
-            message: `${entry.trim()} is not an address range, such as 10.8.0.0/24.`,
+            message: `${entry.trim()} is not an address range written as address/bits.`,
           },
           400,
         );

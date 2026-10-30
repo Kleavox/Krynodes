@@ -44,7 +44,7 @@ main() {
             --admin-key)
               case "$1" in
                 "" | *[!A-Za-z0-9+/=:._-]*)
-                  echo "--admin-key takes a key such as AAAA...:laptop" >&2
+                  echo "--admin-key takes a key written as key:name" >&2
                   exit 1
                   ;;
               esac
@@ -80,9 +80,10 @@ main() {
   for item in $(echo "$setup" | tr ',' ' '); do
     case "$item" in
       recommended) setup_flags="$setup_flags --recommended" ;;
+      confine) setup_flags="$setup_flags --confine" ;;
       docker) setup_flags="$setup_flags --docker" ;;
       *)
-        echo "--setup takes recommended, docker or both" >&2
+        echo "--setup takes recommended, confine, docker or more" >&2
         exit 1
         ;;
     esac
@@ -111,7 +112,7 @@ main() {
   if [ -n "$admin" ]; then
     case "$admin" in
       root | [!a-z_]* | *[!a-z0-9_-]*)
-        echo "--admin takes a user name such as musyaf, not root" >&2
+        echo "--admin takes your user name, not root" >&2
         exit 1
         ;;
     esac

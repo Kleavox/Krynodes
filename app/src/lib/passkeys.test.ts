@@ -114,7 +114,7 @@ describe("passkeys", () => {
           id: "c",
           nodeId: "n",
           kind: "compose",
-          name: "kuma",
+          name: "panel",
           action: "deploy",
         },
         session,
@@ -262,17 +262,17 @@ describe("passkeys", () => {
         {
           nodeId: "11111111-1111-4111-8111-111111111111",
           kind: "docker",
-          name: "adguard",
+          name: "resolver",
         },
       ],
       T + MINUTE,
     );
-    expect(target).toMatchObject({ kind: "docker", name: "adguard" });
+    expect(target).toMatchObject({ kind: "docker", name: "resolver" });
     expect(decode(target!.signed.command)).toMatchObject({
       id: target!.id,
       nodeId: "11111111-1111-4111-8111-111111111111",
       kind: "docker",
-      name: "adguard",
+      name: "resolver",
       action: "restart",
     });
   });
@@ -302,7 +302,7 @@ describe("passkeys", () => {
           {
             nodeId: "11111111-1111-4111-8111-111111111111",
             kind: "docker",
-            name: "adguard",
+            name: "resolver",
           },
         ],
         T + MINUTE,

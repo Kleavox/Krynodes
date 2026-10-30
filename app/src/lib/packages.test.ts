@@ -192,7 +192,7 @@ const action = (over: Partial<ActionRecord>): ActionRecord => ({
 const running: TailscaleReport = {
   state: "running",
   addresses: ["100.101.7.12"],
-  name: "vps-2.tail4d2a.ts.net",
+  name: "vps-2.tail0000.ts.net",
   keyExpiry: "2027-04-24T10:00:00.000Z",
 };
 
@@ -394,7 +394,7 @@ describe("the Tailscale row", () => {
     expect(tailscaleLine(running, "vps-2", NOW)).toEqual({
       lines: [
         "100.101.7.12",
-        "vps-2.tail4d2a.ts.net",
+        "vps-2.tail0000.ts.net",
         "Key expires 24 Apr 2027",
       ],
       warn: false,
@@ -402,18 +402,20 @@ describe("the Tailscale row", () => {
       after: null,
     });
     expect(
-      tailscaleLine({ ...running, keyExpiry: null }, "pivox", NOW).lines.at(-1),
+      tailscaleLine({ ...running, keyExpiry: null }, "server-1", NOW).lines.at(
+        -1,
+      ),
     ).toBe("Key does not expire");
     expect(
       tailscaleLine(
         { ...running, keyExpiry: ahead(3 * DAY), tags: ["tag:kry"] },
-        "pivox",
+        "server-1",
         NOW,
       ),
     ).toEqual({
       lines: [
         "100.101.7.12",
-        "vps-2.tail4d2a.ts.net",
+        "vps-2.tail0000.ts.net",
         "tag:kry · key never expires",
       ],
       warn: false,
@@ -439,12 +441,17 @@ describe("the Tailscale row", () => {
       after: null,
     });
     expect(
-      tailscaleLine({ ...running, keyExpiry: ahead(11.5 * DAY) }, "io", NOW),
+      tailscaleLine(
+        { ...running, keyExpiry: ahead(11.5 * DAY) },
+        "server-2",
+        NOW,
+      ),
     ).toEqual({
       lines: ["Key expires in 12 days"],
       warn: true,
       action: "Sign In Again",
-      after: ", or turn off key expiry for io in Tailscale's admin console",
+      after:
+        ", or turn off key expiry for server-2 in Tailscale's admin console",
     });
     expect(
       tailscaleLine(
@@ -453,11 +460,11 @@ describe("the Tailscale row", () => {
           state: "needs-login",
           keyExpiry: "2026-04-02T10:00:00.000Z",
         },
-        "io",
+        "server-2",
         NOW,
       ),
     ).toEqual({
-      lines: ["Key expired 2 Apr · io left your tailnet"],
+      lines: ["Key expired 2 Apr · server-2 left your tailnet"],
       warn: true,
       action: "Sign In Again",
       after: null,
@@ -574,7 +581,7 @@ describe("the dialogs", () => {
           nodeName: "vps-2",
           repository: true,
           tailscale: running,
-          publicAddress: "51.79.0.11",
+          publicAddress: "198.51.100.11",
         },
       ),
     ).toEqual([
@@ -589,7 +596,7 @@ describe("the dialogs", () => {
         mark: "!",
         title: "vps-2 leaves your tailnet",
         detail: [
-          "SSH to 100.101.7.12 stops working; use the public address 51.79.0.11 instead. Krynodes keeps its own connection.",
+          "SSH to 100.101.7.12 stops working; use the public address 198.51.100.11 instead. Krynodes keeps its own connection.",
         ],
       },
     ]);
@@ -1131,7 +1138,7 @@ describe("Search", () => {
     {
       ...node,
       id: "22222222-2222-4222-8222-222222222222",
-      name: "pivox",
+      name: "server-1",
       updates: null,
     },
   ];
@@ -1225,7 +1232,7 @@ describe("Sign In", () => {
       {
         mark: "✓",
         title: "vps-2 is on your tailnet",
-        detail: ["100.101.7.12 · vps-2.tail4d2a.ts.net"],
+        detail: ["100.101.7.12 · vps-2.tail0000.ts.net"],
       },
       {
         mark: "·",

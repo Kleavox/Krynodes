@@ -12,7 +12,7 @@ export interface RecipeChoice {
 }
 
 const HINTS: Record<string, string> = {
-  "free-port-53": "Only for a DNS server such as AdGuard.",
+  "free-port-53": "Only for a DNS server on this server.",
 };
 
 const HIDDEN = new Set(["dns-stub"]);
@@ -224,7 +224,7 @@ export function protectionDetail(id: string, report: SecurityReport): string {
       : "Blocks addresses that keep failing to log in over SSH.",
     firewall: `Turns on ${firewallName(report)} and keeps SSH and the ports you tick open. Ports published by Docker are not affected.`,
     "free-port-53":
-      "Stops systemd-resolved from holding port 53, so a DNS server such as AdGuard can use it.",
+      "Stops systemd-resolved from holding port 53, so a DNS server can use it.",
   };
   return details[id] ?? "";
 }

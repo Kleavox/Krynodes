@@ -1,6 +1,7 @@
 import {
   ADMIN_KEY_ARG,
   ADMIN_NAME,
+  MAX_FIREWALL_ADDRESSES,
   OFFER_ENTRY,
   PEER_ENTRY,
   parseStackNames,
@@ -51,6 +52,79 @@ export function bridgeArgsValid(
 
 const list = (text: string | undefined) =>
   text === undefined || text === "" ? [] : text.split(",");
+
+const PORT = /^[1-9]\d{0,4}$/u;
+const ADDRESS = /^[\dA-Fa-f.:]{2,39}(?:\/\d{1,3})?$/u;
+const MAX_OPEN_ENTRIES = 64;
+
+const portFits = (port: string) => PORT.test(port) && Number(port) <= 65_535;
+
+const protocolFits = (protocol: string) =>
+  protocol === "tcp" || protocol === "udp";
+
+const fromFits = (from: string) => {
+  if (from === "everyone" || from === "tailscale") return true;
+  const addresses = from.split("+");
+  return (
+    addresses.length <= MAX_FIREWALL_ADDRESSES &&
+    addresses.every((address) => ADDRESS.test(address))
+  );
+};
+
+const openEntryKey = (entry: string) => {
+  const at = entry.indexOf("@");
+  const [port = "", protocol = "", ...rest] = entry.slice(0, at).split("/");
+  return at > 0 &&
+    rest.length === 0 &&
+    portFits(port) &&
+    protocolFits(protocol) &&
+    fromFits(entry.slice(at + 1))
+    ? `${port}/${protocol}`
+    : null;
+};
+
+export function firewallArgsValid(
+  action: string,
+  args: Record<string, string>,
+): boolean {
+  switch (action) {
+    case "open":
+      return (
+        keysAre(args, ["port", "protocol", "from"]) &&
+        portFits(args.port!) &&
+        protocolFits(args.protocol!) &&
+        fromFits(args.from!)
+      );
+    case "close":
+      return (
+        keysAre(args, ["port", "protocol"]) &&
+        portFits(args.port!) &&
+        protocolFits(args.protocol!)
+      );
+    case "putback":
+      return (
+        keysAre(args, ["rule"]) &&
+        args.rule!.length >= 1 &&
+        args.rule!.length <= 300 &&
+        !/\p{Cc}/u.test(args.rule!)
+      );
+    case "apply": {
+      const keys = list(args.ports).map(openEntryKey);
+      return (
+        keysAre(args, ["closed", "ports"]) &&
+        args.closed === "1" &&
+        keys.length <= MAX_OPEN_ENTRIES &&
+        keys.every((key) => key !== null) &&
+        new Set(keys).size === keys.length
+      );
+    }
+  }
+  return false;
+}
+
+export function onOffArgsValid(args: Record<string, string>): boolean {
+  return keysAre(args, ["on"]) && (args.on === "1" || args.on === "0");
+}
 
 export function adminArgsValid(args: Record<string, string>): boolean {
   const keys = list(args.keys);

@@ -56,7 +56,7 @@ func ParseAdminKey(arg string) (AdminKey, error) {
 	blob, label, ok := strings.Cut(arg, ":")
 	raw, err := base64.StdEncoding.DecodeString(blob)
 	if !ok || err != nil || !adminLabel.MatchString(label) || len(raw) < 4 {
-		return AdminKey{}, fmt.Errorf("%.40s is not a key such as AAAA…:laptop", arg)
+		return AdminKey{}, fmt.Errorf("%.40s is not a key written as key:name", arg)
 	}
 	size := binary.BigEndian.Uint32(raw)
 	if uint64(size)+4 > uint64(len(raw)) {
@@ -94,7 +94,7 @@ func AddAdmin(ctx context.Context, env Env, name string, keys []AdminKey, tty Te
 	case name == "root":
 		return AdminResult{}, errors.New("root cannot be the admin user")
 	case !adminName.MatchString(name):
-		return AdminResult{}, fmt.Errorf("%.40s is not a user name such as musyaf", name)
+		return AdminResult{}, fmt.Errorf("%.40s is not a user name", name)
 	}
 	uid, home, found := lookupUser(env, name)
 	if found && uid < 1000 {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func writeInventory(t *testing.T, relay *Relay, services []Service, taken time.T
 
 func TestEnqueueWritesOneFilePerAction(t *testing.T) {
 	relay, _ := newRelay(t)
-	action := Request{ID: idA, Kind: "docker", Name: "adguard", Action: "restart", ExpiresAt: "2026-09-29T10:10:00.000Z"}
+	action := Request{ID: idA, Kind: "docker", Name: "resolver", Action: "restart", ExpiresAt: "2026-09-29T10:10:00.000Z"}
 	if err := relay.Enqueue([]Request{action}); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestEnqueueWritesOneFilePerAction(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected no temporary files, got %d entries", len(entries))
 	}
-	if err := relay.Enqueue([]Request{{ID: "../x", Kind: "docker", Name: "adguard", Action: "restart"}}); err == nil {
+	if err := relay.Enqueue([]Request{{ID: "../x", Kind: "docker", Name: "resolver", Action: "restart"}}); err == nil {
 		t.Fatal("a malformed id must be refused")
 	}
 }
@@ -85,7 +86,7 @@ func TestRefreshLeavesNoMarkerBehind(t *testing.T) {
 
 func TestPollSendsAChangedInventoryOnceWithItsServices(t *testing.T) {
 	relay, poster := newRelay(t)
-	inventory := writeInventory(t, relay, []Service{{Kind: "docker", Name: "adguard", State: "running"}}, executorNow)
+	inventory := writeInventory(t, relay, []Service{{Kind: "docker", Name: "resolver", State: "running"}}, executorNow)
 	poster.hash = inventory.Hash
 	for range 2 {
 		if err := relay.Poll(context.Background()); err != nil {
@@ -147,7 +148,7 @@ func TestAfterARefreshTheHashIsSentEvenWhenNothingChanged(t *testing.T) {
 
 func TestPollReportsResultsAndRemovesTheirRequests(t *testing.T) {
 	relay, poster := newRelay(t)
-	action := Request{ID: idA, Kind: "docker", Name: "adguard", Action: "restart", ExpiresAt: "2026-09-29T10:10:00.000Z"}
+	action := Request{ID: idA, Kind: "docker", Name: "resolver", Action: "restart", ExpiresAt: "2026-09-29T10:10:00.000Z"}
 	if err := relay.Enqueue([]Request{action}); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestPollReportsResultsAndRemovesTheirRequests(t *testing.T) {
 
 func TestAResultTooLargeForAReportIsReportedAsFailed(t *testing.T) {
 	relay, poster := newRelay(t)
-	if err := relay.Enqueue([]Request{{ID: idA, Kind: "compose", Name: "kuma", Action: "read", ExpiresAt: "2026-09-29T10:10:00.000Z"}}); err != nil {
+	if err := relay.Enqueue([]Request{{ID: idA, Kind: "compose", Name: "panel", Action: "read", ExpiresAt: "2026-09-29T10:10:00.000Z"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeJSON(filepath.Join(relay.StateDir, "results"), idA+".json", Result{ID: idA, OK: true, Output: strings.Repeat("😀", 40_000), FinishedAt: "t"}, 0o640); err != nil {
@@ -190,7 +191,7 @@ func TestAReportCarriesAtMostHalfAMegabyteOfResults(t *testing.T) {
 	relay, poster := newRelay(t)
 	for index := range 10 {
 		id := fmt.Sprintf("0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a%02d", index)
-		if err := relay.Enqueue([]Request{{ID: id, Kind: "compose", Name: "kuma", Action: "read", ExpiresAt: "2026-09-29T10:10:00.000Z"}}); err != nil {
+		if err := relay.Enqueue([]Request{{ID: id, Kind: "compose", Name: "panel", Action: "read", ExpiresAt: "2026-09-29T10:10:00.000Z"}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := writeJSON(filepath.Join(relay.StateDir, "results"), id+".json", Result{ID: id, OK: true, Output: strings.Repeat("a", 60_000), FinishedAt: "t"}, 0o640); err != nil {
@@ -213,7 +214,7 @@ func TestAFailedReportWaitsLongerEachTimeBeforeTryingAgain(t *testing.T) {
 	now := executorNow
 	relay.Now = func() time.Time { return now }
 	poster.err = errors.New("offline")
-	writeInventory(t, relay, []Service{{Kind: "docker", Name: "adguard", State: "running"}}, executorNow)
+	writeInventory(t, relay, []Service{{Kind: "docker", Name: "resolver", State: "running"}}, executorNow)
 	poll := func(after time.Duration, want int) {
 		t.Helper()
 		now = now.Add(after)
@@ -229,7 +230,7 @@ func TestAFailedReportWaitsLongerEachTimeBeforeTryingAgain(t *testing.T) {
 	poll(2*time.Second, 3)
 	poster.err = nil
 	poll(30*time.Second, 4)
-	writeInventory(t, relay, []Service{{Kind: "docker", Name: "adguard", State: "stopped"}}, now)
+	writeInventory(t, relay, []Service{{Kind: "docker", Name: "resolver", State: "stopped"}}, now)
 	poll(2*time.Second, 5)
 }
 
@@ -251,7 +252,7 @@ func TestFailuresBackOffToTenMinutesAtMost(t *testing.T) {
 func TestAFailedReportKeepsTheRequest(t *testing.T) {
 	relay, poster := newRelay(t)
 	poster.err = errors.New("offline")
-	if err := relay.Enqueue([]Request{{ID: idA, Kind: "docker", Name: "adguard", Action: "restart", ExpiresAt: "t"}}); err != nil {
+	if err := relay.Enqueue([]Request{{ID: idA, Kind: "docker", Name: "resolver", Action: "restart", ExpiresAt: "t"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeJSON(filepath.Join(relay.StateDir, "results"), idA+".json", Result{ID: idA, OK: true, FinishedAt: "t"}, 0o640); err != nil {
@@ -347,6 +348,26 @@ func TestTheBootCounterRisesOncePerReportAndSurvivesARestart(t *testing.T) {
 	silent.Report(&beat)
 	if beat.Boot != nil {
 		t.Fatalf("a boot with no id %+v", beat.Boot)
+	}
+}
+
+func TestTheHeartbeatCarriesTheDenialsOnlyWhileTheLogIsRead(t *testing.T) {
+	relay := watchingRelay(t)
+	var beat reporter.Heartbeat
+	relay.Report(&beat)
+	if beat.Denials != nil {
+		t.Fatalf("no denials read yet %+v", beat.Denials)
+	}
+	line := reporter.DenialLine{At: "2026-09-29T09:58:00Z", Program: "cat", Wanted: "read shadow", Stack: "panel"}
+	hour := strconv.FormatInt(executorNow.Unix()/3600, 10)
+	old := strconv.FormatInt(executorNow.Unix()/3600-30, 10)
+	state := denialState{Readable: true, Hours: map[string]int{hour: 3, old: 9}, Lines: []reporter.DenialLine{line}}
+	if err := writeJSON(relay.StateDir, denialsFile, state, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	relay.Report(&beat)
+	if beat.Denials == nil || beat.Denials.Count != 3 || !reflect.DeepEqual(beat.Denials.Lines, []reporter.DenialLine{line}) {
+		t.Fatalf("denials %+v", beat.Denials)
 	}
 }
 

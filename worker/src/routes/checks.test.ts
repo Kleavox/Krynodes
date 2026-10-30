@@ -83,26 +83,26 @@ describe("a check suggestion put aside", () => {
     const first = ["10.88.0.2:5432/tcp"];
     const both = [...first, "10.88.0.3:6379/tcp"];
     expect(
-      (await send("PUT", { nodeId: NODE, project: "umami", reaches: first }))
+      (await send("PUT", { nodeId: NODE, project: "tracker", reaches: first }))
         .status,
     ).toBe(204);
-    await send("PUT", { nodeId: NODE, project: "umami", reaches: both });
+    await send("PUT", { nodeId: NODE, project: "tracker", reaches: both });
     expect(await (await send("GET")).json()).toEqual({
-      dismissals: [{ nodeId: NODE, project: "umami", reaches: both }],
+      dismissals: [{ nodeId: NODE, project: "tracker", reaches: both }],
     });
     expect(
       (
         await send("PUT", {
           nodeId: "33333333-3333-4333-8333-333333333333",
-          project: "umami",
+          project: "tracker",
           reaches: first,
         })
       ).status,
     ).toBe(404);
     for (const body of [
       { nodeId: NODE, project: "", reaches: first },
-      { nodeId: NODE, project: "umami", reaches: "10.88.0.2:5432/tcp" },
-      { nodeId: NODE, project: "umami", reaches: Array(65).fill("x") },
+      { nodeId: NODE, project: "tracker", reaches: "10.88.0.2:5432/tcp" },
+      { nodeId: NODE, project: "tracker", reaches: Array(65).fill("x") },
     ]) {
       expect((await send("PUT", body)).status).toBe(400);
     }
@@ -348,9 +348,9 @@ describe("container checks", () => {
   }
   const create = {
     nodeId: NODE,
-    name: "AdGuard",
+    name: "Resolver",
     kind: "CONTAINER",
-    target: "adguard-adguard-1",
+    target: "resolver-resolver-1",
   };
 
   it("creates one on agent 0.7.0 or newer", async () => {
@@ -358,9 +358,9 @@ describe("container checks", () => {
     expect((await send("POST", "/api/checks", create)).status).toBe(201);
     expect(
       sqlite
-        .prepare("SELECT kind, target FROM checks WHERE name = 'AdGuard'")
+        .prepare("SELECT kind, target FROM checks WHERE name = 'Resolver'")
         .get(),
-    ).toEqual({ kind: "CONTAINER", target: "adguard-adguard-1" });
+    ).toEqual({ kind: "CONTAINER", target: "resolver-resolver-1" });
   });
 
   it.each(["0.6.14", null])("refuses agent %s", async (version) => {

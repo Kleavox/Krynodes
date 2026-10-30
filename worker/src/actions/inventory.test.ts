@@ -61,7 +61,7 @@ describe("applyInventory", () => {
     const stored = await applyInventory(
       db,
       node(),
-      { hash: HASH_A, services: [entry("adguard"), entry("web", "stopped")] },
+      { hash: HASH_A, services: [entry("resolver"), entry("web", "stopped")] },
       NOW,
     );
     expect(stored).toBe(HASH_A);
@@ -70,7 +70,7 @@ describe("applyInventory", () => {
       inventory_at: new Date(NOW).toISOString(),
     });
     expect(rows()).toEqual([
-      expect.objectContaining({ name: "adguard", state: "running" }),
+      expect.objectContaining({ name: "resolver", state: "running" }),
       expect.objectContaining({ name: "web", state: "stopped" }),
     ]);
   });
@@ -82,7 +82,7 @@ describe("applyInventory", () => {
       node(),
       {
         hash: HASH_A,
-        services: [entry("adguard"), entry("web"), entry("old")],
+        services: [entry("resolver"), entry("web"), entry("old")],
       },
       NOW,
     );
@@ -90,13 +90,13 @@ describe("applyInventory", () => {
     await applyInventory(
       db,
       node(),
-      { hash: HASH_B, services: [entry("adguard"), entry("web", "failed")] },
+      { hash: HASH_B, services: [entry("resolver"), entry("web", "failed")] },
       later,
     );
     expect(rows()).toEqual([
       {
         kind: "docker",
-        name: "adguard",
+        name: "resolver",
         state: "running",
         updated_at: new Date(NOW).toISOString(),
       },
@@ -114,14 +114,14 @@ describe("applyInventory", () => {
     await applyInventory(
       db,
       node(),
-      { hash: HASH_A, services: [entry("adguard")] },
+      { hash: HASH_A, services: [entry("resolver")] },
       NOW,
     );
     const statements = recordStatements(sqlite);
     const stored = await applyInventory(
       db,
       node(),
-      { hash: HASH_A, services: [entry("adguard")] },
+      { hash: HASH_A, services: [entry("resolver")] },
       NOW + 60_000,
     );
     expect(stored).toBe(HASH_A);
@@ -135,7 +135,7 @@ describe("applyInventory", () => {
     await applyInventory(
       db,
       node(),
-      { hash: HASH_A, services: [entry("adguard")] },
+      { hash: HASH_A, services: [entry("resolver")] },
       NOW,
     );
     sqlite
@@ -190,7 +190,7 @@ describe("applyInventory", () => {
     await applyInventory(
       db,
       node(),
-      { hash: HASH_A, services: [entry("adguard")] },
+      { hash: HASH_A, services: [entry("resolver")] },
       NOW,
     );
     expect(await applyInventory(db, node(), { hash: HASH_B }, NOW)).toBe(
@@ -414,12 +414,12 @@ describe("stacks and trust", () => {
         hash: HASH_A,
         services: [],
         stacks: [{ ...stack("listmonk"), services: ["app", "db"] }],
-        leftovers: ["adguard-home"],
+        leftovers: ["resolver"],
       },
       NOW,
     );
     expect(services()).toEqual({ services: '["app","db"]' });
-    expect(leftovers()).toEqual({ leftovers: '["adguard-home"]' });
+    expect(leftovers()).toEqual({ leftovers: '["resolver"]' });
     await applyInventory(
       db,
       node(),
@@ -427,7 +427,7 @@ describe("stacks and trust", () => {
       NOW + 1,
     );
     expect(services()).toEqual({ services: null });
-    expect(leftovers()).toEqual({ leftovers: '["adguard-home"]' });
+    expect(leftovers()).toEqual({ leftovers: '["resolver"]' });
     await applyInventory(
       db,
       node(),
@@ -559,7 +559,7 @@ describe("stacks and trust", () => {
     await applyInventory(
       db,
       node(),
-      { hash: HASH_B, services: [entry("adguard")] },
+      { hash: HASH_B, services: [entry("resolver")] },
       NOW + 1_000,
     );
     expect(stacks(sqlite)).toHaveLength(1);
@@ -586,7 +586,7 @@ describe("stacks and trust", () => {
           members: [],
         },
       ],
-      taken: [{ range: "172.18.0.0/16", by: "kuma_default" }],
+      taken: [{ range: "172.18.0.0/16", by: "panel_default" }],
       claimed: [],
     };
     const stored = () =>

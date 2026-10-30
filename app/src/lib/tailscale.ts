@@ -4,7 +4,11 @@ import {
   type TailnetRule,
   type TailscaleReport,
 } from "@krynodes/protocol";
-import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
+import {
+  agentHasSecurity,
+  MIN_AGENT_VERSION,
+  SECURITY_AGENT,
+} from "@krynodes/protocol/versions";
 
 import type {
   ActionRecord,
@@ -940,7 +944,77 @@ export function tailnetActionText(
       ? `Sign in ${nodeName} to Tailscale`
       : "Sign in to Tailscale";
   }
+  if (action.action === "exitnode" || action.action === "dns") {
+    const setting = action.action === "dns" ? "Tailscale DNS" : "Exit Node";
+    return nodeName ? `Change ${setting} on ${nodeName}` : `Change ${setting}`;
+  }
   return action.action === "inspect"
     ? "Read what is in use on Tailscale"
     : null;
+}
+
+export interface TailnetSetting {
+  text: string;
+  warn: boolean;
+  changes: boolean;
+}
+
+const NEEDS_SECURITY: TailnetSetting = {
+  text: `Needs agent ${SECURITY_AGENT} or newer`,
+  warn: false,
+  changes: false,
+};
+
+const UNREAD: TailnetSetting = { text: "--", warn: false, changes: true };
+
+export function exitNodeLine(
+  report: TailscaleReport,
+  version: string | null,
+): TailnetSetting {
+  if (!agentHasSecurity(version)) return NEEDS_SECURITY;
+  const exit = report.exitNode;
+  if (!exit) return UNREAD;
+  if (!exit.advertised) return { text: "Off", warn: false, changes: true };
+  return exit.approved
+    ? { text: "On", warn: false, changes: true }
+    : { text: "Waiting for approval in Tailscale", warn: true, changes: true };
+}
+
+export function dnsLine(
+  report: TailscaleReport,
+  version: string | null,
+): TailnetSetting {
+  if (!agentHasSecurity(version)) return NEEDS_SECURITY;
+  if (report.acceptDNS === undefined || report.acceptDNS === null) {
+    return UNREAD;
+  }
+  return { text: report.acceptDNS ? "On" : "Off", warn: false, changes: true };
+}
+
+export function exitNodeText(
+  name: string,
+  on: boolean,
+  approves: boolean,
+): string[] {
+  if (!on) {
+    return [
+      `${name} stops offering itself as an exit node. A device using it loses internet until it picks another exit node or none.`,
+    ];
+  }
+  return [
+    `Devices on your tailnet can send all their internet traffic through ${name}.`,
+    `Their traffic counts against ${name}'s bandwidth. A device using it loses internet while ${name} is down, until it picks no exit node.`,
+    approves
+      ? `Tailscale approves it through the rules Krynodes keeps for ${TAILSCALE.tag}.`
+      : `Approve it in Tailscale's admin console (Machines → ${name} → Edit route settings).`,
+  ];
+}
+
+export function dnsText(name: string, on: boolean): string[] {
+  if (!on) return [`${name} looks names up with its own DNS settings again.`];
+  return [
+    `${name} looks names up through Tailscale, so it finds your devices and servers by their tailnet names.`,
+    `A DNS server running on ${name} keeps working, but ${name}'s own lookups go through Tailscale.`,
+    `If ${name} cannot find Krynodes by name this way, Tailscale DNS is turned back off.`,
+  ];
 }

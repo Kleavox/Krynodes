@@ -40,7 +40,7 @@ const report = {
       subnet: "172.24.0.0/24",
       members: [
         {
-          project: "kuma",
+          project: "panel",
           service: "web",
           address: "172.24.0.3",
           offers: ["3001/tcp"],
@@ -63,7 +63,7 @@ const report = {
     },
   ],
   taken: [
-    { range: "172.18.0.0/16", by: "kuma_default" },
+    { range: "172.18.0.0/16", by: "panel_default" },
     { range: "192.168.1.0/24", by: "eth0", own: true },
   ],
   claimed: ["default-env_public"],
@@ -171,14 +171,14 @@ describe("shared Docker networks of agent 0.7.1", () => {
     ).toBe(false);
     expect(OFFER_ENTRY.test("apps-inner/web=3001/tcp")).toBe(true);
     expect(OFFER_ENTRY.test("apps-inner/web=3001")).toBe(false);
-    expect(PEER_ENTRY.test("apps-inner/adguard.adns:53/udp")).toBe(true);
+    expect(PEER_ENTRY.test("apps-inner/resolver.adns:53/udp")).toBe(true);
     expect(PEER_ENTRY.test("apps-inner/postgres.DB:5432/tcp")).toBe(false);
   });
 
   it("names an admin user and its keys the way the server reads them", () => {
-    expect(ADMIN_NAME.test("musyaf")).toBe(true);
+    expect(ADMIN_NAME.test("user1")).toBe(true);
     expect(ADMIN_NAME.test("_ops-1")).toBe(true);
-    expect(ADMIN_NAME.test("Musyaf")).toBe(false);
+    expect(ADMIN_NAME.test("User1")).toBe(false);
     expect(ADMIN_NAME.test("1ops")).toBe(false);
     expect(ADMIN_NAME.test("a".repeat(33))).toBe(false);
     expect(
@@ -186,7 +186,7 @@ describe("shared Docker networks of agent 0.7.1", () => {
         "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl:laptop",
       ),
     ).toBe(true);
-    expect(ADMIN_KEY_ARG.test("AAAA:j5mus@laptop")).toBe(false);
+    expect(ADMIN_KEY_ARG.test("AAAA:user1@laptop")).toBe(false);
     expect(ADMIN_KEY_ARG.test("AAAA")).toBe(false);
   });
 });

@@ -23,7 +23,7 @@ const action = (overrides: Partial<ActionRecord>): ActionRecord => ({
   mode: "rolling",
   nodeId: "n1",
   kind: "docker",
-  name: "adguard",
+  name: "resolver",
   action: "restart",
   status: "done",
   requestedBy: "owner@example.test",
@@ -68,7 +68,7 @@ const incident = (
     checkId: "c1",
     checkName,
     nodeId: "n1",
-    nodeName: "pivox",
+    nodeName: "server-1",
     summary: "Container is not running",
     startedAt,
     resolvedAt,
@@ -81,7 +81,7 @@ describe("history", () => {
       [
         done("1", at(24, 9, 58), { status: "failed" }),
         incident("opened", "Pi-hole", at(24, 9, 52)),
-        incident("opened", "Umami", at(24, 9, 26)),
+        incident("opened", "Tracker", at(24, 9, 26)),
         done("2", at(24, 9, 24), { status: "expired" }),
         done("3", at(24, 8, 23)),
         done("4", at(23, 9, 38)),
@@ -104,7 +104,7 @@ describe("history", () => {
       [
         incident("resolved", "Blog", at(24, 7, 8), at(24, 7, 20)),
         incident("opened", "Blog", at(24, 7, 8), at(24, 7, 20)),
-        incident("opened", "Umami", at(24, 6, 0)),
+        incident("opened", "Tracker", at(24, 6, 0)),
       ],
       new Date(2026, 9, 24, 15, 0).getTime(),
     );
@@ -112,7 +112,7 @@ describe("history", () => {
       groups[0]!.entries.map((entry) =>
         entry.type === "incident" ? incidentText(entry) : entry.type,
       ),
-    ).toEqual(["Blog recovered after 12m", "Umami went down"]);
+    ).toEqual(["Blog recovered after 12m", "Tracker went down"]);
     expect(groups[0]!.counts).toBe("2 incidents");
   });
 
@@ -124,7 +124,7 @@ describe("history", () => {
         change: {
           id,
           at: when,
-          change: "It was me: the new port on pivox",
+          change: "It was me: the new port on server-1",
           detail: "43112/udp",
           requestedBy: "owner@example.test",
           deviceId: null,
@@ -194,24 +194,24 @@ describe("history", () => {
       causedText(
         {
           id: "i1",
-          checkName: "Umami",
+          checkName: "Tracker",
           summary: "HTTP 502",
           startedAt: at(24, 9, 26),
         },
         new Date(2026, 9, 24, 10, 28).getTime(),
       ),
-    ).toBe("Umami down since 09:26 · HTTP 502 · 1h 2m");
+    ).toBe("Tracker down since 09:26 · HTTP 502 · 1h 2m");
     expect(
       causedText(
         {
           id: "i1",
-          checkName: "Umami",
+          checkName: "Tracker",
           summary: null,
           startedAt: at(24, 9, 26),
         },
         new Date(2026, 9, 24, 9, 30).getTime(),
       ),
-    ).toBe("Umami down since 09:26 · 4m");
+    ).toBe("Tracker down since 09:26 · 4m");
   });
 
   it("asks the Worker for one filter and one search", () => {
@@ -234,18 +234,20 @@ describe("history", () => {
 
 describe("a failed, not fixed card", () => {
   const inventory = {
-    stacks: [{ project: "umami", containers: ["umami-umami-1", "umami-db-1"] }],
+    stacks: [
+      { project: "tracker", containers: ["tracker-tracker-1", "tracker-db-1"] },
+    ],
     services: [
       {
         kind: "docker" as const,
-        name: "umami-db-1",
+        name: "tracker-db-1",
         state: "stopped" as const,
         since: null,
         system: false,
       },
       {
         kind: "docker" as const,
-        name: "umami-umami-1",
+        name: "tracker-tracker-1",
         state: "running" as const,
         since: null,
         system: false,
@@ -263,12 +265,12 @@ describe("a failed, not fixed card", () => {
   it("offers the logs of every container the action touched", () => {
     expect(
       logTargets(
-        action({ kind: "compose", name: "umami", action: "deploy" }),
+        action({ kind: "compose", name: "tracker", action: "deploy" }),
         inventory,
       ),
     ).toEqual([
-      { kind: "docker", name: "umami-db-1" },
-      { kind: "docker", name: "umami-umami-1" },
+      { kind: "docker", name: "tracker-db-1" },
+      { kind: "docker", name: "tracker-tracker-1" },
     ]);
     expect(logTargets(action({ name: "pihole-pihole-1" }), inventory)).toEqual([
       { kind: "docker", name: "pihole-pihole-1" },
@@ -324,13 +326,13 @@ describe("a failed, not fixed card", () => {
 
 describe("what an action says", () => {
   it("says what was done in a few words", () => {
-    expect(historyText(action({}))).toBe("Restart adguard");
+    expect(historyText(action({}))).toBe("Restart resolver");
     expect(historyText(action({ action: "logs" }))).toBe(
-      "Read logs of adguard",
+      "Read logs of resolver",
     );
     expect(
-      historyText(action({ kind: "compose", name: "kuma", action: "purge" })),
-    ).toBe("Delete kuma permanently");
+      historyText(action({ kind: "compose", name: "panel", action: "purge" })),
+    ).toBe("Delete panel permanently");
     expect(
       historyText(
         action({ kind: "systemd", name: "nginx.service", action: "heal" }),
@@ -360,6 +362,19 @@ describe("what an action says", () => {
     ).toBe("Delete network apps-inner");
   });
 
+  it("names the SELinux or AppArmor steps", () => {
+    expect(
+      historyText(
+        action({ kind: "host", name: "confinement", action: "containers" }),
+      ),
+    ).toBe("Change whether SELinux confines containers");
+    expect(
+      historyText(
+        action({ kind: "host", name: "confinement", action: "apply" }),
+      ),
+    ).toBe("Turn on SELinux or AppArmor");
+  });
+
   it("names the Tailscale steps, and the credential they use", () => {
     expect(
       historyText(action({ kind: "vault", name: "tailscale", action: "save" })),
@@ -387,8 +402,8 @@ describe("what an action says", () => {
     const reach = action({ kind: "compose", name: "shop", action: "reach" });
     expect(historyText(reach)).toBe("Change shop's reach");
     expect(
-      failedLine({ ...reach, status: "failed" }, { name: "io" }, 0).text,
-    ).toBe("Change shop's reach on io");
+      failedLine({ ...reach, status: "failed" }, { name: "server-2" }, 0).text,
+    ).toBe("Change shop's reach on server-2");
   });
 });
 
@@ -396,9 +411,9 @@ describe("an error line", () => {
   it("is the last line a failure printed", () => {
     expect(
       errorLine(
-        "Container umami-db-1 Starting\ndependency failed to start: container umami-db-1 exited (1)\n\n",
+        "Container tracker-db-1 Starting\ndependency failed to start: container tracker-db-1 exited (1)\n\n",
       ),
-    ).toBe("dependency failed to start: container umami-db-1 exited (1)");
+    ).toBe("dependency failed to start: container tracker-db-1 exited (1)");
   });
 
   it("is nothing for no output", () => {
@@ -445,8 +460,8 @@ describe("one action line", () => {
 
   it("says a failure in the hourglass with its server, its stack and its date", () => {
     const later = new Date(2026, 9, 24, 23, 0).getTime() + 5 * 86_400_000;
-    expect(failedLine(failed, { name: "pivox", stacks }, later)).toEqual({
-      text: "Restart pihole on pivox",
+    expect(failedLine(failed, { name: "server-1", stacks }, later)).toEqual({
+      text: "Restart pihole on server-1",
       time: "24 Oct 09:24",
       failure: "Exit 1 · port 53 is already allocated",
     });
@@ -462,7 +477,7 @@ describe("one action line", () => {
     const line = actionLine(
       action({
         kind: "compose",
-        name: "umami",
+        name: "tracker",
         action: "deploy",
         deviceId: "d1",
         sentAt: "2026-10-24T02:24:00.000Z",
@@ -472,7 +487,7 @@ describe("one action line", () => {
     );
     expect(line).toMatchObject({
       mark: "✓",
-      text: "Deploy umami",
+      text: "Deploy tracker",
       device: "Laptop",
       duration: "30s",
       failure: null,
@@ -482,8 +497,8 @@ describe("one action line", () => {
 
   it("names the server only when asked", () => {
     expect(
-      actionLine(failed, { nodeName: "pivox", showServer: true }).server,
-    ).toBe("pivox");
-    expect(actionLine(failed, { nodeName: "pivox" }).server).toBeNull();
+      actionLine(failed, { nodeName: "server-1", showServer: true }).server,
+    ).toBe("server-1");
+    expect(actionLine(failed, { nodeName: "server-1" }).server).toBeNull();
   });
 });

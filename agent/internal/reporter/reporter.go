@@ -38,6 +38,12 @@ type Heartbeat struct {
 	Boot    *Boot            `json:"boot,omitempty"`
 	Events  []Event          `json:"events,omitempty"`
 	Release *Release         `json:"release,omitempty"`
+	Denials *Denials         `json:"denials,omitempty"`
+}
+
+type Denials struct {
+	Count int          `json:"count"`
+	Lines []DenialLine `json:"lines"`
 }
 
 type Boot struct {
@@ -189,13 +195,39 @@ type Platform struct {
 }
 
 type SecurityReport struct {
-	CheckedAt  string     `json:"checkedAt"`
-	Findings   []Finding  `json:"findings"`
-	Recipes    []string   `json:"recipes"`
-	Lockdown   bool       `json:"lockdown"`
-	RebootHour *int       `json:"rebootHour"`
-	Platform   *Platform  `json:"platform,omitempty"`
-	Listeners  []Listener `json:"listeners,omitempty"`
+	CheckedAt   string       `json:"checkedAt"`
+	Findings    []Finding    `json:"findings"`
+	Recipes     []string     `json:"recipes"`
+	Lockdown    bool         `json:"lockdown"`
+	RebootHour  *int         `json:"rebootHour"`
+	Platform    *Platform    `json:"platform,omitempty"`
+	Listeners   []Listener   `json:"listeners,omitempty"`
+	Firewall    *Firewall    `json:"firewall,omitempty"`
+	Confinement *Confinement `json:"confinement,omitempty"`
+}
+
+type Confinement struct {
+	System   *string `json:"system"`
+	Mode     *string `json:"mode"`
+	Enforced *int    `json:"enforced"`
+	Complain *int    `json:"complain"`
+	Managed  bool    `json:"managed"`
+	Restart  bool    `json:"restart"`
+	Docker   *bool   `json:"docker"`
+}
+
+type DenialLine struct {
+	At      string `json:"at"`
+	Program string `json:"program"`
+	Wanted  string `json:"wanted"`
+	Stack   string `json:"stack,omitempty"`
+}
+
+type Firewall struct {
+	Closed bool              `json:"closed"`
+	Open   []network.Opening `json:"open"`
+	Other  []string          `json:"other"`
+	Drift  []string          `json:"drift,omitempty"`
 }
 
 type Listener struct {
@@ -308,6 +340,13 @@ type TailscaleReport struct {
 	Peers     int               `json:"peers"`
 	Reach     *[]TailscaleReach `json:"reach"`
 	Names     map[string]string `json:"names"`
+	ExitNode  *ExitNode         `json:"exitNode,omitempty"`
+	AcceptDNS *bool             `json:"acceptDNS,omitempty"`
+}
+
+type ExitNode struct {
+	Advertised bool `json:"advertised"`
+	Approved   bool `json:"approved"`
 }
 
 type TailscaleReach struct {

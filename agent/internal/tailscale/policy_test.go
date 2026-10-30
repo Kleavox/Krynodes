@@ -187,3 +187,28 @@ func TestEverythingExceptYourServers(t *testing.T) {
 func Blank(src []byte) []byte {
 	return scan(src).blank
 }
+
+func TestTheServersTagApprovesItsOwnExitNodeOnce(t *testing.T) {
+	owners := "{\n\t\"tagOwners\": {\"tag:kry\": [\"autogroup:admin\"]},\n"
+	for _, c := range []struct{ src, want string }{
+		{owners + "}\n", owners + "\t\"autoApprovers\": {\"exitNode\": [\"tag:kry\"]}\n}\n"},
+		{owners + "\t\"ssh\": []\n}\n", owners + "\t\"ssh\": [],\n\t\"autoApprovers\": {\"exitNode\": [\"tag:kry\"]}\n}\n"},
+		{
+			owners + "\t\"autoApprovers\": {\n\t\t// my subnet\n\t\t\"routes\": {\"192.168.1.0/24\": [\"tag:nas\"]},\n\t},\n}\n",
+			owners + "\t\"autoApprovers\": {\n\t\t\"exitNode\": [\"tag:kry\"],\n\t\t// my subnet\n\t\t\"routes\": {\"192.168.1.0/24\": [\"tag:nas\"]},\n\t},\n}\n",
+		},
+		{owners + "\t\"autoApprovers\": {},\n}\n", owners + "\t\"autoApprovers\": {\"exitNode\": [\"tag:kry\"]},\n}\n"},
+		{owners + "\t\"autoApprovers\": {\"exitNode\": [\"tag:nas\"]},\n}\n", owners + "\t\"autoApprovers\": {\"exitNode\": [\"tag:kry\", \"tag:nas\"]},\n}\n"},
+		{owners + "\t\"autoApprovers\": {\"exitNode\": []},\n}\n", owners + "\t\"autoApprovers\": {\"exitNode\": [\"tag:kry\"]},\n}\n"},
+		{owners + "\t\"autoApprovers\": {\"exitNode\": [\"tag:nas\", \"tag:kry\"]},\n}\n", owners + "\t\"autoApprovers\": {\"exitNode\": [\"tag:nas\", \"tag:kry\"]},\n}\n"},
+		{"{\n\t\"tagOwners\": {\"tag:nas\": []},\n}\n", "{\n\t\"tagOwners\": {\"tag:nas\": []},\n}\n"},
+	} {
+		saved := string(ApproveExitNodes([]byte(c.src)))
+		if saved != c.want || !json.Valid(Blank([]byte(saved))) {
+			t.Fatalf("saved:\n%s\nwant:\n%s", saved, c.want)
+		}
+		if twice := string(ApproveExitNodes([]byte(saved))); twice != saved {
+			t.Fatalf("a second save changed it:\n%s", twice)
+		}
+	}
+}

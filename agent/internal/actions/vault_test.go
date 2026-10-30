@@ -140,7 +140,7 @@ func TestAServiceGetsAWebAddressWithTheDashboardLogin(t *testing.T) {
 		"docker inspect --format {{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}} listmonk-app-1":                       "listmonk_default \n",
 	}
 	run.failing = map[string]string{"docker inspect --format {{.State.Running}} {{join .Args \" \"}} " + TunnelContainer: "No such object"}
-	args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-pivox.kleavox.xyz", "mode": "path", "path": "/admin", "zone": "kleavox.xyz", "aud": "aud-1"}
+	args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-server-1.example.org", "mode": "path", "path": "/admin", "zone": "example.org", "aud": "aud-1"}
 	result := runRequest(t, executor, exposeRequest(t, executor, split[1], "expose", args))
 	if !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
@@ -150,7 +150,7 @@ func TestAServiceGetsAWebAddressWithTheDashboardLogin(t *testing.T) {
 		tunnel = id
 	}
 	rules := fake.Ingress[tunnel]
-	if len(rules) != 2 || rules[0].Hostname != "listmonk-pivox.kleavox.xyz" || rules[0].Service != "http://listmonk-app-1:9000" {
+	if len(rules) != 2 || rules[0].Hostname != "listmonk-server-1.example.org" || rules[0].Service != "http://listmonk-app-1:9000" {
 		t.Fatalf("rules %#v", rules)
 	}
 	if len(fake.Records) != 1 || len(fake.Apps) != 2 {
@@ -189,7 +189,7 @@ func TestAProtectedAddressIsNeverOpenEvenForAMoment(t *testing.T) {
 		if failing {
 			fake.Fail = map[string]bool{"POST /accounts/acc-1/access/apps": true}
 		}
-		args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-pivox.kleavox.xyz", "mode": "allow", "zone": "kleavox.xyz", "aud": "aud-1"}
+		args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-server-1.example.org", "mode": "allow", "zone": "example.org", "aud": "aud-1"}
 		result := runRequest(t, executor, exposeRequest(t, executor, split[1], "expose", args))
 		guard := slices.Index(fake.Calls, "POST /client/v4/accounts/acc-1/access/apps")
 		route := slices.IndexFunc(fake.Calls, func(call string) bool {
@@ -212,7 +212,7 @@ func TestAWebAddressNeedsTwoPiecesAndAGoodName(t *testing.T) {
 	executor, run, fake := cloudflareExecutor(t, listmonkStack())
 	split := pieces(t, "cf-token", 2)
 	storePiece(t, executor, split[0], "2")
-	good := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-pivox.kleavox.xyz", "mode": "allow", "zone": "kleavox.xyz", "aud": "aud-1"}
+	good := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-server-1.example.org", "mode": "allow", "zone": "example.org", "aud": "aud-1"}
 	cases := map[string]Request{
 		"one piece":  exposeRequest(t, executor, nil, "expose", good),
 		"other zone": exposeRequest(t, executor, split[1], "expose", merge(good, map[string]string{"hostname": "listmonk.evil.example"})),
@@ -253,12 +253,12 @@ func TestRemovingTheLastAddressStopsTheTunnel(t *testing.T) {
 		"docker ps --filter label=com.docker.compose.project=listmonk --filter label=com.docker.compose.service=app --format {{.Names}}": "listmonk-app-1\n",
 		"docker inspect --format {{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}} listmonk-app-1":                       "listmonk_default \n",
 	}
-	args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-pivox.kleavox.xyz", "mode": "allow", "zone": "kleavox.xyz", "aud": "aud-1"}
+	args := map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-server-1.example.org", "mode": "allow", "zone": "example.org", "aud": "aud-1"}
 	if result := runRequest(t, executor, exposeRequest(t, executor, split[1], "expose", args)); !result.OK {
 		t.Fatalf("expose %#v", result)
 	}
 	off := composeRequest(t, idB, "listmonk", "unexpose", func(c *Command) {
-		c.Args = map[string]string{"hostname": "listmonk-pivox.kleavox.xyz", "zone": "kleavox.xyz"}
+		c.Args = map[string]string{"hostname": "listmonk-server-1.example.org", "zone": "example.org"}
 	})
 	off.Attachment = sealedPiece(t, executor, splitSet, split[1])
 	if result := runRequest(t, executor, off); !result.OK {
@@ -284,13 +284,13 @@ func TestReshareMakesFreshPiecesAndCleansARemovedServer(t *testing.T) {
 	cf := &cloudflare.Client{Token: "cf-token", Base: executor.CloudflareBase, HTTP: executor.CloudflareHTTP}
 	ctx := context.Background()
 	gone, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-gone")
-	cf.Point(ctx, "zone-1", "kuma-gone.kleavox.xyz", gone)
-	cf.Guard(ctx, "acc-1", "kuma-gone.kleavox.xyz", "aud-1")
+	cf.Point(ctx, "zone-1", "panel-gone.example.org", gone)
+	cf.Guard(ctx, "acc-1", "panel-gone.example.org", "aud-1")
 	first, _ := ecdh.P256().GenerateKey(rand.Reader)
 	second, _ := ecdh.P256().GenerateKey(rand.Reader)
 	next := "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a21"
 	request := vaultRequest(t, idB, "reshare", func(c *Command) {
-		c.Args = map[string]string{"holders": "node-1:" + seal.Public(first) + ",node-2:" + seal.Public(second), "set": next, "cleanup": "node-gone", "zone": "kleavox.xyz"}
+		c.Args = map[string]string{"holders": "node-1:" + seal.Public(first) + ",node-2:" + seal.Public(second), "set": next, "cleanup": "node-gone", "zone": "example.org"}
 	})
 	request.Attachment = sealedPiece(t, executor, splitSet, split[2])
 	result := runRequest(t, executor, request)
@@ -405,7 +405,7 @@ func TestTheTokenIsRebuiltFromTheSplitInUse(t *testing.T) {
 	storeInto(t, executor, idA, splitSet, "", old[0], "2")
 	storeInto(t, executor, idB, nextSet, splitSet, pieces(t, "other", 2)[0], "2")
 	request := composeRequest(t, idC, "listmonk", "expose", func(c *Command) {
-		c.Args = map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-node.kleavox.xyz", "mode": "everyone", "zone": "kleavox.xyz", "source": splitSet}
+		c.Args = map[string]string{"service": "app", "port": "9000", "hostname": "listmonk-node.example.org", "mode": "everyone", "zone": "example.org", "source": splitSet}
 	})
 	request.Attachment = sealedPiece(t, executor, splitSet, old[1])
 	result := runRequest(t, executor, request)
@@ -443,12 +443,12 @@ func TestAnOlderTunnelOnAContainedStackIsStartedAgainOnce(t *testing.T) {
 	run := func(state string, access string, locked bool) bool {
 		t.Helper()
 		executor, fake := stackExecutor(t)
-		_, stack := ownKuma(t, executor, access, kumaText)
+		_, stack := ownPanel(t, executor, access, panelText)
 		withStacks(&executor, stack)
 		if err := os.WriteFile(filepath.Join(executor.StateDir, "tunnel.env"), []byte("TUNNEL_TOKEN=same\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeJSON(executor.StateDir, "addresses.json", map[string]webAddress{"kuma.kleavox.xyz": {Project: "kuma", Network: "kuma_default"}}, 0o640); err != nil {
+		if err := writeJSON(executor.StateDir, "addresses.json", map[string]webAddress{"panel.example.org": {Project: "panel", Network: "panel_default"}}, 0o640); err != nil {
 			t.Fatal(err)
 		}
 		if locked {

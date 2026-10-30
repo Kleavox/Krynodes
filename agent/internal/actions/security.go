@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Kleavox/krynodes/agent/internal/confine"
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
@@ -30,6 +31,8 @@ type securityState struct {
 	CheckedAt time.Time           `json:"checkedAt"`
 	Findings  []reporter.Finding  `json:"findings"`
 	Listeners []reporter.Listener `json:"listeners,omitempty"`
+	Firewall  *reporter.Firewall  `json:"firewall,omitempty"`
+	Docker    *bool               `json:"docker,omitempty"`
 }
 
 const maxListeners = 100
@@ -49,7 +52,7 @@ func (e Executor) security(ctx context.Context, force bool) *reporter.SecurityRe
 	state, _ := readState[securityState](e.StateDir, "security.json")
 	if force || state.CheckedAt.IsZero() || e.Now().Sub(state.CheckedAt) >= checkEvery {
 		found, listeners := e.findings(ctx)
-		state = securityState{CheckedAt: e.Now(), Findings: found, Listeners: listeners}
+		state = securityState{CheckedAt: e.Now(), Findings: found, Listeners: listeners, Firewall: e.adoptable(ctx), Docker: e.dockerConfined(ctx)}
 		if err := writeJSON(e.StateDir, "security.json", state, 0o640); err != nil {
 			return nil
 		}
@@ -68,6 +71,32 @@ func (e Executor) security(ctx context.Context, force bool) *reporter.SecurityRe
 	}
 	report.Findings = findings
 	report.Listeners = state.Listeners
+	report.Firewall = e.firewallReport(state.Firewall)
+	report.Confinement = e.confinementReport(state.Docker)
+	return report
+}
+
+func (e Executor) dockerConfined(ctx context.Context) *bool {
+	options, ok := e.dockerOptions(ctx)
+	if !ok {
+		return nil
+	}
+	on := slices.ContainsFunc(options, func(option string) bool {
+		return strings.HasPrefix(option, "name=selinux") || strings.HasPrefix(option, "name=apparmor")
+	})
+	return &on
+}
+
+func (e Executor) confinementReport(docker *bool) *reporter.Confinement {
+	state := confine.Read(e.Root, string(recipes.Detect(e.recipeEnv()).Family))
+	applied, managed := e.readRecipes().Applied["confinement"]
+	report := &reporter.Confinement{Managed: managed, Restart: state.Restart || (applied.Saved["restart"] == "1" && state.Mode == confine.KernelOff), Docker: docker}
+	if state.System != "" {
+		report.System, report.Mode = &state.System, &state.Mode
+	}
+	if state.System == confine.AppArmor && state.Mode == confine.On {
+		report.Enforced, report.Complain = &state.Enforced, &state.Complain
+	}
 	return report
 }
 
@@ -116,8 +145,12 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 			add("reboot-pending", "note", "A restart has been waiting since "+since.UTC().Format("2 Jan"))
 		}
 	}
-	if risky := e.riskyContainers(ctx); len(risky) > 0 {
+	risky, unconfined := e.riskyContainers(ctx)
+	if len(risky) > 0 {
 		add("risky-container", "serious", "Containers with full control of the server: "+strings.Join(risky, ", "))
+	}
+	if len(unconfined) > 0 {
+		add("unconfined-container", "warning", "Containers started outside Krynodes that run unconfined: "+strings.Join(unconfined, ", "))
 	}
 	listeners, stub := e.publicListeners(ctx, settings)
 	firewall := e.firewallOf(ctx, platform.Family)
@@ -234,27 +267,49 @@ func (e Executor) fullAccess(project string) bool {
 	return project != "" && ValidTarget("compose", project) && e.accessOf(filepath.Join(e.StateDir, "compose", project)) == "full"
 }
 
-func (e Executor) riskyContainers(ctx context.Context) []string {
+func (e Executor) riskyContainers(ctx context.Context) ([]string, []string) {
 	ids, ok := e.output(ctx, "docker", "ps", "-q")
 	if !ok || strings.TrimSpace(ids) == "" {
-		return nil
+		return nil, nil
 	}
-	output, ok := e.output(ctx, "docker", append([]string{"inspect", "--format", "{{.Name}}\t{{.HostConfig.Privileged}}\t{{range .Mounts}}{{.Source}};{{end}}\t{{index .Config.Labels \"com.docker.compose.project\"}}"}, strings.Fields(ids)...)...)
+	output, ok := e.output(ctx, "docker", append([]string{"inspect", "--format", "{{.Name}}\t{{.HostConfig.Privileged}}\t{{range .Mounts}}{{.Source}};{{end}}\t{{index .Config.Labels \"com.docker.compose.project\"}}\t{{.AppArmorProfile}}\t{{.ProcessLabel}}\t{{range .HostConfig.SecurityOpt}}{{.}};{{end}}"}, strings.Fields(ids)...)...)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	var risky []string
+	var risky, unconfined []string
+	labels := -1
 	for line := range strings.SplitSeq(output, "\n") {
-		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
-		if len(fields) < 4 || e.fullAccess(fields[3]) {
+		fields := append(strings.Split(strings.TrimRight(line, "\r"), "\t"), "", "", "")
+		if len(fields) < 7 || e.fullAccess(fields[3]) {
 			continue
 		}
+		name := strings.TrimPrefix(fields[0], "/")
 		mounts := strings.Split(fields[2], ";")
 		if fields[1] == "true" || slices.Contains(mounts, "/var/run/docker.sock") || slices.Contains(mounts, "/run/docker.sock") {
-			risky = append(risky, strings.TrimPrefix(fields[0], "/"))
+			risky = append(risky, name)
+			continue
+		}
+		var off []string
+		if fields[4] == "unconfined" {
+			off = append(off, "AppArmor")
+		}
+		if options := strings.Split(fields[6], ";"); slices.Contains(options, "seccomp=unconfined") || slices.Contains(options, "seccomp:unconfined") {
+			off = append(off, "seccomp")
+		}
+		if fields[5] == "" && labels == -1 {
+			labels = 0
+			if e.dockerSELinux(ctx) {
+				labels = 1
+			}
+		}
+		if fields[5] == "" && labels == 1 {
+			off = append(off, "SELinux")
+		}
+		if len(off) > 0 {
+			unconfined = append(unconfined, name+" ("+strings.Join(off, ", ")+")")
 		}
 	}
-	return risky
+	return risky, unconfined
 }
 
 func listenerEntries(listeners []reporter.Listener) []string {

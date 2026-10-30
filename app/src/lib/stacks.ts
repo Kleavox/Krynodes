@@ -40,7 +40,10 @@ export function parseHostPorts(text: string): {
     if (entry === "") continue;
     const match = /^(\d{1,5})\/(tcp|udp)$/u.exec(entry);
     if (!match) {
-      return { ports: [], problem: `${entry} is not a port such as 3000/tcp.` };
+      return {
+        ports: [],
+        problem: `${entry} is not a port written as number/tcp.`,
+      };
     }
     const number = Number(match[1]);
     if (number < 1 || number > 65_535) {

@@ -12,9 +12,9 @@ import {
   usesPrivateIp,
 } from "./compose";
 
-const adguard = `services:
-  adguard:
-    image: adguard/adguardhome:v0.107
+const resolver = `services:
+  resolver:
+    image: example/resolver:v0.107
     ports:
       - "53:53/udp"
       - "53:53/tcp"
@@ -23,8 +23,8 @@ const adguard = `services:
         published: 853
         protocol: tcp
     volumes:
-      - ./work:/opt/adguardhome/work
-      - /srv/adguard/conf:/opt/adguardhome/conf
+      - ./work:/opt/resolverhome/work
+      - /srv/resolver/conf:/opt/resolverhome/conf
       - type: bind
         source: /etc/localtime
         target: /etc/localtime
@@ -41,10 +41,10 @@ const adguard = `services:
 
 describe("reading a compose file", () => {
   it("names what a Full access stack opens", () => {
-    expect(summarize(adguard)).toEqual({
-      services: ["adguard", "dhcp", "app"],
+    expect(summarize(resolver)).toEqual({
+      services: ["resolver", "dhcp", "app"],
       internet: ["53/udp", "53/tcp", "853/tcp"],
-      folders: ["/srv/adguard/conf", "/etc/localtime"],
+      folders: ["/srv/resolver/conf", "/etc/localtime"],
       hostNetwork: ["dhcp"],
       devices: ["dhcp"],
       privileged: ["dhcp"],
@@ -70,15 +70,15 @@ describe("reading a compose file", () => {
     expect(summary.internet).toEqual(["8080/tcp"]);
     expect(summary.private).toEqual(["3000/tcp", "9090/tcp"]);
     expect(usesPrivateIp(text)).toBe(true);
-    expect(usesPrivateIp(adguard)).toBe(false);
+    expect(usesPrivateIp(resolver)).toBe(false);
   });
 
   it("lists the ports a file publishes with the service that publishes each", () => {
-    expect(publishedPorts(adguard)).toEqual([
-      { port: "53/udp", service: "adguard" },
-      { port: "53/tcp", service: "adguard" },
-      { port: "3000/tcp", service: "adguard" },
-      { port: "853/tcp", service: "adguard" },
+    expect(publishedPorts(resolver)).toEqual([
+      { port: "53/udp", service: "resolver" },
+      { port: "53/tcp", service: "resolver" },
+      { port: "3000/tcp", service: "resolver" },
+      { port: "853/tcp", service: "resolver" },
     ]);
     expect(publishedPorts("services:\n  web:\n    ports: ['80']\n")).toEqual(
       [],
@@ -157,10 +157,10 @@ describe("reading a compose file", () => {
   });
 
   it("lists services and the ports each one listens on", () => {
-    expect(servicesOf(adguard)).toEqual(["adguard", "dhcp", "app"]);
-    expect(portsOf(adguard, "adguard")).toEqual([53, 3000, 853]);
-    expect(portsOf(adguard, "app")).toEqual([8080]);
-    expect(portsOf(adguard, "missing")).toEqual([]);
+    expect(servicesOf(resolver)).toEqual(["resolver", "dhcp", "app"]);
+    expect(portsOf(resolver, "resolver")).toEqual([53, 3000, 853]);
+    expect(portsOf(resolver, "app")).toEqual([8080]);
+    expect(portsOf(resolver, "missing")).toEqual([]);
   });
 });
 

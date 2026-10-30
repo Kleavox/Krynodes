@@ -14,7 +14,7 @@ const report: BridgesReport = {
       subnet: "172.24.0.0/24",
       members: [
         {
-          project: "kuma",
+          project: "panel",
           service: "web",
           address: "172.24.0.3",
           offers: ["3001/tcp"],
@@ -29,7 +29,7 @@ const report: BridgesReport = {
         },
         {
           project: "adns",
-          service: "adguard",
+          service: "resolver",
           address: "172.24.0.2",
           offers: ["53/udp"],
           guest: false,
@@ -49,8 +49,8 @@ const report: BridgesReport = {
           guest: false,
         },
         {
-          project: "umami",
-          service: "umami",
+          project: "tracker",
+          service: "tracker",
           address: null,
           offers: [],
           guest: false,
@@ -60,15 +60,15 @@ const report: BridgesReport = {
     { name: "proxy", kind: "outside", subnet: "172.19.0.0/16", members: [] },
   ],
   taken: [
-    { range: "172.18.0.0/16", by: "kuma_default" },
+    { range: "172.18.0.0/16", by: "panel_default" },
     { range: "172.24.0.0/24", by: "apps-inner" },
     { range: "172.23.0.0/16", by: "default-env_public" },
     { range: "172.19.0.0/16", by: "proxy" },
   ],
-  claimed: ["kuma_default"],
+  claimed: ["panel_default"],
 };
 
-const io = { name: "io", bridges: report, stacks: [] };
+const serverTwo = { name: "server-2", bridges: report, stacks: [] };
 const none = () => {};
 
 const text = (html: string) =>
@@ -92,7 +92,7 @@ const form = (value: {
 }) =>
   renderToStaticMarkup(
     <CreateNetworkForm
-      server={io}
+      server={serverTwo}
       privateRange="10.88.0.0/24"
       value={value}
       onChange={none}
@@ -105,7 +105,7 @@ const form = (value: {
 describe("Docker Networks on the server page", () => {
   it("shows a row per shared network with its kind, subnet and users", () => {
     const rows = renderToStaticMarkup(
-      <NetworkRows server={io} onCopy={none} onDelete={none} />,
+      <NetworkRows server={serverTwo} onCopy={none} onDelete={none} />,
     )
       .split("<li")
       .slice(1)
@@ -113,9 +113,9 @@ describe("Docker Networks on the server page", () => {
     expect(rows).toHaveLength(3);
     expect(rows[0]).toContain("apps-inner Contained");
     expect(rows[0]).toContain("172.24.0.0/24");
-    expect(rows[0]).toContain("adns, kuma, db guest");
+    expect(rows[0]).toContain("adns, panel, db guest");
     expect(rows[1]).toContain("default-env_public Full Access");
-    expect(rows[1]).toContain("grafana, umami");
+    expect(rows[1]).toContain("grafana, tracker");
     expect(rows[2]).toContain("proxy Outside Krynodes");
     expect(rows[2]).toContain("Not used");
   });
@@ -123,12 +123,12 @@ describe("Docker Networks on the server page", () => {
   it("says when the server has not reported its networks", () => {
     const html = renderToStaticMarkup(
       <NetworkRows
-        server={{ ...io, bridges: null }}
+        server={{ ...serverTwo, bridges: null }}
         onCopy={none}
         onDelete={none}
       />,
     );
-    expect(text(html)).toBe("io has not reported its networks yet.");
+    expect(text(html)).toBe("server-2 has not reported its networks yet.");
   });
 });
 
@@ -140,7 +140,7 @@ describe("Create Network", () => {
       subnet: "172.18.0.0/16",
     });
     expect(text(html)).toContain(
-      "Overlaps kuma_default (172.18.0.0/16) on io.",
+      "Overlaps panel_default (172.18.0.0/16) on server-2.",
     );
     expect(button(html, "Create")).toContain('disabled=""');
   });
@@ -151,14 +151,14 @@ describe("Create Network", () => {
       kind: "full",
       subnet: "172.25.0.0/16",
     });
-    expect(text(html)).toContain("✓ Free on io");
+    expect(text(html)).toContain("✓ Free on server-2");
     expect(button(html, "Create")).not.toContain('disabled=""');
     expect(button(html, "Create")).toContain("<svg");
   });
 
   it("keeps Create off for a name the server already has", () => {
     const html = form({ name: "proxy", kind: "full", subnet: "" });
-    expect(text(html)).toContain("io already has a network named proxy.");
+    expect(text(html)).toContain("server-2 already has a network named proxy.");
     expect(button(html, "Create")).toContain('disabled=""');
   });
 
@@ -166,7 +166,7 @@ describe("Create Network", () => {
     const contained = form({ name: "inner", kind: "contained", subnet: "" });
     expect(text(contained)).toContain("On a Contained Network");
     expect(text(contained)).toContain(
-      "Krynodes picks 172.24.1.0/24, free on io.",
+      "Krynodes picks 172.24.1.0/24, free on server-2.",
     );
     expect(
       text(form({ name: "inner", kind: "full", subnet: "" })),

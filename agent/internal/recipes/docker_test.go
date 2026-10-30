@@ -237,3 +237,44 @@ func TestDockerReportsADownloadFailure(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestTheSELinuxKeyMergesIntoDaemonJSONAndComesOutAgain(t *testing.T) {
+	env, _ := onRelease(t, "rocky")
+	original := "{\n  \"log-driver\": \"local\",\n  \"data-root\": \"/srv/docker\"\n}\n"
+	write(t, env, DockerDaemon, original)
+	previous, existed, err := MergeDaemon(env, "selinux-enabled", true)
+	if err != nil || previous != original || !existed {
+		t.Fatalf("previous %q existed %v err %v", previous, existed, err)
+	}
+	merged := read(env, DockerDaemon)
+	for _, key := range []string{`"log-driver": "local"`, `"data-root": "/srv/docker"`, `"selinux-enabled": true`} {
+		if !strings.Contains(merged, key) {
+			t.Fatalf("missing %s in %s", key, merged)
+		}
+	}
+	if err := RestoreDaemon(env, previous, existed); err != nil || read(env, DockerDaemon) != original {
+		t.Fatalf("restored %q err %v", read(env, DockerDaemon), err)
+	}
+
+	env, _ = onRelease(t, "rocky")
+	previous, existed, err = MergeDaemon(env, "selinux-enabled", true)
+	if err != nil || existed || !strings.Contains(read(env, DockerDaemon), `"selinux-enabled": true`) {
+		t.Fatalf("new file %q err %v", read(env, DockerDaemon), err)
+	}
+	if err := RestoreDaemon(env, previous, existed); err != nil || exists(env, DockerDaemon) {
+		t.Fatalf("a file Krynodes wrote is removed again: %v", err)
+	}
+}
+
+func TestDockerInstalledUnderManagedSELinuxConfinesFromTheStart(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	env, _ = withFetch(env)
+	freshServer(run)
+	if _, err := InstallDocker(context.Background(), env, map[string]string{"selinux": "1"}); err != nil {
+		t.Fatal(err)
+	}
+	daemon := read(env, DockerDaemon)
+	if !strings.Contains(daemon, `"selinux-enabled": true`) || !strings.Contains(daemon, `"log-driver": "local"`) {
+		t.Fatalf("daemon.json %q", daemon)
+	}
+}

@@ -55,6 +55,8 @@ type Executor struct {
 	Audit      bool
 	ConfigPath string
 
+	QuarantineMark string
+
 	CloudflareBase string
 	CloudflareHTTP *http.Client
 
@@ -155,6 +157,8 @@ run:
 			return err
 		}
 	}
+	e.leaveExitNodeWhenQuarantined(ctx)
+	e.firewallDrift(ctx)
 	if snapshot.Docker == "ready" && e.hasContained() {
 		e.guard(ctx)
 		e.refreshTunnel(ctx)

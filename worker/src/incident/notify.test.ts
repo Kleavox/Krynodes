@@ -42,14 +42,14 @@ describe("incident mail", () => {
         [
           T,
           [
-            notice("pivox", "Health"),
-            notice("pivox", "API"),
+            notice("server-1", "Health"),
+            notice("server-1", "API"),
             notice("vps", null),
           ],
         ],
       ]),
     ).toEqual([
-      { at: T, nodeId: "pivox", down: ["Health", "API"] },
+      { at: T, nodeId: "server-1", down: ["Health", "API"] },
       { at: T, nodeId: "vps", down: ["server"] },
     ]);
   });
@@ -57,19 +57,22 @@ describe("incident mail", () => {
   it("never mails a recovery", () => {
     expect(
       run([
-        [T, [notice("pivox", "Health")]],
-        [T + 5 * MINUTE, [notice("pivox", "Health", "resolved")]],
-        [T + 6 * MINUTE, [notice("pivox", null, "resolved")]],
+        [T, [notice("server-1", "Health")]],
+        [T + 5 * MINUTE, [notice("server-1", "Health", "resolved")]],
+        [T + 6 * MINUTE, [notice("server-1", null, "resolved")]],
       ]),
     ).toHaveLength(1);
   });
 
   it("mails a check's first failure in an hour, not the ones after it", () => {
     const mails = run([
-      [T, [notice("pivox", "Health")]],
-      [T + 10 * MINUTE, [notice("pivox", "Health")]],
-      [T + 20 * MINUTE, [notice("pivox", "API"), notice("pivox", "Health")]],
-      [T + 61 * MINUTE, [notice("pivox", "Health")]],
+      [T, [notice("server-1", "Health")]],
+      [T + 10 * MINUTE, [notice("server-1", "Health")]],
+      [
+        T + 20 * MINUTE,
+        [notice("server-1", "API"), notice("server-1", "Health")],
+      ],
+      [T + 61 * MINUTE, [notice("server-1", "Health")]],
     ]);
     expect(mails.map((mail) => [mail.at, mail.down])).toEqual([
       [T, ["Health"]],

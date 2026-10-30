@@ -10,6 +10,8 @@ import {
   DELIVER_SQL,
   deliverActions,
   EXPIRE_SQL,
+  heartbeatActions,
+  PENDING_SQL,
   plannedNodes,
   sweepStatements,
   workUnderway,
@@ -43,7 +45,7 @@ function setup() {
       targets: nodes.map((nodeId) => ({
         nodeId,
         kind: "docker" as const,
-        name: "adguard",
+        name: "resolver",
       })),
       requestedBy: "owner@example.test",
       now,
@@ -89,7 +91,7 @@ describe("action batches", () => {
       {
         id: first!.id,
         kind: "docker",
-        name: "adguard",
+        name: "resolver",
         action: "restart",
         expiresAt: iso(NOW + 10 * MINUTE),
       },
@@ -234,6 +236,19 @@ describe("action batches", () => {
     expect(await ids(A, NOW + 2 * MINUTE)).toEqual([]);
     await finish(C, storeC!.id, true, NOW + 2 * MINUTE);
     expect(await ids(A, NOW + 2 * MINUTE)).toEqual([forget!.id]);
+  });
+
+  it("reads one index entry on a heartbeat from a server with nothing to do", async () => {
+    const { db, sqlite, queue } = setup();
+    await queue("parallel", [A]);
+    const statements = recordStatements(sqlite);
+    expect(await heartbeatActions(db, B, NOW)).toEqual([]);
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).not.toMatch(/UPDATE/u);
+    expect(await heartbeatActions(db, A, NOW)).toHaveLength(1);
+    expect(statements.filter((sql) => sql.startsWith("UPDATE"))).toHaveLength(
+      5,
+    );
   });
 
   it("delivers every action of a parallel batch at once", async () => {
@@ -410,6 +425,9 @@ describe("action batches", () => {
       /SEARCH actions USING (COVERING )?INDEX idx_actions_status_node \(status=\? AND node_id=\?\)/u,
     );
     expect(plan(DELIVER_SQL)).not.toMatch(/SCAN actions\b/u);
+    expect(plan(PENDING_SQL)).toMatch(
+      /SEARCH actions USING COVERING INDEX idx_actions_status_node \(status=\? AND node_id=\?\)/u,
+    );
     expect(plan(EXPIRE_SQL)).toMatch(
       /SEARCH actions USING INDEX idx_actions_status_node \(status=\?\)/u,
     );
@@ -524,7 +542,7 @@ describe("action batches", () => {
     for (const [action, kind, name] of [
       ["heal", "systemd", "nginx.service"],
       ["scan", "host", "server"],
-      ["read", "compose", "umami"],
+      ["read", "compose", "tracker"],
     ] as const) {
       await db.batch(
         createBatch(db, {
@@ -541,7 +559,7 @@ describe("action batches", () => {
     expect(await plannedNodes(db, [B], NOW + MINUTE)).toEqual(new Set());
     await queue("parallel", [B]);
     expect(await workUnderway(db, B, NOW + MINUTE, NOW)).toEqual([
-      { kind: "docker", name: "adguard", action: "restart" },
+      { kind: "docker", name: "resolver", action: "restart" },
     ]);
     expect(await plannedNodes(db, [B], NOW + MINUTE)).toEqual(new Set([B]));
   });

@@ -49,8 +49,11 @@ export async function remindTokens(env: Env, now = Date.now()): Promise<void> {
   }
 }
 
+export const WINDOWS_RETENTION_SQL =
+  "DELETE FROM node_windows WHERE node_id IN (SELECT id FROM nodes) AND window_start < ?";
+
 export async function runRetention(env: Env): Promise<void> {
-  await env.DB.prepare("DELETE FROM node_windows WHERE window_start < ?")
+  await env.DB.prepare(WINDOWS_RETENTION_SQL)
     .bind(new Date(Date.now() - 8 * 86_400_000).toISOString())
     .run();
   await env.DB.prepare(

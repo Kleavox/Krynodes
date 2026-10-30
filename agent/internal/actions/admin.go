@@ -86,7 +86,7 @@ func (e Executor) adminExpect(request Request) Result {
 	}
 	name, list := command.Args["name"], strings.Split(command.Args["keys"], ",")
 	if len(command.Args) != 2 || !recipes.ValidAdminName(name) {
-		return e.refuse(request.ID, errors.New("an admin user needs a name such as musyaf, not root, and its SSH keys"))
+		return e.refuse(request.ID, errors.New("an admin user needs your user name, not root, and its SSH keys"))
 	}
 	if _, err := parseAdminKeys(list); err != nil {
 		return e.refuse(request.ID, err)

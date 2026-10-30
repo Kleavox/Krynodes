@@ -86,9 +86,9 @@ func TestAStackOnASharedBridgeIsKnownByItsAddress(t *testing.T) {
 	for index := range targets {
 		targets[index] = fmt.Sprintf("172.24.0.%d:%d", 3+index, 5432)
 	}
-	addresses := map[string]string{"172.24.0.2": "kuma"}
+	addresses := map[string]string{"172.24.0.2": "panel"}
 	seen := Scans(knocking(now, "172.24.0.2", true, "krc0a1b2c3d4e5f", targets...), now, 10, map[string]string{"krc111111111111": "app"}, addresses)
-	if len(seen.Stacks) != 1 || seen.Stacks[0].Who != "kuma" || seen.Stacks[0].Count != 10 {
+	if len(seen.Stacks) != 1 || seen.Stacks[0].Who != "panel" || seen.Stacks[0].Count != 10 {
 		t.Fatalf("seen %+v", seen)
 	}
 	if seen := Scans(knocking(now, "172.24.0.9", true, "krc0a1b2c3d4e5f", targets...), now, 10, nil, addresses); len(seen.Stacks) != 0 {

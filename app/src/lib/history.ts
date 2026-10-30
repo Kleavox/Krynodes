@@ -15,6 +15,8 @@ import {
   shortDate,
   stampTime,
 } from "./format";
+import { confinementActionText } from "./confine";
+import { firewallActionText } from "./firewall";
 import { networkActionText } from "./network";
 import { actorOf } from "./operations";
 import { namesServer, outcomeOf, packageText } from "./packages";
@@ -238,6 +240,8 @@ export function historyText(
   const packages =
     packageText(action, nodeName) ??
     tailnetActionText(action, nodeName) ??
+    firewallActionText(action) ??
+    confinementActionText(action) ??
     networkActionText(action, names) ??
     quarantineActionText(action);
   if (packages) return packages;

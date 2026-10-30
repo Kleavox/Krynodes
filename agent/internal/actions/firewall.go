@@ -23,32 +23,6 @@ func (p openPort) lets(port int, protocol string) bool {
 	return port >= p.low && port <= p.high && (p.protocol == "any" || p.protocol == protocol)
 }
 
-func (e Executor) routeInterfaces() []string {
-	var names []string
-	add := func(name string) {
-		if name != "" && name != "lo" && !slices.Contains(names, name) {
-			names = append(names, name)
-		}
-	}
-	if body, err := os.ReadFile(e.path("/proc/net/route")); err == nil {
-		for line := range strings.SplitSeq(string(body), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) > 7 && fields[1] == "00000000" && fields[7] == "00000000" {
-				add(fields[0])
-			}
-		}
-	}
-	if body, err := os.ReadFile(e.path("/proc/net/ipv6_route")); err == nil {
-		for line := range strings.SplitSeq(string(body), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) == 10 && strings.Trim(fields[0], "0") == "" && fields[1] == "00" {
-				add(fields[9])
-			}
-		}
-	}
-	return names
-}
-
 func portRanges(text, separator string) []openPort {
 	var open []openPort
 	for item := range strings.SplitSeq(text, ",") {
@@ -70,7 +44,7 @@ func (e Executor) ufwOpen() []openPort {
 	if match := inputPolicy.FindSubmatch(policy); match != nil && strings.EqualFold(string(match[1]), "ACCEPT") {
 		return []openPort{{low: 0, high: 65535, protocol: "any"}}
 	}
-	routed := e.routeInterfaces()
+	routed := recipes.RouteInterfaces(e.recipeEnv())
 	var open []openPort
 	for _, file := range []string{"/etc/ufw/user.rules", "/etc/ufw/user6.rules"} {
 		body, err := os.ReadFile(e.path(file))
@@ -118,15 +92,6 @@ func (e Executor) ufwOpen() []openPort {
 	return open
 }
 
-func infoField(output, name string) []string {
-	for line := range strings.SplitSeq(output, "\n") {
-		if value, ok := strings.CutPrefix(strings.TrimSpace(line), name+":"); ok {
-			return strings.Fields(value)
-		}
-	}
-	return nil
-}
-
 func firewalldPorts(entries []string) []openPort {
 	var open []openPort
 	for _, entry := range entries {
@@ -144,7 +109,7 @@ func firewalldPorts(entries []string) []openPort {
 
 func (e Executor) firewalldOpen(ctx context.Context) []openPort {
 	zone := ""
-	if routed := e.routeInterfaces(); len(routed) > 0 {
+	if routed := recipes.RouteInterfaces(e.recipeEnv()); len(routed) > 0 {
 		zone, _ = e.output(ctx, "firewall-cmd", "--get-zone-of-interface="+routed[0])
 	}
 	if zone = strings.TrimSpace(zone); zone == "" {
@@ -152,13 +117,13 @@ func (e Executor) firewalldOpen(ctx context.Context) []openPort {
 		zone = strings.TrimSpace(zone)
 	}
 	info, _ := e.output(ctx, "firewall-cmd", "--info-zone="+zone)
-	if slices.Contains(infoField(info, "target"), "ACCEPT") {
+	if slices.Contains(recipes.InfoField(info, "target"), "ACCEPT") {
 		return []openPort{{low: 0, high: 65535, protocol: "any"}}
 	}
-	open := firewalldPorts(infoField(info, "ports"))
-	for _, service := range infoField(info, "services") {
+	open := firewalldPorts(recipes.InfoField(info, "ports"))
+	for _, service := range recipes.InfoField(info, "services") {
 		described, _ := e.output(ctx, "firewall-cmd", "--info-service="+service)
-		open = append(open, firewalldPorts(infoField(described, "ports"))...)
+		open = append(open, firewalldPorts(recipes.InfoField(described, "ports"))...)
 	}
 	return open
 }

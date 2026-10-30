@@ -9,6 +9,7 @@ import { SecurityMark } from "@/components/security-mark";
 import { StatusChip } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FirewallSection } from "@/features/nodes/firewall-section";
 import { MachineTiles, readRange } from "@/features/nodes/machine-tiles";
 import { NodeActions } from "@/features/nodes/node-actions";
 import {
@@ -175,6 +176,7 @@ export function NodeDetailPage() {
             reported={quarantined}
           />
           <SecurityPanel node={node} seen={seen} />
+          <FirewallSection node={node} />
           <ThisServer
             node={node}
             release={overview.data.agentRelease}

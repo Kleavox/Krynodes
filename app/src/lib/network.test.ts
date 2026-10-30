@@ -110,12 +110,12 @@ const server = (
   ...extra,
 });
 
-const vps1 = server(A, "vps-1", "10.88.0.1", "141.95.0.21:51820", {
+const vps1 = server(A, "vps-1", "10.88.0.1", "203.0.113.21:51820", {
   points: [{ stack: "backup", target: "vps-3.kry" }],
 });
-const vps2 = server(B, "vps-2", "10.88.0.2", "51.79.0.11:51821");
+const vps2 = server(B, "vps-2", "10.88.0.2", "198.51.100.11:51821");
 const vps3 = server(C, "vps-3", "10.88.0.3", "203.0.113.7:51820");
-const pivox = server(D, "pivox", "10.88.0.4", null);
+const serverOne = server(D, "server-1", "10.88.0.4", null);
 
 const link = (peer: NetworkServer, ago: number, ms: number | null = 4) => ({
   key: peer.key,
@@ -141,7 +141,7 @@ function view(extra: Partial<NetworkView> = {}): NetworkView {
     body: null,
     quarantined: [],
     wrongPorts: [],
-    members: [vps1, vps2, vps3, pivox],
+    members: [vps1, vps2, vps3, serverOne],
     waiting: [],
     links: [
       { a: A, b: B, answering: true, since: "2026-10-26T10:00:00Z" },
@@ -151,7 +151,11 @@ function view(extra: Partial<NetworkView> = {}): NetworkView {
     live: {
       [B]: {
         at: NOW - 20_000,
-        links: [link(vps1, 14), link(vps3, 400, null), link(pivox, 7200, null)],
+        links: [
+          link(vps1, 14),
+          link(vps3, 400, null),
+          link(serverOne, 7200, null),
+        ],
       },
     },
     held: [],
@@ -186,7 +190,7 @@ describe("the Network page", () => {
     expect(serverRow(vps2, view(), presence, NOW)).toEqual({
       name: "vps-2",
       address: "10.88.0.2 · vps-2.kry",
-      endpoint: "51.79.0.11:51821",
+      endpoint: "198.51.100.11:51821",
       links: "Links 1 of 2",
       short: true,
       offline: null,
@@ -195,9 +199,9 @@ describe("the Network page", () => {
       links: "Links 2 of 2",
       short: false,
     });
-    expect(serverRow(pivox, view(), presence, NOW)).toEqual({
-      name: "pivox",
-      address: "10.88.0.4 · pivox.kry",
+    expect(serverRow(serverOne, view(), presence, NOW)).toEqual({
+      name: "server-1",
+      address: "10.88.0.4 · server-1.kry",
       endpoint: "Behind NAT",
       links: "--",
       short: false,
@@ -222,7 +226,7 @@ describe("the Network page", () => {
       },
       {
         nodeId: D,
-        text: "pivox · offline, last answer 2h ago · --",
+        text: "server-1 · offline, last answer 2h ago · --",
         test: false,
         state: "offline",
       },
@@ -230,9 +234,9 @@ describe("the Network page", () => {
   });
 
   it("says two servers behind NAT cannot reach each other instead of no answer", () => {
-    const calisto = server(E, "calisto", "10.88.0.5", null);
+    const serverThree = server(E, "server-3", "10.88.0.5", null);
     const both = view({
-      members: [vps1, pivox, calisto],
+      members: [vps1, serverOne, serverThree],
       links: [
         { a: A, b: D, answering: true, since: "2026-10-26T11:00:00Z" },
         { a: D, b: E, answering: false, since: "2026-10-26T11:00:00Z" },
@@ -244,14 +248,14 @@ describe("the Network page", () => {
       [D]: { online: true, seenAt: NOW },
       [E]: { online: true, seenAt: NOW },
     };
-    expect(peerRows(pivox, both, online, NOW)).toContainEqual({
+    expect(peerRows(serverOne, both, online, NOW)).toContainEqual({
       nodeId: E,
-      text: "calisto · Both are behind NAT and cannot reach each other",
+      text: "server-3 · Both are behind NAT and cannot reach each other",
       test: false,
       state: "nat",
     });
     expect(problemRows(both, online, NOW)).toEqual([]);
-    expect(serverRow(pivox, both, online, NOW).links).toBe("Links 1 of 1");
+    expect(serverRow(serverOne, both, online, NOW).links).toBe("Links 1 of 1");
   });
 
   it("counts no link to a quarantined member, which is cut off on purpose", () => {
@@ -604,8 +608,8 @@ describe("reading the candidates", () => {
     expect(
       presenceOf(
         [
-          node(A, "vps-1", "141.95.0.21"),
-          node(D, "pivox", null, {
+          node(A, "vps-1", "203.0.113.21"),
+          node(D, "server-1", null, {
             last_seen_at: new Date(NOW - 7_200_000).toISOString(),
           }),
         ],
@@ -642,12 +646,12 @@ describe("reading the candidates", () => {
       docker: true,
       system: "Debian",
     });
-    const home = node(D, "pivox", "36.80.0.9", {
+    const home = node(D, "server-1", "192.0.2.9", {
       addresses: [
         {
           label: "IPv4",
           family: 4,
-          address: "36.80.0.9",
+          address: "192.0.2.9",
           router: true,
           network: null,
           owner: "router",
@@ -656,12 +660,12 @@ describe("reading the candidates", () => {
     });
     expect(seatOf(home, undefined)).toMatchObject({
       nat: true,
-      publicAddress: "36.80.0.9",
+      publicAddress: "192.0.2.9",
       firewall: null,
       docker: false,
       system: null,
     });
-    expect(seatOf(node(E, "io", null), undefined).nat).toBe(true);
+    expect(seatOf(node(E, "server-2", null), undefined).nat).toBe(true);
   });
 
   it("sends each probe to the servers that listen, and reads who got through", () => {
@@ -669,14 +673,14 @@ describe("reading the candidates", () => {
       {
         nodeId: A,
         name: "vps-1",
-        publicAddress: "141.95.0.21",
+        publicAddress: "203.0.113.21",
         nat: false,
         port: 51820,
       },
       {
         nodeId: B,
         name: "vps-2",
-        publicAddress: "51.79.0.11",
+        publicAddress: "198.51.100.11",
         nat: false,
         port: 51821,
       },
@@ -689,8 +693,8 @@ describe("reading the candidates", () => {
       },
       {
         nodeId: D,
-        name: "pivox",
-        publicAddress: "36.80.0.9",
+        name: "server-1",
+        publicAddress: "192.0.2.9",
         nat: true,
         port: 51820,
       },
@@ -699,34 +703,37 @@ describe("reading the candidates", () => {
     expect(plan).toEqual([
       {
         nodeId: A,
-        args: { port: "51820", peers: "51.79.0.11:51821 203.0.113.7:51820" },
+        args: { port: "51820", peers: "198.51.100.11:51821 203.0.113.7:51820" },
       },
       {
         nodeId: B,
-        args: { port: "51821", peers: "141.95.0.21:51820 203.0.113.7:51820" },
+        args: { port: "51821", peers: "203.0.113.21:51820 203.0.113.7:51820" },
       },
       {
         nodeId: C,
-        args: { port: "51820", peers: "141.95.0.21:51820 51.79.0.11:51821" },
+        args: {
+          port: "51820",
+          peers: "203.0.113.21:51820 198.51.100.11:51821",
+        },
       },
       {
         nodeId: D,
         args: {
           port: "51820",
-          peers: "141.95.0.21:51820 51.79.0.11:51821 203.0.113.7:51820",
+          peers: "203.0.113.21:51820 198.51.100.11:51821 203.0.113.7:51820",
         },
       },
     ]);
     const answers = {
-      [A]: { arrived: ["36.80.0.9", "51.79.0.11"] },
+      [A]: { arrived: ["192.0.2.9", "198.51.100.11"] },
       [C]: { arrived: [] },
     };
     expect(probeOf(seats[0]!, seats, plan, answers)).toEqual({
-      from: ["vps-2", "pivox"],
+      from: ["vps-2", "server-1"],
       arrived: true,
     });
     expect(probeOf(seats[2]!, seats, plan, answers)).toEqual({
-      from: ["vps-1", "vps-2", "pivox"],
+      from: ["vps-1", "vps-2", "server-1"],
       arrived: false,
     });
     expect(probeOf(seats[1]!, seats, plan, answers)).toBeNull();
@@ -781,7 +788,12 @@ describe("reading the candidates", () => {
     const prepared = { key: key(7), signer: key(8), port: 51821, mtu: 1500 };
     expect(
       joinerOf(
-        { nodeId: B, name: "vps-2", publicAddress: "51.79.0.11", nat: false },
+        {
+          nodeId: B,
+          name: "vps-2",
+          publicAddress: "198.51.100.11",
+          nat: false,
+        },
         prepared,
         "10.88.0.2",
       ),
@@ -792,12 +804,12 @@ describe("reading the candidates", () => {
       key: key(7),
       signer: key(8),
       port: 51821,
-      endpoint: "51.79.0.11:51821",
+      endpoint: "198.51.100.11:51821",
       nat: false,
     });
     expect(
       joinerOf(
-        { nodeId: D, name: "pivox", publicAddress: "36.80.0.9", nat: true },
+        { nodeId: D, name: "server-1", publicAddress: "192.0.2.9", nat: true },
         prepared,
         "10.88.0.4",
       ).endpoint,
@@ -825,8 +837,8 @@ describe("changing and ending", () => {
     ).toEqual([
       {
         mark: "−",
-        text: "vps-1, vps-2 and pivox drop vps-3 and stop accepting its key",
-        short: "vps-1, vps-2 and pivox drop it",
+        text: "vps-1, vps-2 and server-1 drop vps-3 and stop accepting its key",
+        short: "vps-1, vps-2 and server-1 drop it",
       },
       {
         mark: "−",
@@ -867,8 +879,8 @@ describe("changing and ending", () => {
     ).toEqual([
       {
         mark: "−",
-        text: "vps-1, vps-3 and pivox drop vps-2 and stop accepting its key",
-        short: "vps-1, vps-3 and pivox drop it",
+        text: "vps-1, vps-3 and server-1 drop vps-2 and stop accepting its key",
+        short: "vps-1, vps-3 and server-1 drop it",
       },
       {
         mark: "−",
@@ -887,7 +899,7 @@ describe("changing and ending", () => {
     const checks = [
       {
         id: "1",
-        name: "umami to vps-2 db",
+        name: "tracker to vps-2 db",
         node_id: A,
         target: "vps-2.kry:5432",
         enabled: 1,
@@ -925,7 +937,7 @@ describe("changing and ending", () => {
       deleteLines(view(), presence, { keep: ["vps-2"] }, [
         {
           id: "1",
-          name: "umami to vps-2 db",
+          name: "tracker to vps-2 db",
           node_id: A,
           target: "vps-2.kry:5432",
           enabled: 1,
@@ -950,7 +962,7 @@ describe("changing and ending", () => {
       },
       {
         mark: "·",
-        text: "pivox is offline and cleans itself up when it is back",
+        text: "server-1 is offline and cleans itself up when it is back",
       },
       {
         mark: "✕",
@@ -963,15 +975,15 @@ describe("changing and ending", () => {
       {
         mark: "✓",
         text: "Turn off 1 check that goes through the network",
-        detail: "umami to vps-2 db, on vps-1. Turn it on again from Checks.",
+        detail: "tracker to vps-2 db, on vps-1. Turn it on again from Checks.",
         short: "Turn off 1 check through the network",
       },
     ]);
   });
 
   it("words every change the way History lists it", () => {
-    expect(networkText.create(["vps-1", "vps-2", "io", "pivox"])).toBe(
-      "Create the private network with vps-1, vps-2, io and pivox",
+    expect(networkText.create(["vps-1", "vps-2", "server-2", "server-1"])).toBe(
+      "Create the private network with vps-1, vps-2, server-2 and server-1",
     );
     expect(networkText.add(["vps-4"])).toBe("Add vps-4 to the private network");
     expect(networkText.remove("vps-3")).toBe(
@@ -979,12 +991,12 @@ describe("changing and ending", () => {
     );
     expect(networkText.delete).toBe("Delete the private network");
     expect(networkText.rekey).toBe("Make new network keys");
-    expect(networkText.test("vps-2", "pivox")).toBe("Test vps-2 ↔ pivox");
+    expect(networkText.test("vps-2", "server-1")).toBe("Test vps-2 ↔ server-1");
     expect(networkText.again).toBe("Send the private network again");
     expect(networkText.rule("vps-3")).toBe(
       "Put the firewall rule back on vps-3",
     );
-    expect(networkText.mtu("pivox", 1380)).toBe("Use MTU 1380 on pivox");
+    expect(networkText.mtu("server-1", 1380)).toBe("Use MTU 1380 on server-1");
     expect(testingText("vps-2", "vps-3", 12_400)).toBe(
       "Testing vps-2 ↔ vps-3 · 12s",
     );
@@ -1066,7 +1078,7 @@ describe("Test Link", () => {
       },
       {
         mark: "✓",
-        text: "vps-2 still has 51.79.0.11",
+        text: "vps-2 still has 198.51.100.11",
         short: "vps-2: address unchanged",
       },
       {
@@ -1093,7 +1105,7 @@ describe("Test Link", () => {
       { mark: "–", text: "Large packets · tested once the link is up" },
     ]);
     expect(mostLikely(a, b, network, ["vps-1"])).toEqual({
-      text: "Something in front of vps-3 lets UDP 51820 in from vps-1 but not from vps-2 (51.79.0.11). This is often a provider firewall rule limited by source. Add 51.79.0.11 to it.",
+      text: "Something in front of vps-3 lets UDP 51820 in from vps-1 but not from vps-2 (198.51.100.11). This is often a provider firewall rule limited by source. Add 198.51.100.11 to it.",
       detail: "Krynodes cannot change a provider's firewall.",
       fix: null,
     });
@@ -1102,7 +1114,7 @@ describe("Test Link", () => {
   it("offers Use 1380 when large packets stop on the way", () => {
     const a = end(vps1, 5);
     const b = end(
-      pivox,
+      serverOne,
       8,
       { large: { passed: 1380, tried: [1420, 1400, 1380] } },
       null,
@@ -1119,11 +1131,11 @@ describe("Test Link", () => {
       { mark: "✓", text: "Packets of 1380 bytes get through" },
     ]);
     expect(rows.map((row) => row.short)).toContain("Address unchanged");
-    expect(rows.map((row) => row.text)).not.toContain("pivox still has --");
+    expect(rows.map((row) => row.text)).not.toContain("server-1 still has --");
     expect(mostLikely(a, b, network, [])).toEqual({
-      text: "The way to pivox carries at most 1380 bytes, likely because of its home connection. Small requests work, but a large reply stalls.",
+      text: "The way to server-1 carries at most 1380 bytes, likely because of its home connection. Small requests work, but a large reply stalls.",
       detail:
-        "pivox gets MTU 1380 and the others keep 1420. Connections to pivox then use the smaller size from both ends.",
+        "server-1 gets MTU 1380 and the others keep 1420. Connections to server-1 then use the smaller size from both ends.",
       fix: { kind: "mtu", nodeId: D, size: 1380 },
     });
     expect(testSummary(rows, { kind: "mtu", nodeId: D, size: 1380 })).toBe(
@@ -1144,13 +1156,13 @@ describe("Test Link", () => {
     expect(testPairs(view()).map(([a, b]) => `${a.name}-${b.name}`)).toEqual([
       "vps-1-vps-2",
       "vps-1-vps-3",
-      "vps-1-pivox",
+      "vps-1-server-1",
       "vps-2-vps-3",
-      "vps-2-pivox",
-      "vps-3-pivox",
+      "vps-2-server-1",
+      "vps-3-server-1",
     ]);
     expect(testPairs(view(), C).map(([a, b]) => `${a.name}-${b.name}`)).toEqual(
-      ["vps-1-vps-3", "vps-2-vps-3", "vps-3-pivox"],
+      ["vps-1-vps-3", "vps-2-vps-3", "vps-3-server-1"],
     );
     expect(testOthers(view(), B, C)).toEqual(["vps-1"]);
   });
@@ -1450,13 +1462,13 @@ describe("the network document", () => {
 describe("the ends of a member", () => {
   it("says what Delete Node does to the network first", () => {
     expect(leaveParagraph(vps3, view())).toBe(
-      "vps-3 is in the private network. Krynodes takes it out first: vps-1, vps-2 and pivox drop it, and 10.88.0.3 is held while a stack still points to it. backup on vps-1 reaches vps-3.kry and stops working.",
+      "vps-3 is in the private network. Krynodes takes it out first: vps-1, vps-2 and server-1 drop it, and 10.88.0.3 is held while a stack still points to it. backup on vps-1 reaches vps-3.kry and stops working.",
     );
     expect(leaveParagraph(vps2, view({ members: [vps1, vps2] }))).toBe(
       "vps-2 is in the private network. Krynodes takes it out first: vps-1 drops it, and 10.88.0.2 is let go.",
     );
     expect(leaveParagraph(vps3, view(), true)).toBe(
-      "That also takes kry0 off. Until then it can do no harm: vps-1, vps-2 and pivox drop vps-3 now and no longer accept its key.",
+      "That also takes kry0 off. Until then it can do no harm: vps-1, vps-2 and server-1 drop vps-3 now and no longer accept its key.",
     );
   });
 
@@ -1464,21 +1476,21 @@ describe("the ends of a member", () => {
     const sealed = { [A]: "a", [B]: "b", [C]: "c", [D]: "d" };
     expect(missingSeals(view(), sealed)).toBeNull();
     expect(missingSeals(view(), { [A]: "a", [B]: "b" })).toBe(
-      "vps-3 and pivox have not reported their seal keys yet. Refresh their services and try again.",
+      "vps-3 and server-1 have not reported their seal keys yet. Refresh their services and try again.",
     );
     expect(missingSeals(view(), { [A]: "a", [B]: "b", [C]: "c" })).toBe(
-      "pivox has not reported its seal key yet. Refresh its services and try again.",
+      "server-1 has not reported its seal key yet. Refresh its services and try again.",
     );
   });
 
   it("names the offline servers that make their keys later", () => {
     expect(rekeyNote(view(), presence)).toBe(
-      "pivox is offline. It gets its new key when it is back, and cannot connect with the old one meanwhile.",
+      "server-1 is offline. It gets its new key when it is back, and cannot connect with the old one meanwhile.",
     );
     expect(
       rekeyNote(view(), { ...presence, [C]: { online: false, seenAt: null } }),
     ).toBe(
-      "vps-3 and pivox are offline. They get their new keys when they are back, and cannot connect with the old ones meanwhile.",
+      "vps-3 and server-1 are offline. They get their new keys when they are back, and cannot connect with the old ones meanwhile.",
     );
     expect(rekeyNote(view(), { ...presence, [D]: presence[A]! })).toBeNull();
   });
@@ -1494,7 +1506,7 @@ describe("the ends of a member", () => {
       result: null,
     });
     expect(
-      testEnd(pivox, presence, NOW, { firewall: null }, null),
+      testEnd(serverOne, presence, NOW, { firewall: null }, null),
     ).toMatchObject({ address: null, age: 7200 });
   });
 
@@ -1534,7 +1546,7 @@ const servers = [
         reaches: ["10.88.0.3:9000/tcp"],
         private: [],
       }),
-      onIt("umami", "contained", {
+      onIt("tracker", "contained", {
         serves: [],
         reaches: ["10.88.0.2:5432/tcp"],
         private: [],
@@ -1578,12 +1590,12 @@ const placed = () =>
         ...vps1,
         points: [
           { stack: "backup", target: "10.88.0.3:9000/tcp" },
-          { stack: "umami", target: "10.88.0.2:5432/tcp" },
+          { stack: "tracker", target: "10.88.0.2:5432/tcp" },
         ],
       },
       vps2,
       vps3,
-      pivox,
+      serverOne,
     ],
   });
 
@@ -1624,7 +1636,7 @@ describe("stacks on the private network", () => {
       "vps-2:5432 is not a place such as vps-2:5432/tcp.",
     );
     expect(problem("vps-2")).toBe(
-      "vps-2 is not a place such as vps-2:5432/tcp.",
+      "vps-2 is not a place such as vps-2:port/tcp.",
     );
     expect(
       problem(
@@ -1714,6 +1726,65 @@ describe("stacks on the private network", () => {
     expect(privateIpProblem(grafanaOpen, "vps-4", false)).toBeNull();
   });
 
+  it("names the services SELinux does not confine, only where Docker confines", () => {
+    const tools = `services:
+  web:
+    image: nginx
+  backup:
+    image: restic
+    volumes:
+      - /srv:/srv:ro
+  vpn:
+    image: vpn
+    network_mode: host
+`;
+    expect(opensBox(tools, null, null, true)!.lines).toContain(
+      "Not confined by SELinux: backup, vpn",
+    );
+    expect(
+      opensBox(tools, null, null, false)!.lines.some((line) =>
+        line.startsWith("Not confined"),
+      ),
+    ).toBe(false);
+    expect(
+      opensBox(
+        `services:
+  web:
+    image: nginx
+`,
+        null,
+        null,
+        true,
+      )!.lines,
+    ).toEqual([]);
+  });
+
+  it("says which published ports a closed firewall keeps closed", () => {
+    const two = `${grafanaOpen}  web:
+    image: nginx
+    ports:
+      - "8080:80"
+`;
+    expect(opensBox(two, null, [])!.notes).toEqual([
+      "3000/tcp and 8080/tcp are closed by the firewall. Open them in the server's Firewall section.",
+    ]);
+    expect(
+      opensBox(two, null, [{ port: 3000, protocol: "tcp", from: "everyone" }])!
+        .notes,
+    ).toEqual([
+      "8080/tcp is closed by the firewall. Open it in the server's Firewall section.",
+    ]);
+    expect(
+      opensBox(two, null, [
+        { port: 3000, protocol: "tcp", from: "tailscale" },
+        { port: 8080, protocol: "tcp", from: "everyone" },
+      ])!.notes,
+    ).toEqual([]);
+    expect(opensBox(two, null, null)!.notes).toEqual([
+      "Docker opens these ports past ufw, so a firewall does not close them.",
+    ]);
+  });
+
   it("points Security's public line at the private address, and keeps the firewall's network row", () => {
     const stacks = [
       { project: "grafana", access: "full" as const, public: ["3000/tcp"] },
@@ -1794,9 +1865,9 @@ describe("stacks on the private network", () => {
       },
       {
         mark: "✕",
-        text: "umami on vps-1 reaches vps-2:5432/tcp",
+        text: "tracker on vps-1 reaches vps-2:5432/tcp",
         detail: "It fails until you change it.",
-        short: "umami on vps-1 stops reaching vps-2:5432",
+        short: "tracker on vps-1 stops reaching vps-2:5432",
         action: "edit",
         nodeId: A,
       },
@@ -1988,12 +2059,12 @@ describe("stacks on the private network", () => {
       },
       {
         nodeId: A,
-        project: "umami",
+        project: "tracker",
         reaches: ["10.88.0.2:5432/tcp"],
-        text: "umami reaches vps-2:5432/tcp over the private network. Watch that path from vps-1?",
+        text: "tracker reaches vps-2:5432/tcp over the private network. Watch that path from vps-1?",
         check: {
           nodeId: A,
-          name: "umami to vps-2 db",
+          name: "tracker to vps-2 db",
           kind: "TCP",
           target: "vps-2.kry:5432",
           timeoutSeconds: 10,
@@ -2031,20 +2102,24 @@ describe("the link a test checks", () => {
       peer: "n2",
       output: null,
     } as unknown as ActionRecord;
-    const names = { n1: "io", n2: "pivox" };
-    expect(networkActionText(test, names)).toBe("Test the link io ↔ pivox");
+    const names = { n1: "server-2", n2: "server-1" };
+    expect(networkActionText(test, names)).toBe(
+      "Test the link server-2 ↔ server-1",
+    );
     expect(networkActionText({ ...test, peer: "n9" }, names)).toBe(
       "Test a private network link",
     );
     expect(networkActionText({ ...test, peer: null }, names)).toBe(
       "Test a private network link",
     );
-    expect(historyText(test, [], "io", names)).toBe("Test the link io ↔ pivox");
+    expect(historyText(test, [], "server-2", names)).toBe(
+      "Test the link server-2 ↔ server-1",
+    );
     expect(
       actionLine(
         { ...test, requestedAt: "2026-10-28T03:00:00.000Z" },
-        { nodeName: "io", names },
+        { nodeName: "server-2", names },
       ).text,
-    ).toBe("Test the link io ↔ pivox");
+    ).toBe("Test the link server-2 ↔ server-1");
   });
 });

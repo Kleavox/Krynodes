@@ -27,6 +27,7 @@ var turnedOff = map[string]string{
 	"fail2ban":         "fail2ban no longer guards SSH",
 	"firewall":         "The firewall rules Krynodes added are gone",
 	"free-port-53":     "systemd-resolved holds port 53 again",
+	"confinement":      "SELinux or AppArmor is back as Krynodes found it",
 }
 
 var krynodesFiles = []string{"krynodes.json", "compose.krynodes.previous.json", "compose.previous.yaml", ".env.previous"}

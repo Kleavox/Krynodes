@@ -111,7 +111,7 @@ describe("overview with live connections", () => {
               lastSeen: LAST_SEEN,
               connectedAt: LAST_SEEN - 600_000,
               agentVersion: "0.3.0",
-              hostname: "pivox",
+              hostname: "server-1",
               metrics: {
                 cpuPercent: 42,
                 memoryUsedBytes: 5,
@@ -155,7 +155,7 @@ describe("overview with live connections", () => {
             [NODE]: {
               lastSeen: LAST_SEEN,
               agentVersion: "0.3.0",
-              hostname: "pivox",
+              hostname: "server-1",
               metrics: {
                 cpuPercent: 42,
                 memoryUsedBytes: 5,
@@ -198,6 +198,71 @@ describe("overview with live connections", () => {
       nodes: Record<string, unknown>[];
     };
     expect(body.nodes.map((entry) => entry.grace_seconds)).toEqual([420, 420]);
+    errors.mockRestore();
+  });
+});
+
+describe("lists that have not changed", () => {
+  const watch = (sqlite: { prepare: (sql: string) => unknown }) => {
+    const statements: string[] = [];
+    const prepare = sqlite.prepare;
+    sqlite.prepare = (sql: string) => {
+      statements.push(sql);
+      return prepare.call(sqlite, sql);
+    };
+    return {
+      statements,
+      restore: () => {
+        sqlite.prepare = prepare;
+      },
+    };
+  };
+
+  it("answers 304 without reading D1 while the hub's version stands", async () => {
+    let version = "a1-4";
+    const hub = fleet((request) =>
+      new URL(request.url).pathname === "/version"
+        ? Response.json({ version })
+        : new Response(null, { status: 404 }),
+    );
+    const t = await setup({
+      FLEET: hub.binding as unknown as DurableObjectNamespace,
+    });
+    for (const path of [
+      "/api/services",
+      "/api/network",
+      "/api/history",
+      "/api/history/attention",
+    ]) {
+      const first = await t.call(path);
+      expect(first.status).toBe(200);
+      const tag = first.headers.get("etag")!;
+      expect(tag).toMatch(/^"a1-4-\d+"$/u);
+      expect(first.headers.get("cache-control")).toBe("private, no-cache");
+      const watched = watch(t.sqlite);
+      const again = await t.call(path, { "if-none-match": `W/${tag}` });
+      watched.restore();
+      expect(again.status).toBe(304);
+      expect(watched.statements).toEqual([]);
+      version = "a1-5";
+      expect((await t.call(path, { "if-none-match": tag })).status).toBe(200);
+      version = "a1-4";
+    }
+  });
+
+  it("reads D1 as before when the hub cannot say its version", async () => {
+    const hub = fleet(() => {
+      throw new Error("hub down");
+    });
+    const errors = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const t = await setup({
+      FLEET: hub.binding as unknown as DurableObjectNamespace,
+    });
+    const response = await t.call("/api/services", { "if-none-match": '"x"' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("etag")).toBeNull();
     errors.mockRestore();
   });
 });

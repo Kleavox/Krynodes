@@ -29,7 +29,7 @@ const STARTED = "2026-09-27T07:59:00Z";
 function heartbeat(results?: CheckResult[]): AgentHeartbeat {
   return {
     nodeId: NODE.id,
-    hostname: "pivox",
+    hostname: "server-1",
     operatingSystem: "linux",
     architecture: "arm64",
     agentVersion: "0.3.1",

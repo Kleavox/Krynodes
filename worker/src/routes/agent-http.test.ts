@@ -92,8 +92,8 @@ function joinNetwork(sqlite: ReturnType<typeof createTestDb>["sqlite"]) {
     `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
      VALUES ('standalone', '10.88.0.0/24', 51820, 1420, 2, '{}', 's1', 'now', 'owner');
      INSERT INTO network_members (node_id, state, address, port, key, signer, endpoint, nat, since) VALUES
-     ('${NODE}', 'in', '10.88.0.1', 51821, 'k1', 's1', '141.95.0.21:51821', 0, 'now'),
-     ('${OTHER}', 'in', '10.88.0.2', 51820, 'k2', 's2', '141.95.0.22:51820', 0, 'now');`,
+     ('${NODE}', 'in', '10.88.0.1', 51821, 'k1', 's1', '203.0.113.21:51821', 0, 'now'),
+     ('${OTHER}', 'in', '10.88.0.2', 51820, 'k2', 's2', '203.0.113.22:51820', 0, 'now');`,
   );
 }
 
@@ -104,14 +104,14 @@ describe("a member's public address", () => {
   it("moves its endpoint on the others by itself and says so once", async () => {
     const t = await setup();
     joinNetwork(t.sqlite);
-    await seen(t, "141.95.0.99");
-    await seen(t, "141.95.0.99");
+    await seen(t, "203.0.113.99");
+    await seen(t, "203.0.113.99");
     await seen(t, "2001:db8:1:2::8f2a");
     expect(
       t.sqlite
         .prepare("SELECT endpoint FROM network_members WHERE node_id = ?")
         .get(NODE),
-    ).toEqual({ endpoint: "141.95.0.99:51821" });
+    ).toEqual({ endpoint: "203.0.113.99:51821" });
     expect(t.sqlite.prepare("SELECT stamp FROM network").get()).not.toEqual({
       stamp: "s1",
     });
@@ -124,7 +124,7 @@ describe("a member's public address", () => {
     ).toEqual([
       {
         change: `Update the public address of ${NODE}`,
-        detail: "141.95.0.21 → 141.95.0.99",
+        detail: "203.0.113.21 → 203.0.113.99",
         requested_by: "Krynodes",
         device_id: null,
         nodes: JSON.stringify([NODE]),
@@ -143,7 +143,7 @@ describe("a member's public address", () => {
     t.sqlite.exec(
       `UPDATE network_members SET nat = 1, endpoint = NULL WHERE node_id = '${NODE}'`,
     );
-    await seen(t, "141.95.0.99");
+    await seen(t, "203.0.113.99");
     expect(
       t.sqlite.prepare("SELECT count(*) AS n FROM network_changes").get(),
     ).toEqual({ n: 0 });
@@ -157,8 +157,8 @@ describe("the server's own addresses", () => {
       (
         await t.call("GET", "/api/agent/address", { "cf-connecting-ip": ip })
       ).json();
-    expect(await seen("103.28.54.214")).toEqual({
-      address: "103.28.54.214",
+    expect(await seen("198.51.100.214")).toEqual({
+      address: "198.51.100.214",
       family: 4,
     });
     expect(await seen("2001:db8:1:2::8f2a")).toEqual({
@@ -167,7 +167,7 @@ describe("the server's own addresses", () => {
     });
     const stored = t.row();
     expect(stored).toMatchObject({
-      ipv4: "103.28.54.214",
+      ipv4: "198.51.100.214",
       ipv6: "2001:db8:1:2::8f2a",
     });
     expect(stored.ipv4_at).not.toBeNull();
@@ -191,7 +191,7 @@ describe("the server's own addresses", () => {
       (
         await t.call("GET", "/api/agent/address", {
           authorization: "Bearer wrong",
-          "cf-connecting-ip": "103.28.54.214",
+          "cf-connecting-ip": "198.51.100.214",
         })
       ).status,
     ).toBe(401);
@@ -199,7 +199,7 @@ describe("the server's own addresses", () => {
 
   it("keep the network Cloudflare names for each family", async () => {
     const t = await setup();
-    await t.fromNetwork("GET", "103.28.54.214", {
+    await t.fromNetwork("GET", "198.51.100.214", {
       asOrganization: "PT Telkom Indonesia",
     });
     await t.fromNetwork("GET", "2001:db8:1:2::8f2a", undefined);
@@ -218,15 +218,15 @@ describe("the server's own addresses", () => {
     const response = await t.call(
       "POST",
       "/api/agent/address",
-      { "cf-connecting-ip": "103.28.54.214" },
+      { "cf-connecting-ip": "198.51.100.214" },
       { interfaces },
     );
     expect(await response.json()).toEqual({
-      address: "103.28.54.214",
+      address: "198.51.100.214",
       family: 4,
     });
     const stored = t.row();
-    expect(stored.ipv4).toBe("103.28.54.214");
+    expect(stored.ipv4).toBe("198.51.100.214");
     expect(JSON.parse(stored.interfaces!)).toEqual(interfaces);
   });
 
@@ -239,7 +239,7 @@ describe("the server's own addresses", () => {
     await t.call(
       "POST",
       "/api/agent/address",
-      { "cf-connecting-ip": "103.28.54.214" },
+      { "cf-connecting-ip": "198.51.100.214" },
       {
         interfaces: [
           { name: "", address: "10.0.0.1" },
@@ -267,27 +267,27 @@ describe("the server's own addresses", () => {
 
   it("leave the interfaces alone when an older agent calls with GET", async () => {
     const t = await setup();
-    const interfaces = [{ name: "eth0", address: "51.79.0.10" }];
+    const interfaces = [{ name: "eth0", address: "198.51.100.10" }];
     await t.call(
       "POST",
       "/api/agent/address",
-      { "cf-connecting-ip": "51.79.0.10" },
+      { "cf-connecting-ip": "198.51.100.10" },
       { interfaces },
     );
     await t.call("GET", "/api/agent/address", {
-      "cf-connecting-ip": "51.79.0.10",
+      "cf-connecting-ip": "198.51.100.10",
     });
     expect(JSON.parse(t.row().interfaces!)).toEqual(interfaces);
   });
 
   it("keep the stored interfaces when a call carries none it can read", async () => {
     const t = await setup();
-    const interfaces = [{ name: "eth0", address: "51.79.0.10" }];
+    const interfaces = [{ name: "eth0", address: "198.51.100.10" }];
     const send = (body: unknown) =>
       t.call(
         "POST",
         "/api/agent/address",
-        { "cf-connecting-ip": "51.79.0.10" },
+        { "cf-connecting-ip": "198.51.100.10" },
         body,
       );
     await send({ interfaces });
@@ -295,7 +295,7 @@ describe("the server's own addresses", () => {
       { interfaces: {} },
       { interfaces: "eth0" },
       { interfaces: [] },
-      { interfaces: [{ iface: "eth0", ip: "51.79.0.10" }] },
+      { interfaces: [{ iface: "eth0", ip: "198.51.100.10" }] },
     ]) {
       await send(body);
       expect(JSON.parse(t.row().interfaces!)).toEqual(interfaces);

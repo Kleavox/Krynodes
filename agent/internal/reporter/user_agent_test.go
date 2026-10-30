@@ -16,7 +16,7 @@ func TestRequestsIdentifyAsTheKrynodesAgent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if _, err := New(server.URL, "token", "0.4.0").Enroll(context.Background(), Host{Hostname: "pivox"}); err != nil {
+	if _, err := New(server.URL, "token", "0.4.0").Enroll(context.Background(), Host{Hostname: "server-1"}); err != nil {
 		t.Fatalf("enroll: %v", err)
 	}
 	if got != "kry-agent/0.4.0" {

@@ -15,6 +15,7 @@ import type {
   QuarantineView,
   StoppedStack,
 } from "../types";
+import { systemName } from "./confine";
 import { parseTimestamp, shortDate, stampTime } from "./format";
 import { planRemoval, type VaultName, type VaultNode } from "./vault";
 
@@ -77,6 +78,16 @@ function warningWords(warning: NodeWarning, now: number) {
           : `${value("port")} opened on a public address, not through Krynodes`,
         detail: `Process ${value("process")}`,
       };
+    case "firewall":
+      return {
+        title: "Firewall rule added, not through Krynodes",
+        detail: value("rule"),
+      };
+    case "confinement":
+      return {
+        title: `${systemName(warning.detail.system === "apparmor" ? "apparmor" : "selinux")} denied ${value("program")}`,
+        detail: `${value("type")} · ${value("wanted")}`,
+      };
     case "rule":
       return {
         title: "Krynodes' firewall rule was removed, and put back",
@@ -109,7 +120,15 @@ export function warningStrip(
   };
 }
 
-const ACCEPTS = ["ssh-key", "ssh-login", "user", "sudo", "port"];
+const ACCEPTS = [
+  "ssh-key",
+  "ssh-login",
+  "user",
+  "sudo",
+  "port",
+  "firewall",
+  "confinement",
+];
 
 export const acceptsWarning = (kind: string) => ACCEPTS.includes(kind);
 
@@ -524,12 +543,17 @@ export function stoppedRow(
     const [address = "", rest = ""] = place.split(/:(.*)/su);
     return `${names[address] ?? address}:${rest}`;
   });
+  const denied = stack.why === "confinement";
   return {
-    title: `Stopped by Krynodes at ${stampTime(stack.at, now)}: a container tried ${count > 0 ? places(count) : "-- places"} it was not given`,
+    title: denied
+      ? `Stopped by Krynodes at ${stampTime(stack.at, now)}: SELinux or AppArmor denied one of its containers`
+      : `Stopped by Krynodes at ${stampTime(stack.at, now)}: a container tried ${count > 0 ? places(count) : "-- places"} it was not given`,
     places:
       shown.length === 0
         ? "--"
-        : `${shown.join(", ")}${count > shown.length ? " …" : ""}`,
+        : denied
+          ? stack.tried.join(", ")
+          : `${shown.join(", ")}${count > shown.length ? " …" : ""}`,
     note: `${nodeName} is still trusted. Only this stack was stopped, and it stays stopped after a reboot. Change its secrets before you start it again.`,
   };
 }

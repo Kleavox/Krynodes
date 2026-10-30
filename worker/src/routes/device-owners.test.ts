@@ -125,7 +125,7 @@ describe("devices that belong to an account", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({
       code: "NOT_YOUR_DEVICE",
-      message: "ZnJpZW5kcw belongs to friend. Use one of your own devices.",
+      message: "ZnJpZW5kcw belongs to friend. Use one of your own passkeys.",
     });
   });
 });

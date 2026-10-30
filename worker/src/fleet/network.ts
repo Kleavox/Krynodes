@@ -26,6 +26,7 @@ export interface NetworkTurn {
   reply: NetworkReply | null;
   stamp: string | null;
   poke: string[];
+  changed?: boolean;
 }
 
 export class HubNetwork {
@@ -130,6 +131,7 @@ export class HubNetwork {
       reply: Object.keys(reply).length > 0 ? reply : null,
       stamp: row.stamp,
       poke,
+      ...(statements.length > 0 ? { changed: true } : {}),
     };
   }
 

@@ -75,7 +75,7 @@ func ParseServes(text string) ([]Serve, error) {
 		}
 		port, who, _ := strings.Cut(entry, "=")
 		if !validPortText(port) {
-			return nil, fmt.Errorf("%s is not a port such as 5432/tcp", port)
+			return nil, fmt.Errorf("%s is not a port written as number/tcp", port)
 		}
 		if slices.ContainsFunc(serves, func(serve Serve) bool { return serve.Port == port }) {
 			return nil, fmt.Errorf("%s is listed twice", port)
@@ -117,7 +117,7 @@ func ParsePlaces(text, networkRange, own string) ([]string, error) {
 		}
 		switch {
 		case match == nil || err != nil || number < 1 || number > 65535:
-			return nil, fmt.Errorf("%s is not a place such as 10.88.0.2:5432/tcp", entry)
+			return nil, fmt.Errorf("%s is not a place written as host:number/tcp", entry)
 		case address.String() == own:
 			return nil, fmt.Errorf("%s is this server; use Reach This Server On", own)
 		case !prefix.Contains(address):

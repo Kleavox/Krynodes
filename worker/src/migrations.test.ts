@@ -33,9 +33,9 @@ function before0014() {
   sqlite.exec("PRAGMA foreign_keys = ON");
   apply(sqlite, (name) => name < "0014");
   sqlite.exec(
-    "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+    "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
   );
-  sqlite.exec(action("a1", "docker", "adguard", "restart", "done"));
+  sqlite.exec(action("a1", "docker", "resolver", "restart", "done"));
   sqlite.exec(action("a2", "systemd", "nginx.service", "stop", "queued"));
   return sqlite;
 }
@@ -195,7 +195,7 @@ describe("migration 0016", () => {
     sqlite.exec(
       "INSERT INTO passphrase (owner_user_id, salt, iterations, public_key, set_at) VALUES ('standalone', 'c2FsdA', 600000, 'cHVi', '2026-09-30T10:00:00.000Z')",
     );
-    sqlite.exec(action("a3", "docker", "adguard", "restart", "queued", "{}"));
+    sqlite.exec(action("a3", "docker", "resolver", "restart", "queued", "{}"));
     sqlite.exec("UPDATE actions SET device_id = 'd1' WHERE id = 'a3'");
     const columns = sqlite
       .prepare("SELECT name FROM pragma_table_info('nodes')")
@@ -298,9 +298,9 @@ describe("migrations 0020 and 0021", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0020");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
     );
-    sqlite.exec(action("a1", "docker", "adguard", "restart", "done"));
+    sqlite.exec(action("a1", "docker", "resolver", "restart", "done"));
     apply(sqlite, (name) => name >= "0020");
     return sqlite;
   }
@@ -319,11 +319,11 @@ describe("migrations 0020 and 0021", () => {
 
   it("allows logs requests beside a pending action, but one pending action per target", () => {
     const sqlite = current();
-    sqlite.exec(action("r1", "docker", "adguard", "restart", "queued"));
-    sqlite.exec(action("l1", "docker", "adguard", "logs", "queued"));
-    sqlite.exec(action("l2", "docker", "adguard", "logs", "sent"));
+    sqlite.exec(action("r1", "docker", "resolver", "restart", "queued"));
+    sqlite.exec(action("l1", "docker", "resolver", "logs", "queued"));
+    sqlite.exec(action("l2", "docker", "resolver", "logs", "sent"));
     expect(() =>
-      sqlite.exec(action("r2", "docker", "adguard", "stop", "queued")),
+      sqlite.exec(action("r2", "docker", "resolver", "stop", "queued")),
     ).toThrow(/UNIQUE/u);
     expect(
       (
@@ -355,7 +355,7 @@ describe("migration 0027", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0027");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'io', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-2', 'h1')",
     );
     sqlite.exec(
       "INSERT INTO checks (id, node_id, name, kind, target, status, timeout_seconds, latency_ms, last_checked_at, consecutive_failures, last_message, public, public_note, auto_restart) VALUES ('c1', 'n1', 'Web', 'HTTP', 'https://example.com/', 'DOWN', 15, 120, '2026-10-10T01:00:00.000Z', 3, 'timeout', 1, 'Main site', 0), ('c2', 'n1', 'Nginx', 'SERVICE', 'nginx.service', 'UP', 10, 5, NULL, 0, NULL, 0, NULL, 1)",
@@ -365,7 +365,7 @@ describe("migration 0027", () => {
     );
     expect(() =>
       sqlite.exec(
-        "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('c3', 'n1', 'AdGuard', 'CONTAINER', 'adguard-adguard-1')",
+        "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('c3', 'n1', 'Resolver', 'CONTAINER', 'resolver-resolver-1')",
       ),
     ).toThrow(/CHECK/u);
     const before = sqlite.prepare("SELECT * FROM checks ORDER BY id").all();
@@ -382,7 +382,7 @@ describe("migration 0027", () => {
       { id: "i2", check_id: "c2", status: "RESOLVED" },
     ]);
     sqlite.exec(
-      "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('c3', 'n1', 'AdGuard', 'CONTAINER', 'adguard-adguard-1')",
+      "INSERT INTO checks (id, node_id, name, kind, target) VALUES ('c3', 'n1', 'Resolver', 'CONTAINER', 'resolver-resolver-1')",
     );
     expect(() =>
       sqlite.exec(
@@ -411,7 +411,7 @@ describe("migration 0029", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0029");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
     );
     for (const id of ["phone", "laptop", "spare"]) {
       sqlite.exec(
@@ -422,7 +422,7 @@ describe("migration 0029", () => {
       sqlite.exec(
         `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
            status, requested_by, requested_at, device_id)
-         VALUES ('${id}', 'b-${id}', 0, 'rolling', 'n1', 'docker', 'adguard', 'restart',
+         VALUES ('${id}', 'b-${id}', 0, 'rolling', 'n1', 'docker', 'resolver', 'restart',
            'done', '${by}', '${at}', '${device}')`,
       );
     signed("a1", "phone", "old@example.test", "2026-10-01T10:00:00.000Z");
@@ -445,7 +445,7 @@ describe("migration 0030", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0030");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
     );
     sqlite.exec(
       `INSERT INTO settings (key, value, updated_at) VALUES ('address_display', '"shown"', '2026-10-14T00:00:00.000Z')`,
@@ -471,7 +471,7 @@ describe("migration 0026", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0026");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
     );
     sqlite.exec(action("a1", "host", "docker", "install", "done", "{}"));
     expect(() =>
@@ -498,7 +498,7 @@ describe("migration 0032", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0032");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
     );
     sqlite.exec(action("a1", "host", "docker", "install", "done", "{}"));
     sqlite.exec(
@@ -543,7 +543,7 @@ describe("migration 0033", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0033");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1'), ('n2', 'standalone', 'io', 'h2')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1'), ('n2', 'standalone', 'server-2', 'h2')",
     );
     sqlite.exec(action("a1", "apt", "system", "upgrade", "sent", "{}"));
     sqlite.exec(
@@ -587,7 +587,7 @@ describe("migration 0033", () => {
     );
     sqlite.exec(
       `INSERT INTO network_addresses (owner_user_id, address, state, node_id, node_name)
-       VALUES ('standalone', '10.88.0.1', 'used', 'n1', 'pivox')`,
+       VALUES ('standalone', '10.88.0.1', 'used', 'n1', 'server-1')`,
     );
     sqlite.exec("UPDATE nodes SET links = '[]' WHERE id = 'n1'");
     sqlite.exec("DELETE FROM nodes WHERE id = 'n1'");
@@ -597,7 +597,7 @@ describe("migration 0033", () => {
     expect(sqlite.prepare("SELECT * FROM network_links").all()).toEqual([]);
     expect(
       sqlite.prepare("SELECT node_name FROM network_addresses").all(),
-    ).toEqual([{ node_name: "pivox" }]);
+    ).toEqual([{ node_name: "server-1" }]);
   });
 });
 
@@ -607,7 +607,7 @@ describe("migration 0034", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0034");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'io', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-2', 'h1')",
     );
     sqlite.exec(action("a1", "network", "kry0", "prepare", "done", "{}"));
     sqlite.exec(
@@ -728,7 +728,7 @@ describe("migration 0036", () => {
     sqlite.exec(action("a6", "vault", "cloudflare", "store", "queued", "{}"));
     sqlite.exec("UPDATE nodes SET tailscale_vault = '{}' WHERE id = 'n1'");
     sqlite.exec(
-      `INSERT INTO tailscale (owner_user_id, tailnet, client_id, webhook_secret, connected_at) VALUES ('standalone', 'tail4d2a.ts.net', 'kQ1', 's', 'now')`,
+      `INSERT INTO tailscale (owner_user_id, tailnet, client_id, webhook_secret, connected_at) VALUES ('standalone', 'tail0000.ts.net', 'kQ1', 's', 'now')`,
     );
     expect(
       sqlite.prepare("SELECT rules, lines, members FROM tailscale").get(),
@@ -757,12 +757,12 @@ describe("migration 0037", () => {
     sqlite.exec("PRAGMA foreign_keys = ON");
     apply(sqlite, (name) => name < "0037");
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'io', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-2', 'h1')",
     );
     const service = (name: string, state: string) =>
       `INSERT INTO services (node_id, kind, name, state, since, system) VALUES ('n1', 'systemd', '${name}', '${state}', NULL, 1)`;
     sqlite.exec(service("nginx.service", "running"));
-    sqlite.exec(action("a1", "compose", "kuma", "deploy", "queued", "{}"));
+    sqlite.exec(action("a1", "compose", "panel", "deploy", "queued", "{}"));
     expect(() =>
       sqlite.exec(service("e2scrub_reap.service", "boot")),
     ).toThrow();
@@ -790,7 +790,7 @@ describe("migration 0037", () => {
       sqlite.exec(action("a4", "bridge", "apps-inner", "nap", "queued", "{}")),
     ).toThrow();
     expect(() =>
-      sqlite.exec(action("a5", "compose", "kuma", "deploy", "queued", "{}")),
+      sqlite.exec(action("a5", "compose", "panel", "deploy", "queued", "{}")),
     ).toThrow(/UNIQUE/u);
     sqlite.exec("UPDATE nodes SET bridges = '{}' WHERE id = 'n1'");
     expect(
@@ -810,5 +810,52 @@ describe("migration 0037", () => {
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM services").get()).toEqual({
       n: 0,
     });
+  });
+});
+
+describe("migration 0042", () => {
+  it("keeps every action and index, and takes the firewall, Tailscale and confinement verbs", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0042");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
+    );
+    sqlite.exec(action("a1", "host", "server", "admin", "done", "{}"));
+    expect(() =>
+      sqlite.exec(action("a2", "host", "firewall", "open", "queued", "{}")),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0042"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    const verbs: [string, string][] = [
+      ["firewall", "open"],
+      ["firewall", "close"],
+      ["firewall", "putback"],
+      ["tailscale", "exitnode"],
+      ["tailscale", "dns"],
+      ["confinement", "containers"],
+    ];
+    verbs.forEach(([name, verb], index) => {
+      sqlite.exec(action(`v${index}`, "host", name, verb, "done", "{}"));
+    });
+    expect(() =>
+      sqlite.exec(action("x", "host", "firewall", "nap", "queued", "{}")),
+    ).toThrow();
+    expect(
+      sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'actions' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all()
+        .map((row) => (row as { name: string }).name),
+    ).toEqual([
+      "idx_actions_batch",
+      "idx_actions_node_requested",
+      "idx_actions_one_pending",
+      "idx_actions_status_node",
+      "idx_actions_target",
+    ]);
   });
 });

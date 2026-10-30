@@ -30,7 +30,7 @@ const action = (overrides: Partial<ActionRecord>): ActionRecord => ({
   mode: "rolling",
   nodeId: "n1",
   kind: "docker",
-  name: "adguard",
+  name: "resolver",
   action: "restart",
   status: "queued",
   requestedBy: "owner@example.test",
@@ -55,7 +55,7 @@ const data: ServicesResponse = {
       services: [
         {
           kind: "docker",
-          name: "adguard",
+          name: "resolver",
           state: "running",
           since: null,
           system: false,
@@ -85,7 +85,7 @@ const data: ServicesResponse = {
       services: [
         {
           kind: "docker",
-          name: "adguard",
+          name: "resolver",
           state: "stopped",
           since: null,
           system: false,
@@ -101,7 +101,7 @@ const data: ServicesResponse = {
       services: [
         {
           kind: "docker",
-          name: "adguard",
+          name: "resolver",
           state: "running",
           since: null,
           system: false,
@@ -125,7 +125,11 @@ const data: ServicesResponse = {
   ],
 };
 
-const nodes = [node("n1", "PIVOX"), node("n2", "vps-sg"), node("n3", "zeta")];
+const nodes = [
+  node("n1", "SERVER-1"),
+  node("n2", "vps-sg"),
+  node("n3", "zeta"),
+];
 
 describe("grouping services by server", () => {
   const names = (groups: ReturnType<typeof groupByServer>) =>
@@ -138,11 +142,11 @@ describe("grouping services by server", () => {
   it("lists each server's services, troubled servers first, without system units", () => {
     const groups = groupByServer(data, nodes, all);
     expect(names(groups)).toEqual([
-      ["vps-sg", ["adguard"]],
-      ["PIVOX", ["adguard", "nginx.service"]],
-      ["zeta", ["adguard"]],
+      ["vps-sg", ["resolver"]],
+      ["SERVER-1", ["nginx.service", "resolver"]],
+      ["zeta", ["resolver"]],
     ]);
-    expect(groups[1]!.members[0]!.action?.id).toBe("new-action");
+    expect(groups[1]!.members[1]!.action?.id).toBe("new-action");
   });
 
   it("puts a server's stopped services first", () => {
@@ -160,23 +164,23 @@ describe("grouping services by server", () => {
       ],
     };
     expect(names(groupByServer(stopped, nodes, all))).toEqual([
-      ["PIVOX", ["nginx.service", "adguard"]],
+      ["SERVER-1", ["nginx.service", "resolver"]],
     ]);
   });
 
   it("shows system units, searches services or servers and filters on request", () => {
     expect(
       names(groupByServer(data, nodes, { ...all, showSystem: true }))[1],
-    ).toEqual(["PIVOX", ["adguard", "cron.service", "nginx.service"]]);
+    ).toEqual(["SERVER-1", ["cron.service", "nginx.service", "resolver"]]);
     expect(
       names(groupByServer(data, nodes, { ...all, query: "NGINX" })),
-    ).toEqual([["PIVOX", ["nginx.service"]]]);
+    ).toEqual([["SERVER-1", ["nginx.service"]]]);
     expect(
       names(groupByServer(data, nodes, { ...all, query: "zeta" })),
-    ).toEqual([["zeta", ["adguard"]]]);
+    ).toEqual([["zeta", ["resolver"]]]);
     expect(
       names(groupByServer(data, nodes, { ...all, notRunning: true })),
-    ).toEqual([["vps-sg", ["adguard"]]]);
+    ).toEqual([["vps-sg", ["resolver"]]]);
   });
 
   it("knows which servers trust a device", () => {
@@ -210,33 +214,39 @@ describe("grouping services by server", () => {
 
 describe("action labels", () => {
   it("describes every stage", () => {
-    expect(actionText(action({}), "PIVOX")).toBe(
-      "Waiting for PIVOX to restart",
+    expect(actionText(action({}), "SERVER-1")).toBe(
+      "Waiting for SERVER-1 to restart",
     );
-    expect(actionText(action({ deliverableAt: null }), "PIVOX")).toBe(
+    expect(actionText(action({ deliverableAt: null }), "SERVER-1")).toBe(
       "Waiting for its turn to restart",
     );
     expect(
-      actionText(action({ kind: "compose", action: "restore" }), "pivox"),
-    ).toBe("Waiting for pivox to restore");
-    expect(actionText(action({ action: "autorestart" }), "pivox")).toBe(
-      "Waiting for pivox to turn on auto-restart",
+      actionText(action({ kind: "compose", action: "restore" }), "server-1"),
+    ).toBe("Waiting for server-1 to restore");
+    expect(actionText(action({ action: "autorestart" }), "server-1")).toBe(
+      "Waiting for server-1 to turn on auto-restart",
     );
-    expect(actionText(action({ status: "sent" }), "PIVOX")).toBe("Restarting…");
+    expect(actionText(action({ status: "sent" }), "SERVER-1")).toBe(
+      "Restarting…",
+    );
     expect(
       actionText(
         action({ status: "done", finishedAt: "2026-09-29T10:01:05.000Z" }),
-        "PIVOX",
+        "SERVER-1",
       ),
     ).toMatch(/^✓ Restarted \d\d:\d\d$/u);
-    expect(actionText(action({ status: "failed", exitCode: 1 }), "PIVOX")).toBe(
-      "Failed · Exit 1",
-    );
-    expect(actionText(action({ status: "failed" }), "PIVOX")).toBe("Failed");
-    expect(actionText(action({ status: "expired" }), "PIVOX")).toBe("Expired");
-    expect(actionText(action({ status: "skipped" }), "PIVOX")).toBe("Skipped");
     expect(
-      actionText(action({ action: "stop", status: "sent" }), "PIVOX"),
+      actionText(action({ status: "failed", exitCode: 1 }), "SERVER-1"),
+    ).toBe("Failed · Exit 1");
+    expect(actionText(action({ status: "failed" }), "SERVER-1")).toBe("Failed");
+    expect(actionText(action({ status: "expired" }), "SERVER-1")).toBe(
+      "Expired",
+    );
+    expect(actionText(action({ status: "skipped" }), "SERVER-1")).toBe(
+      "Skipped",
+    );
+    expect(
+      actionText(action({ action: "stop", status: "sent" }), "SERVER-1"),
     ).toBe("Stopping…");
   });
 
@@ -313,10 +323,10 @@ describe("polling, checks and outcomes", () => {
   it("finds the container behind a CONTAINER check by its exact name", () => {
     expect(
       serviceForCheck(
-        { kind: "CONTAINER", target: "adguard", node_id: "n2" },
+        { kind: "CONTAINER", target: "resolver", node_id: "n2" },
         data,
       ),
-    ).toMatchObject({ kind: "docker", name: "adguard", state: "stopped" });
+    ).toMatchObject({ kind: "docker", name: "resolver", state: "stopped" });
     expect(
       serviceForCheck(
         { kind: "CONTAINER", target: "nginx", node_id: "n1" },
@@ -326,20 +336,20 @@ describe("polling, checks and outcomes", () => {
   });
 
   it("says what runs and how it ended, in words people read", () => {
-    expect(runningText(action({ status: "sent" }), "PIVOX")).toBe(
-      "Restarting adguard on PIVOX",
+    expect(runningText(action({ status: "sent" }), "SERVER-1")).toBe(
+      "Restarting resolver on SERVER-1",
     );
-    expect(runningText(action({ status: "sent" }))).toBe("Restarting adguard");
+    expect(runningText(action({ status: "sent" }))).toBe("Restarting resolver");
     expect(
       runningText(
         action({ kind: "host", name: "server", action: "reboot" }),
-        "PIVOX",
+        "SERVER-1",
       ),
-    ).toBe("Restarting PIVOX");
+    ).toBe("Restarting SERVER-1");
     expect(isPending(action({ status: "sent" }))).toBe(true);
-    expect(outcomeText(action({ status: "done" }), "PIVOX")).toEqual({
+    expect(outcomeText(action({ status: "done" }), "SERVER-1")).toEqual({
       ok: true,
-      text: "adguard restarted on PIVOX",
+      text: "resolver restarted on SERVER-1",
     });
     expect(
       outcomeText(
@@ -349,13 +359,13 @@ describe("polling, checks and outcomes", () => {
           kind: "systemd",
           name: "nginx.service",
         }),
-        "PIVOX",
+        "SERVER-1",
       ),
     ).toEqual({
       ok: false,
-      text: "Could not restart nginx on PIVOX (exit 1)",
+      text: "Could not restart nginx on SERVER-1 (exit 1)",
     });
-    expect(outcomeText(action({ status: "cancelled" }), "PIVOX")).toBeNull();
+    expect(outcomeText(action({ status: "cancelled" }), "SERVER-1")).toBeNull();
   });
 });
 
@@ -365,12 +375,12 @@ describe("announcements and bulk order", () => {
     expect(`${verb("reboot")} ${displayName("host", "server")}`).toBe(
       "Restart server",
     );
-    expect(actionText({ ...reboot, status: "sent" }, "PIVOX")).toBe(
+    expect(actionText({ ...reboot, status: "sent" }, "SERVER-1")).toBe(
       "Restarting…",
     );
-    expect(outcomeText({ ...reboot, status: "done" }, "PIVOX")).toEqual({
+    expect(outcomeText({ ...reboot, status: "done" }, "SERVER-1")).toEqual({
       ok: true,
-      text: "PIVOX restarted",
+      text: "SERVER-1 restarted",
     });
   });
 });
@@ -381,19 +391,22 @@ describe("words for agent 0.4.0 commands", () => {
 
   it("reads an automatic restart and the switch plainly", () => {
     expect(
-      outcomeText(unit({ action: "heal", status: "done" }), "pivox"),
-    ).toEqual({ ok: true, text: "nginx restarted automatically on pivox" });
-    expect(runningText(unit({ action: "heal", status: "sent" }), "pivox")).toBe(
-      "Restarting nginx on pivox",
-    );
+      outcomeText(unit({ action: "heal", status: "done" }), "server-1"),
+    ).toEqual({ ok: true, text: "nginx restarted automatically on server-1" });
     expect(
-      outcomeText(unit({ action: "autorestart", status: "done" }), "pivox"),
-    ).toEqual({ ok: true, text: "nginx now restarts automatically on pivox" });
+      runningText(unit({ action: "heal", status: "sent" }), "server-1"),
+    ).toBe("Restarting nginx on server-1");
     expect(
-      outcomeText(unit({ action: "manual", status: "done" }), "pivox"),
+      outcomeText(unit({ action: "autorestart", status: "done" }), "server-1"),
     ).toEqual({
       ok: true,
-      text: "nginx no longer restarts automatically on pivox",
+      text: "nginx now restarts automatically on server-1",
+    });
+    expect(
+      outcomeText(unit({ action: "manual", status: "done" }), "server-1"),
+    ).toEqual({
+      ok: true,
+      text: "nginx no longer restarts automatically on server-1",
     });
   });
 
@@ -402,28 +415,28 @@ describe("words for agent 0.4.0 commands", () => {
       outcomeText(
         action({
           kind: "compose",
-          name: "kuma",
+          name: "panel",
           action: "purge",
           status: "failed",
           exitCode: 1,
         }),
-        "pivox",
+        "server-1",
       ),
     ).toEqual({
       ok: false,
-      text: "Could not delete kuma permanently on pivox (exit 1)",
+      text: "Could not delete panel permanently on server-1 (exit 1)",
     });
     expect(
       outcomeText(
         action({
           kind: "compose",
-          name: "kuma",
+          name: "panel",
           action: "restore",
           status: "done",
         }),
-        "pivox",
+        "server-1",
       ),
-    ).toEqual({ ok: true, text: "kuma restored on pivox" });
+    ).toEqual({ ok: true, text: "panel restored on server-1" });
   });
 });
 
@@ -461,10 +474,10 @@ describe("restart automatically", () => {
 
   it("says why it cannot be turned on", () => {
     expect(
-      autoRestartBlocker(check, node("n1", "pivox", "0.7.0"), entry()),
+      autoRestartBlocker(check, node("n1", "server-1", "0.7.0"), entry()),
     ).toBeNull();
     expect(
-      autoRestartBlocker(check, node("n1", "pivox", "0.4.1"), entry()),
+      autoRestartBlocker(check, node("n1", "server-1", "0.4.1"), entry()),
     ).toBe("Needs agent 0.7.0");
     expect(autoRestartBlocker(check, undefined, entry())).toBe(
       "Server Not Found",
@@ -472,28 +485,28 @@ describe("restart automatically", () => {
     expect(
       autoRestartBlocker(
         check,
-        { ...node("n1", "pivox", "0.7.0"), agent_version: null },
+        { ...node("n1", "server-1", "0.7.0"), agent_version: null },
         entry(),
       ),
     ).toBe("Waiting for First Report");
     expect(
       autoRestartBlocker(
         { ...check, target: "ssh" },
-        node("n1", "pivox", "0.7.0"),
+        node("n1", "server-1", "0.7.0"),
         entry(),
       ),
     ).toBe("Krynodes never restarts this unit");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.7.0"),
+        node("n1", "server-1", "0.7.0"),
         entry({ services: [] }),
       ),
     ).toBe("The unit is not on this server");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "pivox", "0.7.0"),
+        node("n1", "server-1", "0.7.0"),
         entry({ trust: null }),
       ),
     ).toBe("Not Trusted Yet");
@@ -524,16 +537,16 @@ describe("words for host work", () => {
   it("names Docker and a protection, and keeps the server short", () => {
     const install = action({ kind: "host", name: "docker", action: "install" });
     expect(historyText(install)).toBe("Install Docker");
-    expect(runningText({ ...install, status: "sent" }, "pivox")).toBe(
-      "Installing Docker on pivox",
+    expect(runningText({ ...install, status: "sent" }, "server-1")).toBe(
+      "Installing Docker on server-1",
     );
-    expect(outcomeText({ ...install, status: "done" }, "pivox")).toEqual({
+    expect(outcomeText({ ...install, status: "done" }, "server-1")).toEqual({
       ok: true,
-      text: "Docker installed on pivox",
+      text: "Docker installed on server-1",
     });
     const recipe = action({ kind: "host", name: "fail2ban", action: "apply" });
-    expect(runningText({ ...recipe, status: "sent" }, "pivox")).toBe(
-      "Turning on block repeated login failures on pivox",
+    expect(runningText({ ...recipe, status: "sent" }, "server-1")).toBe(
+      "Turning on block repeated login failures on server-1",
     );
     const reboot = action({
       kind: "host",
@@ -541,7 +554,7 @@ describe("words for host work", () => {
       action: "reboot",
       status: "sent",
     });
-    expect(runningText(reboot, "pivox")).toBe("Restarting pivox");
+    expect(runningText(reboot, "server-1")).toBe("Restarting server-1");
   });
 });
 
@@ -555,31 +568,31 @@ describe("words for removing Krynodes and moving a stack into it", () => {
       exitCode: null,
     });
   it("keeps the name Krynodes and says where", () => {
-    expect(actionText(removal("queued"), "pivox")).toBe(
-      "Waiting for pivox to remove Krynodes",
+    expect(actionText(removal("queued"), "server-1")).toBe(
+      "Waiting for server-1 to remove Krynodes",
     );
-    expect(runningText(removal("sent"), "pivox")).toBe(
-      "Removing Krynodes from pivox",
+    expect(runningText(removal("sent"), "server-1")).toBe(
+      "Removing Krynodes from server-1",
     );
-    expect(outcomeText(removal("done"), "pivox")).toEqual({
+    expect(outcomeText(removal("done"), "server-1")).toEqual({
       ok: true,
-      text: "Krynodes removed from pivox",
+      text: "Krynodes removed from server-1",
     });
-    expect(outcomeText(removal("failed"), "pivox")).toEqual({
+    expect(outcomeText(removal("failed"), "server-1")).toEqual({
       ok: false,
-      text: "Could not remove Krynodes from pivox (failed)",
+      text: "Could not remove Krynodes from server-1 (failed)",
     });
     expect(
       actionText(
         action({
           kind: "compose",
-          name: "kuma",
+          name: "panel",
           action: "adopt",
           status: "queued",
         }),
-        "pivox",
+        "server-1",
       ),
-    ).toBe("Waiting for pivox to move into Krynodes");
+    ).toBe("Waiting for server-1 to move into Krynodes");
   });
 });
 
@@ -629,9 +642,9 @@ describe("states a unit rests in", () => {
       historyText(
         action({ kind: "host", name: "server", action: "admin" }),
         [],
-        "io",
+        "server-2",
       ),
-    ).toBe("Get an admin user command for io");
+    ).toBe("Get an admin user command for server-2");
     expect(displayName("host", "no-root-login")).toBe("no root login");
   });
 });

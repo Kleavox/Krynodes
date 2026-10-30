@@ -17,7 +17,7 @@ import (
 const (
 	aptSimulate = "apt-get -s -o Debug::NoLocking=1 -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= upgrade"
 	listening   = "ss -H -tulnp"
-	riskyFormat = "{{.Name}}\t{{.HostConfig.Privileged}}\t{{range .Mounts}}{{.Source}};{{end}}\t{{index .Config.Labels \"com.docker.compose.project\"}}"
+	riskyFormat = "{{.Name}}\t{{.HostConfig.Privileged}}\t{{range .Mounts}}{{.Source}};{{end}}\t{{index .Config.Labels \"com.docker.compose.project\"}}\t{{.AppArmorProfile}}\t{{.ProcessLabel}}\t{{range .HostConfig.SecurityOpt}}{{.}};{{end}}"
 	portsFormat = "{{.Names}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}"
 )
 
@@ -185,7 +185,7 @@ func TestAHealthyServerHasOnlyNotes(t *testing.T) {
 func TestFullAccessStacksMayHoldDockerButTheirPortsAreNamed(t *testing.T) {
 	executor, run := securityExecutor(t)
 	healthyServer(t, executor, run)
-	dir := filepath.Join(executor.StateDir, "compose", "adguard")
+	dir := filepath.Join(executor.StateDir, "compose", "resolver")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
@@ -193,12 +193,12 @@ func TestFullAccessStacksMayHoldDockerButTheirPortsAreNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	run.respond["docker ps -q"] = "c1\n"
-	run.respond["docker inspect --format "+riskyFormat+" c1"] = "/adguard-dns-1\ttrue\t\tadguard\n"
-	run.respond["docker ps --format "+portsFormat] = "adguard-dns-1\t0.0.0.0:53->53/udp\tadguard\n"
+	run.respond["docker inspect --format "+riskyFormat+" c1"] = "/resolver-dns-1\ttrue\t\tresolver\n"
+	run.respond["docker ps --format "+portsFormat] = "resolver-dns-1\t0.0.0.0:53->53/udp\tresolver\n"
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if found := findingsOf(t, executor); len(found) != 3 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (adguard-dns-1)" {
+	if found := findingsOf(t, executor); len(found) != 3 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (resolver-dns-1)" {
 		t.Fatalf("findings %#v", found)
 	}
 }
@@ -209,8 +209,8 @@ const defaultRoute = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\t
 
 const manyListeners = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n" +
 	"tcp LISTEN 0 128 0.0.0.0:80 0.0.0.0:* users:((\"nginx\",pid=2,fd=3))\n" +
-	"tcp LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:((\"AdGuardHome\",pid=3,fd=3))\n" +
-	"tcp LISTEN 0 128 0.0.0.0:3000 0.0.0.0:* users:((\"AdGuardHome\",pid=3,fd=4))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:443 0.0.0.0:* users:((\"Resolver\",pid=3,fd=3))\n" +
+	"tcp LISTEN 0 128 0.0.0.0:3000 0.0.0.0:* users:((\"Resolver\",pid=3,fd=4))\n" +
 	"udp UNCONN 0 0 0.0.0.0:41641 0.0.0.0:* users:((\"tailscaled\",pid=4,fd=5))\n" +
 	"udp UNCONN 0 0 0.0.0.0:68 0.0.0.0:* users:((\"systemd-network\",pid=5,fd=3))\n" +
 	"udp UNCONN 0 0 0.0.0.0:5355 0.0.0.0:* users:((\"systemd-resolve\",pid=6,fd=3))\n" +
@@ -673,10 +673,10 @@ func TestALockedDownServerStartsNothingUntilItIsUnlocked(t *testing.T) {
 	}
 	executor, run := stackExecutor(t)
 	lock(executor)
-	refused("create", runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)), run)
+	refused("create", runRequest(t, executor, createRequest(t, idA, "panel", panelText)), run)
 	executor, run = stackExecutor(t)
 	lock(executor)
-	refused("docker start", runRequest(t, executor, request(t, idA, "docker", "adguard", "start", soon())), run)
+	refused("docker start", runRequest(t, executor, request(t, idA, "docker", "resolver", "start", soon())), run)
 	executor, _ = stackExecutor(t, listmonk)
 	lock(executor)
 	if result := runRequest(t, executor, request(t, idA, "compose", "listmonk", "stop", soon())); !result.OK {
@@ -945,5 +945,60 @@ func TestInstallDockerRunsInTheHostUnit(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(executor.StateDir, "docker.json")); err != nil {
 		t.Fatal("Krynodes remembers it installed Docker")
+	}
+}
+
+func confinementOf(t *testing.T, executor Executor) *reporter.Confinement {
+	t.Helper()
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var inventory Inventory
+	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	return inventory.Security.Confinement
+}
+
+const dockerSecurity = "docker info --format {{json .SecurityOptions}}"
+
+func TestEveryServerReportsItsConfinementWithoutOptingIn(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/sys/module/apparmor/parameters/enabled", "Y\n")
+	rootFile(t, executor, "/sys/kernel/security/apparmor/profiles", "docker-default (enforce)\n/usr/bin/man (complain)\n")
+	run.respond[dockerSecurity] = `["name=apparmor","name=seccomp,profile=builtin","name=cgroupns"]` + "\n"
+	got := confinementOf(t, executor)
+	if got == nil || got.System == nil || *got.System != "apparmor" || *got.Mode != "on" || *got.Enforced != 1 || *got.Complain != 1 || got.Managed || got.Restart || got.Docker == nil || !*got.Docker {
+		t.Fatalf("got %+v", got)
+	}
+
+	executor, run = securityExecutor(t)
+	rhelServer(t, executor, run)
+	rootFile(t, executor, "/sys/fs/selinux/enforce", "0")
+	rootFile(t, executor, "/etc/selinux/config", "SELINUX=permissive\n")
+	run.failing[dockerSecurity] = "docker: command not found"
+	got = confinementOf(t, executor)
+	if got == nil || *got.System != "selinux" || *got.Mode != "permissive" || got.Enforced != nil || got.Complain != nil || got.Docker != nil {
+		t.Fatalf("got %+v", got)
+	}
+
+	executor, run = securityExecutor(t)
+	rhelServer(t, executor, run)
+	rootFile(t, executor, "/etc/selinux/config", "SELINUX=enforcing\n")
+	run.respond[dockerSecurity] = `["name=seccomp,profile=builtin"]` + "\n"
+	got = confinementOf(t, executor)
+	if *got.Mode != "disabled" || !got.Restart || got.Docker == nil || *got.Docker {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAServerWithNeitherReportsNoSystem(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/os-release", "ID=alpine\nVERSION_ID=3.20.3\n")
+	got := confinementOf(t, executor)
+	if got == nil || got.System != nil || got.Mode != nil {
+		t.Fatalf("got %+v", got)
 	}
 }

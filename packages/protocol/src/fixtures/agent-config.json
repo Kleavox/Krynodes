@@ -7,7 +7,7 @@
       "id": "22222222-2222-4222-8222-222222222222",
       "name": "Kleavox",
       "kind": "HTTP",
-      "target": "https://kleavox.xyz/health",
+      "target": "https://example.org/health",
       "timeoutSeconds": 10
     }
   ]

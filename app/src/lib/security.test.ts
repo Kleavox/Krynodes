@@ -184,7 +184,7 @@ describe("the security check on screen", () => {
     ]);
     expect(
       recipeChoices(found).find((choice) => choice.id === "free-port-53")?.hint,
-    ).toBe("Only for a DNS server such as AdGuard.");
+    ).toBe("Only for a DNS server on this server.");
   });
 
   it("recommends the four safest recipes that are still off and can run", () => {
@@ -356,18 +356,18 @@ describe("no root login", () => {
         "First let a sudo user other than root log in over SSH with a key.",
     });
     expect(
-      recipeChoices(keyed("SSH keys for musyaf, root")).find(
+      recipeChoices(keyed("SSH keys for user1, root")).find(
         (each) => each.id === "no-root-login",
       )!.blocked,
     ).toBeNull();
-    expect(recommended(keyed("SSH keys for musyaf, root"))).not.toContain(
+    expect(recommended(keyed("SSH keys for user1, root"))).not.toContain(
       "no-root-login",
     );
     expect(
       recipeChoices(
         report({
           findings: [
-            { id: "ssh-keys", severity: "note", detail: "SSH keys for musyaf" },
+            { id: "ssh-keys", severity: "note", detail: "SSH keys for user1" },
           ],
         }),
       ).find((each) => each.id === "no-root-login")!.outside,
@@ -379,10 +379,10 @@ describe("no root login", () => {
       recipeChoices({ ...keyed(findings), recipes }).find(
         (each) => each.id === "no-root-login",
       )!;
-    expect(row("SSH keys for musyaf, root").hint).toBe(
-      "SSH stops letting root log in. musyaf keeps logging in with a key and uses sudo. If you get locked out, Krynodes can turn root login back on.",
+    expect(row("SSH keys for user1, root").hint).toBe(
+      "SSH stops letting root log in. user1 keeps logging in with a key and uses sudo. If you get locked out, Krynodes can turn root login back on.",
     );
-    expect(row("SSH keys for musyaf, root", ["no-root-login"])).toMatchObject({
+    expect(row("SSH keys for user1, root", ["no-root-login"])).toMatchObject({
       applied: true,
       hint: null,
     });
@@ -390,17 +390,17 @@ describe("no root login", () => {
 
   it("names who keeps logging in", () => {
     expect(
-      protectionDetail("no-root-login", keyed("SSH keys for musyaf, root")),
+      protectionDetail("no-root-login", keyed("SSH keys for user1, root")),
     ).toBe(
-      "SSH stops letting root log in. musyaf keeps logging in with a key and uses sudo. If you get locked out, Krynodes can turn root login back on.",
+      "SSH stops letting root log in. user1 keeps logging in with a key and uses sudo. If you get locked out, Krynodes can turn root login back on.",
     );
     expect(
       protectionDetail(
         "no-root-login",
-        keyed("SSH keys for budi, musyaf, root"),
+        keyed("SSH keys for budi, user1, root"),
       ),
     ).toBe(
-      "SSH stops letting root log in. budi and musyaf keep logging in with a key and use sudo. If you get locked out, Krynodes can turn root login back on.",
+      "SSH stops letting root log in. budi and user1 keep logging in with a key and use sudo. If you get locked out, Krynodes can turn root login back on.",
     );
   });
 });

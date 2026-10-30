@@ -172,9 +172,9 @@ describe("enrollment tokens", () => {
     const { id, token } = await create({
       docker: true,
       adminUser: true,
-      adminName: "musyaf",
+      adminName: "user1",
     });
-    const flags = `--admin musyaf --admin-key ${blob(LAPTOP)}:j5mus-laptop --admin-key ${blob(PHONE)}:phone`;
+    const flags = `--admin user1 --admin-key ${blob(LAPTOP)}:user1-laptop --admin-key ${blob(PHONE)}:phone`;
     expect(tail((await script(token)).text)).toBe(
       `{\n  kry_args='https://kry.example.test ${token} --setup docker ${flags}'\n  main $kry_args\n}\n`,
     );
@@ -204,9 +204,44 @@ describe("enrollment tokens", () => {
     expect(tail((await script(token)).text)).toContain(flags);
   });
 
+  it("turns on SELinux or AppArmor when it is ticked, and keeps it as a default", async () => {
+    const { create, script, request } = fleet();
+    const { token } = await create({ recommended: true, confine: true });
+    expect(tail((await script(token)).text)).toContain(
+      "--setup recommended,confine",
+    );
+    const alone = await create({ confine: true });
+    expect(tail((await script(alone.token)).text)).toContain(
+      "--setup confine'",
+    );
+    const without = await create({ docker: true });
+    expect(tail((await script(without.token)).text)).not.toContain("confine");
+    expect(
+      (
+        await request("PUT", "/api/settings/enroll-defaults", {
+          recommended: true,
+          docker: true,
+          hour: 3,
+          confine: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      await (await request("GET", "/api/settings/enroll-defaults")).json(),
+    ).toMatchObject({ confine: true });
+    await request("PUT", "/api/settings/enroll-defaults", {
+      recommended: true,
+      docker: true,
+      hour: 3,
+    });
+    expect(
+      await (await request("GET", "/api/settings/enroll-defaults")).json(),
+    ).toMatchObject({ confine: false });
+  });
+
   it("adds no admin user when Enroll Defaults has no keys", async () => {
     const { create, script } = fleet();
-    const { token } = await create({ adminUser: true, adminName: "musyaf" });
+    const { token } = await create({ adminUser: true, adminName: "user1" });
     expect(tail((await script(token)).text)).not.toContain("--admin");
     const unnamed = await create({ adminUser: true });
     expect(tail((await script(unnamed.token)).text)).not.toContain("--admin");
@@ -220,7 +255,7 @@ describe("enrollment tokens", () => {
       hour: 3,
       keys: [LAPTOP],
     });
-    for (const adminName of [undefined, "", "root", "Musyaf", "bad name"]) {
+    for (const adminName of [undefined, "", "root", "User1", "bad name"]) {
       expect(
         (
           await request("POST", "/api/enrollments", {

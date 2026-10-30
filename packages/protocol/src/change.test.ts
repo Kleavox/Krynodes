@@ -7,7 +7,7 @@ const names = { a: "Laptop", b: "Phone", c: "Tablet", d: "Key", e: "Spare" };
 const N1 = "11111111-1111-4111-8111-111111111111";
 const N2 = "22222222-2222-4222-8222-222222222222";
 const N3 = "33333333-3333-4333-8333-333333333333";
-const servers = { [N1]: "pivox", [N2]: "vps", [N3]: "europa" };
+const servers = { [N1]: "server-1", [N2]: "vps", [N3]: "europa" };
 
 describe("change summaries", () => {
   it("names an admission", () => {
@@ -27,6 +27,18 @@ describe("change summaries", () => {
       { nodeId: N1, added: ["b"], removed: [] },
       { nodeId: N2, added: ["b"], removed: [] },
     ]);
+  });
+
+  it("calls a passkey with no name an unknown passkey", () => {
+    expect(
+      summarizeChange({
+        names,
+        servers,
+        currentCore: ["a"],
+        currentAccess: {},
+        change: { core: ["a", "z"], access: {} },
+      }).title,
+    ).toBe("Admit an unknown passkey");
   });
 
   it("names a removal and an access change", () => {
@@ -53,7 +65,7 @@ describe("change summaries", () => {
           access: { [N1]: ["a", "b"], [N2]: ["a", "b"] },
         },
       }).title,
-    ).toBe("Give Phone access to pivox and vps");
+    ).toBe("Give Phone access to server-1 and vps");
   });
 
   it("names who gets or loses which server", () => {
@@ -69,10 +81,10 @@ describe("change summaries", () => {
         change: { core: null, access },
       }).title;
     expect(title({ [N1]: ["a"] }, { [N1]: ["a", "c"] })).toBe(
-      "Give Tablet access to pivox",
+      "Give Tablet access to server-1",
     );
     expect(title({ [N1]: ["a", "c"] }, { [N1]: ["a"] })).toBe(
-      "Take pivox from Tablet",
+      "Take server-1 from Tablet",
     );
     expect(title({ [N3]: ["a", "b", "c"] }, { [N3]: [] })).toBe(
       "Take europa from Laptop, Phone and Tablet",
@@ -85,7 +97,7 @@ describe("change summaries", () => {
         { [N1]: ["a"], [N2]: ["a", "c"] },
         { [N1]: ["a", "c"], [N2]: ["a"] },
       ),
-    ).toBe("Give Tablet access to pivox · Take vps from Tablet");
+    ).toBe("Give Tablet access to server-1 · Take vps from Tablet");
     expect(
       title({ [N1]: [], [N2]: [] }, { [N1]: ["a", "b"], [N2]: ["b", "c"] }),
     ).toBe("Change access on 2 servers");

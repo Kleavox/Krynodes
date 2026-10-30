@@ -746,7 +746,7 @@ func (e Executor) checkEntries(project string, meta stackMeta, uses []sharedUse)
 	for _, peer := range meta.Peers {
 		match := peerEntry.FindStringSubmatch(peer)
 		if match == nil {
-			return fmt.Errorf("%s is not a port of another stack such as apps-inner/postgres.db:5432/tcp", peer)
+			return fmt.Errorf("%s is not a port of another stack written as stack/name:number/tcp", peer)
 		}
 		if _, err := joined(match[1]); err != nil {
 			return err

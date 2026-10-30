@@ -12,7 +12,7 @@ import (
 var now = time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
 
 func TestParseReadsNamesStatesAndHealth(t *testing.T) {
-	got := Parse("adguard-adguard-1\trunning\tUp 3 hours\n" +
+	got := Parse("resolver-resolver-1\trunning\tUp 3 hours\n" +
 		"web\trunning\tUp 2 minutes (healthy)\n" +
 		"db\trunning\tUp 1 minute (unhealthy)\n" +
 		"api\trunning\tUp 5 seconds (health: starting)\n" +
@@ -20,7 +20,7 @@ func TestParseReadsNamesStatesAndHealth(t *testing.T) {
 		"\n" +
 		"broken line\n")
 	want := []Container{
-		{Name: "adguard-adguard-1", State: "running"},
+		{Name: "resolver-resolver-1", State: "running"},
 		{Name: "web", State: "running", Health: "healthy"},
 		{Name: "db", State: "running", Health: "unhealthy"},
 		{Name: "api", State: "running", Health: "starting"},

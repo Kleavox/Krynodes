@@ -279,7 +279,7 @@ function NewStackForm({
           <Input
             id="stack-name"
             value={name}
-            placeholder="Uptime Kuma"
+            placeholder="Your app's name"
             autoComplete="off"
             aria-invalid={touched && nameProblem !== null}
             aria-describedby={
@@ -344,9 +344,7 @@ function NewStackForm({
             value={text}
             rows={12}
             spellCheck={false}
-            placeholder={
-              'services:\n  web:\n    image: louislam/uptime-kuma:1\n    ports:\n      - "3001:3001"'
-            }
+            placeholder="Paste your compose file"
             aria-invalid={touched && textProblem !== null}
             aria-describedby="stack-file-notes"
             onChange={(event) => setText(event.target.value)}
@@ -385,6 +383,7 @@ function NewStackForm({
           ) : (
             <div id="stack-file-notes">
               <FullAccessSummary
+                nodeId={nodeId}
                 text={text}
                 member={network.member}
                 onText={setText}

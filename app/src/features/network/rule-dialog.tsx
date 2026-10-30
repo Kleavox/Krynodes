@@ -186,7 +186,7 @@ export function RuleDialog({
             <Input
               id="rule-other"
               value={other}
-              placeholder="9100/tcp"
+              placeholder="number/tcp"
               autoComplete="off"
               disabled={save.isPending}
               aria-invalid={!readable}

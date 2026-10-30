@@ -15,7 +15,7 @@ function action(id: string, values: Partial<ActionRow> = {}): ActionRow {
     mode: "rolling",
     node_id: NODE,
     kind: "compose",
-    name: "umami",
+    name: "tracker",
     action: "deploy",
     status: "failed",
     requested_by: "owner@example.test",
@@ -32,8 +32,8 @@ function action(id: string, values: Partial<ActionRow> = {}): ActionRow {
   };
 }
 
-const stopped: Health = new Map([[`${NODE}|compose|umami`, false]]);
-const running: Health = new Map([[`${NODE}|compose|umami`, true]]);
+const stopped: Health = new Map([[`${NODE}|compose|tracker`, false]]);
+const running: Health = new Map([[`${NODE}|compose|tracker`, true]]);
 const ids = (rows: ActionRow[]) => rows.map((row) => row.id);
 
 describe("not fixed", () => {

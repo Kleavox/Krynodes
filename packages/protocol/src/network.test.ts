@@ -109,8 +109,8 @@ describe("the network document", () => {
 
 describe("stacks on the network", () => {
   const stack = {
-    project: "umami",
-    directory: "/var/lib/krynodes/compose/umami",
+    project: "tracker",
+    directory: "/var/lib/krynodes/compose/tracker",
     running: 1,
     total: 1,
     compose: true,

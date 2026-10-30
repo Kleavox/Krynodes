@@ -15,7 +15,7 @@ import {
 } from "./admin-user";
 
 const LAPTOP =
-  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIN+aw2ekALRgy/qt38BoTs6eGn55s71g0oi0WM0vVl+z j5mus@laptop";
+  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJQIdIFdIOrfxkgPwGXPHesM4bMreTr2K6zwvH2eRuGK user1@laptop";
 const PHONE =
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPO5YBCY7BQSSM4XGAM/HxWEZPe5+h2n+txzD81ovRiq phone";
 const variant = (end: string) =>
@@ -28,7 +28,7 @@ const key = (line: string, label: string, fingerprint = "SHA256:x") => ({
   label,
 });
 
-const keys = [key(LAPTOP, "j5mus-laptop"), key(PHONE, "phone")];
+const keys = [key(LAPTOP, "user1-laptop"), key(PHONE, "phone")];
 
 describe("the SSH keys in Enroll Defaults", () => {
   it("shows a pasted key as a fingerprint row", async () => {
@@ -36,11 +36,11 @@ describe("the SSH keys in Enroll Defaults", () => {
     expect(row).toEqual({
       line: LAPTOP,
       type: "ssh-ed25519",
-      fingerprint: "SHA256:rtAbBHSVw2EvT29V7SS2PB/KPD+MzZoKzqJRYZDabDw",
-      label: "j5mus-laptop",
+      fingerprint: "SHA256:vJ6CKU+xFnpShJn8LfDKB88waZSGk7ZmJzZA0PM8Gxk",
+      label: "user1-laptop",
     });
     expect(keyText(row!)).toBe(
-      "ED25519 SHA256:rtAbBHSVw2EvT29V7SS2PB/KPD+MzZoKzqJRYZDabDw j5mus-laptop",
+      "ED25519 SHA256:vJ6CKU+xFnpShJn8LfDKB88waZSGk7ZmJzZA0PM8Gxk user1-laptop",
     );
     expect(
       (await keyRow("ssh-ed25519 " + LAPTOP.split(" ")[1], 2))?.label,
@@ -55,7 +55,7 @@ describe("the SSH keys in Enroll Defaults", () => {
       [],
     );
     expect(added.keys.map((row) => row.label)).toEqual([
-      "j5mus-laptop",
+      "user1-laptop",
       "phone",
     ]);
     expect(added.rest).toBe("");
@@ -82,7 +82,7 @@ describe("the SSH keys in Enroll Defaults", () => {
     expect(again.note).toBe("That key is already here.");
     const both = await addKeys([LAPTOP, PHONE].join("\n"), [laptop]);
     expect(both.keys.map((row) => row.label)).toEqual([
-      "j5mus-laptop",
+      "user1-laptop",
       "phone",
     ]);
     expect(both.note).toBeNull();
@@ -94,7 +94,7 @@ describe("the SSH keys in Enroll Defaults", () => {
     expect(three).toHaveLength(3);
     const full = await addKeys([variant("x"), variant("w")].join("\n"), three);
     expect(full.keys.map((row) => row.label)).toEqual([
-      "j5mus-laptop",
+      "user1-laptop",
       "phone",
       "spare-y",
       "spare-x",
@@ -110,9 +110,9 @@ describe("the SSH keys in Enroll Defaults", () => {
   });
 
   it("takes a lowercase user name that is not root", () => {
-    expect(adminNameProblem("musyaf")).toBeNull();
+    expect(adminNameProblem("user1")).toBeNull();
     expect(adminNameProblem("")).toBeNull();
-    for (const name of ["root", "Musyaf", "1abc", "a b"]) {
+    for (const name of ["root", "User1", "1abc", "a b"]) {
       expect(adminNameProblem(name)).toBe(
         "Lowercase letters, digits, dashes and underscores. Not root.",
       );
@@ -124,7 +124,7 @@ describe("the SSH keys in Enroll Defaults", () => {
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     );
     expect(await keysDigest([LAPTOP])).toBe(
-      "614dceec4a297a7a784834b36017af9a73b26a0c154422cf03c1e89f4260a932",
+      "2d22af4e764d60d676332cfe436dbcb5efdb51c69162a614c9430b2644beb01e",
     );
     expect(await keysDigest([LAPTOP, PHONE])).not.toBe(
       await keysDigest([PHONE, LAPTOP]),
@@ -146,18 +146,18 @@ describe("Add Admin User at enroll and on a server", () => {
   });
 
   it("signs the name and the keys as blob:label", () => {
-    expect(adminArgs("musyaf", keys)).toEqual({
-      name: "musyaf",
-      keys: "AAAAC3NzaC1lZDI1NTE5AAAAIN+aw2ekALRgy/qt38BoTs6eGn55s71g0oi0WM0vVl+z:j5mus-laptop,AAAAC3NzaC1lZDI1NTE5AAAAIPO5YBCY7BQSSM4XGAM/HxWEZPe5+h2n+txzD81ovRiq:phone",
+    expect(adminArgs("user1", keys)).toEqual({
+      name: "user1",
+      keys: "AAAAC3NzaC1lZDI1NTE5AAAAIJQIdIFdIOrfxkgPwGXPHesM4bMreTr2K6zwvH2eRuGK:user1-laptop,AAAAC3NzaC1lZDI1NTE5AAAAIPO5YBCY7BQSSM4XGAM/HxWEZPe5+h2n+txzD81ovRiq:phone",
     });
-    expect(adminCommand("musyaf")).toBe("sudo kry admin-user musyaf");
+    expect(adminCommand("user1")).toBe("sudo kry admin-user user1");
   });
 
   it("says why Add Admin User cannot run", () => {
-    const node = { name: "io", agent_version: "0.7.1" };
+    const node = { name: "server-2", agent_version: "0.7.1" };
     expect(adminBlocker(node, keys)).toBeNull();
     expect(adminBlocker({ ...node, agent_version: "0.7.0" }, keys)).toBe(
-      "Needs agent 0.7.1 · io runs 0.7.0",
+      "Needs agent 0.7.1 · server-2 runs 0.7.0",
     );
     expect(adminBlocker({ ...node, agent_version: null }, keys)).toBe(
       "Waiting for First Report",
@@ -168,7 +168,7 @@ describe("Add Admin User at enroll and on a server", () => {
   });
 
   it("tells the owner how to log in once root cannot", () => {
-    expect(loginLine("musyaf", "139.99.0.40")).toBe("ssh musyaf@139.99.0.40");
-    expect(loginLine("musyaf", null)).toBeNull();
+    expect(loginLine("user1", "192.0.2.40")).toBe("ssh user1@192.0.2.40");
+    expect(loginLine("user1", null)).toBeNull();
   });
 });

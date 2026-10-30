@@ -107,6 +107,7 @@ export interface StoppedStack {
   at: string;
   tried: string[];
   count: number;
+  why?: "confinement";
 }
 
 export interface QuarantineView {
@@ -456,7 +457,13 @@ export type ActionVerb =
   | "save"
   | "key"
   | "join"
-  | "admin";
+  | "admin"
+  | "open"
+  | "close"
+  | "putback"
+  | "exitnode"
+  | "dns"
+  | "containers";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =
@@ -513,6 +520,49 @@ export interface SecurityReport {
     protocol: "tcp" | "udp";
     process: string;
   }[];
+  firewall?: {
+    closed: boolean;
+    open: FirewallOpening[];
+    other: string[];
+    drift?: string[];
+  };
+  confinement?: Confinement;
+}
+
+export interface Confinement {
+  system: "selinux" | "apparmor" | null;
+  mode:
+    | "enforcing"
+    | "permissive"
+    | "disabled"
+    | "on"
+    | "off"
+    | "kernel-off"
+    | null;
+  enforced: number | null;
+  complain: number | null;
+  managed: boolean;
+  restart: boolean;
+  docker: boolean | null;
+}
+
+interface DenialLine {
+  at: string;
+  program: string;
+  wanted: string;
+  stack?: string;
+}
+
+export interface DenialsView {
+  count: number | null;
+  lines: DenialLine[];
+}
+
+export interface FirewallOpening {
+  port: number;
+  protocol: "tcp" | "udp";
+  from: "everyone" | "tailscale" | "addresses";
+  addresses?: string[];
 }
 
 export interface WebAddress {

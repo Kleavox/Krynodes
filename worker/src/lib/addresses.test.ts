@@ -23,7 +23,7 @@ const columns = (change: Partial<AddressColumns>): AddressColumns => ({
 const on = (...entries: [string, string][]) =>
   JSON.stringify(entries.map(([name, address]) => ({ name, address })));
 
-const pivox = columns({
+const serverOne = columns({
   ipv4: "203.0.113.12",
   ipv4_at: at(0),
   ipv4_network: "PT Telkom Indonesia",
@@ -32,7 +32,7 @@ const pivox = columns({
 
 describe("a server's addresses", () => {
   it("mark a seen address the server does not hold as a router's", () => {
-    expect(listAddresses(pivox, [])).toEqual([
+    expect(listAddresses(serverOne, [])).toEqual([
       {
         label: "IPv4",
         family: 4,
@@ -45,19 +45,23 @@ describe("a server's addresses", () => {
   });
 
   it("leave the server's own address untagged", () => {
-    const io = columns({
-      ipv4: "51.79.0.10",
+    const serverTwo = columns({
+      ipv4: "198.51.100.10",
       ipv4_at: at(0),
-      interfaces: on(["eth0", "51.79.0.10"]),
+      interfaces: on(["eth0", "198.51.100.10"]),
     });
-    expect(listAddresses(io, [])[0]).toMatchObject({ router: false });
+    expect(listAddresses(serverTwo, [])[0]).toMatchObject({ router: false });
   });
 
   it("show no tag before the agent sends interfaces", () => {
-    expect(listAddresses({ ...pivox, interfaces: null }, [])[0]).toMatchObject({
+    expect(
+      listAddresses({ ...serverOne, interfaces: null }, [])[0],
+    ).toMatchObject({
       router: false,
     });
-    expect(listAddresses({ ...pivox, interfaces: "{" }, [])[0]).toMatchObject({
+    expect(
+      listAddresses({ ...serverOne, interfaces: "{" }, [])[0],
+    ).toMatchObject({
       router: false,
     });
   });
@@ -69,16 +73,16 @@ describe("a server's addresses", () => {
       "[]",
       '[{"iface":"eth0","ip":"192.168.1.5"}]',
     ]) {
-      expect(listAddresses({ ...pivox, interfaces }, [])[0]).toMatchObject({
+      expect(listAddresses({ ...serverOne, interfaces }, [])[0]).toMatchObject({
         router: false,
       });
     }
   });
 
   it("follow the owner's correction over detection", () => {
-    expect(listAddresses({ ...pivox, ipv4_owner: "own" }, [])[0]).toMatchObject(
-      { router: false, owner: "own" },
-    );
+    expect(
+      listAddresses({ ...serverOne, ipv4_owner: "own" }, [])[0],
+    ).toMatchObject({ router: false, owner: "own" });
     const own = columns({
       ipv6: "2001:db8::91c3",
       ipv6_at: at(0),
@@ -108,7 +112,7 @@ describe("a server's addresses", () => {
 
   it("list VPN addresses inside the private ranges under their interface", () => {
     const vpn = {
-      ...pivox,
+      ...serverOne,
       interfaces: on(["eth0", "192.168.1.5"], ["tailscale0", "100.101.102.7"]),
     };
     expect(listAddresses(vpn, ["100.64.0.0/10"])).toEqual([
@@ -127,7 +131,7 @@ describe("a server's addresses", () => {
 
   it("names the private network on its kry0 address", () => {
     const joined = {
-      ...pivox,
+      ...serverOne,
       interfaces: on(["eth0", "192.168.1.5"], ["kry0", "10.88.0.2"]),
     };
     expect(listAddresses(joined, ["10.88.0.0/24"])[1]).toEqual({

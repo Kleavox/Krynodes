@@ -7,14 +7,15 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
+	"github.com/Kleavox/krynodes/agent/internal/confine"
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 )
 
 type SetupOptions struct {
 	Recommended bool
+	Confine     bool
 	Docker      bool
 	RebootHour  *int
 	Network     string
@@ -22,8 +23,6 @@ type SetupOptions struct {
 	AdminKeys   []recipes.AdminKey
 	Terminal    recipes.Terminal
 }
-
-type Asker func(question string) (yes bool, asked bool)
 
 var setupSteps = []struct{ id, title string }{
 	{"security-updates", "Automatic security updates"},
@@ -33,37 +32,7 @@ var setupSteps = []struct{ id, title string }{
 	{"firewall", "Firewall"},
 }
 
-var neverAsked = []string{"68/udp", "546/udp", "5353/udp", "5355/udp", "5355/tcp"}
-
-func (e Executor) portsToKeep(ctx context.Context, out io.Writer, ask Asker) []string {
-	settings, _ := e.sshSettings(ctx)
-	listeners, _ := e.publicListeners(ctx, settings)
-	var keep []string
-	seen := map[string]bool{}
-	silent := false
-	for _, listener := range listeners {
-		entry := fmt.Sprintf("%d/%s", listener.Port, listener.Protocol)
-		if seen[entry] || slices.Contains(neverAsked, entry) {
-			continue
-		}
-		seen[entry] = true
-		label := entry
-		if listener.Process != "" {
-			label += " (" + listener.Process + ")"
-		}
-		yes, asked := ask("Keep " + label + " open to everyone? [y/N] ")
-		silent = silent || !asked
-		if yes || !asked {
-			keep = append(keep, entry)
-		}
-	}
-	if silent && len(keep) > 0 {
-		fmt.Fprintf(out, "No terminal to ask on, so %s stay open.\n", strings.Join(keep, ", "))
-	}
-	return keep
-}
-
-func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer, ask Asker) error {
+func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer) error {
 	env := e.recipeEnv()
 	platform := recipes.Detect(env)
 	name := platform.Pretty
@@ -110,18 +79,14 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			}
 			stepArgs, rest := args, ""
 			if step.id == "firewall" {
-				if e.firewallOf(ctx, platform.Family).active {
-					mark("–", step.title, " already on")
-					continue
-				}
-				kept := e.portsToKeep(ctx, out, ask)
-				stepArgs = maps.Clone(args)
-				stepArgs["ports"] = strings.Join(kept, ",")
-				if len(kept) > 0 {
-					rest = " · also open: " + strings.Join(kept, ", ")
-				}
+				stepArgs, rest = e.closedSetup(ctx, env, platform.Family, args)
 			}
 			saved, err := recipes.Apply(ctx, env, step.id, stepArgs)
+			if err == nil && stepArgs["closed"] == "1" {
+				if err = e.rememberClosed(ctx, env, stepArgs["ports"]); err != nil {
+					recipes.Undo(ctx, env, step.id, saved)
+				}
+			}
 			if err == nil {
 				state.Applied[step.id] = appliedRecipe{At: e.Now(), Saved: saved}
 				err = writeJSON(e.StateDir, "recipes.json", state, 0o640)
@@ -132,9 +97,13 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			}
 			mark("✓", step.title, rest)
 		}
+		e.syncPublish(ctx)
+	}
+	if options.Confine {
+		e.setupConfine(ctx, env, platform.Family, mark)
 	}
 	if options.Docker {
-		result, err := recipes.InstallDocker(ctx, env, args)
+		result, err := recipes.InstallDocker(ctx, env, e.installArgs(args))
 		if err == nil && result.Installed {
 			err = writeJSON(e.StateDir, "docker.json", dockerState{InstalledAt: e.Now()}, 0o640)
 		}
@@ -159,6 +128,54 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	}
 	os.Remove(filepath.Join(e.StateDir, "security.json"))
 	return nil
+}
+
+func (e Executor) closedSetup(ctx context.Context, env recipes.Env, family recipes.Family, args map[string]string) (map[string]string, string) {
+	closed := maps.Clone(args)
+	closed["closed"] = "1"
+	if !e.firewallOf(ctx, family).active {
+		return closed, " · closed"
+	}
+	var ports, keys []string
+	for _, opening := range recipes.Adopt(ctx, env, recipes.ReadRules(ctx, env), e.networkPort()).Open {
+		ports, keys = append(ports, opening.String()), append(keys, opening.Key())
+	}
+	closed["ports"] = strings.Join(ports, ",")
+	if len(keys) == 0 {
+		return closed, " · closed"
+	}
+	return closed, " · closed · kept open: " + strings.Join(keys, ", ")
+}
+
+func (e Executor) setupConfine(ctx context.Context, env recipes.Env, family recipes.Family, mark func(sign, title, rest string)) {
+	found := confine.Read(e.Root, string(family))
+	title := map[string]string{confine.SELinux: "SELinux", confine.AppArmor: "AppArmor"}[found.System]
+	state := e.readRecipes()
+	switch _, on := state.Applied["confinement"]; {
+	case title == "":
+		mark("–", "SELinux or AppArmor", " skipped: neither is on this system")
+		return
+	case on:
+		mark("–", title, " already on")
+		return
+	}
+	if err := e.markConfinement("apply"); err != nil {
+		mark("✗", title, ": "+err.Error())
+		return
+	}
+	saved, err := recipes.Apply(ctx, env, "confinement", nil)
+	if err == nil {
+		state.Applied["confinement"] = appliedRecipe{At: e.Now(), Saved: saved}
+		err = writeJSON(e.StateDir, "recipes.json", state, 0o640)
+	}
+	switch {
+	case err != nil:
+		mark("✗", title, ": "+err.Error())
+	case saved["restart"] == "1":
+		mark("–", title, ": restart to finish")
+	default:
+		mark("✓", title, " · enforcing")
+	}
 }
 
 func (e Executor) setupRebootWindow(ctx context.Context, env recipes.Env, hour *int, title string, mark func(sign, title, rest string)) {

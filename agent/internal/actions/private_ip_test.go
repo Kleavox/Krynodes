@@ -28,14 +28,14 @@ func onMember(run *fakeRun) {
 }
 
 func bothFiles(dir, rest string) string {
-	return "docker compose --project-name kuma --project-directory " + dir + " -f " + filepath.Join(dir, "compose.yaml") + " -f " + filepath.Join(dir, "compose.krynodes-hosts.json") + " " + rest
+	return "docker compose --project-name panel --project-directory " + dir + " -f " + filepath.Join(dir, "compose.yaml") + " -f " + filepath.Join(dir, "compose.krynodes-hosts.json") + " " + rest
 }
 
 func fullGrafana(t *testing.T, member, up bool) (Executor, *fakeRun, Result) {
 	t.Helper()
 	executor, run := stackExecutor(t)
-	dir := kumaDir(executor)
-	kumaReady(t, executor, run, map[string]any{"image": "grafana/grafana:11", "ports": []any{map[string]any{"host_ip": "10.88.0.2", "target": 3000, "published": "3000", "protocol": "tcp"}}}, nil)
+	dir := panelDir(executor)
+	panelReady(t, executor, run, map[string]any{"image": "grafana/grafana:11", "ports": []any{map[string]any{"host_ip": "10.88.0.2", "target": 3000, "published": "3000", "protocol": "tcp"}}}, nil)
 	run.respond[bothFiles(dir, psStates)] = "web\trunning\t\t0\n"
 	if member {
 		inNetwork(t, executor)
@@ -44,7 +44,7 @@ func fullGrafana(t *testing.T, member, up bool) (Executor, *fakeRun, Result) {
 	if !up {
 		delete(run.respond, kry0Listed)
 	}
-	result := runRequest(t, executor, composeRequest(t, idA, "kuma", "create", func(command *Command) {
+	result := runRequest(t, executor, composeRequest(t, idA, "panel", "create", func(command *Command) {
 		command.Compose = privateText
 		command.Access = "full"
 	}))
@@ -56,15 +56,15 @@ func startedAny(calls []string) bool {
 }
 
 func TestAComposeCallOnAMemberCarriesThePrivateAddress(t *testing.T) {
-	executor, run, result := servingKuma(t, true, "", nil)
+	executor, run, result := servingPanel(t, true, "", nil)
 	if !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
-	dir := kumaDir(executor)
+	dir := panelDir(executor)
 	if !slices.Contains(run.calls, withOwnIP+composeCall(dir, "compose.krynodes.json", "up -d")) || slices.Contains(run.calls, composeCall(dir, "compose.krynodes.json", "up -d")) {
 		t.Fatalf("calls %q", run.calls)
 	}
-	_, run, result = servingKuma(t, false, "", nil)
+	_, run, result = servingPanel(t, false, "", nil)
 	if !result.OK || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "env ") }) {
 		t.Fatalf("off the network nothing is added: %#v %q", result, run.calls)
 	}
@@ -72,7 +72,7 @@ func TestAComposeCallOnAMemberCarriesThePrivateAddress(t *testing.T) {
 
 func TestAFullAccessStackOnAMemberGetsTheNamesBeside(t *testing.T) {
 	executor, run, result := fullGrafana(t, true, true)
-	dir := kumaDir(executor)
+	dir := panelDir(executor)
 	if !result.OK || !slices.Contains(run.calls, withOwnIP+bothFiles(dir, "up -d")) {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
@@ -81,7 +81,7 @@ func TestAFullAccessStackOnAMemberGetsTheNamesBeside(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := asList(asMap(asMap(hosts["services"])["web"])["extra_hosts"])
-	if len(listed) != 2 || listed[0] != "io.kry:10.88.0.1" || listed[1] != "vps-2.kry:10.88.0.2" {
+	if len(listed) != 2 || listed[0] != "server-2.kry:10.88.0.1" || listed[1] != "vps-2.kry:10.88.0.2" {
 		t.Fatalf("hosts %#v", hosts)
 	}
 }
@@ -91,14 +91,14 @@ func TestOffTheNetworkAFileThatUsesThePrivateAddressDoesNotStart(t *testing.T) {
 	if result.OK || !strings.Contains(result.Output, "this server is not in the private network, so KRY_PRIVATE_IP has no value") || startedAny(run.calls) {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
-	if _, err := os.Stat(filepath.Join(kumaDir(executor), "compose.krynodes-hosts.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(panelDir(executor), "compose.krynodes-hosts.json")); !os.IsNotExist(err) {
 		t.Fatalf("no names off the network: %v", err)
 	}
 	executor, run = stackExecutor(t)
-	_, stack := ownKuma(t, executor, "full", privateText)
+	_, stack := ownPanel(t, executor, "full", privateText)
 	withStacks(&executor, stack)
-	kumaReady(t, executor, run, map[string]any{"image": "grafana/grafana:11"}, nil)
-	edited := runRequest(t, executor, composeRequest(t, idB, "kuma", "edit", func(command *Command) { command.Compose = privateText }))
+	panelReady(t, executor, run, map[string]any{"image": "grafana/grafana:11"}, nil)
+	edited := runRequest(t, executor, composeRequest(t, idB, "panel", "edit", func(command *Command) { command.Compose = privateText }))
 	if edited.OK || !strings.Contains(edited.Output, "KRY_PRIVATE_IP has no value") || startedAny(run.calls) {
 		t.Fatalf("an edit and its way back start nothing: %#v %q", edited, run.calls)
 	}
@@ -112,7 +112,7 @@ func TestWithKry0DownAStackOnThePrivateAddressWaits(t *testing.T) {
 }
 
 func TestLeavingPutsAServedStackBackOnTheServerOnly(t *testing.T) {
-	executor, run, result := servingKuma(t, true, "", map[string]string{"serves": "3001/tcp=all", "reaches": "10.88.0.1:5432/tcp"})
+	executor, run, result := servingPanel(t, true, "", map[string]string{"serves": "3001/tcp=all", "reaches": "10.88.0.1:5432/tcp"})
 	if !result.OK {
 		t.Fatalf("result %#v", result)
 	}
@@ -123,7 +123,7 @@ func TestLeavingPutsAServedStackBackOnTheServerOnly(t *testing.T) {
 	if !left.OK {
 		t.Fatalf("leave %#v calls %q", left, run.calls)
 	}
-	dir := kumaDir(executor)
+	dir := panelDir(executor)
 	web := krynodesConfig(t, dir)["services"].(map[string]any)["web"].(map[string]any)
 	if ports := web["ports"].([]any); len(ports) != 1 || ports[0].(map[string]any)["host_ip"] != "127.0.0.1" {
 		t.Fatalf("ports %#v", ports)

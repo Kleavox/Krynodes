@@ -49,9 +49,9 @@ const action = (overrides: Partial<ActionRecord>): ActionRecord => ({
   batchId: "b1",
   position: 0,
   mode: "rolling",
-  nodeId: "io",
+  nodeId: "server-2",
   kind: "compose",
-  name: "umami",
+  name: "tracker",
   action: "deploy",
   status: "failed",
   requestedBy: "owner@example.test",
@@ -61,7 +61,7 @@ const action = (overrides: Partial<ActionRecord>): ActionRecord => ({
   finishedAt: at(9, 25),
   exitCode: 1,
   output:
-    "Container umami-db-1  Error\ndependency failed to start: container umami-db-1 exited (1)",
+    "Container tracker-db-1  Error\ndependency failed to start: container tracker-db-1 exited (1)",
   deviceId: null,
   ...overrides,
 });
@@ -123,15 +123,15 @@ describe("one incident's timeline", () => {
     incident: {
       id: "i1",
       check_id: "c1",
-      node_id: "io",
+      node_id: "server-2",
       status: "OPEN",
       started_at: at(9, 26),
       resolved_at: null,
       summary: "HTTP 502",
-      check_name: "Umami",
-      node_name: "io",
+      check_name: "Tracker",
+      node_name: "server-2",
       check_kind: "HTTP",
-      check_target: "https://umami.kleavox.xyz",
+      check_target: "https://tracker.example.org",
     },
     results: [result(9, 20, "UP"), result(9, 25, "UP"), ...twelveDown],
     updates: [
@@ -192,9 +192,9 @@ describe("an incident's header", () => {
   });
 
   it("links what its check watches to Services", () => {
-    expect(ownerLink({ kind: "stack", project: "umami" })).toEqual({
-      label: "Stack umami",
-      to: "/services?q=umami",
+    expect(ownerLink({ kind: "stack", project: "tracker" })).toEqual({
+      label: "Stack tracker",
+      to: "/services?q=tracker",
     });
     expect(ownerLink({ kind: "container", name: "pihole" })).toEqual({
       label: "Container pihole",
@@ -317,7 +317,7 @@ describe("the incident list", () => {
         update: null,
         action: action({ status: "done", output: null }),
       }),
-    ).toBe("Deploy umami: done");
+    ).toBe("Deploy tracker: done");
   });
 });
 
@@ -335,14 +335,14 @@ describe("incidents on the Checks page", () => {
   ): Incident => ({
     id,
     check_id: checkId,
-    node_id: "io",
+    node_id: "server-2",
     status: lasted === null ? "OPEN" : "RESOLVED",
     started_at: new Date(started).toISOString(),
     resolved_at:
       lasted === null ? null : new Date(started + lasted).toISOString(),
     summary,
     check_name: checkId,
-    node_name: "io",
+    node_name: "server-2",
   });
 
   it("gives each row its start, open or how long it lasted, and why", () => {
@@ -397,7 +397,7 @@ describe("incidents on the Checks page", () => {
       lastIncidentLine("blog", [
         incident("old", "blog", on(10, 9, 0), MINUTE, "older"),
         resolved,
-        incident("x", "umami", on(25, 9, 0), MINUTE, "other"),
+        incident("x", "tracker", on(25, 9, 0), MINUTE, "other"),
       ]),
     ).toBe("Last incident 21 Oct · 12m · timed out");
   });
@@ -496,7 +496,7 @@ describe("an incident's reason", () => {
     expect(
       incidentReason("Mesh is down: dial tcp 10.66.0.2:22: connection refused"),
     ).toBe("dial tcp 10.66.0.2:22: connection refused");
-    expect(incidentReason("Umami is down")).toBeNull();
+    expect(incidentReason("Tracker is down")).toBeNull();
     expect(incidentReason(null)).toBeNull();
     expect(incidentReason("Restarted by hand")).toBe("Restarted by hand");
   });

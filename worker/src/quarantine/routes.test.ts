@@ -75,11 +75,12 @@ const codeFor = async (release: ReturnType<typeof pending>) =>
     ),
   );
 
-function setup() {
+function setup(fleet?: unknown) {
   const { db, sqlite } = createTestDb();
   seedFleet(sqlite);
   const mail = vi.fn(async () => ({ messageId: "m" }));
   const env = {
+    ...(fleet ? { FLEET: fleet } : {}),
     DB: db,
     PUBLIC_ORIGIN: ORIGIN,
     EMAIL: { send: mail },
@@ -208,6 +209,35 @@ describe("a warning's answers", () => {
     ]);
   });
 
+  it("It Was Me on a denial accepts that program and type for good", async () => {
+    const { sqlite, call, warn, changes } = setup();
+    const denial = {
+      system: "selinux",
+      program: "nginx",
+      type: "httpd_t",
+      wanted: "read shadow",
+      item: "nginx httpd_t",
+    };
+    warn("confinement", denial);
+    const me = await call("POST", `/api/nodes/${V1}/warnings/w1/me`, {
+      target: step(V1, "host", "server", "accept", {
+        kind: "confinement",
+        item: denial.item,
+      }),
+    });
+    expect(me.status).toBe(201);
+    expect(
+      queued(sqlite).map((row) => [row.nodeId, row.action, row.status]),
+    ).toEqual([[V1, "accept", "queued"]]);
+    expect(changes()).toEqual([
+      {
+        change: "It was me: the denial on vps-1",
+        requestedBy: EMAIL,
+        deviceId: DEVICE,
+      },
+    ]);
+  });
+
   it("It Was Me on a warning the agent cannot accept asks only for the confirmation", async () => {
     const { sqlite, call, warn, answer, core } = setup();
     warn("rule", {});
@@ -225,6 +255,45 @@ describe("a warning's answers", () => {
       (await call("POST", `/api/nodes/${V1}/warnings/w1/me`, {})).status,
     ).toBe(200);
     expect(answer()).toEqual({ answer: "me", answeredBy: EMAIL });
+  });
+});
+
+describe("a server's denials", () => {
+  it("come from the hub, and read -- without it", async () => {
+    const lines = [
+      {
+        at: "2026-10-29T09:58:00Z",
+        program: "cat",
+        wanted: "read shadow",
+        stack: "panel",
+      },
+    ];
+    const asked: string[] = [];
+    const fleet = {
+      idFromName: (name: string) => ({ name }),
+      get: () => ({
+        fetch: async (input: RequestInfo | URL) => {
+          asked.push(String(input));
+          return Response.json({ count: 2, lines, at: 1 });
+        },
+      }),
+    };
+    const held = await setup(fleet).call("GET", `/api/nodes/${V1}/denials`);
+    expect(held.status).toBe(200);
+    expect(await held.json()).toEqual({ count: 2, lines });
+    expect(asked).toEqual([`https://fleet/denials?node=${V1}`]);
+    const without = setup();
+    expect(
+      await (await without.call("GET", `/api/nodes/${V1}/denials`)).json(),
+    ).toEqual({ count: null, lines: [] });
+    expect(
+      (
+        await without.call(
+          "GET",
+          "/api/nodes/00000000-0000-4000-8000-000000000000/denials",
+        )
+      ).status,
+    ).toBe(404);
   });
 });
 
@@ -340,7 +409,7 @@ describe("a quarantined server", () => {
       "drop vps-3",
       "block vps-2",
       "block vps-3",
-      "block io",
+      "block server-2",
     ]);
     expect(read.changeThese).toEqual({
       stacks: ["app"],
@@ -390,6 +459,11 @@ describe("a quarantined server", () => {
         "INSERT INTO stopped_stacks (node_id, project, at, tried, count) VALUES (?, 'app', ?, ?, 14)",
       )
       .run(V1, at(now), JSON.stringify(["10.88.0.2:22/tcp"]));
+    sqlite
+      .prepare(
+        "INSERT INTO stopped_stacks (node_id, project, at, tried, count, why) VALUES (?, 'panel', ?, ?, 1, 'confinement')",
+      )
+      .run(V1, at(now), JSON.stringify(["read shadow"]));
     await quarantine(db, { nodeId: V1, why: "why", now });
     const read = await json(await call("GET", `/api/nodes/${V1}/quarantine`));
     expect(read.quarantine).toMatchObject({
@@ -398,6 +472,13 @@ describe("a quarantined server", () => {
     });
     expect(read.stopped).toEqual([
       { project: "app", at: at(now), tried: ["10.88.0.2:22/tcp"], count: 14 },
+      {
+        project: "panel",
+        at: at(now),
+        tried: ["read shadow"],
+        count: 1,
+        why: "confinement",
+      },
     ]);
   });
 
@@ -435,12 +516,12 @@ describe("a quarantined server", () => {
       set: "s2",
       source: "s1",
       cleanup: V1,
-      zone: "kleavox.xyz",
+      zone: "example.org",
     });
     sqlite.exec(
       `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at)
-       VALUES ('app.kleavox.xyz', '${V1}', 'app', 'web', 80, 'everyone', 'owner', 'now'),
-              ('db.kleavox.xyz', '${V2}', 'db', 'web', 80, 'everyone', 'owner', 'now')`,
+       VALUES ('app.example.org', '${V1}', 'app', 'web', 80, 'everyone', 'owner', 'now'),
+              ('db.example.org', '${V2}', 'db', 'web', 80, 'everyone', 'owner', 'now')`,
     );
     sqlite
       .prepare(
@@ -466,7 +547,7 @@ describe("a quarantined server", () => {
       ),
     );
     expect(sqlite.prepare("SELECT hostname FROM web_addresses").all()).toEqual([
-      { hostname: "db.kleavox.xyz" },
+      { hostname: "db.example.org" },
     ]);
   });
 });

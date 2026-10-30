@@ -24,15 +24,15 @@ func sharedRecord(t *testing.T, executor Executor, kind string, pins map[string]
 	}
 }
 
-func sharedKuma(t *testing.T, executor Executor, run *fakeRun, change func(map[string]any)) string {
+func sharedPanel(t *testing.T, executor Executor, run *fakeRun, change func(map[string]any)) string {
 	t.Helper()
-	service := kumaService(kumaDir(executor))
+	service := panelService(panelDir(executor))
 	service["networks"] = map[string]any{"default": nil, "inner": nil}
 	if change != nil {
 		change(service)
 	}
-	dir := kumaReady(t, executor, run, service, map[string]any{"networks": map[string]any{
-		"default": map[string]any{"name": "kuma_default"},
+	dir := panelReady(t, executor, run, service, map[string]any{"networks": map[string]any{
+		"default": map[string]any{"name": "panel_default"},
 		"inner":   map[string]any{"name": "apps-inner", "external": true},
 	}})
 	run.respond["docker network inspect -f {{.Id}} apps-inner"] = innerID + "\n"
@@ -40,30 +40,30 @@ func sharedKuma(t *testing.T, executor Executor, run *fakeRun, change func(map[s
 	return dir
 }
 
-func createKuma(t *testing.T, executor Executor, access string, args map[string]string) Result {
+func createPanel(t *testing.T, executor Executor, access string, args map[string]string) Result {
 	t.Helper()
-	return runRequest(t, executor, composeRequest(t, idA, "kuma", "create", func(c *Command) {
-		c.Compose, c.Access, c.Args = kumaText, access, args
+	return runRequest(t, executor, composeRequest(t, idA, "panel", "create", func(c *Command) {
+		c.Compose, c.Access, c.Args = panelText, access, args
 	}))
 }
 
 func TestAContainedStackJoinsAKrynodesContainedNetworkWithAFixedAddress(t *testing.T) {
 	executor, run := bridgeExecutor(t, "1")
 	sharedRecord(t, executor, "contained", nil)
-	dir := sharedKuma(t, executor, run, nil)
-	if result := createKuma(t, executor, "contained", map[string]string{"offers": "apps-inner/web=3001/tcp", "hostPorts": "3000/tcp"}); !result.OK {
+	dir := sharedPanel(t, executor, run, nil)
+	if result := createPanel(t, executor, "contained", map[string]string{"offers": "apps-inner/web=3001/tcp", "hostPorts": "3000/tcp"}); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	config := krynodesConfig(t, dir)
 	web := config["services"].(map[string]any)["web"].(map[string]any)
 	joined := web["networks"].(map[string]any)["inner"].(map[string]any)
-	if joined["ipv4_address"] != "172.24.0.2" || !reflect.DeepEqual(joined["aliases"], []any{"web.kuma"}) || !reflect.DeepEqual(web["cap_drop"], []any{"NET_RAW"}) {
+	if joined["ipv4_address"] != "172.24.0.2" || !reflect.DeepEqual(joined["aliases"], []any{"web.panel"}) || !reflect.DeepEqual(web["cap_drop"], []any{"NET_RAW"}) {
 		t.Fatalf("web %#v", web)
 	}
 	if shared := config["networks"].(map[string]any)["inner"].(map[string]any); shared["driver_opts"] != nil {
 		t.Fatalf("an external network keeps its own options: %#v", shared)
 	}
-	if !slices.Equal(bridgesOf(config), []string{bridgeName("kuma", "default")}) {
+	if !slices.Equal(bridgesOf(config), []string{bridgeName("panel", "default")}) {
 		t.Fatalf("bridges %q", bridgesOf(config))
 	}
 	if slices.ContainsFunc(run.calls, func(call string) bool {
@@ -71,7 +71,7 @@ func TestAContainedStackJoinsAKrynodesContainedNetworkWithAFixedAddress(t *testi
 	}) {
 		t.Fatalf("a shared bridge gets no host-port rule: %q", run.calls)
 	}
-	if pins := executor.readBridges()["apps-inner"].Pins; pins["kuma/web"] != "172.24.0.2" {
+	if pins := executor.readBridges()["apps-inner"].Pins; pins["panel/web"] != "172.24.0.2" {
 		t.Fatalf("pins %#v", pins)
 	}
 	if meta := executor.metaOf(dir); !slices.Equal(meta.Offers, []string{"apps-inner/web=3001/tcp"}) {
@@ -82,8 +82,8 @@ func TestAContainedStackJoinsAKrynodesContainedNetworkWithAFixedAddress(t *testi
 func TestAFullAccessStackJoinsAContainedNetworkAsAGuest(t *testing.T) {
 	executor, run := bridgeExecutor(t, "1")
 	sharedRecord(t, executor, "contained", map[string]string{"adns/dns": "172.24.0.2"})
-	dir := sharedKuma(t, executor, run, nil)
-	if result := createKuma(t, executor, "full", nil); !result.OK {
+	dir := sharedPanel(t, executor, run, nil)
+	if result := createPanel(t, executor, "full", nil); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	var override map[string]any
@@ -92,7 +92,7 @@ func TestAFullAccessStackJoinsAContainedNetworkAsAGuest(t *testing.T) {
 	}
 	web := override["services"].(map[string]any)["web"].(map[string]any)
 	joined := web["networks"].(map[string]any)["inner"].(map[string]any)
-	if joined["ipv4_address"] != "172.24.0.3" || !reflect.DeepEqual(joined["aliases"], []any{"web.kuma"}) || !reflect.DeepEqual(web["cap_drop"], []any{"NET_RAW"}) {
+	if joined["ipv4_address"] != "172.24.0.3" || !reflect.DeepEqual(joined["aliases"], []any{"web.panel"}) || !reflect.DeepEqual(web["cap_drop"], []any{"NET_RAW"}) {
 		t.Fatalf("override %#v", override)
 	}
 	if !slices.Contains(run.calls, composeCall(dir, "compose.yaml -f "+filepath.Join(dir, hostsFile), "up -d")) {
@@ -120,12 +120,12 @@ func TestJoiningASharedNetworkIsRefusedWhenItCannotBeKeptClosed(t *testing.T) {
 			if c.kind != "" {
 				sharedRecord(t, executor, c.kind, nil)
 			}
-			sharedKuma(t, executor, run, c.change)
+			sharedPanel(t, executor, run, c.change)
 			if c.missing {
 				delete(run.respond, "docker network inspect -f {{.Id}} apps-inner")
 				run.failing = map[string]string{"docker network inspect -f {{.Id}} apps-inner": "Error: No such network: apps-inner"}
 			}
-			result := createKuma(t, executor, c.access, nil)
+			result := createPanel(t, executor, c.access, nil)
 			if result.OK || result.Output != "refused: "+c.refusal {
 				t.Fatalf("result %#v", result)
 			}
@@ -139,20 +139,20 @@ func TestJoiningASharedNetworkIsRefusedWhenItCannotBeKeptClosed(t *testing.T) {
 func TestAStackReachesOnlyWhatAnotherStackOffers(t *testing.T) {
 	executor, run := bridgeExecutor(t, "1")
 	sharedRecord(t, executor, "contained", map[string]string{"db/postgres": "172.24.0.2"})
-	dir := sharedKuma(t, executor, run, nil)
+	dir := sharedPanel(t, executor, run, nil)
 	peers := map[string]string{"peers": "apps-inner/postgres.db:5432/tcp"}
-	if result := createKuma(t, executor, "contained", peers); result.OK || result.Output != "refused: postgres.db does not offer 5432/tcp on apps-inner." {
+	if result := createPanel(t, executor, "contained", peers); result.OK || result.Output != "refused: postgres.db does not offer 5432/tcp on apps-inner." {
 		t.Fatalf("result %#v", result)
 	}
 	writeStack(t, executor, "db", stackMeta{Access: "full", Offers: []string{"apps-inner/postgres=5432/tcp"}}, "")
-	again := composeRequest(t, idB, "kuma", "create", func(c *Command) { c.Compose, c.Access, c.Args = kumaText, "contained", peers })
+	again := composeRequest(t, idB, "panel", "create", func(c *Command) { c.Compose, c.Access, c.Args = panelText, "contained", peers })
 	if result := runRequest(t, executor, again); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	if meta := executor.metaOf(dir); !slices.Equal(meta.Peers, []string{"apps-inner/postgres.db:5432/tcp"}) {
 		t.Fatalf("meta %#v", meta)
 	}
-	if _, err := executor.choicesFrom(Command{Args: map[string]string{"peers": "apps-inner/postgres:5432/tcp"}}, "contained", stackMeta{}); err == nil || err.Error() != "apps-inner/postgres:5432/tcp is not a port of another stack such as apps-inner/postgres.db:5432/tcp" {
+	if _, err := executor.choicesFrom(Command{Args: map[string]string{"peers": "apps-inner/postgres:5432/tcp"}}, "contained", stackMeta{}); err == nil || err.Error() != "apps-inner/postgres:5432/tcp is not a port of another stack written as stack/name:number/tcp" {
 		t.Fatalf("err %v", err)
 	}
 	if _, err := executor.choicesFrom(Command{Args: map[string]string{"peers": "apps-inner/postgres.db:5432/tcp"}}, "full", stackMeta{}); err == nil {
@@ -165,13 +165,13 @@ func TestAStackReachesOnlyWhatAnotherStackOffers(t *testing.T) {
 
 func TestAnOfferMustNameANetworkAndServiceTheStackHas(t *testing.T) {
 	for offers, refusal := range map[string]string{
-		"other-net/web=3001/tcp":  "kuma does not join other-net, a Contained network on this server.",
+		"other-net/web=3001/tcp":  "panel does not join other-net, a Contained network on this server.",
 		"apps-inner/api=3001/tcp": "api is not on apps-inner.",
 	} {
 		executor, run := bridgeExecutor(t, "1")
 		sharedRecord(t, executor, "contained", nil)
-		sharedKuma(t, executor, run, nil)
-		if result := createKuma(t, executor, "contained", map[string]string{"offers": offers}); result.OK || result.Output != "refused: "+refusal {
+		sharedPanel(t, executor, run, nil)
+		if result := createPanel(t, executor, "contained", map[string]string{"offers": offers}); result.OK || result.Output != "refused: "+refusal {
 			t.Fatalf("%s: %#v", offers, result)
 		}
 	}
@@ -180,8 +180,8 @@ func TestAnOfferMustNameANetworkAndServiceTheStackHas(t *testing.T) {
 func peersExecutor(t *testing.T, filter string) (Executor, *fakeRun) {
 	t.Helper()
 	executor, run := bridgeExecutor(t, filter)
-	sharedRecord(t, executor, "contained", map[string]string{"kuma/web": "172.24.0.2", "db/postgres": "172.24.0.3", "adns/dns": "172.24.0.4"})
-	writeStack(t, executor, "kuma", stackMeta{Access: "contained", Peers: []string{"apps-inner/postgres.db:5432/tcp", "apps-inner/dns.adns:53/udp"}}, "")
+	sharedRecord(t, executor, "contained", map[string]string{"panel/web": "172.24.0.2", "db/postgres": "172.24.0.3", "adns/dns": "172.24.0.4"})
+	writeStack(t, executor, "panel", stackMeta{Access: "contained", Peers: []string{"apps-inner/postgres.db:5432/tcp", "apps-inner/dns.adns:53/udp"}}, "")
 	writeStack(t, executor, "db", stackMeta{Access: "full", Offers: []string{"apps-inner/postgres=5432/tcp"}}, "")
 	writeStack(t, executor, "adns", stackMeta{Access: "contained"}, "")
 	run.failing = map[string]string{"iptables -C DOCKER-USER -i " + inner + " -o " + inner + " -j KRY-PEERS": ""}
@@ -229,11 +229,11 @@ func TestPeersFailClosedWithoutBridgeFiltering(t *testing.T) {
 }
 
 func TestGuardClosesPortsOtherStacksPublish(t *testing.T) {
-	executor, run, result := reachingKuma(t, "3000/tcp")
+	executor, run, result := reachingPanel(t, "3000/tcp")
 	if !result.OK {
 		t.Fatalf("result %#v", result)
 	}
-	bridge := bridgeName("kuma", "default")
+	bridge := bridgeName("panel", "default")
 	ret := "-i " + bridge + " -p tcp -m conntrack --ctorigdstport 3000 -j RETURN"
 	logged := "-m limit --limit 600/min -j LOG --log-prefix kry-reach  --log-level 6"
 	stale := "-i krcdeadbeef0000 -p tcp -m conntrack --ctorigdstport 9 -j RETURN"
@@ -285,13 +285,13 @@ func TestOffThePrivateNetworkAStackThatKnocksIsStopped(t *testing.T) {
 func TestRemovingAStackFreesItsAddresses(t *testing.T) {
 	executor, run := bridgeExecutor(t, "1")
 	sharedRecord(t, executor, "contained", nil)
-	sharedKuma(t, executor, run, nil)
-	if result := createKuma(t, executor, "contained", nil); !result.OK {
+	sharedPanel(t, executor, run, nil)
+	if result := createPanel(t, executor, "contained", nil); !result.OK {
 		t.Fatalf("result %#v", result)
 	}
-	dir := kumaDir(executor)
-	withStacks(&executor, Stack{Project: "kuma", Directory: dir, Files: []string{filepath.Join(dir, "compose.krynodes.json")}})
-	if result := runRequest(t, executor, composeRequest(t, idB, "kuma", "remove", nil)); !result.OK {
+	dir := panelDir(executor)
+	withStacks(&executor, Stack{Project: "panel", Directory: dir, Files: []string{filepath.Join(dir, "compose.krynodes.json")}})
+	if result := runRequest(t, executor, composeRequest(t, idB, "panel", "remove", nil)); !result.OK {
 		t.Fatalf("result %#v", result)
 	}
 	if record := executor.readBridges()["apps-inner"]; len(record.Pins) != 0 || !slices.Equal(record.Freed, []string{"172.24.0.2"}) {

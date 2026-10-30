@@ -162,7 +162,7 @@ export function useSignedOperation(toastErrors = true) {
           : error;
       }
     },
-    [...ACTION_QUERIES, ["cloudflare"], queryKeys.tailscale],
+    [...ACTION_QUERIES, ["cloudflare"], queryKeys.tailscale, ["quarantine"]],
     toastErrors,
   );
 }

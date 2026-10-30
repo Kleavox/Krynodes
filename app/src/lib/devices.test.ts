@@ -105,11 +105,15 @@ describe("synced", () => {
 
 describe("where a passkey acts", () => {
   it("says all, none, up to two names, or a count", () => {
-    expect(reachText(["io", "pivox", "calisto"], 3)).toBe("All Servers");
+    expect(reachText(["server-2", "server-1", "server-3"], 3)).toBe(
+      "All Servers",
+    );
     expect(reachText([], 3)).toBe("No Servers");
-    expect(reachText(["io"], 3)).toBe("io");
-    expect(reachText(["io", "pivox"], 3)).toBe("io, pivox");
-    expect(reachText(["io", "pivox", "calisto"], 5)).toBe("3 of 5 Servers");
+    expect(reachText(["server-2"], 3)).toBe("server-2");
+    expect(reachText(["server-2", "server-1"], 3)).toBe("server-2, server-1");
+    expect(reachText(["server-2", "server-1", "server-3"], 5)).toBe(
+      "3 of 5 Servers",
+    );
   });
 
   it("finds trusted servers no passkey reaches", () => {

@@ -36,7 +36,7 @@ export function notYours(
     ? new Refusal(
         403,
         "NOT_YOUR_DEVICE",
-        `${device.name} belongs to ${handle(device.account)}. Use one of your own devices.`,
+        `${device.name} belongs to ${handle(device.account)}. Use one of your own passkeys.`,
       )
     : null;
 }

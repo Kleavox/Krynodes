@@ -275,7 +275,7 @@ func (f *fakeActions) NetworkReply(reply *reporter.NetworkReply) error {
 }
 
 func TestTheNetworkRidesTheHeartbeatAndItsReplyReachesTheRelay(t *testing.T) {
-	reply := &reporter.NetworkReply{Endpoints: []reporter.NetworkEndpoint{{Key: "k", Endpoint: "141.95.0.21:51820"}}}
+	reply := &reporter.NetworkReply{Endpoints: []reporter.NetworkEndpoint{{Key: "k", Endpoint: "203.0.113.21:51820"}}}
 	server := &fakeReporter{
 		config:    configWith(targetURL(t), "v1"),
 		heartbeat: reporter.HeartbeatResponse{OK: true, IntervalSeconds: 60, ConfigVersion: "v1", Network: reply},
@@ -327,7 +327,7 @@ func TestActionsAndRefreshesAreHandedToTheRelay(t *testing.T) {
 		config: configWith(targetURL(t), "v1"),
 		heartbeat: reporter.HeartbeatResponse{
 			OK: true, IntervalSeconds: 60, ConfigVersion: "v1", Refresh: true,
-			Actions: []reporter.ActionRequest{{ID: "a", Kind: "docker", Name: "adguard", Action: "restart"}},
+			Actions: []reporter.ActionRequest{{ID: "a", Kind: "docker", Name: "resolver", Action: "restart"}},
 		},
 	}
 	relay := &fakeActions{}

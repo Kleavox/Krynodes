@@ -22,11 +22,13 @@ const (
 )
 
 type node struct {
-	ID           string     `json:"ID"`
-	DNSName      string     `json:"DNSName"`
-	TailscaleIPs []string   `json:"TailscaleIPs"`
-	KeyExpiry    *time.Time `json:"KeyExpiry"`
-	Tags         []string   `json:"Tags"`
+	ID            string     `json:"ID"`
+	DNSName       string     `json:"DNSName"`
+	TailscaleIPs  []string   `json:"TailscaleIPs"`
+	KeyExpiry     *time.Time `json:"KeyExpiry"`
+	Tags          []string   `json:"Tags"`
+	AllowedIPs    []string   `json:"AllowedIPs"`
+	PrimaryRoutes []string   `json:"PrimaryRoutes"`
 }
 
 type status struct {
@@ -93,6 +95,11 @@ func Report(ctx context.Context, run Runner, local Local) reporter.TailscaleRepo
 		}
 	}
 	report.Peers = len(parsed.Peer)
+	if prefs, err := readPrefs(ctx, run); err == nil {
+		report.AcceptDNS = &prefs.CorpDNS
+		report.ExitNode = &reporter.ExitNode{Advertised: exitRoutes(prefs.AdvertiseRoutes)}
+		report.ExitNode.Approved = report.ExitNode.Advertised && (exitRoutes(parsed.Self.AllowedIPs) || exitRoutes(parsed.Self.PrimaryRoutes))
+	}
 	if local == nil {
 		return report
 	}

@@ -116,8 +116,8 @@ function setup() {
     .run(JSON.stringify(SIGNED));
   sqlite.exec(
     `INSERT INTO network_members (node_id, state, address, port, key, signer, endpoint, nat, since) VALUES
-     ('${A}', 'in', '10.88.0.1', 51820, '${key(1)}', '${key(101)}', '141.95.0.21:51820', 0, 'now'),
-     ('${B}', 'in', '10.88.0.2', 51820, '${key(2)}', '${key(102)}', '141.95.0.22:51820', 0, 'now'),
+     ('${A}', 'in', '10.88.0.1', 51820, '${key(1)}', '${key(101)}', '203.0.113.21:51820', 0, 'now'),
+     ('${B}', 'in', '10.88.0.2', 51820, '${key(2)}', '${key(102)}', '203.0.113.22:51820', 0, 'now'),
      ('${C}', 'waiting', NULL, 51820, '${key(3)}', '${key(103)}', NULL, 0, 'now')`,
   );
   const harness = hubHarness({ DB: db });
@@ -212,7 +212,7 @@ describe("the network on the heartbeat", () => {
     const b = await connect(B);
     expect(
       (await send(a, A, { version: 2, key: key(1), links: [] }))?.endpoints,
-    ).toEqual([{ key: key(2), endpoint: "141.95.0.22:51820" }]);
+    ).toEqual([{ key: key(2), endpoint: "203.0.113.22:51820" }]);
     expect(
       (await send(a, A, { version: 2, key: key(1), links: [] }))?.endpoints,
     ).toBeUndefined();
