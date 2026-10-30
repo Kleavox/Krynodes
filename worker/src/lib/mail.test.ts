@@ -35,7 +35,7 @@ describe("incident email", () => {
     const { env, sent } = mailEnv();
     await sendServerEmail(env, {
       nodeId: "n1",
-      nodeName: "pivox",
+      nodeName: "server-1",
       down: [
         down("API <health>", "API <health> is down: timeout"),
         down("Web"),
@@ -48,7 +48,7 @@ describe("incident email", () => {
       email: "kry@example.test",
     });
     expect(message.subject).toBe(
-      "[Krynodes] pivox: 2 checks down — API <health>, Web",
+      "[Krynodes] server-1: 2 checks down — API <health>, Web",
     );
     expect(message.html).toContain("API &lt;health&gt;");
     expect(message.html).not.toContain("<health>");
@@ -68,10 +68,10 @@ describe("incident email", () => {
     const { env, sent } = mailEnv();
     await sendServerEmail(env, {
       nodeId: "n1",
-      nodeName: "pivox",
-      down: [down(null, "pivox stopped reporting")],
+      nodeName: "server-1",
+      down: [down(null, "server-1 stopped reporting")],
     });
-    expect(sent().subject).toBe("[Krynodes] pivox: offline");
+    expect(sent().subject).toBe("[Krynodes] server-1: offline");
     expect(sent().text).toContain("Last report: 2026-09-28 08:05 UTC");
     expect(sent().text).toContain("https://kry.example.test/nodes/n1");
   });
@@ -104,7 +104,7 @@ describe("incident email", () => {
       const { env, send } = mailEnv(extra);
       await sendServerEmail(env, {
         nodeId: "n1",
-        nodeName: "pivox",
+        nodeName: "server-1",
         down: [down("API")],
       });
       expect(send).not.toHaveBeenCalled();
@@ -187,6 +187,28 @@ describe("quarantine mail", () => {
         { chain: "KRY-REACH", rule: "-A KRY-REACH -j DROP" },
         "vps-1: Krynodes' firewall rule was removed",
         ["Rule: KRY-REACH · -A KRY-REACH -j DROP"],
+      ],
+      [
+        "firewall",
+        { rule: "allow 9999/tcp", item: "allow 9999/tcp" },
+        "vps-1: a firewall rule was added outside Krynodes",
+        ["Rule: allow 9999/tcp"],
+      ],
+      [
+        "confinement",
+        {
+          system: "selinux",
+          program: "nginx",
+          type: "httpd_t",
+          wanted: "read shadow",
+          item: "nginx httpd_t",
+        },
+        "vps-1: SELinux denied nginx",
+        [
+          "SELinux denied nginx (httpd_t) read shadow. If you do not know why nginx would need it",
+          "Program: nginx (httpd_t)",
+          "Wanted: read shadow",
+        ],
       ],
       [
         "port",
@@ -300,5 +322,27 @@ describe("quarantine mail", () => {
     }
     expect(html).toContain("Stopped</span>");
     expect(buttons(html)).toBe(1);
+  });
+
+  it("tells of a stack stopped by SELinux or AppArmor with what was denied", async () => {
+    const { env, sent } = mailEnv();
+    await sendStoppedEmail(env, {
+      nodeId: "n1",
+      nodeName: "vps-1",
+      project: "app",
+      count: 1,
+      tried: ["read shadow"],
+      at: "2026-10-27T21:04:00.000Z",
+      why: "confinement",
+      program: "cat",
+    });
+    const { text } = sent();
+    for (const line of [
+      "SELinux or AppArmor denied a container in app read shadow (cat). Krynodes stopped the stack, and it stays stopped after a reboot. vps-1 is still trusted.",
+      "Denied: read shadow (cat)",
+    ]) {
+      expect(text).toContain(line);
+    }
+    expect(text).not.toContain("Tried:");
   });
 });

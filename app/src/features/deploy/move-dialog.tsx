@@ -366,7 +366,12 @@ function MoveForm({
             <p className="text-xs text-destructive">{privateWrong}</p>
           )}
           {chosenAccess === "full" && (
-            <FullAccessSummary text={text} member={there} onText={setEdited} />
+            <FullAccessSummary
+              nodeId={chosen}
+              text={text}
+              member={there}
+              onText={setEdited}
+            />
           )}
           {block && (
             <div

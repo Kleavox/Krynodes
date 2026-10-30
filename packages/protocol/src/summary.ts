@@ -53,7 +53,7 @@ export function summarizeChange(input: {
       };
     })
     .filter((entry) => entry.added.length > 0 || entry.removed.length > 0);
-  const name = (id: string) => input.names[id] ?? "an unknown device";
+  const name = (id: string) => input.names[id] ?? "an unknown passkey";
   const parts = [
     ...admitted.map((id) => `Admit ${name(id)}`),
     ...removed.map((id) => `Remove ${name(id)}`),

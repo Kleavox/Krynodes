@@ -153,6 +153,28 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Getting the command…",
       done: "Command ready",
     },
+    open: { verb: "Open Port", doing: "Opening the port…", done: "Opened" },
+    close: { verb: "Close Port", doing: "Closing the port…", done: "Closed" },
+    putback: {
+      verb: "Put Back",
+      doing: "Taking the rule out…",
+      done: "Rule taken out",
+    },
+    exitnode: {
+      verb: "Change Exit Node",
+      doing: "Changing Exit Node…",
+      done: "Exit Node changed",
+    },
+    dns: {
+      verb: "Change Tailscale DNS",
+      doing: "Changing Tailscale DNS…",
+      done: "Tailscale DNS changed",
+    },
+    containers: {
+      verb: "Confine Containers",
+      doing: "Changing how containers are confined…",
+      done: "Containers changed",
+    },
   };
 
 export const STATE_LABEL: Record<ServiceState, string> = {

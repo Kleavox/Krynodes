@@ -14,7 +14,7 @@ var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 var bridgeTarget = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 
-var Recipes = []string{"security-updates", "reboot-window", "ssh-keys-only", "no-root-login", "fail2ban", "firewall", "free-port-53"}
+var Recipes = []string{"security-updates", "reboot-window", "ssh-keys-only", "no-root-login", "fail2ban", "firewall", "free-port-53", "confinement"}
 
 const TunnelContainer = "krynodes-tunnel"
 

@@ -40,12 +40,12 @@ func recorder(answer func(w http.ResponseWriter, r *http.Request)) (*httptest.Se
 }
 
 var oneLink = func() []link {
-	return []link{{name: "eth0", up: true, addrs: []netip.Addr{netip.MustParseAddr("51.79.0.10")}}}
+	return []link{{name: "eth0", up: true, addrs: []netip.Addr{netip.MustParseAddr("198.51.100.10")}}}
 }
 
 func answerFour(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"address":"103.28.54.214","family":4}`))
+	w.Write([]byte(`{"address":"198.51.100.214","family":4}`))
 }
 
 func TestTheProbeAsksOverEachFamilyAndKeepsWhatAnswered(t *testing.T) {
@@ -53,7 +53,7 @@ func TestTheProbeAsksOverEachFamilyAndKeepsWhatAnswered(t *testing.T) {
 	defer server.Close()
 	prober := Prober{Endpoint: server.URL + "/", Token: "agent-token", Version: "0.6.13", links: oneLink}
 	found := prober.Probe(context.Background())
-	if len(found) != 1 || found["tcp4"] != "103.28.54.214" {
+	if len(found) != 1 || found["tcp4"] != "198.51.100.214" {
 		t.Fatalf("found %v", found)
 	}
 	calls := seen()
@@ -75,7 +75,7 @@ func TestTheProbeSendsTheInterfacesWithEachCall(t *testing.T) {
 		t.Fatal("no request")
 	}
 	for _, got := range calls {
-		if got.method != http.MethodPost || len(got.body.Interfaces) != 1 || got.body.Interfaces[0] != (Interface{Name: "eth0", Address: "51.79.0.10"}) {
+		if got.method != http.MethodPost || len(got.body.Interfaces) != 1 || got.body.Interfaces[0] != (Interface{Name: "eth0", Address: "198.51.100.10"}) {
 			t.Fatalf("call %s %v", got.method, got.body.Interfaces)
 		}
 	}
@@ -91,7 +91,7 @@ func TestTheProbeAsksWithGETWhenKrynodesDoesNotKnowPOST(t *testing.T) {
 	})
 	defer server.Close()
 	found := (Prober{Endpoint: server.URL, Token: "x", Version: "dev", links: oneLink}).Probe(context.Background())
-	if found["tcp4"] != "103.28.54.214" {
+	if found["tcp4"] != "198.51.100.214" {
 		t.Fatalf("found %v", found)
 	}
 	calls := seen()

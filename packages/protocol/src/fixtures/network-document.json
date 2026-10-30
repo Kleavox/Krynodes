@@ -13,13 +13,13 @@
       "signer": "Gq5XvCZ6m6GB0YdQ3TTqN4TfxLMvx8ZvYhAEZ3yUnUs=",
       "port": 51820,
       "mtu": null,
-      "endpoint": "141.95.0.21:51820",
+      "endpoint": "203.0.113.21:51820",
       "nat": false,
       "psk": { "22222222-2222-4222-8222-222222222222": "eyJ2IjoxfQ" }
     },
     {
       "node": "22222222-2222-4222-8222-222222222222",
-      "name": "pivox",
+      "name": "server-1",
       "address": "10.88.0.2",
       "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
       "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",

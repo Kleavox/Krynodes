@@ -165,7 +165,7 @@ func serveCalls(p *peer) {
 }
 
 func beat() reporter.Heartbeat {
-	return reporter.Heartbeat{NodeID: "node-1", Host: reporter.Host{Hostname: "pivox", AgentVersion: "0.3.1"}}
+	return reporter.Heartbeat{NodeID: "node-1", Host: reporter.Host{Hostname: "server-1", AgentVersion: "0.3.1"}}
 }
 
 func TestEveryCallSharesTheConnectionAndFindsItsAnswer(t *testing.T) {

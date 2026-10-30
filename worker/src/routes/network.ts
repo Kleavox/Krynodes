@@ -7,7 +7,7 @@ import {
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
-import { fleetLinks, pokeSoon } from "../fleet/client";
+import { fleetLinks, pokeSoon, unchangedList } from "../fleet/client";
 import { assertionUv } from "../lib/webauthn";
 import { nextAddresses, type AddressRow } from "../network/addresses";
 import { quarantinedNodes } from "../quarantine/quarantine";
@@ -112,7 +112,7 @@ export function registerNetworkRoutes(
   app: KrynodesApp,
   requireOperator: MiddlewareHandler<KrynodesEnv>,
 ): void {
-  app.get("/api/network", requireOperator, async (context) => {
+  app.get("/api/network", requireOperator, unchangedList, async (context) => {
     const db = context.env.DB;
     const owner = context.get("identity").id;
     const [row, members, addresses, links, changes, stored, held, wrong] =

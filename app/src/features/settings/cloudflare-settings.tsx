@@ -84,7 +84,7 @@ export function CloudflareSettings() {
   const chosenZone = zone ?? settings.data?.zone ?? "";
   const zoneProblem =
     chosenZone && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/u.test(chosenZone)
-      ? "Enter the domain only, such as kleavox.xyz."
+      ? "Enter the domain only, without https:// or a path."
       : null;
   const holding = nodes.filter((node) => pieceOf(node, setId) !== null);
   const busy = pendingTokenSteps(services.data?.actions ?? []);

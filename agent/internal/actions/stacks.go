@@ -637,13 +637,17 @@ func registryHost(image string) string {
 	return ""
 }
 
-func (e Executor) checkRegistries(ctx context.Context, config map[string]any) error {
-	lookup := e.LookupIP
-	if lookup == nil {
-		lookup = func(ctx context.Context, host string) ([]net.IP, error) {
-			return net.DefaultResolver.LookupIP(ctx, "ip", host)
-		}
+func (e Executor) lookupIP() func(context.Context, string) ([]net.IP, error) {
+	if e.LookupIP != nil {
+		return e.LookupIP
 	}
+	return func(ctx context.Context, host string) ([]net.IP, error) {
+		return net.DefaultResolver.LookupIP(ctx, "ip", host)
+	}
+}
+
+func (e Executor) checkRegistries(ctx context.Context, config map[string]any) error {
+	lookup := e.lookupIP()
 	services := asMap(config["services"])
 	for _, name := range sortedKeys(services) {
 		host := registryOf(asText(asMap(services[name])["image"]))

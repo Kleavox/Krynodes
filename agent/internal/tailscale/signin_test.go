@@ -20,7 +20,7 @@ func (d *tailscaled) run(_ context.Context, name string, args ...string) ([]byte
 	if d.state == "" {
 		return nil, 1, context.DeadlineExceeded
 	}
-	return []byte(`{"BackendState":"` + d.state + `","AuthURL":"` + d.authURL + `","Self":{"DNSName":"vps-2.tail4d2a.ts.net.","TailscaleIPs":["100.101.7.12"]}}`), 0, nil
+	return []byte(`{"BackendState":"` + d.state + `","AuthURL":"` + d.authURL + `","Self":{"DNSName":"vps-2.tail0000.ts.net.","TailscaleIPs":["100.101.7.12"]}}`), 0, nil
 }
 
 func (d *tailscaled) stream(ctx context.Context, each func(string), name string, args ...string) error {

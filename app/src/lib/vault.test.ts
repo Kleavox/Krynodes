@@ -88,7 +88,7 @@ describe("the Cloudflare token in pieces", () => {
       set: "next-set",
       source: SET,
       cleanup: B,
-      zone: "kleavox.xyz",
+      zone: "example.org",
       forgets: [],
     });
     expect(steps).toEqual([
@@ -109,7 +109,7 @@ describe("the Cloudflare token in pieces", () => {
           set: "next-set",
           source: SET,
           cleanup: B,
-          zone: "kleavox.xyz",
+          zone: "example.org",
         },
         attachFrom: 0,
       },
@@ -137,18 +137,18 @@ describe("the Cloudflare token in pieces", () => {
 
 describe("web addresses", () => {
   it("names an address after the app and the server", () => {
-    expect(hostnameFor("Listmonk_App", "VM-0-10-debian", "kleavox.xyz")).toBe(
-      "listmonk-app-vm-0-10-debian.kleavox.xyz",
+    expect(hostnameFor("Listmonk_App", "VM-0-10-debian", "example.org")).toBe(
+      "listmonk-app-vm-0-10-debian.example.org",
     );
   });
 
   it("never ends a long name with a hyphen", () => {
-    const name = hostnameFor(`${"a".repeat(62)}-b`, "pivox", "kleavox.xyz");
-    expect(name).toBe(`${"a".repeat(62)}.kleavox.xyz`);
+    const name = hostnameFor(`${"a".repeat(62)}-b`, "server-1", "example.org");
+    expect(name).toBe(`${"a".repeat(62)}.example.org`);
   });
 
   it("says what is wrong with an address before the fingerprint", () => {
-    expect(addressProblem("listmonk-pivox", "9000")).toBeNull();
+    expect(addressProblem("listmonk-server-1", "9000")).toBeNull();
     for (const label of ["", "-listmonk", "listmonk-", "a".repeat(64)]) {
       expect(addressProblem(label, "9000")).toMatch(/lowercase letters/u);
     }
@@ -166,10 +166,10 @@ describe("web addresses", () => {
       project: "listmonk",
       service: "app",
       port: 9000,
-      hostname: "listmonk-a.kleavox.xyz",
+      hostname: "listmonk-a.example.org",
       mode: "path" as const,
       path: "/admin",
-      zone: "kleavox.xyz",
+      zone: "example.org",
       aud: "aud-1",
       source: SET,
     };
@@ -189,10 +189,10 @@ describe("web addresses", () => {
         args: {
           service: "app",
           port: "9000",
-          hostname: "listmonk-a.kleavox.xyz",
+          hostname: "listmonk-a.example.org",
           mode: "path",
           path: "/admin",
-          zone: "kleavox.xyz",
+          zone: "example.org",
           aud: "aud-1",
           source: SET,
         },
@@ -208,9 +208,9 @@ describe("web addresses", () => {
         args: {
           service: "app",
           port: "9000",
-          hostname: "listmonk-a.kleavox.xyz",
+          hostname: "listmonk-a.example.org",
           mode: "allow",
-          zone: "kleavox.xyz",
+          zone: "example.org",
           aud: "aud-1",
           source: SET,
         },
@@ -221,8 +221,8 @@ describe("web addresses", () => {
         target: A,
         targetKey: "KA",
         project: "listmonk",
-        hostname: "listmonk-a.kleavox.xyz",
-        zone: "kleavox.xyz",
+        hostname: "listmonk-a.example.org",
+        zone: "example.org",
         releaser: B,
         disposal: "purge",
         source: SET,
@@ -312,16 +312,16 @@ describe("moving a stack", () => {
       source: A,
       target: B,
       targetKey: "KB",
-      project: "adguard-home",
+      project: "resolver",
       compose: "x",
       access: "full",
       original: "keep",
-      title: "AdGuard Home",
-      names: "adguard=adguard-home",
+      title: "Resolver",
+      names: "resolver=resolver",
     })[1];
     expect(create?.args).toEqual({
-      title: "AdGuard Home",
-      names: "adguard=adguard-home",
+      title: "Resolver",
+      names: "resolver=resolver",
     });
   });
 
@@ -330,7 +330,7 @@ describe("moving a stack", () => {
       source: A,
       target: B,
       targetKey: "KB",
-      project: "kuma",
+      project: "panel",
       compose: "x",
       access: "contained",
       original: "keep",
@@ -714,7 +714,7 @@ describe("the Tailscale credential in pieces", () => {
     const seen = Date.parse("2026-10-27T07:00:00Z");
     const row = {
       id: A,
-      name: "pivox",
+      name: "server-1",
       agent_version: "0.7.0",
       last_seen_at: "2026-10-27 06:59:50",
       interval_seconds: 60,
@@ -735,7 +735,7 @@ describe("the Tailscale credential in pieces", () => {
     expect(vaultNodes(data, [row], "fp", seen, "tailscale")).toEqual([
       {
         id: A,
-        name: "pivox",
+        name: "server-1",
         sealKey: "key-1",
         vault: { set: SET, holders: 4 },
         reachable: true,

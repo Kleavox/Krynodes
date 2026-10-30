@@ -62,18 +62,18 @@ func joinGroup(t *testing.T, executor Executor, group, name string) {
 
 func adminRunner(t *testing.T, executor *Executor, run *fakeRun) {
 	t.Helper()
-	run.respond["sudo -l -U musyaf"] = "    (ALL : ALL) ALL\n"
+	run.respond["sudo -l -U user1"] = "    (ALL : ALL) ALL\n"
 	if _, err := os.Stat(executor.path("/etc/group")); err != nil {
 		rootFile(t, *executor, "/etc/group", "sudo:x:27:\n")
 	}
 	inner := executor.Run
 	executor.Run = func(ctx context.Context, name string, args ...string) ([]byte, int, error) {
 		switch name + " " + strings.Join(args, " ") {
-		case "useradd -m -s /bin/bash musyaf":
+		case "useradd -m -s /bin/bash user1":
 			body, _ := os.ReadFile(executor.path("/etc/passwd"))
-			rootFile(t, *executor, "/etc/passwd", string(body)+"musyaf:x:1001:1001::/home/musyaf:/bin/bash\n")
-		case "usermod -aG sudo musyaf":
-			joinGroup(t, *executor, "sudo", "musyaf")
+			rootFile(t, *executor, "/etc/passwd", string(body)+"user1:x:1001:1001::/home/user1:/bin/bash\n")
+		case "usermod -aG sudo user1":
+			joinGroup(t, *executor, "sudo", "user1")
 		}
 		return inner(ctx, name, args...)
 	}
@@ -108,16 +108,16 @@ func stateFileGone(t *testing.T, executor Executor, names ...string) {
 
 func TestAnAdminUserCommandIsMadeReadyBySignature(t *testing.T) {
 	executor, _ := securityExecutor(t)
-	args := map[string]string{"name": "musyaf", "keys": adminBlob + ":laptop"}
+	args := map[string]string{"name": "user1", "keys": adminBlob + ":laptop"}
 	unsigned := hostRequest(t, idA, "server", "admin", args)
 	unsigned.Signed = nil
 	if result := runRequest(t, executor, unsigned); result.OK {
 		t.Fatalf("unsigned: %+v", result)
 	}
 	for id, bad := range map[string]map[string]string{
-		idB: {"name": "musyaf", "keys": "AAAA:laptop"},
+		idB: {"name": "user1", "keys": "AAAA:laptop"},
 		idC: {"name": "root", "keys": adminBlob + ":laptop"},
-		idD: {"name": "musyaf", "keys": strings.Repeat(adminBlob+":laptop,", 4) + adminBlob + ":phone"},
+		idD: {"name": "user1", "keys": strings.Repeat(adminBlob+":laptop,", 4) + adminBlob + ":phone"},
 	} {
 		if result := runRequest(t, executor, hostRequest(t, id, "server", "admin", bad)); result.OK {
 			t.Fatalf("%v: %+v", bad, result)
@@ -126,11 +126,11 @@ func TestAnAdminUserCommandIsMadeReadyBySignature(t *testing.T) {
 	stateFileGone(t, executor, adminFile)
 	id := "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a05"
 	result := runRequest(t, executor, hostRequest(t, id, "server", "admin", args))
-	if !result.OK || result.Output != "ready: run sudo kry admin-user musyaf on this server within 30 minutes" {
+	if !result.OK || result.Output != "ready: run sudo kry admin-user user1 on this server within 30 minutes" {
 		t.Fatalf("result %+v", result)
 	}
 	ticket, err := readState[adminTicket](executor.StateDir, adminFile)
-	if err != nil || ticket.ID != id || ticket.Name != "musyaf" || !slices.Equal(ticket.Keys, []string{adminBlob + ":laptop"}) || !ticket.Until.Equal(executorNow.Add(30*time.Minute)) {
+	if err != nil || ticket.ID != id || ticket.Name != "user1" || !slices.Equal(ticket.Keys, []string{adminBlob + ":laptop"}) || !ticket.Until.Equal(executorNow.Add(30*time.Minute)) {
 		t.Fatalf("ticket %+v %v", ticket, err)
 	}
 	if info, _ := os.Stat(filepath.Join(executor.StateDir, adminFile)); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
@@ -139,13 +139,13 @@ func TestAnAdminUserCommandIsMadeReadyBySignature(t *testing.T) {
 }
 
 func TestAdminUserNeedsAFreshCommandForThatName(t *testing.T) {
-	for _, ticket := range []*adminTicket{nil, {Name: "musyaf", Keys: []string{adminBlob + ":laptop"}, Until: executorNow.Add(-time.Minute)}, {Name: "budi", Keys: []string{adminBlob + ":laptop"}, Until: executorNow.Add(time.Minute)}} {
+	for _, ticket := range []*adminTicket{nil, {Name: "user1", Keys: []string{adminBlob + ":laptop"}, Until: executorNow.Add(-time.Minute)}, {Name: "budi", Keys: []string{adminBlob + ":laptop"}, Until: executorNow.Add(time.Minute)}} {
 		executor, run := watchedServer(t)
 		if ticket != nil {
 			writeJSON(executor.StateDir, adminFile, *ticket, 0o600)
 		}
 		var out strings.Builder
-		err := executor.AdminUser(context.Background(), "musyaf", &out, &adminTerminal{out: &out, answer: true})
+		err := executor.AdminUser(context.Background(), "user1", &out, &adminTerminal{out: &out, answer: true})
 		if err == nil || err.Error() != adminAgain || len(run.calls) != 0 {
 			t.Fatalf("ticket %+v: %v %q", ticket, err, run.calls)
 		}
@@ -158,15 +158,15 @@ func TestAdminUserMakesTheUserAndQuietsOnlyItsOwnItems(t *testing.T) {
 	rootFile(t, executor, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
 	run.respond["sshd -T"] = "passwordauthentication yes\npermitrootlogin yes\nport 22\n"
 	adminRunner(t, &executor, run)
-	sshTakesEffect(run, "root", "musyaf")
+	sshTakesEffect(run, "root", "user1")
 	executor.watchServer(context.Background())
-	writeJSON(executor.StateDir, adminFile, adminTicket{ID: idA, Name: "musyaf", Keys: []string{adminBlob + ":laptop"}, Until: executorNow.Add(10 * time.Minute)}, 0o600)
+	writeJSON(executor.StateDir, adminFile, adminTicket{ID: idA, Name: "user1", Keys: []string{adminBlob + ":laptop"}, Until: executorNow.Add(10 * time.Minute)}, 0o600)
 	writeJSON(executor.StateDir, "security.json", securityState{}, 0o640)
 	var out strings.Builder
-	if err := executor.AdminUser(context.Background(), "musyaf", &out, &adminTerminal{out: &out, answer: true}); err != nil {
+	if err := executor.AdminUser(context.Background(), "user1", &out, &adminTerminal{out: &out, answer: true}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(out.String(), "✓ Admin user musyaf · sudo with its password\n✓ SSH keys only\n✓ No root login · log in as musyaf from now on\n") {
+	if !strings.HasSuffix(out.String(), "✓ Admin user user1 · sudo with its password\n✓ SSH keys only\n✓ No root login · log in as user1 from now on\n") {
 		t.Fatalf("out\n%s", out.String())
 	}
 	if applied := executor.appliedRecipes(); !slices.Equal(applied, []string{"no-root-login", "ssh-keys-only"}) {
@@ -190,11 +190,11 @@ func TestSetupMakesTheAdminUserFirstAndTurnsRootLoginOffLast(t *testing.T) {
 	rootFile(t, executor, "/sys/module/wireguard/version", "1.0.0\n")
 	rootFile(t, executor, "/usr/bin/wg", "")
 	rootFile(t, executor, "/etc/hosts", "127.0.0.1 localhost\n")
-	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[{"family":"inet","local":"141.95.0.30","prefixlen":24}]},` + wg0Address + `]`
+	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[{"family":"inet","local":"203.0.113.30","prefixlen":24}]},` + wg0Address + `]`
 	run.respond["ip -j route show default"] = `[{"dev":"eth0"}]`
 	run.respond["wg show all listen-port"] = "wg0\t51820\n"
 	adminRunner(t, &executor, run)
-	sshTakesEffect(run, "root", "musyaf")
+	sshTakesEffect(run, "root", "user1")
 	executor.watchServer(context.Background())
 	var out strings.Builder
 	tty := &adminTerminal{out: &out, answer: true}
@@ -202,13 +202,13 @@ func TestSetupMakesTheAdminUserFirstAndTurnsRootLoginOffLast(t *testing.T) {
 		rootFile(t, executor, "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA laptop\n"+intruderKey+"\n")
 		executor.watchServer(context.Background())
 	}
-	options := SetupOptions{Recommended: true, Docker: true, RebootHour: hour(20), Network: "10.88.0.0/24", Admin: "musyaf", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
-	if err := executor.Setup(context.Background(), options, &out, func(string) (bool, bool) { return false, false }); err != nil {
+	options := SetupOptions{Recommended: true, Docker: true, RebootHour: hour(20), Network: "10.88.0.0/24", Admin: "user1", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
+	if err := executor.Setup(context.Background(), options, &out); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
 	last := -1
-	for _, line := range []string{"Admin user musyaf gets these SSH keys:", "✓ Admin user musyaf · sudo with its password", "✓ Automatic security updates", "✓ SSH keys only", "✓ Docker", "✓ Private network ready", "✓ No root login · log in as musyaf from now on"} {
+	for _, line := range []string{"Admin user user1 gets these SSH keys:", "✓ Admin user user1 · sudo with its password", "✓ Automatic security updates", "✓ SSH keys only", "✓ Docker", "✓ Private network ready", "✓ No root login · log in as user1 from now on"} {
 		at := strings.Index(got, line)
 		if at <= last {
 			t.Fatalf("%q out of order in\n%s", line, got)
@@ -220,7 +220,7 @@ func TestSetupMakesTheAdminUserFirstAndTurnsRootLoginOffLast(t *testing.T) {
 		t.Fatalf("during setup only the key slipped in may warn: %+v", events)
 	}
 	start, _ := readState[watch.State](executor.StateDir, watchFile)
-	if !slices.Contains(start.Users, "musyaf") || !slices.Contains(start.Sudo, "group:sudo:musyaf") {
+	if !slices.Contains(start.Users, "user1") || !slices.Contains(start.Sudo, "group:sudo:user1") {
 		t.Fatalf("start %+v", start)
 	}
 	stateFileGone(t, executor, adminMarkFile)
@@ -230,8 +230,8 @@ func TestSetupSkipsTheAdminUserAndRootLoginWithoutAYes(t *testing.T) {
 	executor, run := setupServer(t)
 	adminRunner(t, &executor, run)
 	var out strings.Builder
-	options := SetupOptions{Recommended: true, Admin: "musyaf", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: &adminTerminal{out: &out}}
-	if err := executor.Setup(context.Background(), options, &out, func(string) (bool, bool) { return false, false }); err != nil {
+	options := SetupOptions{Recommended: true, Admin: "user1", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: &adminTerminal{out: &out}}
+	if err := executor.Setup(context.Background(), options, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "– Admin user skipped: the keys were not confirmed\n") || strings.Contains(out.String(), "No root login") {
@@ -246,15 +246,15 @@ func TestOnlyTheAdminBeingMadePassesWhileItsMarkLasts(t *testing.T) {
 	executor, _ := watchedServer(t)
 	executor.watchServer(context.Background())
 	mark := func(until time.Time) {
-		if err := writeJSON(executor.StateDir, adminMarkFile, adminMark{Name: "musyaf", Keys: []string{adminKey(t).Fingerprint()}, Until: until}, 0o600); err != nil {
+		if err := writeJSON(executor.StateDir, adminMarkFile, adminMark{Name: "user1", Keys: []string{adminKey(t).Fingerprint()}, Until: until}, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	mark(executorNow.Add(time.Minute))
 	body, _ := os.ReadFile(executor.path("/etc/passwd"))
-	rootFile(t, executor, "/etc/passwd", string(body)+"musyaf:x:1001:1001::/home/musyaf:/bin/bash\neve:x:1002:1002::/home/eve:/bin/bash\n")
-	joinGroup(t, executor, "sudo", "musyaf")
-	rootFile(t, executor, "/home/musyaf/.ssh/authorized_keys", "ssh-ed25519 "+adminBlob+" laptop\n"+intruderKey+"\n")
+	rootFile(t, executor, "/etc/passwd", string(body)+"user1:x:1001:1001::/home/user1:/bin/bash\neve:x:1002:1002::/home/eve:/bin/bash\n")
+	joinGroup(t, executor, "sudo", "user1")
+	rootFile(t, executor, "/home/user1/.ssh/authorized_keys", "ssh-ed25519 "+adminBlob+" laptop\n"+intruderKey+"\n")
 	executor.watchServer(context.Background())
 	if events := readEvents(t, executor); len(events) != 2 || events[0].Detail["key"] != "ED25519 "+intruderPrint(t)+" eve" || events[1].Detail["user"] != "eve" {
 		t.Fatalf("only the admin's own items pass: %+v", events)
@@ -269,18 +269,18 @@ func TestOnlyTheAdminBeingMadePassesWhileItsMarkLasts(t *testing.T) {
 func TestSetupTakesTheStartingPointBeforeItChangesAnything(t *testing.T) {
 	executor, run := setupServer(t)
 	adminRunner(t, &executor, run)
-	sshTakesEffect(run, "root", "musyaf")
+	sshTakesEffect(run, "root", "user1")
 	var out strings.Builder
 	tty := &adminTerminal{out: &out, answer: true}
 	tty.during = func() {
 		rootFile(t, executor, "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA laptop\n"+intruderKey+"\n")
 	}
-	options := SetupOptions{Recommended: true, Admin: "musyaf", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
-	if err := executor.Setup(context.Background(), options, &out, func(string) (bool, bool) { return false, false }); err != nil {
+	options := SetupOptions{Recommended: true, Admin: "user1", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
+	if err := executor.Setup(context.Background(), options, &out); err != nil {
 		t.Fatal(err)
 	}
 	start, _ := readState[watch.State](executor.StateDir, watchFile)
-	if !slices.Contains(start.Users, "musyaf") || slices.ContainsFunc(start.Keys, func(key watch.Key) bool { return key.Fingerprint == intruderPrint(t) }) {
+	if !slices.Contains(start.Users, "user1") || slices.ContainsFunc(start.Keys, func(key watch.Key) bool { return key.Fingerprint == intruderPrint(t) }) {
 		t.Fatalf("start %+v", start)
 	}
 	executor.watchServer(context.Background())

@@ -73,6 +73,19 @@ func TestTheInstallerPassesSetupAfterTheTrustKeys(t *testing.T) {
 	}
 }
 
+func TestTheInstallerTurnsOnSELinuxOrAppArmorWhenTheSetupAsks(t *testing.T) {
+	log, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--setup", "recommended,confine")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	if !strings.Contains(log, "kry setup --recommended --confine\n") {
+		t.Fatalf("log\n%s", log)
+	}
+	if _, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--setup", "everything"); err == nil || !strings.Contains(output, "--setup takes recommended, confine, docker or more") {
+		t.Fatalf("%v\n%s", err, output)
+	}
+}
+
 const servedArgs = "https://kry.example token-1 --trust https://kry.example --access phone -- phone.-7.key1 laptop.-7.key2 --setup recommended --reboot-hour 20"
 
 func servedInstaller(t *testing.T) string {
@@ -138,15 +151,15 @@ func TestTheInstallerRunsSetupWithoutTrustAndGoesOnWhenItFails(t *testing.T) {
 }
 
 func TestTheInstallerPassesTheAdminUserToSetup(t *testing.T) {
-	log, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--setup", "recommended", "--admin", "musyaf", "--admin-key", "AAAAC3Nza+1/x=:laptop", "--admin-key", "BBBB2:phone")
+	log, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--setup", "recommended", "--admin", "user1", "--admin-key", "AAAAC3Nza+1/x=:laptop", "--admin-key", "BBBB2:phone")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, output)
 	}
-	if !strings.Contains(log, "kry setup --recommended --admin musyaf --admin-key AAAAC3Nza+1/x=:laptop --admin-key BBBB2:phone\n") {
+	if !strings.Contains(log, "kry setup --recommended --admin user1 --admin-key AAAAC3Nza+1/x=:laptop --admin-key BBBB2:phone\n") {
 		t.Fatalf("log\n%s", log)
 	}
-	log, output, err = runInstaller(t, false, "https://kry.example", "token-1", "--admin", "musyaf", "--admin-key", "AAAA1:laptop")
-	if err != nil || !strings.Contains(log, "kry setup --admin musyaf --admin-key AAAA1:laptop\n") {
+	log, output, err = runInstaller(t, false, "https://kry.example", "token-1", "--admin", "user1", "--admin-key", "AAAA1:laptop")
+	if err != nil || !strings.Contains(log, "kry setup --admin user1 --admin-key AAAA1:laptop\n") {
 		t.Fatalf("%v\n%s\n%s", err, log, output)
 	}
 }
@@ -161,8 +174,8 @@ func TestTheInstallerRefusesBadSetupFlags(t *testing.T) {
 		{"https://kry.example", "token-1", "--network", "10.0.0.0/24"},
 		{"https://kry.example", "token-1", "--admin", "root", "--admin-key", "AAAA:laptop"},
 		{"https://kry.example", "token-1", "--admin", "a;b", "--admin-key", "AAAA:laptop"},
-		{"https://kry.example", "token-1", "--admin", "musyaf", "--admin-key", "AAAA:lap top"},
-		{"https://kry.example", "token-1", "--admin", "musyaf", "--admin-key", "AAAA*:laptop"},
+		{"https://kry.example", "token-1", "--admin", "user1", "--admin-key", "AAAA:lap top"},
+		{"https://kry.example", "token-1", "--admin", "user1", "--admin-key", "AAAA*:laptop"},
 	} {
 		log, output, err := runInstaller(t, false, args...)
 		if err == nil || strings.Contains(log, "kry enroll") {

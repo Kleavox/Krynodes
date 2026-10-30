@@ -54,7 +54,7 @@ func member(document map[string]any, index int) map[string]any {
 
 func TestTheSharedFixtureParses(t *testing.T) {
 	document := fixture(t)
-	if document.Version != 3 || len(document.Members) != 2 || document.Members[1].Name != "pivox" || !document.Members[1].NAT {
+	if document.Version != 3 || len(document.Members) != 2 || document.Members[1].Name != "server-1" || !document.Members[1].NAT {
 		t.Fatalf("document %+v", document)
 	}
 	if document.Members[1].MTU == nil || *document.Members[1].MTU != 1380 || document.Members[0].MTU != nil {

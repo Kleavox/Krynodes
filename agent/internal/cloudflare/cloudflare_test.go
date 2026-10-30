@@ -22,7 +22,7 @@ func client(t *testing.T) (*cloudflare.Client, *cftest.API) {
 func TestAWebAddressGetsATunnelRouteDNSAndLogin(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
-	zone, err := cf.Zone(ctx, "kleavox.xyz")
+	zone, err := cf.Zone(ctx, "example.org")
 	if err != nil || zone.ID != "zone-1" || zone.AccountID != "acc-1" {
 		t.Fatalf("zone %#v %v", zone, err)
 	}
@@ -37,20 +37,20 @@ func TestAWebAddressGetsATunnelRouteDNSAndLogin(t *testing.T) {
 	if token, err := cf.TunnelToken(ctx, zone.AccountID, tunnel); err != nil || token != "tunnel-token-"+tunnel {
 		t.Fatalf("token %q %v", token, err)
 	}
-	if err := cf.Route(ctx, zone.AccountID, tunnel, "listmonk-pivox.kleavox.xyz", "http://listmonk-app-1:9000"); err != nil {
+	if err := cf.Route(ctx, zone.AccountID, tunnel, "listmonk-server-1.example.org", "http://listmonk-app-1:9000"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cf.Route(ctx, zone.AccountID, tunnel, "adguard-pivox.kleavox.xyz", "http://adguard-1:3000"); err != nil {
+	if err := cf.Route(ctx, zone.AccountID, tunnel, "resolver-server-1.example.org", "http://resolver-1:3000"); err != nil {
 		t.Fatal(err)
 	}
 	rules := fake.Ingress[tunnel]
 	if len(rules) != 3 || rules[2].Service != "http_status:404" || rules[2].Hostname != "" {
 		t.Fatalf("rules %#v", rules)
 	}
-	if err := cf.Point(ctx, zone.ID, "listmonk-pivox.kleavox.xyz", tunnel); err != nil {
+	if err := cf.Point(ctx, zone.ID, "listmonk-server-1.example.org", tunnel); err != nil {
 		t.Fatal(err)
 	}
-	if err := cf.Point(ctx, zone.ID, "listmonk-pivox.kleavox.xyz", tunnel); err != nil || len(fake.Records) != 1 {
+	if err := cf.Point(ctx, zone.ID, "listmonk-server-1.example.org", tunnel); err != nil || len(fake.Records) != 1 {
 		t.Fatalf("pointing twice keeps one record: %v %v", err, fake.Records)
 	}
 	for _, record := range fake.Records {
@@ -58,16 +58,16 @@ func TestAWebAddressGetsATunnelRouteDNSAndLogin(t *testing.T) {
 			t.Fatalf("record %#v", record)
 		}
 	}
-	if err := cf.Guard(ctx, zone.AccountID, "listmonk-pivox.kleavox.xyz/admin", "aud-1"); err != nil {
+	if err := cf.Guard(ctx, zone.AccountID, "listmonk-server-1.example.org/admin", "aud-1"); err != nil {
 		t.Fatal(err)
 	}
 	var guarded cloudflare.App
 	for _, app := range fake.Apps {
-		if app.Domain == "listmonk-pivox.kleavox.xyz/admin" {
+		if app.Domain == "listmonk-server-1.example.org/admin" {
 			guarded = app
 		}
 	}
-	if guarded.Name != "krynodes listmonk-pivox.kleavox.xyz/admin" || guarded.Type != "self_hosted" || len(guarded.Policies) != 1 || guarded.Policies[0].ID != "pol-1" {
+	if guarded.Name != "krynodes listmonk-server-1.example.org/admin" || guarded.Type != "self_hosted" || len(guarded.Policies) != 1 || guarded.Policies[0].ID != "pol-1" {
 		t.Fatalf("app %#v", guarded)
 	}
 	if expires, err := cf.Expires(ctx, zone.AccountID); err != nil || expires != "2027-10-05T00:00:00Z" {
@@ -78,7 +78,7 @@ func TestAWebAddressGetsATunnelRouteDNSAndLogin(t *testing.T) {
 func TestGuardingAgainNeverLeavesTheAddressOpen(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
-	const domain = "listmonk-pivox.kleavox.xyz"
+	const domain = "listmonk-server-1.example.org"
 	if err := cf.Guard(ctx, "acc-1", domain, "aud-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestGuardingAgainNeverLeavesTheAddressOpen(t *testing.T) {
 func TestAGuardedAddressSignsInTheWayTheDashboardDoes(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
-	const domain = "listmonk-pivox.kleavox.xyz"
+	const domain = "listmonk-server-1.example.org"
 	if err := cf.Guard(ctx, "acc-1", domain, "aud-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -140,14 +140,14 @@ func mapApps(apps map[string]cloudflare.App) []cloudflare.App {
 func TestKrynodesNeverTakesAnotherRecordOrApp(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
-	fake.Records["mine"] = cloudflare.Record{ID: "mine", Type: "A", Name: "blog.kleavox.xyz", Content: "203.0.113.5"}
-	if err := cf.Point(ctx, "zone-1", "blog.kleavox.xyz", "tunnel-9"); err == nil || !strings.Contains(err.Error(), "already") {
+	fake.Records["mine"] = cloudflare.Record{ID: "mine", Type: "A", Name: "blog.example.org", Content: "203.0.113.5"}
+	if err := cf.Point(ctx, "zone-1", "blog.example.org", "tunnel-9"); err == nil || !strings.Contains(err.Error(), "already") {
 		t.Fatalf("err %v", err)
 	}
-	if err := cf.Unpoint(ctx, "zone-1", "blog.kleavox.xyz"); err != nil || fake.Records["mine"].ID == "" {
+	if err := cf.Unpoint(ctx, "zone-1", "blog.example.org"); err != nil || fake.Records["mine"].ID == "" {
 		t.Fatalf("someone else's record stays: %v %v", err, fake.Records)
 	}
-	if err := cf.Unguard(ctx, "acc-1", "kry.kleavox.xyz"); err != nil || fake.Apps["dash"].ID == "" {
+	if err := cf.Unguard(ctx, "acc-1", "kry.example.org"); err != nil || fake.Apps["dash"].ID == "" {
 		t.Fatalf("the dashboard app stays: %v", err)
 	}
 }
@@ -156,21 +156,21 @@ func TestRemovingAnAddressTakesOnlyItsOwnParts(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
 	tunnel, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-a")
-	cf.Route(ctx, "acc-1", tunnel, "a.kleavox.xyz", "http://a:1")
-	cf.Route(ctx, "acc-1", tunnel, "b.kleavox.xyz", "http://b:1")
-	cf.Point(ctx, "zone-1", "a.kleavox.xyz", tunnel)
-	cf.Guard(ctx, "acc-1", "a.kleavox.xyz", "aud-1")
-	if err := cf.Unroute(ctx, "acc-1", tunnel, "a.kleavox.xyz"); err != nil {
+	cf.Route(ctx, "acc-1", tunnel, "a.example.org", "http://a:1")
+	cf.Route(ctx, "acc-1", tunnel, "b.example.org", "http://b:1")
+	cf.Point(ctx, "zone-1", "a.example.org", tunnel)
+	cf.Guard(ctx, "acc-1", "a.example.org", "aud-1")
+	if err := cf.Unroute(ctx, "acc-1", tunnel, "a.example.org"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cf.Unpoint(ctx, "zone-1", "a.kleavox.xyz"); err != nil {
+	if err := cf.Unpoint(ctx, "zone-1", "a.example.org"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cf.Unguard(ctx, "acc-1", "a.kleavox.xyz"); err != nil {
+	if err := cf.Unguard(ctx, "acc-1", "a.example.org"); err != nil {
 		t.Fatal(err)
 	}
 	rules := fake.Ingress[tunnel]
-	if len(rules) != 2 || rules[0].Hostname != "b.kleavox.xyz" || len(fake.Records) != 0 || len(fake.Apps) != 1 {
+	if len(rules) != 2 || rules[0].Hostname != "b.example.org" || len(fake.Records) != 0 || len(fake.Apps) != 1 {
 		t.Fatalf("rules %#v records %v apps %v", rules, fake.Records, fake.Apps)
 	}
 }
@@ -179,10 +179,10 @@ func TestCleaningUpARemovedServer(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
 	tunnel, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-b")
-	cf.Point(ctx, "zone-1", "kuma-b.kleavox.xyz", tunnel)
-	cf.Guard(ctx, "acc-1", "kuma-b.kleavox.xyz", "aud-1")
+	cf.Point(ctx, "zone-1", "panel-b.example.org", tunnel)
+	cf.Guard(ctx, "acc-1", "panel-b.example.org", "aud-1")
 	other, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-a")
-	cf.Point(ctx, "zone-1", "kuma-a.kleavox.xyz", other)
+	cf.Point(ctx, "zone-1", "panel-a.example.org", other)
 	if err := cf.Clean(ctx, "acc-1", "zone-1", "krynodes-node-b"); err != nil {
 		t.Fatal(err)
 	}
@@ -195,9 +195,9 @@ func TestACleanUpThatStoppedHalfWayFindsTheLoginsOnTheNextTry(t *testing.T) {
 	cf, fake := client(t)
 	ctx := context.Background()
 	tunnel, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-b")
-	cf.Route(ctx, "acc-1", tunnel, "kuma-b.kleavox.xyz", "http://kuma:3001")
-	cf.Point(ctx, "zone-1", "kuma-b.kleavox.xyz", tunnel)
-	cf.Guard(ctx, "acc-1", "kuma-b.kleavox.xyz/admin", "aud-1")
+	cf.Route(ctx, "acc-1", tunnel, "panel-b.example.org", "http://panel:3001")
+	cf.Point(ctx, "zone-1", "panel-b.example.org", tunnel)
+	cf.Guard(ctx, "acc-1", "panel-b.example.org/admin", "aud-1")
 	fake.Fail = map[string]bool{"GET /accounts/acc-1/access/apps": true}
 	if err := cf.Clean(ctx, "acc-1", "zone-1", "krynodes-node-b"); err == nil {
 		t.Fatal("the first try stops")
@@ -217,7 +217,7 @@ func TestACleanUpThatStoppedHalfWayFindsTheLoginsOnTheNextTry(t *testing.T) {
 func TestCloudflareErrorsAreReadable(t *testing.T) {
 	cf, _ := client(t)
 	cf.Token = "wrong"
-	if _, err := cf.Zone(context.Background(), "kleavox.xyz"); err == nil || !strings.Contains(err.Error(), "Authentication error") {
+	if _, err := cf.Zone(context.Background(), "example.org"); err == nil || !strings.Contains(err.Error(), "Authentication error") {
 		t.Fatalf("err %v", err)
 	}
 	cf.Token = "cf-token"

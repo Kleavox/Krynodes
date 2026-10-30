@@ -1,7 +1,7 @@
 import { Ellipsis } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router";
-import { dnsName } from "@krynodes/protocol";
+import { dnsName, TAILSCALE } from "@krynodes/protocol";
 
 import { AddressRows } from "@/components/server-addresses";
 import { Button } from "@/components/ui/button";
@@ -20,9 +20,16 @@ import { parseTimestamp, shortDate } from "@/lib/format";
 import { presenceOf, serverRow } from "@/lib/network";
 import { packagesBlocker, tailscaleLine, updatesLine } from "@/lib/packages";
 import { tailnetRemoved } from "@/lib/quarantine";
-import { notApplied, serverLines } from "@/lib/tailscale";
+import {
+  dnsLine,
+  exitNodeLine,
+  notApplied,
+  serverLines,
+} from "@/lib/tailscale";
 import { cn } from "@/lib/utils";
 import type { AgentRelease, NodeRecord } from "@/types";
+
+import { TailscaleSettingDialog } from "./tailscale-setting-dialog";
 
 function reachedBy(
   trust: { core: string[]; access: string[] } | null,
@@ -50,6 +57,7 @@ export function ThisServer({
   const network = useNetwork();
   const overview = useOverview();
   const [signIn, setSignIn] = useState<{ again: boolean } | null>(null);
+  const [changing, setChanging] = useState<"exitnode" | "dns" | null>(null);
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
   const updates = updatesLine(node.updates, now);
@@ -86,6 +94,21 @@ export function ThisServer({
         }
       : null;
   const blocker = packagesBlocker(node, (trust?.core.length ?? 0) > 0, now);
+  const settings =
+    node.tailscale?.state === "running" && !node.quarantine
+      ? [
+          {
+            setting: "exitnode" as const,
+            title: "Exit Node",
+            line: exitNodeLine(node.tailscale, node.agent_version),
+          },
+          {
+            setting: "dns" as const,
+            title: "Tailscale DNS",
+            line: dnsLine(node.tailscale, node.agent_version),
+          },
+        ]
+      : [];
   const member = network.data?.members.find(
     (entry) => entry.nodeId === node.id,
   );
@@ -239,6 +262,34 @@ export function ThisServer({
               </dd>
             </>
           )}
+          {settings.map((row) => (
+            <Fragment key={row.setting}>
+              <dt className="leading-8 text-muted-foreground">{row.title}</dt>
+              <dd
+                className={cn(
+                  "min-w-0 py-1.5 break-words",
+                  row.line.warn && "text-warning",
+                )}
+              >
+                {row.line.text}
+              </dd>
+              <dd>
+                {row.line.changes && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`${row.title} on ${node.name}`}
+                    disabled={blocker !== null}
+                    title={blocker ?? undefined}
+                    className="size-9 md:size-8"
+                    onClick={() => setChanging(row.setting)}
+                  >
+                    <Ellipsis aria-hidden="true" />
+                  </Button>
+                )}
+              </dd>
+            </Fragment>
+          ))}
           <dt className="leading-8 text-muted-foreground">Agent</dt>
           <dd className="min-w-0 break-words">
             {agentLine(node, release.version, now)}
@@ -269,6 +320,22 @@ export function ThisServer({
           again={signIn.again}
           open
           onOpenChange={(open) => !open && setSignIn(null)}
+        />
+      )}
+      {changing !== null && node.tailscale && (
+        <TailscaleSettingDialog
+          node={node}
+          setting={changing}
+          on={
+            changing === "dns"
+              ? node.tailscale.acceptDNS === true
+              : node.tailscale.exitNode?.advertised === true
+          }
+          approves={
+            !!tail?.connected &&
+            (node.tailscale.tags?.includes(TAILSCALE.tag) ?? false)
+          }
+          onClose={() => setChanging(null)}
         />
       )}
     </section>

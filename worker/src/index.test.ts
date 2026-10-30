@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import worker, { runRetention } from "./index";
+import worker, { runRetention, WINDOWS_RETENTION_SQL } from "./index";
 import type { Env } from "./env";
 import { createTestDb } from "./test/sqlite-d1";
 
@@ -36,7 +36,7 @@ describe("Krynodes retention", () => {
   it("drops history windows older than eight days, by the primary key", async () => {
     const { db, sqlite } = createTestDb();
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
     );
     const day = 86_400_000;
     for (const age of [9 * day, 7 * day, 60_000]) {
@@ -50,6 +50,15 @@ describe("Krynodes retention", () => {
     expect(
       sqlite.prepare("SELECT COUNT(*) AS n FROM node_windows").get(),
     ).toEqual({ n: 2 });
+    const plan = sqlite
+      .prepare(`EXPLAIN QUERY PLAN ${WINDOWS_RETENTION_SQL}`)
+      .all()
+      .map((row) => String((row as { detail: unknown }).detail))
+      .join(" | ");
+    expect(plan).toMatch(
+      /SEARCH node_windows USING PRIMARY KEY \(node_id=\? AND window_start<\?\)/u,
+    );
+    expect(plan).not.toMatch(/SCAN node_windows\b/u);
   });
 
   it("forgets enrollment tokens a day after they expire", async () => {
@@ -79,13 +88,13 @@ describe("Krynodes retention", () => {
   it("erases log text a day after it arrives and keeps the row", async () => {
     const { db, sqlite } = createTestDb();
     sqlite.exec(
-      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'pivox', 'h1')",
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
     );
     const at = (age: number) => new Date(Date.now() - age).toISOString();
     const insert = sqlite.prepare(
       `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
          status, requested_by, requested_at, finished_at, output)
-       VALUES (?, ?, 0, 'parallel', 'n1', 'docker', 'adguard', ?, ?, 'owner', ?, ?, 'text')`,
+       VALUES (?, ?, 0, 'parallel', 'n1', 'docker', 'resolver', ?, ?, 'owner', ?, ?, 'text')`,
     );
     insert.run("old-logs", "b1", "logs", "done", at(2 * DAY), at(2 * DAY));
     insert.run("new-logs", "b2", "logs", "done", at(HOUR), at(HOUR));

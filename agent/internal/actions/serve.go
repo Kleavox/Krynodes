@@ -58,12 +58,12 @@ func (e Executor) choicesFrom(command Command, access string, current stackMeta)
 		meta.Serves, meta.Reaches, meta.Peers = current.Serves, current.Reaches, current.Peers
 	}
 	if text, given := command.Args["offers"]; given {
-		if meta.Offers, err = sharedEntries(text, offerEntry, "%s is not an offer such as apps-inner/web=3001/tcp"); err != nil {
+		if meta.Offers, err = sharedEntries(text, offerEntry, "%s is not an offer written as stack/service=number/tcp"); err != nil {
 			return stackMeta{}, err
 		}
 	}
 	if text, given := command.Args["peers"]; given {
-		if meta.Peers, err = sharedEntries(text, peerEntry, "%s is not a port of another stack such as apps-inner/postgres.db:5432/tcp"); err != nil {
+		if meta.Peers, err = sharedEntries(text, peerEntry, "%s is not a port of another stack written as stack/name:number/tcp"); err != nil {
 			return stackMeta{}, err
 		}
 		if len(meta.Peers) > 0 && access != "contained" {
@@ -249,7 +249,7 @@ func (e Executor) listed(ctx context.Context, tool, name string) string {
 }
 
 func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) error {
-	peers := e.syncPeers(ctx)
+	peers := errors.Join(e.syncPublish(ctx), e.syncPeers(ctx))
 	document, own := e.ownAddress()
 	if own == "" {
 		return peers

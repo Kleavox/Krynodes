@@ -22,14 +22,14 @@ func TestContainerChecksReadTheWatcherStateOnce(t *testing.T) {
 	containerState = func() (containers.State, error) {
 		reads++
 		return containers.State{At: time.Now(), Docker: true, Containers: []containers.Container{
-			{Name: "adguard-adguard-1", State: "running"},
+			{Name: "resolver-resolver-1", State: "running"},
 			{Name: "db", State: "running", Health: "unhealthy"},
 			{Name: "old", State: "exited"},
 		}}, nil
 	}
 	defer func() { containerState = previous }()
 	results := runOnce(context.Background(), []reporter.Check{
-		{ID: "a", Kind: "CONTAINER", Target: "adguard-adguard-1"},
+		{ID: "a", Kind: "CONTAINER", Target: "resolver-resolver-1"},
 		{ID: "b", Kind: "CONTAINER", Target: "db"},
 		{ID: "c", Kind: "CONTAINER", Target: "old"},
 		{ID: "d", Kind: "CONTAINER", Target: "missing"},

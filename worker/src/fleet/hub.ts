@@ -42,7 +42,7 @@ import {
   type WarningMail,
 } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
-import { agentConfigResponseSchema } from "@krynodes/protocol";
+import { agentConfigResponseSchema, type Denials } from "@krynodes/protocol";
 import {
   drain,
   fold,
@@ -90,6 +90,7 @@ const ROSTER = "roster";
 const MAIL_STATE = "mailState";
 const MESSAGES_PER_MINUTE = 60;
 const STOPPED_MS = 10 * 60_000;
+const CHECKS_KEPT_MS = 10 * 60_000;
 const MAILS_AT_ONCE = 5;
 const WATCHDOG_RETRY_MS = 60_000;
 const RECHECK_MS = 60_000;
@@ -138,6 +139,19 @@ export class FleetHub {
     string,
     { at: number; checks: Set<string> }
   >();
+  private readonly version = {
+    epoch: crypto.randomUUID().slice(0, 8),
+    count: 0,
+  };
+  private readonly denials = new Map<string, Denials & { at: number }>();
+  private readonly checks = new Map<
+    string,
+    {
+      at: number;
+      interval: number;
+      agent: Awaited<ReturnType<typeof loadAgentConfig>>;
+    }
+  >();
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
@@ -150,6 +164,12 @@ export class FleetHub {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/version") {
+      return Response.json({
+        version: `${this.version.epoch}-${this.version.count}`,
+      });
+    }
+    if (request.method !== "GET") this.version.count += 1;
     if (url.pathname === "/connect") {
       const nodeId = request.headers.get("x-kry-node");
       const ownerId = request.headers.get("x-kry-owner");
@@ -190,6 +210,11 @@ export class FleetHub {
     if (url.pathname === "/network") {
       return Response.json(Object.fromEntries(this.network.latest));
     }
+    if (url.pathname === "/denials") {
+      return Response.json(
+        this.denials.get(url.searchParams.get("node") ?? "") ?? null,
+      );
+    }
     if (url.pathname === "/tailnet" && request.method === "POST") {
       const body = (await request.json().catch(() => null)) as {
         owner?: unknown;
@@ -219,8 +244,10 @@ export class FleetHub {
   }
 
   private poke(nodeIds: string[]): number {
+    if (nodeIds.length > 0) this.version.count += 1;
     let poked = 0;
     for (const nodeId of nodeIds) {
+      this.checks.delete(nodeId);
       for (const ws of this.ctx.getWebSockets(nodeId)) {
         try {
           ws.send(JSON.stringify({ type: "poke" }));
@@ -249,6 +276,7 @@ export class FleetHub {
     }
     this.ctx.acceptWebSocket(ws, [nodeId]);
     ws.serializeAttachment(newState(nodeId, ownerId, interval));
+    this.checks.delete(nodeId);
     const roster = await this.roster();
     roster[nodeId] = {
       interval,
@@ -265,6 +293,7 @@ export class FleetHub {
   }
 
   announce(topics: string[]): void {
+    this.version.count += 1;
     const message = JSON.stringify({ type: "changed", topics });
     for (const ws of this.ctx.getWebSockets(WATCH)) {
       try {
@@ -360,6 +389,7 @@ export class FleetHub {
         const node = await this.node(ws, state);
         if (!node) return;
         this.stopped.delete(node.id);
+        this.checks.delete(node.id);
         const { alerts, next, deleted, ...response } = await receiveReport(
           this.env.DB,
           node,
@@ -672,6 +702,7 @@ export class FleetHub {
 
   async alarm(): Promise<void> {
     const now = Date.now();
+    this.version.count += 1;
     let send: ServerChanges[] = [];
     try {
       const offline = await this.watchdog(now);
@@ -800,7 +831,7 @@ export class FleetHub {
     }
     const disk = await this.disk(node.id, current, beat.metrics, now);
     state = { ...state, diskFull: disk.full };
-    const agent = await loadAgentConfig(db, node);
+    const agent = await this.agentConfig(node, now);
     const accepted = trusted
       ? acceptResults(agent.checks, beat.results ?? [])
       : [];
@@ -822,6 +853,7 @@ export class FleetHub {
       now,
       working,
     );
+    if (ingestion.statements.length > 0) this.checks.delete(node.id);
     const folded = fold(state, beat, accepted, now);
     const leading: D1PreparedStatement[] = [];
     if (folded.flushed)
@@ -858,6 +890,14 @@ export class FleetHub {
         .map((notice) => notice.checkId!),
       now,
     );
+    if (
+      leading.length > 0 ||
+      ingestion.statements.length > 0 ||
+      ingestion.transitions.length > 0 ||
+      heals.length > 0
+    ) {
+      this.version.count += 1;
+    }
     const healing = new Set<string>();
     if (heals.length > 0) {
       const done = await db.batch(heals.map((heal) => heal.statement));
@@ -877,6 +917,7 @@ export class FleetHub {
     ];
     const mails = marked.length > 0 ? await this.notify(marked, now) : [];
     await disk.store?.();
+    if (beat.denials) this.denials.set(node.id, { ...beat.denials, at: now });
     let taken: Intake | null = null;
     try {
       const network =
@@ -901,6 +942,7 @@ export class FleetHub {
               warned: [],
               stopped: [],
             };
+      if (taken || network?.changed || !trusted) this.version.count += 1;
       if (taken) {
         await this.keepCutoffs(taken.cutoffs);
         poked.push(...taken.nodes);
@@ -953,6 +995,24 @@ export class FleetHub {
         quarantined: [...cloned, ...(taken?.quarantined ?? [])],
       });
     }
+  }
+
+  private async agentConfig(node: AgentNode, now: number) {
+    const kept = this.checks.get(node.id);
+    if (
+      kept &&
+      kept.interval === node.interval_seconds &&
+      now - kept.at < CHECKS_KEPT_MS
+    ) {
+      return kept.agent;
+    }
+    const agent = await loadAgentConfig(this.env.DB, node);
+    this.checks.set(node.id, {
+      at: now,
+      interval: node.interval_seconds,
+      agent,
+    });
+    return agent;
   }
 
   private async stoppedChecks(

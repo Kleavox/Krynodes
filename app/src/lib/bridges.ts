@@ -480,7 +480,7 @@ export function stackNetworkArgs(
         if (!match || number < 1 || number > 65535) {
           return {
             args: {},
-            problem: `${offer.service} offers ${port}; write a port such as 3001/tcp.`,
+            problem: `${offer.service} offers ${port}; write it as number/tcp.`,
           };
         }
         offered.push(`${box.name}/${offer.service}=${number}/${match[2]}`);

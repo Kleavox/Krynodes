@@ -2,6 +2,7 @@ import { ownerOf, touches } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 
 import { laterDone, loadEstate, notFixed } from "../actions/attention";
+import { unchangedList } from "../fleet/client";
 import { QUESTIONS, SEALED_VERBS, type ActionRow } from "../actions/store";
 import { READ_ONLY, toActionRecord } from "./services";
 import type { KrynodesApp, KrynodesEnv } from "./shared";
@@ -78,7 +79,7 @@ export function registerHistoryRoutes(
   app: KrynodesApp,
   requireOperator: MiddlewareHandler<KrynodesEnv>,
 ): void {
-  app.get("/api/history", requireOperator, async (context) => {
+  app.get("/api/history", requireOperator, unchangedList, async (context) => {
     const db = context.env.DB;
     const show =
       SHOWS.find((value) => value === context.req.query("show")) ??
@@ -225,65 +226,70 @@ export function registerHistoryRoutes(
     });
   });
 
-  app.get("/api/history/attention", requireOperator, async (context) => {
-    const db = context.env.DB;
-    const owner = context.get("identity").id;
-    const owned = "node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)";
-    const [failed, done, open, estate] = await Promise.all([
-      db
-        .prepare(
-          `SELECT * FROM actions
+  app.get(
+    "/api/history/attention",
+    requireOperator,
+    unchangedList,
+    async (context) => {
+      const db = context.env.DB;
+      const owner = context.get("identity").id;
+      const owned = "node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)";
+      const [failed, done, open, estate] = await Promise.all([
+        db
+          .prepare(
+            `SELECT * FROM actions
            WHERE ${owned} AND kind <> 'trust' AND hidden_at IS NULL
              AND status IN ('failed', 'expired')
              AND action NOT IN (SELECT value FROM json_each(?))
            ORDER BY requested_at DESC, id DESC`,
-        )
-        .bind(owner, UNLISTED)
-        .all<ActionRow>(),
-      laterDone(db, owner, Date.now()),
-      db
-        .prepare(
-          `SELECT i.id, i.summary, i.started_at, c.name AS check_name, c.kind, c.target, c.node_id
+          )
+          .bind(owner, UNLISTED)
+          .all<ActionRow>(),
+        laterDone(db, owner, Date.now()),
+        db
+          .prepare(
+            `SELECT i.id, i.summary, i.started_at, c.name AS check_name, c.kind, c.target, c.node_id
            FROM incidents i JOIN checks c ON c.id = i.check_id
            WHERE i.status = 'OPEN' AND c.${owned}
            ORDER BY i.started_at, i.id`,
-        )
-        .bind(owner)
-        .all<{
-          id: string;
-          summary: string | null;
-          started_at: string;
-          check_name: string;
-          kind: string;
-          target: string;
-          node_id: string;
-        }>(),
-      loadEstate(db, owner),
-    ]);
-    return context.json({
-      items: notFixed(failed.results, done, estate.health, Date.now()).map(
-        (row) => {
-          const server = estate.server(row.node_id);
-          const incident = open.results.find((entry) => {
-            const watched =
-              entry.node_id === row.node_id ? ownerOf(entry, server) : null;
-            return watched !== null && touches(watched, row, server);
-          });
-          return {
-            action: record(row),
-            incident: incident
-              ? {
-                  id: incident.id,
-                  checkName: incident.check_name,
-                  summary: incident.summary,
-                  startedAt: incident.started_at,
-                }
-              : null,
-          };
-        },
-      ),
-    });
-  });
+          )
+          .bind(owner)
+          .all<{
+            id: string;
+            summary: string | null;
+            started_at: string;
+            check_name: string;
+            kind: string;
+            target: string;
+            node_id: string;
+          }>(),
+        loadEstate(db, owner),
+      ]);
+      return context.json({
+        items: notFixed(failed.results, done, estate.health, Date.now()).map(
+          (row) => {
+            const server = estate.server(row.node_id);
+            const incident = open.results.find((entry) => {
+              const watched =
+                entry.node_id === row.node_id ? ownerOf(entry, server) : null;
+              return watched !== null && touches(watched, row, server);
+            });
+            return {
+              action: record(row),
+              incident: incident
+                ? {
+                    id: incident.id,
+                    checkName: incident.check_name,
+                    summary: incident.summary,
+                    startedAt: incident.started_at,
+                  }
+                : null,
+            };
+          },
+        ),
+      });
+    },
+  );
 
   app.post("/api/history/:id/hide", requireOperator, async (context) => {
     const identity = context.get("identity");

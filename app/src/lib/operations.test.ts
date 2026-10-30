@@ -17,7 +17,7 @@ const ago = (minutes: number) => new Date(NOW - minutes * 60_000).toISOString();
 const node = (overrides: Partial<NodeRecord> = {}) =>
   ({
     id: "n1",
-    name: "pivox",
+    name: "server-1",
     agent_version: "0.6.0",
     update_requested_version: null,
     update_requested_at: null,
@@ -161,7 +161,7 @@ describe("activity", () => {
     );
     expect(list.map((item) => item.id)).toEqual(["x5", "r1"]);
     expect(list[0]).toMatchObject({
-      nodeName: "pivox",
+      nodeName: "server-1",
       by: "budi",
       label: "redis",
     });
@@ -183,7 +183,7 @@ describe("activity", () => {
       NOW,
     );
     expect(list.map((item) => [item.id, item.text])).toEqual([
-      ["t-a", "Testing pivox ↔ vps-3"],
+      ["t-a", "Testing server-1 ↔ vps-3"],
     ]);
   });
 });

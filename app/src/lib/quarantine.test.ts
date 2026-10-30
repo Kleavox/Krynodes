@@ -103,6 +103,23 @@ describe("the warning strip", () => {
       "Krynodes' firewall rule was removed, and put back · 21:04",
       "KRY-REACH · -j DROP",
     ]);
+    expect(strip("firewall", { rule: "allow 9999/tcp" })).toEqual([
+      "Firewall rule added, not through Krynodes · 21:04",
+      "allow 9999/tcp",
+    ]);
+    expect(
+      strip("confinement", {
+        system: "selinux",
+        program: "nginx",
+        type: "httpd_t",
+        wanted: "read shadow",
+        item: "nginx httpd_t",
+      }),
+    ).toEqual(["SELinux denied nginx · 21:04", "httpd_t · read shadow"]);
+    expect(strip("confinement", { system: "apparmor" })).toEqual([
+      "AppArmor denied -- · 21:04",
+      "-- · --",
+    ]);
     expect(
       strip("quiet", {
         lastReport: "2026-10-27T13:58:00Z",
@@ -316,8 +333,8 @@ describe("a quarantined server's page", () => {
         stacks: ["app", "worker"],
         vault: { set: "s1", holders: 3 },
         webAddresses: [
-          { hostname: "app.kleavox.xyz", project: "app" },
-          { hostname: "api.kleavox.xyz", project: "app" },
+          { hostname: "app.example.org", project: "app" },
+          { hostname: "api.example.org", project: "app" },
         ],
         trusted: [
           { nodeId: V2, nodeName: "vps-2", project: "db", port: "5432/tcp" },
@@ -350,7 +367,7 @@ describe("a quarantined server's page", () => {
         },
         {
           id: "web",
-          title: "app.kleavox.xyz, api.kleavox.xyz",
+          title: "app.example.org, api.example.org",
           tag: null,
           note: "Still points at vps-1's tunnel",
           action: { kind: "unexpose", label: "Remove Web Addresses" },
@@ -414,10 +431,18 @@ describe("a quarantined server's page", () => {
 describe("what It Was Me and the reshare send", () => {
   it("asks the agent to accept only what it can keep as a starting point", () => {
     expect(
-      ["ssh-key", "ssh-login", "user", "sudo", "port", "rule", "quiet"].map(
-        acceptsWarning,
-      ),
-    ).toEqual([true, true, true, true, true, false, false]);
+      [
+        "ssh-key",
+        "ssh-login",
+        "user",
+        "sudo",
+        "port",
+        "firewall",
+        "confinement",
+        "rule",
+        "quiet",
+      ].map(acceptsWarning),
+    ).toEqual([true, true, true, true, true, true, true, false, false]);
   });
 
   it("reshares without the quarantined server: it neither assembles, releases, holds nor forgets", () => {
@@ -543,6 +568,28 @@ describe("a stopped stack", () => {
       title:
         "Stopped by Krynodes at 21:04: a container tried 1 place it was not given",
       places: "10.88.0.9:80/tcp",
+    });
+  });
+
+  it("says SELinux or AppArmor denied it, and what was wanted", () => {
+    expect(
+      stoppedRow(
+        {
+          project: "panel",
+          at: "2026-10-27T14:04:00Z",
+          tried: ["read shadow"],
+          count: 1,
+          why: "confinement",
+        },
+        "server-1",
+        {},
+        NOW,
+      ),
+    ).toEqual({
+      title:
+        "Stopped by Krynodes at 21:04: SELinux or AppArmor denied one of its containers",
+      places: "read shadow",
+      note: "server-1 is still trusted. Only this stack was stopped, and it stays stopped after a reboot. Change its secrets before you start it again.",
     });
   });
 });

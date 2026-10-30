@@ -16,22 +16,22 @@ import {
 
 type ServiceNode = ServicesResponse["nodes"][number];
 
-const io: ServiceNode = {
-  id: "io",
+const serverTwo: ServiceNode = {
+  id: "server-2",
   inventoryAt: null,
   refreshRequestedAt: null,
   trust: null,
   services: [
     {
       kind: "docker",
-      name: "umami-app-1",
+      name: "tracker-app-1",
       state: "running",
       since: null,
       system: false,
     },
     {
       kind: "docker",
-      name: "umami-db-1",
+      name: "tracker-db-1",
       state: "stopped",
       since: null,
       system: false,
@@ -88,13 +88,13 @@ const io: ServiceNode = {
   ],
   stacks: [
     {
-      project: "umami",
-      directory: "/srv/umami",
+      project: "tracker",
+      directory: "/srv/tracker",
       running: 1,
       total: 2,
       compose: true,
       rollback: true,
-      containers: ["umami-app-1", "umami-db-1"],
+      containers: ["tracker-app-1", "tracker-db-1"],
     },
     {
       project: "blog",
@@ -108,15 +108,15 @@ const io: ServiceNode = {
   ],
   webAddresses: [
     {
-      hostname: "umami.kleavox.xyz",
-      project: "umami",
+      hostname: "tracker.example.org",
+      project: "tracker",
       service: "app",
       port: 3000,
       mode: "allow",
       path: null,
     },
     {
-      hostname: "blog.kleavox.xyz",
+      hostname: "blog.example.org",
       project: "blog",
       service: "web",
       port: 80,
@@ -133,7 +133,7 @@ const check = (
   status: CheckRecord["status"] = "UP",
 ): CheckRecord => ({
   id,
-  node_id: "io",
+  node_id: "server-2",
   name: id,
   kind,
   target,
@@ -150,9 +150,9 @@ const check = (
 });
 
 const checks = [
-  check("Umami", "HTTP", "https://umami.kleavox.xyz", "DOWN"),
-  check("Blog", "HTTP", "https://blog.kleavox.xyz/"),
-  check("SSH", "TCP", "51.79.0.10:22"),
+  check("Tracker", "HTTP", "https://tracker.example.org", "DOWN"),
+  check("Blog", "HTTP", "https://blog.example.org/"),
+  check("SSH", "TCP", "198.51.100.10:22"),
   check("nginx", "SERVICE", "nginx"),
   check("Elsewhere", "HTTP", "https://example.com"),
 ];
@@ -165,17 +165,17 @@ const incident = (
 ): Incident => ({
   id,
   check_id: checkId,
-  node_id: "io",
+  node_id: "server-2",
   status: resolved ? "RESOLVED" : "OPEN",
   started_at: started,
   resolved_at: resolved,
   summary: "HTTP 502",
   check_name: checkId,
-  node_name: "io",
+  node_name: "server-2",
 });
 
 const incidents = [
-  incident("i1", "Umami", "2026-10-24T02:26:00.000Z", null),
+  incident("i1", "Tracker", "2026-10-24T02:26:00.000Z", null),
   incident(
     "i2",
     "Blog",
@@ -196,9 +196,9 @@ const failed = (over: Partial<ActionRecord>): AttentionItem => ({
     batchId: "b1",
     position: 0,
     mode: "rolling",
-    nodeId: "io",
+    nodeId: "server-2",
     kind: "compose",
-    name: "umami",
+    name: "tracker",
     action: "deploy",
     status: "failed",
     requestedBy: "o",
@@ -207,29 +207,32 @@ const failed = (over: Partial<ActionRecord>): AttentionItem => ({
     sentAt: null,
     finishedAt: "2026-10-24T02:25:00.000Z",
     exitCode: 1,
-    output: "umami-db-1 exited (1)",
+    output: "tracker-db-1 exited (1)",
     deviceId: null,
     ...over,
   },
   incident: null,
 });
 
-const items = [failed({}), failed({ id: "a2", nodeId: "pivox", name: "blog" })];
+const items = [
+  failed({}),
+  failed({ id: "a2", nodeId: "server-1", name: "blog" }),
+];
 
 describe("what runs on a server", () => {
-  const { cards, other } = whatRuns(io, checks, incidents, items);
+  const { cards, other } = whatRuns(serverTwo, checks, incidents, items);
   const card = (kind: string, name: string) =>
     cards.find((each) => each.kind === kind && each.name === name);
 
-  it("gives umami one card with its failed deploy, its check and its open incident, first", () => {
+  it("gives tracker one card with its failed deploy, its check and its open incident, first", () => {
     expect(cards[0]).toMatchObject({
       kind: "stack",
-      name: "umami",
+      name: "tracker",
       problem: true,
       incident: { id: "i1" },
       notFixed: { action: { id: "a1" } },
     });
-    expect(cards[0]!.checks.map((each) => each.id)).toEqual(["Umami"]);
+    expect(cards[0]!.checks.map((each) => each.id)).toEqual(["Tracker"]);
   });
 
   it("gives blog its check and its last resolved incident", () => {
@@ -266,8 +269,8 @@ describe("what runs on a server", () => {
     });
     const failedUnit = whatRuns(
       {
-        ...io,
-        services: io.services.map((service) =>
+        ...serverTwo,
+        services: serverTwo.services.map((service) =>
           service.name === "backup.service"
             ? { ...service, state: "failed" as const }
             : service,
@@ -280,9 +283,9 @@ describe("what runs on a server", () => {
     expect(
       failedUnit.cards.find((each) => each.name === "backup.service"),
     ).toMatchObject({ problem: true, alarm: true });
-    expect(cards[0]).toMatchObject({ name: "umami", alarm: true });
+    expect(cards[0]).toMatchObject({ name: "tracker", alarm: true });
     expect(cards.slice(0, 2).map((each) => each.name)).toEqual([
-      "umami",
+      "tracker",
       "backup.service",
     ]);
   });
@@ -293,7 +296,7 @@ describe("what runs on a server", () => {
 
   it("pulls a running unit with a down check out of the fold", () => {
     const down = whatRuns(
-      io,
+      serverTwo,
       [check("nginx", "SERVICE", "nginx.service", "DOWN")],
       [incident("i9", "nginx", "2026-10-24T02:00:00.000Z", null)],
       [],
@@ -309,24 +312,29 @@ describe("what runs on a server", () => {
 
   it("an old agent's stacks claim no container checks", () => {
     const old: ServiceNode = {
-      ...io,
-      stacks: io.stacks.map(({ containers: _, ...stack }) => stack),
+      ...serverTwo,
+      stacks: serverTwo.stacks.map(({ containers: _, ...stack }) => stack),
     };
     const result = whatRuns(
       old,
-      [check("app", "CONTAINER", "umami-app-1")],
+      [check("app", "CONTAINER", "tracker-app-1")],
       [],
       [],
     );
-    expect(result.cards.find((each) => each.name === "umami")!.checks).toEqual(
-      [],
-    );
+    expect(
+      result.cards.find((each) => each.name === "tracker")!.checks,
+    ).toEqual([]);
     expect(result.other.map((each) => each.id)).toEqual(["app"]);
   });
 
   it("says nothing of a server with nothing reported", () => {
     expect(
-      whatRuns({ ...io, services: [], stacks: [] }, checks, incidents, []),
+      whatRuns(
+        { ...serverTwo, services: [], stacks: [] },
+        checks,
+        incidents,
+        [],
+      ),
     ).toMatchObject({ cards: [] });
   });
 });

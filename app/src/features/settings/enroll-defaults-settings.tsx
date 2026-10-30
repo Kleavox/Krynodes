@@ -73,7 +73,8 @@ export function ProtectionOptions<T extends SetupChoice>({
           </span>
           <span className="block text-xs text-muted-foreground">
             Automatic security updates, restart when needed, SSH keys only,
-            blocking repeated login failures and a firewall.
+            blocking repeated login failures, and a firewall that closes every
+            port except SSH.
           </span>
         </span>
       </label>
@@ -99,6 +100,22 @@ export function ProtectionOptions<T extends SetupChoice>({
           </Select>
         </div>
       )}
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={value.confine === true}
+          onChange={() => onChange({ ...value, confine: !value.confine })}
+        />
+        <span>
+          <span className="block font-medium">Turn On SELinux or AppArmor</span>
+          <span className="block text-xs text-muted-foreground">
+            SELinux on Rocky, Alma and RHEL, AppArmor on Debian and Ubuntu,
+            enforcing from the start. A server that has it switched off needs
+            one restart.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

@@ -123,7 +123,7 @@ func parseTrust(args []string) (trustOptions, error) {
 	flags.BoolVar(&options.reset, "reset", false, "forget every trusted device")
 	flags.BoolVar(&options.grant, "grant", false, "let the trusted devices reach this server")
 	flags.StringVar(&options.access, "access", "", "let this one trusted device reach this server")
-	flags.StringVar(&options.origin, "origin", "", "the dashboard origin, such as https://kry.kleavox.xyz")
+	flags.StringVar(&options.origin, "origin", "", "your dashboard's origin")
 	flags.StringVar(&options.config, "config", defaultConfigPath, "path to the agent config")
 	if err := flags.Parse(args); err != nil {
 		return trustOptions{}, err
@@ -642,6 +642,7 @@ func execActions() error {
 		},
 		Audit:          true,
 		TailscaleLocal: tailscale.Socket,
+		QuarantineMark: filepath.Join(stateDirectory, "quarantined"),
 	}
 	return executor.Execute(context.Background())
 }

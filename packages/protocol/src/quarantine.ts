@@ -20,6 +20,8 @@ export const EVENT_KINDS = [
   "sudo",
   "port",
   "rule",
+  "firewall",
+  "confinement",
 ] as const;
 
 export const quarantineSettingsSchema = z.strictObject({

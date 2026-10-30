@@ -19,7 +19,7 @@ export function seedFleet(
     [V1]: "vps-1",
     [V2]: "vps-2",
     [V3]: "vps-3",
-    [IO]: "io",
+    [IO]: "server-2",
     [OLD]: "old",
   };
   for (const [id, name] of Object.entries(names)) {

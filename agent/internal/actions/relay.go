@@ -303,6 +303,7 @@ func (r *Relay) Report(beat *reporter.Heartbeat) {
 			beat.Events = append(beat.Events, event)
 		}
 	}
+	beat.Denials = readDenials(r.StateDir, r.Now())
 	var release reporter.Release
 	if readJSON(filepath.Join(r.StateDir, releaseFile), &release) == nil {
 		if expires, err := time.Parse(time.RFC3339, release.Expires); err == nil && r.Now().Before(expires) {

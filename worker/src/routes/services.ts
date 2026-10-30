@@ -1,11 +1,14 @@
-import { pokeSoon } from "../fleet/client";
+import { pokeSoon, unchangedList } from "../fleet/client";
 import {
   FEATURE_AGENT,
+  FIREWALL_VERBS,
   KIND_VERBS,
   MIN_AGENT_VERSION,
   RECIPES,
+  SECURITY_AGENT,
   UNSIGNED_VERBS,
   agentHasFeatures,
+  agentHasSecurity,
   agentSupported,
   hostVerbFits,
   isProtectedTarget,
@@ -20,7 +23,9 @@ import { requestRefresh } from "../actions/inventory";
 import {
   adminArgsValid,
   bridgeArgsValid,
+  firewallArgsValid,
   hasStackNameArgs,
+  onOffArgsValid,
   hasStackNetworkArgs,
   stackNameArgsValid,
   stackNetworkArgsValid,
@@ -39,7 +44,7 @@ import { decodeJson, toB64url } from "../lib/b64url";
 import {
   endOfLifeDate,
   eolFinding,
-  readEndOfLife,
+  cachedEndOfLife,
   type EndOfLife,
 } from "../agent/end-of-life";
 import { filterListeners, type Finding, type Listener } from "../lib/ranges";
@@ -102,6 +107,12 @@ const actionRequestSchema = z.object({
     "rekey",
     "unblock",
     "admin",
+    "exitnode",
+    "dns",
+    "open",
+    "close",
+    "putback",
+    "containers",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -160,17 +171,45 @@ const needsFeatures = (
   (target.kind === "compose" &&
     (hasStackNetworkArgs(args) || hasStackNameArgs(args)));
 
-const signedArgsFit = (
-  kind: string,
+const ON_OFF: readonly string[] = ["exitnode", "dns", "containers"];
+
+const changesFirewall = (
+  target: { kind: string; name: string },
   action: string,
   args: Record<string, string>,
 ) =>
-  kind === "bridge"
+  target.kind === "host" &&
+  target.name === "firewall" &&
+  (FIREWALL_VERBS.includes(action) ||
+    (action === "apply" && args.closed !== undefined));
+
+const onOff = (target: { kind: string; name: string }, action: string) =>
+  target.kind === "host" && ON_OFF.includes(action);
+
+const needsSecurity = (
+  target: { kind: string; name: string },
+  action: string,
+  args: Record<string, string>,
+) =>
+  onOff(target, action) ||
+  (target.kind === "host" && target.name === "confinement") ||
+  changesFirewall(target, action, args);
+
+const signedArgsFit = (
+  target: { kind: string; name: string },
+  action: string,
+  args: Record<string, string>,
+) =>
+  target.kind === "bridge"
     ? bridgeArgsValid(action, args)
-    : kind === "host" && action === "admin"
+    : target.kind === "host" && action === "admin"
       ? adminArgsValid(args)
-      : kind !== "compose" ||
-        (stackNetworkArgsValid(args) && stackNameArgsValid(args));
+      : changesFirewall(target, action, args)
+        ? firewallArgsValid(action, args)
+        : onOff(target, action)
+          ? onOffArgsValid(args)
+          : target.kind !== "compose" ||
+            (stackNetworkArgsValid(args) && stackNameArgsValid(args));
 
 const askedFits = (
   kind: string,
@@ -288,7 +327,7 @@ export function registerServiceRoutes(
   app: KrynodesApp,
   requireOperator: MiddlewareHandler<KrynodesEnv>,
 ): void {
-  app.get("/api/services", requireOperator, async (context) => {
+  app.get("/api/services", requireOperator, unchangedList, async (context) => {
     const db = context.env.DB;
     const owner = context.get("identity").id;
     const now = Date.now();
@@ -296,7 +335,7 @@ export function registerServiceRoutes(
     const [ranges, network, endOfLife] = await Promise.all([
       readPrivateRanges(db, owner),
       readNetwork(db, owner).then(liveRange),
-      readEndOfLife(db),
+      cachedEndOfLife(db, now),
     ]);
     const [nodes, services, actions] = await Promise.all([
       db
@@ -609,8 +648,9 @@ export function registerServiceRoutes(
         (target) =>
           (target.kind === "bridge" ||
             (target.kind === "host" && action === "admin") ||
+            needsSecurity(target, action, argsOf(target)) ||
             target.kind === "compose") &&
-          !signedArgsFit(target.kind, action, argsOf(target)),
+          !signedArgsFit(target, action, argsOf(target)),
       )
     ) {
       return invalidRequest(context);
@@ -730,6 +770,20 @@ export function registerServiceRoutes(
         {
           code: "AGENT_TOO_OLD",
           message: `Update the agent on ${byId.get(behind.nodeId)!.name} to ${FEATURE_AGENT} or newer.`,
+        },
+        422,
+      );
+    }
+    const unready = targets.find(
+      (target) =>
+        needsSecurity(target, action, argsOf(target)) &&
+        !agentHasSecurity(byId.get(target.nodeId)!.agent_version),
+    );
+    if (unready) {
+      return context.json(
+        {
+          code: "AGENT_TOO_OLD",
+          message: `Update the agent on ${byId.get(unready.nodeId)!.name} to ${SECURITY_AGENT} or newer.`,
         },
         422,
       );

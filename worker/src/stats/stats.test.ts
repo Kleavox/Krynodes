@@ -782,7 +782,7 @@ describe("serveStats", () => {
   it("never shows what a check is, where it points, or its server", async () => {
     const { db, sqlite } = fleet();
     sqlite
-      .prepare("UPDATE nodes SET name = 'pivox-secret-node' WHERE id = ?")
+      .prepare("UPDATE nodes SET name = 'server-1-secret-node' WHERE id = ?")
       .run(NODE);
     publish(sqlite, "a", { name: "Website", status: "DOWN" });
     sqlite
@@ -798,7 +798,7 @@ describe("serveStats", () => {
     for (const secret of [
       "secret.internal",
       "10.0.0.5",
-      "pivox-secret-node",
+      "server-1-secret-node",
       "HTTP",
       "connection refused",
     ]) {

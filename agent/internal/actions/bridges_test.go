@@ -44,7 +44,7 @@ func endpoint(name, address string) map[string]any {
 
 var serverNets = []map[string]any{
 	dockerNet("bridge", "b0b0b0b0b0b0b0b0", "172.17.0.0/16", nil, nil),
-	dockerNet("kuma_default", "0a1b2c3d4e5f6a7b", "172.18.0.0/16", map[string]string{"com.docker.compose.network": "default", "com.docker.compose.project": "kuma"}, nil),
+	dockerNet("panel_default", "0a1b2c3d4e5f6a7b", "172.18.0.0/16", map[string]string{"com.docker.compose.network": "default", "com.docker.compose.project": "panel"}, nil),
 	dockerNet("proxy", "c0c0c0c0c0c0c0c0", "172.19.0.0/16", nil, nil),
 	{"Name": "host", "Id": "d0d0d0d0d0d0d0d0", "Driver": "host", "Labels": map[string]string{}, "IPAM": map[string]any{"Config": []any{}}, "Containers": map[string]any{}},
 }
@@ -145,7 +145,7 @@ func TestBridgeCreateRefusesWhatTheServerCannotTake(t *testing.T) {
 	}{
 		{"taken name", "proxy", "contained", "172.24.0.0/24", "This server already has a network named proxy."},
 		{"claimed name", "default-env_public", "full", "172.23.0.0/16", "The default-env stack makes its own public network with this name. Write external: true there, or pick another name."},
-		{"docker network", "apps-inner", "contained", "172.18.5.0/24", "Overlaps kuma_default (172.18.0.0/16) on this server."},
+		{"docker network", "apps-inner", "contained", "172.18.5.0/24", "Overlaps panel_default (172.18.0.0/16) on this server."},
 		{"private network", "apps-inner", "contained", "10.88.0.0/16", "Overlaps your private network (10.88.0.0/24)."},
 		{"tailscale", "apps-inner", "contained", "100.100.0.0/16", "Overlaps Tailscale's addresses (100.64.0.0/10)."},
 		{"own network", "apps-inner", "contained", "192.168.1.0/24", "Overlaps this server's own network (192.168.1.0/24 on eth0)."},
@@ -227,15 +227,15 @@ func TestANetworkWithTheRightNameButAnotherIDIsOutsideKrynodes(t *testing.T) {
 
 func TestBridgeRemoveRefusesWhileStacksUseIt(t *testing.T) {
 	executor, run := bridgeExecutor(t, "1")
-	if err := executor.saveBridges(map[string]bridgeRecord{"apps-inner": {ID: "9f2c00000000000000000000", Kind: "contained", Subnet: "172.24.0.0/24", Bridge: expectedBridge("apps-inner"), Pins: map[string]string{"kuma/web": "172.24.0.2"}}}); err != nil {
+	if err := executor.saveBridges(map[string]bridgeRecord{"apps-inner": {ID: "9f2c00000000000000000000", Kind: "contained", Subnet: "172.24.0.0/24", Bridge: expectedBridge("apps-inner"), Pins: map[string]string{"panel/web": "172.24.0.2"}}}); err != nil {
 		t.Fatal(err)
 	}
-	writeStack(t, executor, "umami", stackMeta{Access: "contained"}, "services:\n  web:\n    networks: [inner]\nnetworks:\n  inner:\n    name: apps-inner\n    external: true\n")
+	writeStack(t, executor, "tracker", stackMeta{Access: "contained"}, "services:\n  web:\n    networks: [inner]\nnetworks:\n  inner:\n    name: apps-inner\n    external: true\n")
 	writeStack(t, executor, "other", stackMeta{Access: "contained"}, "services:\n  web:\n    networks: [apps-inner-2]\n")
-	onServer(t, run, dockerNet("apps-inner", "9f2c00000000000000000000", "172.24.0.0/24", map[string]string{"com.krynodes.network": "contained"}, map[string]any{"c1": endpoint("kuma-web-1", "172.24.0.2/24")}))
-	run.respond["docker ps -a --no-trunc --format "+labelsFormat] = "c1\tkuma\tweb\n"
+	onServer(t, run, dockerNet("apps-inner", "9f2c00000000000000000000", "172.24.0.0/24", map[string]string{"com.krynodes.network": "contained"}, map[string]any{"c1": endpoint("panel-web-1", "172.24.0.2/24")}))
+	run.respond["docker ps -a --no-trunc --format "+labelsFormat] = "c1\tpanel\tweb\n"
 	result := runRequest(t, executor, bridgeRequest(t, "apps-inner", "remove", nil))
-	if result.OK || result.Output != "refused: kuma and umami still use it. Take it out of their compose files first." {
+	if result.OK || result.Output != "refused: panel and tracker still use it. Take it out of their compose files first." {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	if slices.Contains(run.calls, "docker network rm apps-inner") {
@@ -246,7 +246,7 @@ func TestBridgeRemoveRefusesWhileStacksUseIt(t *testing.T) {
 func TestBridgeRemoveDeletesAnUnusedNetworkAndItsPins(t *testing.T) {
 	executor, run := bridgeExecutor(t, "1")
 	if err := executor.saveBridges(map[string]bridgeRecord{
-		"apps-inner": {ID: "9f2c00000000000000000000", Kind: "contained", Subnet: "172.24.0.0/24", Bridge: expectedBridge("apps-inner"), Pins: map[string]string{"kuma/web": "172.24.0.2"}, Freed: []string{"172.24.0.3"}},
+		"apps-inner": {ID: "9f2c00000000000000000000", Kind: "contained", Subnet: "172.24.0.0/24", Bridge: expectedBridge("apps-inner"), Pins: map[string]string{"panel/web": "172.24.0.2"}, Freed: []string{"172.24.0.3"}},
 		"cache":      {ID: "cace00000000000000000000", Kind: "full", Subnet: "172.25.0.0/24", Bridge: "br-cace00000000"},
 	}); err != nil {
 		t.Fatal(err)
@@ -278,14 +278,14 @@ func TestPinsTakeTheLowestUnusedAddressThenTheOldestFreed(t *testing.T) {
 		}
 		return address
 	}
-	if a, b, again := take("kuma/web"), take("adns/dns"), take("kuma/web"); a != "172.24.0.2" || b != "172.24.0.3" || again != "172.24.0.2" {
+	if a, b, again := take("panel/web"), take("adns/dns"), take("panel/web"); a != "172.24.0.2" || b != "172.24.0.3" || again != "172.24.0.2" {
 		t.Fatalf("pins %s %s %s", a, b, again)
 	}
-	if err := executor.unpin("kuma"); err != nil {
+	if err := executor.unpin("panel"); err != nil {
 		t.Fatal(err)
 	}
 	records = executor.readBridges()
-	if got := records["apps-inner"]; !slices.Equal(got.Freed, []string{"172.24.0.2"}) || got.Pins["kuma/web"] != "" {
+	if got := records["apps-inner"]; !slices.Equal(got.Freed, []string{"172.24.0.2"}) || got.Pins["panel/web"] != "" {
 		t.Fatalf("record %#v", got)
 	}
 	if next := take("db/postgres"); next != "172.24.0.4" {
@@ -310,35 +310,35 @@ func TestBridgesReportListsNetworksMembersAndWhatIsTaken(t *testing.T) {
 	if err := executor.saveBridges(map[string]bridgeRecord{"apps-inner": {ID: "9f2c00000000000000000000", Kind: "contained", Subnet: "172.24.0.0/24", Bridge: "krc0a1b2c3d4e5f"}}); err != nil {
 		t.Fatal(err)
 	}
-	writeStack(t, executor, "kuma", stackMeta{Access: "contained", Offers: []string{"apps-inner/web=3001/tcp", "apps-inner/web=3002/udp", "other/web=80/tcp"}, Networks: map[string]string{"default": "kuma_default"}}, "")
+	writeStack(t, executor, "panel", stackMeta{Access: "contained", Offers: []string{"apps-inner/web=3001/tcp", "apps-inner/web=3002/udp", "other/web=80/tcp"}, Networks: map[string]string{"default": "panel_default"}}, "")
 	writeStack(t, executor, "db", stackMeta{Access: "full", Offers: []string{"apps-inner/postgres=5432/tcp"}, Networks: map[string]string{"default": "db_default", "data": "db-data"}}, "")
 	nets := append(slices.Clone(serverNets), dockerNet("apps-inner", "9f2c00000000000000000000", "172.24.0.0/24", map[string]string{"com.krynodes.network": "contained"}, map[string]any{
 		"c2": endpoint("db-postgres-1", "172.24.0.3/24"),
-		"c1": endpoint("kuma-web-1", "172.24.0.2/24"),
+		"c1": endpoint("panel-web-1", "172.24.0.2/24"),
 		"c3": endpoint("loose", ""),
 	}))
 	onServer(t, run, nets...)
-	run.respond["docker ps -a --no-trunc --format "+labelsFormat] = "c1\tkuma\tweb\nc2\tdb\tpostgres\nc3\t\t\n"
+	run.respond["docker ps -a --no-trunc --format "+labelsFormat] = "c1\tpanel\tweb\nc2\tdb\tpostgres\nc3\t\t\n"
 	report := executor.bridgesReport(context.Background())
 	address := func(text string) *string { return &text }
 	want := &reporter.Bridges{
 		Networks: []reporter.BridgeNetwork{
 			{Name: "apps-inner", Kind: "contained", Subnet: address("172.24.0.0/24"), Members: []reporter.BridgeMember{
 				{Project: "db", Service: "postgres", Address: address("172.24.0.3"), Offers: []string{"5432/tcp"}, Guest: true},
-				{Project: "kuma", Service: "web", Address: address("172.24.0.2"), Offers: []string{"3001/tcp", "3002/udp"}},
 				{Project: "loose", Service: "loose", Offers: []string{}},
+				{Project: "panel", Service: "web", Address: address("172.24.0.2"), Offers: []string{"3001/tcp", "3002/udp"}},
 			}},
 			{Name: "proxy", Kind: "outside", Subnet: address("172.19.0.0/16"), Members: []reporter.BridgeMember{}},
 		},
 		Taken: []reporter.Taken{
 			{Range: "172.24.0.0/24", By: "apps-inner"},
 			{Range: "172.17.0.0/16", By: "bridge"},
-			{Range: "172.18.0.0/16", By: "kuma_default"},
+			{Range: "172.18.0.0/16", By: "panel_default"},
 			{Range: "172.19.0.0/16", By: "proxy"},
 			{Range: "192.168.1.0/24", By: "eth0", Own: true},
 			{Range: "10.200.0.0/16", By: "eth0", Own: true},
 		},
-		Claimed: []string{"db-data", "db_default", "kuma_default"},
+		Claimed: []string{"db-data", "db_default", "panel_default"},
 	}
 	if !reflect.DeepEqual(report, want) {
 		got, _ := json.Marshal(report)
@@ -360,11 +360,11 @@ func TestTheInventoryHashFollowsAMembersOffers(t *testing.T) {
 	if err := executor.saveBridges(map[string]bridgeRecord{"apps-inner": {ID: "9f2c00000000000000000000", Kind: "contained", Subnet: "172.24.0.0/24", Bridge: "krc0a1b2c3d4e5f"}}); err != nil {
 		t.Fatal(err)
 	}
-	onServer(t, run, dockerNet("apps-inner", "9f2c00000000000000000000", "172.24.0.0/24", nil, map[string]any{"c1": endpoint("kuma-web-1", "172.24.0.2/24")}))
-	run.respond["docker ps -a --no-trunc --format "+labelsFormat] = "c1\tkuma\tweb\n"
+	onServer(t, run, dockerNet("apps-inner", "9f2c00000000000000000000", "172.24.0.0/24", nil, map[string]any{"c1": endpoint("panel-web-1", "172.24.0.2/24")}))
+	run.respond["docker ps -a --no-trunc --format "+labelsFormat] = "c1\tpanel\tweb\n"
 	hash := func(offers ...string) string {
 		t.Helper()
-		writeStack(t, executor, "kuma", stackMeta{Access: "contained", Offers: offers}, "")
+		writeStack(t, executor, "panel", stackMeta{Access: "contained", Offers: offers}, "")
 		if err := executor.Execute(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -386,22 +386,22 @@ func TestTheInventoryHashFollowsAMembersOffers(t *testing.T) {
 func TestAStackRecordsTheNetworksItMakesItself(t *testing.T) {
 	executor, run := stackExecutor(t)
 	networks := map[string]any{
-		"default": map[string]any{"name": "kuma_default"},
-		"public":  map[string]any{"name": "kuma_public"},
+		"default": map[string]any{"name": "panel_default"},
+		"public":  map[string]any{"name": "panel_public"},
 		"shared":  map[string]any{"name": "apps-inner", "external": true},
 	}
-	dir := kumaReady(t, executor, run, kumaService(kumaDir(executor)), map[string]any{"networks": networks})
-	request := composeRequest(t, idA, "kuma", "create", func(c *Command) { c.Compose, c.Access = kumaText, "full" })
+	dir := panelReady(t, executor, run, panelService(panelDir(executor)), map[string]any{"networks": networks})
+	request := composeRequest(t, idA, "panel", "create", func(c *Command) { c.Compose, c.Access = panelText, "full" })
 	if result := runRequest(t, executor, request); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
-	if meta := executor.metaOf(dir); !reflect.DeepEqual(meta.Networks, map[string]string{"default": "kuma_default", "public": "kuma_public"}) {
+	if meta := executor.metaOf(dir); !reflect.DeepEqual(meta.Networks, map[string]string{"default": "panel_default", "public": "panel_public"}) {
 		t.Fatalf("meta %#v", meta)
 	}
 }
 
 func TestTheRelaySendsTheNetworksAndTheirAbsence(t *testing.T) {
-	for _, bridges := range []*reporter.Bridges{nil, {Networks: []reporter.BridgeNetwork{}, Taken: []reporter.Taken{}, Claimed: []string{"kuma_default"}}} {
+	for _, bridges := range []*reporter.Bridges{nil, {Networks: []reporter.BridgeNetwork{}, Taken: []reporter.Taken{}, Claimed: []string{"panel_default"}}} {
 		relay, poster := newRelay(t)
 		inventory, err := NewInventory(Parts{Docker: "ready", Bridges: bridges}, executorNow)
 		if err != nil {

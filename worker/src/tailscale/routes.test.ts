@@ -96,7 +96,7 @@ const store = (nodeId: string, name = "tailscale", holders = "2") =>
 
 const CONNECT = {
   tailscale: {
-    tailnet: "tail4d2a.ts.net",
+    tailnet: "tail0000.ts.net",
     clientId: "kQ1clientCNTRL",
     webhookSecret: "tskey-webhook-s3cret",
   },
@@ -120,12 +120,12 @@ function routes(version = "0.7.0") {
   }
   const env = {
     DB: db,
-    PUBLIC_ORIGIN: "https://kry.kleavox.xyz",
+    PUBLIC_ORIGIN: "https://kry.example.org",
     AGENT_ORIGIN: "https://kry.kleavox.workers.dev",
   } as unknown as Env;
   const call = (method: string, path: string, body?: unknown) =>
     app.request(
-      `https://kry.kleavox.xyz${path}`,
+      `https://kry.example.org${path}`,
       {
         method,
         headers: { "content-type": "application/json" },
@@ -228,7 +228,7 @@ describe("Tailscale operations", () => {
         )
         .get(),
     ).toEqual({
-      tailnet: "tail4d2a.ts.net",
+      tailnet: "tail0000.ts.net",
       client_id: "kQ1clientCNTRL",
       webhook_secret: "tskey-webhook-s3cret",
       set_id: null,
@@ -241,7 +241,7 @@ describe("Tailscale operations", () => {
       )
       .run();
     const again = {
-      tailscale: { tailnet: "tail4d2a.ts.net", clientId: "kQ2clientCNTRL" },
+      tailscale: { tailnet: "tail0000.ts.net", clientId: "kQ2clientCNTRL" },
     };
     expect((await t.operate("split", [store(A), store(B)], again)).status).toBe(
       201,
@@ -337,7 +337,7 @@ describe("Tailscale operations", () => {
     const cloudflare = await t.operate(
       "split",
       [A, B].map((nodeId) => store(nodeId, "cloudflare")),
-      { zone: "kleavox.xyz" },
+      { zone: "example.org" },
     );
     expect(await answer(cloudflare)).toMatchObject({
       code: "TOKEN_BUSY",
@@ -377,7 +377,7 @@ describe("GET /api/tailscale", () => {
       address: "0.0.0.0",
       port: 53,
       protocol: "udp",
-      process: "AdGuardHome",
+      process: "Resolver",
     };
     t.sqlite
       .prepare("UPDATE nodes SET security = ? WHERE id = ?")
@@ -425,7 +425,7 @@ async function hub() {
   sqlite
     .prepare(
       `INSERT INTO tailscale (owner_user_id, tailnet, client_id, webhook_secret, connected_at)
-       VALUES ('standalone', 'tail4d2a.ts.net', 'kQ1clientCNTRL', 's', datetime('now'))`,
+       VALUES ('standalone', 'tail0000.ts.net', 'kQ1clientCNTRL', 's', datetime('now'))`,
     )
     .run();
   const harness = hubHarness({ DB: db });
@@ -482,7 +482,7 @@ async function hub() {
     });
   const env = {
     DB: db,
-    PUBLIC_ORIGIN: "https://kry.kleavox.xyz",
+    PUBLIC_ORIGIN: "https://kry.example.org",
   } as unknown as Env;
   const operate = async (
     kind: string,
@@ -490,7 +490,7 @@ async function hub() {
     extra = {},
   ) => {
     const response = await app.request(
-      "https://kry.kleavox.xyz/api/operations",
+      "https://kry.example.org/api/operations",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -603,7 +603,7 @@ describe("Tailscale results", () => {
       t.sqlite.prepare("SELECT node_id, device FROM tailscale_nodes").all(),
     ).toEqual([{ node_id: C, device: "nC" }]);
     const stores = await t.operate("split", [store(A), store(B)], {
-      tailscale: { tailnet: "tail4d2a.ts.net", clientId: "kQ1clientCNTRL" },
+      tailscale: { tailnet: "tail0000.ts.net", clientId: "kQ1clientCNTRL" },
     });
     await t.beat(A);
     await t.finish(A, stores[0]!, "stored");

@@ -135,7 +135,7 @@ export function HistoryPage() {
               type="search"
               value={typed}
               onChange={(event) => setTyped(event.target.value)}
-              placeholder="Search nginx, umami, port 53…"
+              placeholder="Search names, servers or ports"
               aria-label="Search history"
               className="h-9 w-full sm:w-64 md:h-8"
             />

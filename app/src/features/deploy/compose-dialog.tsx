@@ -305,6 +305,7 @@ function ComposeForm({
               </div>
               {chosen === "full" && (
                 <FullAccessSummary
+                  nodeId={target.nodeId}
                   text={current}
                   member={network.member}
                   onText={setText}

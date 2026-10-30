@@ -314,6 +314,12 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
+	level := ""
+	if e.dockerSELinux(ctx) {
+		if level, err = e.levelFor(name); err != nil {
+			return e.failed(request, err, "")
+		}
+	}
 	if meta.Access == "contained" {
 		if err := vet(config, directory, kindOf); err != nil {
 			return e.refuse(request.ID, err)
@@ -331,6 +337,9 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		applyPins(config, config, pins)
 		applyNames(config, config, meta.Names, former)
 		applyRelations(config, config, name)
+		if level != "" {
+			addLabels(config, config, directory, level, false)
+		}
 		if err := writeJSON(directory, "compose.krynodes.json", config, 0o640); err != nil {
 			return e.failed(request, err, "")
 		}
@@ -348,6 +357,9 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		applyPins(override, config, pins)
 		applyNames(override, config, meta.Names, former)
 		applyRelations(override, config, name)
+		if level != "" {
+			addLabels(override, config, directory, level, true)
+		}
 	}
 	if len(asMap(override["services"])) > 0 {
 		if err := writeJSON(directory, hostsFile, override, 0o640); err != nil {
@@ -364,6 +376,11 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 	}
 	if err := e.fits(ctx, config); err != nil {
 		return e.refuse(request.ID, err)
+	}
+	if level != "" {
+		if err := e.relabelFolder(ctx, directory, level); err != nil {
+			return e.failed(request, err, "")
+		}
 	}
 	if _, err := e.docker(ctx, pullTimeout, "pull", composeArgs(stack, "pull")...); err != nil {
 		return e.failed(request, err, "")

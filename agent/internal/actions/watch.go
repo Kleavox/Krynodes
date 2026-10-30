@@ -23,7 +23,7 @@ const watchFile = "watch.json"
 
 var (
 	sharedRange = netip.MustParsePrefix("100.64.0.0/10")
-	acceptKinds = []string{"ssh-key", "ssh-login", "user", "sudo", "port"}
+	acceptKinds = []string{"ssh-key", "ssh-login", "user", "sudo", "port", "firewall", "confinement"}
 )
 
 func shortHash(parts ...string) string {
@@ -149,7 +149,13 @@ func (e Executor) accept(request Request) Result {
 	}
 	kind, item := command.Args["kind"], command.Args["item"]
 	if len(command.Args) != 2 || !slices.Contains(acceptKinds, kind) || item == "" {
-		return e.refuse(request.ID, errors.New("only a new key, sign-in, user, sudo rule or port can be accepted"))
+		return e.refuse(request.ID, errors.New("only a new key, sign-in, user, sudo rule, port, firewall rule or denied program can be accepted"))
+	}
+	if kind == "firewall" {
+		return e.acceptFirewall(request, item)
+	}
+	if kind == "confinement" {
+		return e.acceptConfinement(request, item)
 	}
 	start, err := readState[watch.State](e.StateDir, watchFile)
 	if err != nil {

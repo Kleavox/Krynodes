@@ -37,7 +37,7 @@ const service = (kind: ServiceEntry["kind"], name: string): ServiceEntry => ({
 describe("picked targets", () => {
   const services = [
     service("systemd", "tailscaled.service"),
-    service("docker", "adguard-adguard-1"),
+    service("docker", "resolver-resolver-1"),
     service("systemd", "nginx.service"),
     service("docker", "web-1"),
     service("systemd", "nginx.service"),
@@ -49,7 +49,7 @@ describe("picked targets", () => {
       { name: "tailscaled.service", seen: true },
     ]);
     expect(targetOptions(services, "CONTAINER", "")).toEqual([
-      { name: "adguard-adguard-1", seen: true },
+      { name: "resolver-resolver-1", seen: true },
       { name: "web-1", seen: true },
     ]);
     expect(targetOptions(services, "HTTP", "")).toEqual([]);
@@ -59,7 +59,7 @@ describe("picked targets", () => {
   it("keeps a current target the server no longer shows", () => {
     expect(targetOptions(services, "CONTAINER", "old-db")).toEqual([
       { name: "old-db", seen: false },
-      { name: "adguard-adguard-1", seen: true },
+      { name: "resolver-resolver-1", seen: true },
       { name: "web-1", seen: true },
     ]);
     expect(targetOptions(services, "CONTAINER", "web-1")).toHaveLength(2);
@@ -75,7 +75,7 @@ describe("picked targets", () => {
   it("asks for a pick instead of a typed name", () => {
     expect(checkTargetProblem("CONTAINER", "")).toBe("Choose a container.");
     expect(checkTargetProblem("SERVICE", "")).toBe("Choose a service.");
-    expect(checkTargetProblem("CONTAINER", "adguard-adguard-1")).toBeNull();
+    expect(checkTargetProblem("CONTAINER", "resolver-resolver-1")).toBeNull();
   });
 });
 
@@ -96,9 +96,7 @@ describe("check targets", () => {
     expect(checkTargetProblem("HTTP", "ftp://example.com")).toBe(
       "Use a full URL starting with http:// or https://.",
     );
-    expect(checkTargetProblem("TCP", "example.com")).toBe(
-      "Use host:port, such as 127.0.0.1:5432.",
-    );
+    expect(checkTargetProblem("TCP", "example.com")).toBe("Use host:port.");
     expect(checkTargetProblem("TCP", "example.com:70000")).toBe(
       "The port must be between 1 and 65535.",
     );
@@ -146,21 +144,21 @@ describe("checks by server", () => {
       interval_seconds: 60,
     }) as NodeRecord;
   const nodes = [
-    server("io", "io"),
-    server("pv", "pivox"),
-    server("cl", "calisto"),
+    server("server-2", "server-2"),
+    server("pv", "server-1"),
+    server("cl", "server-3"),
     server("old", "old", 86_400_000),
     server("spare", "spare"),
   ];
   const checks = [
-    check("HTTP", { id: "blog", node_id: "io", name: "Blog" }),
+    check("HTTP", { id: "blog", node_id: "server-2", name: "Blog" }),
     check("HTTP", {
-      id: "umami",
-      node_id: "io",
-      name: "Umami",
+      id: "tracker",
+      node_id: "server-2",
+      name: "Tracker",
       status: "DOWN",
     }),
-    check("TCP", { id: "ssh", node_id: "io", name: "SSH" }),
+    check("TCP", { id: "ssh", node_id: "server-2", name: "SSH" }),
     check("SERVICE", { id: "tail", node_id: "pv", name: "tailscaled" }),
     check("SERVICE", {
       id: "pihole",
@@ -186,23 +184,25 @@ describe("checks by server", () => {
         group.checks.map((item) => item.name),
       ]),
     ).toEqual([
-      ["io", ["Umami", "Blog", "SSH"]],
-      ["pivox", ["Pi-hole", "tailscaled"]],
-      ["calisto", ["MinIO console", "postgresql"]],
+      ["server-2", ["Tracker", "Blog", "SSH"]],
+      ["server-1", ["Pi-hole", "tailscaled"]],
+      ["server-3", ["MinIO console", "postgresql"]],
       ["old", ["Old"]],
     ]);
   });
 
   it("puts a quarantined server last", () => {
     const quarantined = {
-      ...server("pv", "pivox"),
+      ...server("pv", "server-1"),
       quarantine: { at: before(60_000), why: "scan" },
     };
     expect(
-      checksByServer(checks, [quarantined, server("io", "io")], NOW).map(
-        (group) => group.node.name,
-      ),
-    ).toEqual(["io", "pivox"]);
+      checksByServer(
+        checks,
+        [quarantined, server("server-2", "server-2")],
+        NOW,
+      ).map((group) => group.node.name),
+    ).toEqual(["server-2", "server-1"]);
   });
 
   it("files each check under one status filter", () => {
@@ -235,15 +235,18 @@ describe("checks by server", () => {
     ).toBeNull();
     expect(
       shownTarget(
-        check("HTTP", { name: "Umami", target: "https://umami.kleavox.xyz/" }),
+        check("HTTP", {
+          name: "Tracker",
+          target: "https://tracker.example.org/",
+        }),
       ),
-    ).toBe("umami.kleavox.xyz");
+    ).toBe("tracker.example.org");
     expect(
       shownTarget(check("HTTP", { target: "http://10.0.0.2:8080/health" })),
     ).toBe("10.0.0.2:8080/health");
     expect(
-      shownTarget(check("TCP", { name: "SSH", target: "51.79.0.10:22" })),
-    ).toBe("51.79.0.10:22");
+      shownTarget(check("TCP", { name: "SSH", target: "198.51.100.10:22" })),
+    ).toBe("198.51.100.10:22");
   });
 });
 
@@ -297,7 +300,9 @@ describe("the Down box", () => {
     expect(
       autoRestartLine({ ...pihole, auto_restart: 0 }, [heal()], NOW),
     ).toBeNull();
-    expect(autoRestartLine(pihole, [heal({ nodeId: "io" })], NOW)).toBeNull();
+    expect(
+      autoRestartLine(pihole, [heal({ nodeId: "server-2" })], NOW),
+    ).toBeNull();
     expect(
       autoRestartLine(pihole, [heal({ action: "restart" })], NOW),
     ).toBeNull();
@@ -413,38 +418,40 @@ describe("a check's live status", () => {
 
 describe("dockerKindBlocker", () => {
   it("names why Docker is not offered", () => {
-    const io = (agent_version: string | null) => ({
-      name: "io",
+    const serverTwo = (agent_version: string | null) => ({
+      name: "server-2",
       agent_version,
     });
     expect(dockerKindBlocker("", undefined, undefined)).toBe(
       "Choose a Server First",
     );
-    expect(dockerKindBlocker("n1", io(null), undefined)).toBe(
+    expect(dockerKindBlocker("n1", serverTwo(null), undefined)).toBe(
       "Waiting for First Report",
     );
-    expect(dockerKindBlocker("n1", io("0.6.14"), "ready")).toBe(
+    expect(dockerKindBlocker("n1", serverTwo("0.6.14"), "ready")).toBe(
       "Needs agent 0.7.0",
     );
-    expect(dockerKindBlocker("n1", io("0.7.1"), "missing")).toBe(
-      "No Docker on io",
+    expect(dockerKindBlocker("n1", serverTwo("0.7.1"), "missing")).toBe(
+      "No Docker on server-2",
     );
-    expect(dockerKindBlocker("n1", io("0.7.1"), "no-compose")).toBeNull();
-    expect(dockerKindBlocker("n1", io("0.7.1"), null)).toBeNull();
+    expect(
+      dockerKindBlocker("n1", serverTwo("0.7.1"), "no-compose"),
+    ).toBeNull();
+    expect(dockerKindBlocker("n1", serverTwo("0.7.1"), null)).toBeNull();
   });
 });
 
 describe("checks in search", () => {
   it("finds a check by its name, its target or its server and opens it on Checks", () => {
-    const nodes = [{ id: "n1", name: "Pivox" }] as NodeRecord[];
+    const nodes = [{ id: "n1", name: "Server-1" }] as NodeRecord[];
     const [found] = checkCommands(
       [check("TCP", { name: "Mesh", target: "10.66.0.2:22" })],
       nodes,
     );
     expect(found).toEqual({
       key: "c1",
-      value: "Mesh check 10.66.0.2:22 Pivox",
-      label: "Mesh · Pivox",
+      value: "Mesh check 10.66.0.2:22 Server-1",
+      label: "Mesh · Server-1",
       to: "/checks?q=Mesh",
     });
   });

@@ -18,7 +18,7 @@ const (
 	laptopPrint    = "SHA256:lMKB0LebO8arH9OP7OBxvLF0veMl7Of0UHgkPdafFtQ"
 	phoneBlob      = "AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q"
 	passwordMarker = "pw-marker-5f3a"
-	sudoList       = "User musyaf may run the following commands on io:\n    (ALL : ALL) ALL\n"
+	sudoList       = "User user1 may run the following commands on server-2:\n    (ALL : ALL) ALL\n"
 )
 
 type fakeTerminal struct {
@@ -72,11 +72,11 @@ func adminServer(t *testing.T, release string) (Env, *fakeRun, *fakeTerminal) {
 	write(t, env, "/etc/passwd", "root:x:0:0:root:/root:/bin/bash\nwww:x:33:33::/var/www:/usr/sbin/nologin\n")
 	write(t, env, "/etc/group", "sudo:x:27:\nwheel:x:10:\n")
 	run.effects = map[string]func(){
-		"useradd -m -s /bin/bash musyaf": func() {
-			write(t, env, "/etc/passwd", read(env, "/etc/passwd")+"musyaf:x:1001:1001::/home/musyaf:/bin/bash\n")
+		"useradd -m -s /bin/bash user1": func() {
+			write(t, env, "/etc/passwd", read(env, "/etc/passwd")+"user1:x:1001:1001::/home/user1:/bin/bash\n")
 		},
 	}
-	run.respond["sudo -l -U musyaf"] = sudoList
+	run.respond["sudo -l -U user1"] = sudoList
 	return env, run, &fakeTerminal{run: run, answer: true, asked: true, password: passwordMarker}
 }
 
@@ -103,32 +103,32 @@ func TestAnAdminKeyIsReadFromItsBlob(t *testing.T) {
 func TestAnAdminUserIsMadeWithSudoAndTheKeys(t *testing.T) {
 	for release, group := range map[string]string{"": "sudo", "rocky": "wheel"} {
 		env, run, tty := adminServer(t, release)
-		result, err := AddAdmin(context.Background(), env, "musyaf", adminKeys(t), tty)
+		result, err := AddAdmin(context.Background(), env, "user1", adminKeys(t), tty)
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := []string{"useradd -m -s /bin/bash musyaf", "usermod -aG " + group + " musyaf", "tty passwd musyaf", "sudo -l -U musyaf"}
+		want := []string{"useradd -m -s /bin/bash user1", "usermod -aG " + group + " user1", "tty passwd user1", "sudo -l -U user1"}
 		if calls := adminCalls(run); !slices.Equal(calls, want) {
 			t.Fatalf("%s calls %q", release, calls)
 		}
 		if tty.askedAt != 0 || !strings.Contains(tty.printed.String(), laptopPrint) || !strings.Contains(tty.printed.String(), "Add them? [y/N] ") {
 			t.Fatalf("the keys come before any command: %d %q", tty.askedAt, tty.printed.String())
 		}
-		if result.Group != group || !result.Created || !slices.Equal(result.KeyFiles, []string{"/home/musyaf/.ssh/authorized_keys"}) {
+		if result.Group != group || !result.Created || !slices.Equal(result.KeyFiles, []string{"/home/user1/.ssh/authorized_keys"}) {
 			t.Fatalf("result %+v", result)
 		}
-		keys := read(env, "/home/musyaf/.ssh/authorized_keys")
+		keys := read(env, "/home/user1/.ssh/authorized_keys")
 		if keys != "ssh-ed25519 "+laptopBlob+" laptop\nssh-ed25519 "+phoneBlob+" phone\n" {
 			t.Fatalf("keys %q", keys)
 		}
-		if !slices.Contains(run.calls, "chown -R musyaf: "+env.path("/home/musyaf/.ssh")) {
+		if !slices.Contains(run.calls, "chown -R user1: "+env.path("/home/user1/.ssh")) {
 			t.Fatalf("calls %q", run.calls)
 		}
 		if runtime.GOOS != "windows" {
-			if info, _ := os.Stat(env.path("/home/musyaf/.ssh/authorized_keys")); info.Mode().Perm() != 0o600 {
+			if info, _ := os.Stat(env.path("/home/user1/.ssh/authorized_keys")); info.Mode().Perm() != 0o600 {
 				t.Fatalf("mode %v", info.Mode())
 			}
-			if info, _ := os.Stat(env.path("/home/musyaf/.ssh")); info.Mode().Perm() != 0o700 {
+			if info, _ := os.Stat(env.path("/home/user1/.ssh")); info.Mode().Perm() != 0o700 {
 				t.Fatalf("mode %v", info.Mode())
 			}
 		}
@@ -145,22 +145,22 @@ func TestAnAdminUserIsMadeWithSudoAndTheKeys(t *testing.T) {
 
 func TestAnExistingUserKeepsItsKeys(t *testing.T) {
 	env, run, tty := adminServer(t, "")
-	write(t, env, "/etc/passwd", read(env, "/etc/passwd")+"musyaf:x:1001:1001::/home/musyaf:/bin/bash\n")
-	write(t, env, "/home/musyaf/.ssh/authorized_keys", "ssh-rsa AAAAold desk\nssh-ed25519 "+laptopBlob+" laptop\n")
-	result, err := AddAdmin(context.Background(), env, "musyaf", adminKeys(t), tty)
+	write(t, env, "/etc/passwd", read(env, "/etc/passwd")+"user1:x:1001:1001::/home/user1:/bin/bash\n")
+	write(t, env, "/home/user1/.ssh/authorized_keys", "ssh-rsa AAAAold desk\nssh-ed25519 "+laptopBlob+" laptop\n")
+	result, err := AddAdmin(context.Background(), env, "user1", adminKeys(t), tty)
 	if err != nil || result.Created || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "useradd") }) {
 		t.Fatalf("result %+v %v %q", result, err, run.calls)
 	}
-	if keys := read(env, "/home/musyaf/.ssh/authorized_keys"); keys != "ssh-rsa AAAAold desk\nssh-ed25519 "+laptopBlob+" laptop\nssh-ed25519 "+phoneBlob+" phone\n" {
+	if keys := read(env, "/home/user1/.ssh/authorized_keys"); keys != "ssh-rsa AAAAold desk\nssh-ed25519 "+laptopBlob+" laptop\nssh-ed25519 "+phoneBlob+" phone\n" {
 		t.Fatalf("keys %q", keys)
 	}
 }
 
 func TestAnAdminUserIsSkippedWithoutAYes(t *testing.T) {
-	for asked, sentence := range map[bool]string{true: "the keys were not confirmed", false: "no terminal to type musyaf's password on"} {
+	for asked, sentence := range map[bool]string{true: "the keys were not confirmed", false: "no terminal to type user1's password on"} {
 		env, run, tty := adminServer(t, "")
 		tty.answer, tty.asked = false, asked
-		_, err := AddAdmin(context.Background(), env, "musyaf", adminKeys(t), tty)
+		_, err := AddAdmin(context.Background(), env, "user1", adminKeys(t), tty)
 		var skipped AdminSkipped
 		if !errors.As(err, &skipped) || err.Error() != sentence || len(run.calls) != 0 {
 			t.Fatalf("asked %v: %v %q", asked, err, run.calls)
@@ -171,11 +171,11 @@ func TestAnAdminUserIsSkippedWithoutAYes(t *testing.T) {
 func TestThreeFailedPasswordsLeaveTheUserLocked(t *testing.T) {
 	env, run, tty := adminServer(t, "")
 	tty.fails = 3
-	result, err := AddAdmin(context.Background(), env, "musyaf", adminKeys(t), tty)
-	if err == nil || err.Error() != "the password was not set. Run sudo kry admin-user musyaf later." {
+	result, err := AddAdmin(context.Background(), env, "user1", adminKeys(t), tty)
+	if err == nil || err.Error() != "the password was not set. Run sudo kry admin-user user1 later." {
 		t.Fatalf("err %v", err)
 	}
-	if calls := adminCalls(run); !slices.Equal(calls, []string{"useradd -m -s /bin/bash musyaf", "usermod -aG sudo musyaf", "tty passwd musyaf", "tty passwd musyaf", "tty passwd musyaf"}) {
+	if calls := adminCalls(run); !slices.Equal(calls, []string{"useradd -m -s /bin/bash user1", "usermod -aG sudo user1", "tty passwd user1", "tty passwd user1", "tty passwd user1"}) {
 		t.Fatalf("calls %q", calls)
 	}
 	if result.Group != "sudo" {
@@ -185,14 +185,14 @@ func TestThreeFailedPasswordsLeaveTheUserLocked(t *testing.T) {
 
 func TestSudoMustLetTheAdminIn(t *testing.T) {
 	env, run, tty := adminServer(t, "")
-	run.respond["sudo -l -U musyaf"] = "User musyaf is not allowed to run sudo on io.\n"
-	if _, err := AddAdmin(context.Background(), env, "musyaf", adminKeys(t), tty); err == nil || err.Error() != "it is in the sudo group but sudo does not let it in. Check /etc/sudoers." {
+	run.respond["sudo -l -U user1"] = "User user1 is not allowed to run sudo on server-2.\n"
+	if _, err := AddAdmin(context.Background(), env, "user1", adminKeys(t), tty); err == nil || err.Error() != "it is in the sudo group but sudo does not let it in. Check /etc/sudoers." {
 		t.Fatalf("err %v", err)
 	}
 }
 
 func TestRootAndSystemAccountsAreNotAdminUsers(t *testing.T) {
-	for name, sentence := range map[string]string{"root": "root cannot be the admin user", "www": "www is a system account on this server.", "Bad": "Bad is not a user name such as musyaf"} {
+	for name, sentence := range map[string]string{"root": "root cannot be the admin user", "www": "www is a system account on this server.", "Bad": "Bad is not a user name"} {
 		env, run, tty := adminServer(t, "")
 		if _, err := AddAdmin(context.Background(), env, name, adminKeys(t), tty); err == nil || err.Error() != sentence || len(run.calls) != 0 {
 			t.Fatalf("%s: %v %q", name, err, run.calls)

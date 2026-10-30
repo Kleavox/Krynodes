@@ -42,6 +42,12 @@ type Policy struct {
 	closeAt   int
 	needComma bool
 	indent    string
+
+	exitApproved   bool
+	approversAt    int
+	approversEmpty bool
+	exitAt         int
+	exitEmpty      bool
 }
 
 type scanned struct {
@@ -141,7 +147,7 @@ func trimLine(line string) string {
 
 func Read(src []byte) (Policy, error) {
 	s := scan(src)
-	p := Policy{Tags: []string{}, GrantsAt: -1, openComma: -1}
+	p := Policy{Tags: []string{}, GrantsAt: -1, openComma: -1, approversAt: -1, exitAt: -1}
 	broken := errors.New("Tailscale's policy file could not be read")
 	begin, end := -1, -1
 	for index, comment := range s.comments {
@@ -202,6 +208,10 @@ func Read(src []byte) (Policy, error) {
 			if _, err := decoder.Token(); err != nil {
 				return p, broken
 			}
+		case "autoApprovers":
+			if err := p.readApprovers(decoder); err != nil {
+				return p, broken
+			}
 		default:
 			var skip json.RawMessage
 			if err := decoder.Decode(&skip); err != nil {
@@ -234,6 +244,76 @@ func Read(src []byte) (Policy, error) {
 		}
 	}
 	return p, nil
+}
+
+func (p *Policy) readApprovers(decoder *json.Decoder) error {
+	broken := errors.New("autoApprovers")
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return broken
+	}
+	p.approversAt, p.approversEmpty = int(decoder.InputOffset()), !decoder.More()
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if token != "exitNode" {
+			var skip json.RawMessage
+			if err := decoder.Decode(&skip); err != nil {
+				return err
+			}
+			continue
+		}
+		if token, err := decoder.Token(); err != nil || token != json.Delim('[') {
+			return broken
+		}
+		p.exitAt, p.exitEmpty = int(decoder.InputOffset()), !decoder.More()
+		for decoder.More() {
+			var owner string
+			if err := decoder.Decode(&owner); err != nil {
+				return err
+			}
+			p.exitApproved = p.exitApproved || owner == Tag
+		}
+		if _, err := decoder.Token(); err != nil {
+			return err
+		}
+	}
+	_, err := decoder.Token()
+	return err
+}
+
+func ApproveExitNodes(src []byte) []byte {
+	p, err := Read(src)
+	if err != nil || !p.Kry || p.exitApproved {
+		return src
+	}
+	entry := `"exitNode": ["` + Tag + `"]`
+	at, text := p.closeAt, "\n"+p.indent+`"autoApprovers": {`+entry+"}"
+	switch {
+	case p.exitAt >= 0:
+		at, text = p.exitAt, `"`+Tag+`"`
+		if !p.exitEmpty {
+			text += ", "
+		}
+	case p.approversAt >= 0:
+		at, text = p.approversAt, entry
+		blank := scan(src).blank
+		next := at
+		for next < len(blank) && space(blank[next]) {
+			next++
+		}
+		switch {
+		case p.approversEmpty:
+		case bytes.IndexByte(src[at:next], '\n') >= 0:
+			text = "\n" + lineIndent(src, next, p.indent+p.indent) + text + ","
+		default:
+			text += ", "
+		}
+	case p.needComma:
+		text = "," + text
+	}
+	return slices.Concat(src[:at], []byte(text), src[at:])
 }
 
 func lineIndent(src []byte, at int, fallback string) string {

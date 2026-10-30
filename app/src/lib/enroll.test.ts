@@ -38,19 +38,34 @@ describe("setup sent with the enroll command", () => {
     });
   });
 
+  it("turns on SELinux or AppArmor only when it is ticked", () => {
+    const base = { recommended: false, docker: false, hour: 3, network: false };
+    expect(enrollSetup({ ...base, confine: true }, 0)).toEqual({
+      recommended: false,
+      docker: false,
+      rebootHour: null,
+      confine: true,
+    });
+    expect(enrollSetup({ ...base, confine: false }, 0)).toEqual({
+      recommended: false,
+      docker: false,
+      rebootHour: null,
+    });
+  });
+
   it("sends the admin user's name only when Add Admin User is ticked", () => {
     const base = { recommended: false, docker: false, hour: 3, network: false };
     expect(
-      enrollSetup({ ...base, adminUser: true, adminName: " musyaf " }, 0),
+      enrollSetup({ ...base, adminUser: true, adminName: " user1 " }, 0),
     ).toEqual({
       recommended: false,
       docker: false,
       rebootHour: null,
       adminUser: true,
-      adminName: "musyaf",
+      adminName: "user1",
     });
     expect(
-      enrollSetup({ ...base, adminUser: false, adminName: "musyaf" }, 0),
+      enrollSetup({ ...base, adminUser: false, adminName: "user1" }, 0),
     ).toEqual({ recommended: false, docker: false, rebootHour: null });
   });
 });

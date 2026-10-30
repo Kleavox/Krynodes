@@ -42,7 +42,7 @@ const getButton = (html: string) =>
     .find((part) => part.includes("Get Command"))!
     .split(">")[0]!;
 
-const form = (blocker: string | null, name = "musyaf") =>
+const form = (blocker: string | null, name = "user1") =>
   renderToStaticMarkup(
     <AdminUserForm
       keys={keys}
@@ -78,8 +78,8 @@ describe("Add Admin User on a server", () => {
   });
 
   it("shows the gate on an older agent with Update Agent", () => {
-    const html = form("Needs agent 0.7.1 · io runs 0.7.0");
-    expect(text(html)).toContain("Needs agent 0.7.1 · io runs 0.7.0");
+    const html = form("Needs agent 0.7.1 · server-2 runs 0.7.0");
+    expect(text(html)).toContain("Needs agent 0.7.1 · server-2 runs 0.7.0");
     expect(text(html)).toContain("Update Agent");
     expect(getButton(html)).toContain('disabled=""');
   });
@@ -94,10 +94,12 @@ describe("Add Admin User on a server", () => {
 
   it("gives the command to run on the server", () => {
     const html = renderToStaticMarkup(
-      <AdminCommandView nodeName="io" name="musyaf" />,
+      <AdminCommandView nodeName="server-2" name="user1" />,
     );
-    expect(text(html)).toContain("sudo kry admin-user musyaf");
-    expect(text(html)).toContain("asks for musyaf's password on io's screen");
+    expect(text(html)).toContain("sudo kry admin-user user1");
+    expect(text(html)).toContain(
+      "asks for user1's password on server-2's screen",
+    );
   });
 });
 
@@ -141,7 +143,7 @@ describe("Enroll a Server", () => {
   it("asks for this server's user name once Add Admin User is ticked", () => {
     const html = withQueries(
       <SetupOptions
-        value={{ ...setup, adminName: "musyaf" }}
+        value={{ ...setup, adminName: "user1" }}
         onChange={none}
         keys={keys}
       />,
@@ -150,7 +152,7 @@ describe("Enroll a Server", () => {
       "A sudo user that logs in with your 2 SSH keys from Enroll Defaults.",
     );
     expect(text(html)).toContain("User Name");
-    expect(nameField(html)).toContain('value="musyaf"');
+    expect(nameField(html)).toContain('value="user1"');
     expect(nameField(html)).not.toContain('disabled=""');
     const unticked = withQueries(
       <SetupOptions
@@ -176,7 +178,7 @@ describe("Enroll a Server", () => {
   it("keeps the admin user as it was once the command is made", () => {
     const html = withQueries(
       <SetupOptions
-        value={{ ...setup, adminName: "musyaf" }}
+        value={{ ...setup, adminName: "user1" }}
         onChange={none}
         keys={keys}
         adminLocked

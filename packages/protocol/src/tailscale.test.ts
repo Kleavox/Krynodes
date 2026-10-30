@@ -24,7 +24,7 @@ describe("Tailscale rules", () => {
   });
 
   it("names who reaches which server, and nothing for everything else", () => {
-    const pivox = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a93";
+    const serverOne = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a93";
     expect(
       ruleSchema.safeParse({
         from: "devices",
@@ -33,7 +33,8 @@ describe("Tailscale rules", () => {
       }).success,
     ).toBe(true);
     expect(
-      ruleSchema.safeParse({ from: pivox, to: pivox, ports: ["53"] }).success,
+      ruleSchema.safeParse({ from: serverOne, to: serverOne, ports: ["53"] })
+        .success,
     ).toBe(true);
     expect(ruleSchema.safeParse({ from: "devices", to: "rest" }).success).toBe(
       true,
@@ -57,7 +58,7 @@ describe("Tailscale rules", () => {
       timestamp: "2026-10-27T03:12:00Z",
       version: 1,
       type: "nodeCreated",
-      tailnet: "tail4d2a.ts.net",
+      tailnet: "tail0000.ts.net",
       message: "Node nas-7 created",
       data: { nodeID: "nXyZ", managedBy: "tag:kry" },
     };

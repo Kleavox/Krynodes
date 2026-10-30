@@ -11,6 +11,7 @@ import {
   agentConfigResponseSchema,
   agentHeartbeatSchema,
   checkResultSchema,
+  denialsSchema,
   heartbeatResponseSchema,
   isProtectedTarget,
   COMMAND_GRACE_MS,
@@ -52,7 +53,7 @@ describe("Krynodes Agent protocol v1", () => {
   it("accepts a heartbeat carrying check results, and one without, but no unknown status", () => {
     const heartbeat = {
       nodeId: fixture.nodeId,
-      hostname: "pivox",
+      hostname: "server-1",
       operatingSystem: "linux",
       architecture: "arm64",
       agentVersion: "0.3.0",
@@ -217,7 +218,7 @@ describe("service action messages", () => {
   const action = {
     id,
     kind: "docker",
-    name: "adguard",
+    name: "resolver",
     action: "restart",
     expiresAt: "2026-09-29T10:10:00.000Z",
     signed: signedCommand,
@@ -274,7 +275,7 @@ describe("service action messages", () => {
         agentActionSchema.safeParse({
           ...action,
           kind: "compose",
-          name: "uptime-kuma",
+          name: "panel",
           action: verb,
         }).success,
         verb,
@@ -299,7 +300,7 @@ describe("service action messages", () => {
       agentActionSchema.safeParse({
         ...unsigned,
         kind: "compose",
-        name: "uptime-kuma",
+        name: "panel",
         action: "create",
       }).success,
     ).toBe(false);
@@ -324,7 +325,7 @@ describe("service action messages", () => {
       agentActionSchema.safeParse({
         ...bare,
         kind: "docker",
-        name: "adguard",
+        name: "resolver",
         action: "heal",
       }).success,
     ).toBe(false);
@@ -336,7 +337,7 @@ describe("service action messages", () => {
       agentActionSchema.safeParse({
         ...action,
         kind: "compose",
-        name: "uptime-kuma",
+        name: "panel",
         action: "create",
         signed: { ...signedCommand, command },
       }).success,
@@ -436,8 +437,8 @@ describe("service action messages", () => {
       }).success,
     ).toBe(false);
     const removed = {
-      project: "kuma",
-      directory: "/var/lib/kry-exec/compose/kuma",
+      project: "panel",
+      directory: "/var/lib/kry-exec/compose/panel",
       removedAt: "2026-10-05T10:00:00.000Z",
     };
     expect(
@@ -449,7 +450,10 @@ describe("service action messages", () => {
     expect(
       agentActionsRequestSchema.safeParse({
         nodeId,
-        inventory: { ...inventory, removed: [{ ...removed, project: "Kuma" }] },
+        inventory: {
+          ...inventory,
+          removed: [{ ...removed, project: "Panel" }],
+        },
       }).success,
     ).toBe(false);
     expect(agentActionsRequestSchema.safeParse({ nodeId }).success).toBe(false);
@@ -532,7 +536,7 @@ describe("strict action messages", () => {
           {
             id,
             kind: "docker",
-            name: "adguard",
+            name: "resolver",
             action: "restart",
             expiresAt: "2026-09-29T10:10:00.000Z",
             command: "x",
@@ -572,7 +576,7 @@ describe("deploy messages", () => {
       agentActionSchema.safeParse({
         ...deploy,
         kind: "docker",
-        name: "adguard",
+        name: "resolver",
         action: "deploy",
       }).success,
     ).toBe(false);
@@ -726,7 +730,7 @@ describe("server restart messages", () => {
       agentActionSchema.safeParse({
         ...reboot,
         kind: "docker",
-        name: "adguard",
+        name: "resolver",
       }).success,
     ).toBe(false);
   });
@@ -870,8 +874,8 @@ describe("orchestration messages of agent 0.5.0", () => {
 
   it("reports a seal key, security findings, the vault and stack access", () => {
     const stack = {
-      project: "adguard",
-      directory: "/var/lib/kry-exec/compose/adguard",
+      project: "resolver",
+      directory: "/var/lib/kry-exec/compose/resolver",
       running: 1,
       total: 1,
       compose: true,
@@ -1019,8 +1023,8 @@ describe("orchestration messages of agent 0.5.0", () => {
 
   it("carries a stack's display name and container names", () => {
     const stack = {
-      project: "adguard-home",
-      directory: "/var/lib/kry-exec/compose/adguard-home",
+      project: "resolver",
+      directory: "/var/lib/kry-exec/compose/resolver",
       running: 1,
       total: 1,
       compose: true,
@@ -1029,12 +1033,12 @@ describe("orchestration messages of agent 0.5.0", () => {
     const accepts = (extra: Record<string, unknown>) =>
       stackEntrySchema.safeParse({ ...stack, ...extra }).success;
     expect(
-      accepts({ title: "AdGuard Home", names: { adguard: "adguard-home" } }),
+      accepts({ title: "Resolver", names: { resolver: "resolver" } }),
     ).toBe(true);
-    expect(accepts({ title: " AdGuard" })).toBe(false);
+    expect(accepts({ title: " Resolver" })).toBe(false);
     expect(accepts({ title: "x".repeat(65) })).toBe(false);
-    expect(accepts({ names: { adguard: "bad name" } })).toBe(false);
-    expect(accepts({ names: { "bad service": "adguard-home" } })).toBe(false);
+    expect(accepts({ names: { resolver: "bad name" } })).toBe(false);
+    expect(accepts({ names: { "bad service": "resolver" } })).toBe(false);
   });
 
   it("carries a stack's service names and a server's leftovers", () => {
@@ -1048,7 +1052,7 @@ describe("orchestration messages of agent 0.5.0", () => {
     };
     const accepts = (services: unknown) =>
       stackEntrySchema.safeParse({ ...stack, services }).success;
-    expect(accepts(["uptime-kuma", "db"])).toBe(true);
+    expect(accepts(["panel", "db"])).toBe(true);
     expect(accepts(["bad service"])).toBe(false);
     expect(accepts(Array(65).fill("db"))).toBe(false);
     const leftovers = (names: unknown) =>
@@ -1056,7 +1060,7 @@ describe("orchestration messages of agent 0.5.0", () => {
         nodeId: "3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b",
         inventory: { hash: "a".repeat(64), leftovers: names },
       }).success;
-    expect(leftovers(["adguard-home"])).toBe(true);
+    expect(leftovers(["resolver"])).toBe(true);
     expect(leftovers(["Bad Name"])).toBe(false);
     expect(leftovers(Array(51).fill("x"))).toBe(false);
   });
@@ -1064,12 +1068,12 @@ describe("orchestration messages of agent 0.5.0", () => {
 
 describe("stack names", () => {
   it("takes a display name with capitals and spaces", () => {
-    expect(stackTitleValid("AdGuard Home")).toBe(true);
+    expect(stackTitleValid("Resolver")).toBe(true);
     expect(stackTitleValid("Pi-hole · DNS")).toBe(true);
     expect(stackTitleValid("x".repeat(64))).toBe(true);
     expect(stackTitleValid("")).toBe(false);
-    expect(stackTitleValid(" AdGuard")).toBe(false);
-    expect(stackTitleValid("AdGuard ")).toBe(false);
+    expect(stackTitleValid(" Resolver")).toBe(false);
+    expect(stackTitleValid("Resolver ")).toBe(false);
     expect(stackTitleValid("x".repeat(65))).toBe(false);
     expect(stackTitleValid("Ad\nGuard")).toBe(false);
   });
@@ -1258,11 +1262,11 @@ describe("Tailscale rules messages of agent 0.7.0", () => {
   const report = {
     ...shared.tailscale,
     id: "nAbC123CNTRL",
-    tailnet: "tail4d2a.ts.net",
+    tailnet: "tail0000.ts.net",
     tags: ["tag:kry"],
     peers: 8,
     reach: [{ from: ["*"], ports: ["*"] }],
-    names: { "100.101.7.11": "io" },
+    names: { "100.101.7.11": "server-2" },
   };
 
   it("reads In Use Now without a signature and joins only with one", () => {
@@ -1304,6 +1308,37 @@ describe("Tailscale rules messages of agent 0.7.0", () => {
     }
   });
 
+  it("offers the server as an exit node and uses Tailscale DNS only with a signature", () => {
+    for (const action of ["exitnode", "dns"]) {
+      expect(parses({ action, signed: signedCommand }), action).toBe(true);
+      expect(parses({ action }), action).toBe(false);
+      expect(
+        parses({ action, name: "server", signed: signedCommand }),
+        action,
+      ).toBe(false);
+    }
+  });
+
+  it("reports the exit node and Tailscale DNS, or nothing when unread", () => {
+    expect(
+      accepts({
+        tailscale: {
+          ...report,
+          exitNode: { advertised: true, approved: false },
+          acceptDNS: false,
+        },
+      }),
+    ).toBe(true);
+    expect(
+      accepts({ tailscale: { ...report, exitNode: null, acceptDNS: null } }),
+    ).toBe(true);
+    expect(
+      accepts({
+        tailscale: { ...report, exitNode: { advertised: true } },
+      }),
+    ).toBe(false);
+  });
+
   it("reports who may reach the server, its tag and the credential's piece", () => {
     expect(accepts({ tailscale: report })).toBe(true);
     expect(accepts({ tailscale: { ...report, reach: null } })).toBe(true);
@@ -1324,5 +1359,191 @@ describe("Tailscale rules messages of agent 0.7.0", () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe("Firewall of agent 0.7.4", () => {
+  const nodeId = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a92";
+  const parses = (name: string, action: string, signed = true) =>
+    agentActionSchema.safeParse({
+      id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a93",
+      kind: "host",
+      name,
+      action,
+      expiresAt: "2026-10-29T10:10:00.000Z",
+      ...(signed ? { signed: signedCommand } : {}),
+    }).success;
+  const security = {
+    checkedAt: "2026-10-29T10:00:00.000Z",
+    findings: [],
+    recipes: ["firewall"],
+    lockdown: false,
+    rebootHour: null,
+  };
+  const accepts = (firewall: unknown) =>
+    agentActionsRequestSchema.safeParse({
+      nodeId,
+      inventory: { hash: "c".repeat(64), security: { ...security, firewall } },
+    }).success;
+
+  it("opens, closes and puts back only on the firewall, signed", () => {
+    for (const action of ["open", "close", "putback"]) {
+      expect(parses("firewall", action), action).toBe(true);
+      expect(parses("firewall", action, false), action).toBe(false);
+      expect(parses("server", action), action).toBe(false);
+      expect(parses("fail2ban", action), action).toBe(false);
+    }
+    expect(parses("firewall", "apply")).toBe(true);
+  });
+
+  it("reports what is open, what it keeps and what came from outside", () => {
+    const open = [
+      { port: 443, protocol: "tcp", from: "everyone" },
+      { port: 8443, protocol: "tcp", from: "tailscale" },
+      {
+        port: 53,
+        protocol: "udp",
+        from: "addresses",
+        addresses: ["203.0.113.0/24", "2001:db8::/32"],
+      },
+    ];
+    expect(
+      accepts({ closed: true, open, other: [], drift: ["allow 9999/tcp"] }),
+    ).toBe(true);
+    expect(accepts({ closed: false, open: [], other: ["allow OpenSSH"] })).toBe(
+      true,
+    );
+    expect(accepts(undefined)).toBe(true);
+    expect(
+      accepts({
+        closed: true,
+        open: [{ port: 0, protocol: "tcp", from: "everyone" }],
+        other: [],
+      }),
+    ).toBe(false);
+    expect(
+      accepts({
+        closed: true,
+        open: [{ port: 80, protocol: "tcp", from: "nobody" }],
+        other: [],
+      }),
+    ).toBe(false);
+    expect(
+      accepts({
+        closed: true,
+        open: [
+          {
+            port: 80,
+            protocol: "tcp",
+            from: "addresses",
+            addresses: Array.from({ length: 9 }, (_, i) => `203.0.113.${i}/32`),
+          },
+        ],
+        other: [],
+      }),
+    ).toBe(false);
+    expect(accepts({ closed: true, open: [], other: ["x".repeat(301)] })).toBe(
+      false,
+    );
+    expect(accepts({ closed: true, open: [] })).toBe(false);
+  });
+});
+
+describe("SELinux and AppArmor of agent 0.7.4", () => {
+  const nodeId = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a92";
+  const parses = (name: string, action: string, signed = true) =>
+    agentActionSchema.safeParse({
+      id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a93",
+      kind: "host",
+      name,
+      action,
+      expiresAt: "2026-10-29T10:10:00.000Z",
+      ...(signed ? { signed: signedCommand } : {}),
+    }).success;
+  const security = {
+    checkedAt: "2026-10-29T10:00:00.000Z",
+    findings: [],
+    recipes: ["confinement"],
+    lockdown: false,
+    rebootHour: null,
+  };
+  const accepts = (confinement: unknown) =>
+    agentActionsRequestSchema.safeParse({
+      nodeId,
+      inventory: {
+        hash: "c".repeat(64),
+        security: { ...security, confinement },
+      },
+    }).success;
+  const managed = {
+    system: "selinux",
+    mode: "enforcing",
+    enforced: null,
+    complain: null,
+    managed: true,
+    restart: false,
+    docker: true,
+  };
+  const line = {
+    at: "2026-10-29T09:58:00Z",
+    program: "cat",
+    wanted: "read shadow",
+    stack: "panel",
+  };
+
+  it("turns on, undoes and confines containers, signed", () => {
+    expect(parses("confinement", "apply")).toBe(true);
+    expect(parses("confinement", "undo")).toBe(true);
+    expect(parses("confinement", "containers")).toBe(true);
+    expect(parses("confinement", "containers", false)).toBe(false);
+    expect(parses("firewall", "containers")).toBe(false);
+    expect(parses("server", "containers")).toBe(false);
+  });
+
+  it("reports what the server has, managed or not", () => {
+    expect(accepts(managed)).toBe(true);
+    expect(
+      accepts({
+        system: null,
+        mode: null,
+        enforced: null,
+        complain: null,
+        managed: false,
+        restart: false,
+        docker: null,
+      }),
+    ).toBe(true);
+    expect(
+      accepts({
+        ...managed,
+        system: "apparmor",
+        mode: "kernel-off",
+        enforced: 3,
+        complain: 1,
+      }),
+    ).toBe(true);
+    expect(accepts({ ...managed, mode: "relaxed" })).toBe(false);
+    expect(accepts({ ...managed, denials: 2 })).toBe(false);
+  });
+
+  it("sends the denials with the heartbeat, at most twenty lines", () => {
+    expect(denialsSchema.safeParse({ count: 2, lines: [line] }).success).toBe(
+      true,
+    );
+    expect(denialsSchema.safeParse({ count: 0, lines: [] }).success).toBe(true);
+    expect(denialsSchema.safeParse({ count: -1, lines: [] }).success).toBe(
+      false,
+    );
+    expect(
+      denialsSchema.safeParse({ count: 21, lines: Array(21).fill(line) })
+        .success,
+    ).toBe(false);
+    expect(
+      denialsSchema.safeParse({
+        count: 1,
+        lines: [{ ...line, wanted: "x".repeat(301) }],
+      }).success,
+    ).toBe(false);
+    expect("denials" in agentHeartbeatSchema.shape).toBe(true);
   });
 });

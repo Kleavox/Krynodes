@@ -181,6 +181,8 @@ describe("the heartbeat carries what the server saw", () => {
       "sudo",
       "port",
       "rule",
+      "firewall",
+      "confinement",
     ]) {
       expect(eventSchema.safeParse({ ...event, kind }).success).toBe(true);
     }

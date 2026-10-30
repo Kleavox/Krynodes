@@ -68,6 +68,7 @@ describe("enroll defaults", () => {
       docker: true,
       hour: 3,
       network: false,
+      confine: false,
       keys: [],
     });
     const saved = await call("PUT", "/api/settings/enroll-defaults", {
@@ -83,6 +84,7 @@ describe("enroll defaults", () => {
       docker: false,
       hour: 22,
       network: false,
+      confine: false,
       keys: [],
     });
   });
@@ -122,7 +124,7 @@ describe("the SSH keys in enroll defaults", () => {
         line: LAPTOP,
         type: "ssh-ed25519",
         fingerprint: LAPTOP_PRINT,
-        label: "j5mus-laptop",
+        label: "user1-laptop",
       },
       {
         line: PHONE,
@@ -142,7 +144,7 @@ describe("the SSH keys in enroll defaults", () => {
       .run(
         JSON.stringify({
           ...defaults,
-          admin: { name: "musyaf", keys: [LAPTOP] },
+          admin: { name: "user1", keys: [LAPTOP] },
         }),
       );
     const read = (await (
@@ -196,7 +198,7 @@ describe("addresses that are not public", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
       code: "INVALID_RANGE",
-      message: "10.0.0/8 is not an address range, such as 10.8.0.0/24.",
+      message: "10.0.0/8 is not an address range written as address/bits.",
     });
     expect(
       (

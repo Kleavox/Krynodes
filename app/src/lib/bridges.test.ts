@@ -22,7 +22,7 @@ const report: BridgesReport = {
       subnet: "172.24.0.0/24",
       members: [
         {
-          project: "kuma",
+          project: "panel",
           service: "web",
           address: "172.24.0.3",
           offers: ["3001/tcp"],
@@ -37,7 +37,7 @@ const report: BridgesReport = {
         },
         {
           project: "adns",
-          service: "adguard",
+          service: "resolver",
           address: "172.24.0.2",
           offers: ["53/udp"],
           guest: false,
@@ -57,8 +57,8 @@ const report: BridgesReport = {
           guest: false,
         },
         {
-          project: "umami",
-          service: "umami",
+          project: "tracker",
+          service: "tracker",
           address: null,
           offers: [],
           guest: false,
@@ -68,12 +68,12 @@ const report: BridgesReport = {
     { name: "proxy", kind: "outside", subnet: "172.30.0.0/16", members: [] },
   ],
   taken: [
-    { range: "172.18.0.0/16", by: "kuma_default" },
+    { range: "172.18.0.0/16", by: "panel_default" },
     { range: "172.24.0.0/24", by: "apps-inner" },
     { range: "172.23.0.0/16", by: "default-env_public" },
     { range: "192.168.1.0/24", by: "eth0", own: true },
   ],
-  claimed: ["kuma_default"],
+  claimed: ["panel_default"],
 };
 
 const stack = (
@@ -97,16 +97,20 @@ const stack = (
   },
 });
 
-const kuma = stack("kuma", {
+const panel = stack("panel", {
   offers: ["apps-inner/web=3001/tcp"],
   peers: ["apps-inner/postgres.db:5432/tcp", "apps-inner/old.gone:80/tcp"],
 });
-const adns = stack("adns", { peers: ["apps-inner/web.kuma:3001/tcp"] });
+const adns = stack("adns", { peers: ["apps-inner/web.panel:3001/tcp"] });
 const db = {
   ...stack("db", { offers: ["apps-inner/postgres=5432/tcp"] }),
   access: "full" as const,
 };
-const io = { name: "io", bridges: report, stacks: [kuma, adns, db] };
+const serverTwo = {
+  name: "server-2",
+  bridges: report,
+  stacks: [panel, adns, db],
+};
 
 const joining = (network: string, service = "web", extra = "") => `services:
   ${service}:
@@ -133,14 +137,17 @@ describe("picking a free subnet", () => {
 
 describe("the subnet line", () => {
   const line = (input: string, privateRange: string | null = "10.88.0.0/24") =>
-    subnetLine(input, { name: "io", bridges: report }, privateRange);
+    subnetLine(input, { name: "server-2", bridges: report }, privateRange);
 
   it("says what Krynodes picks or that a typed one is free", () => {
     expect(line("")).toEqual({
       ok: true,
-      text: "Krynodes picks 172.24.1.0/24, free on io.",
+      text: "Krynodes picks 172.24.1.0/24, free on server-2.",
     });
-    expect(line("172.25.0.0/24")).toEqual({ ok: true, text: "✓ Free on io" });
+    expect(line("172.25.0.0/24")).toEqual({
+      ok: true,
+      text: "✓ Free on server-2",
+    });
   });
 
   it("refuses in the agent's order", () => {
@@ -148,10 +155,13 @@ describe("the subnet line", () => {
       ["172.25.0.0", "Write it as 172.24.0.0/24."],
       ["300.1.0.0/24", "Write it as 172.24.0.0/24."],
       ["172.25.0.5/24", "Write it as 172.25.0.0/24."],
-      ["172.18.5.0/24", "Overlaps kuma_default (172.18.0.0/16) on io."],
+      ["172.18.5.0/24", "Overlaps panel_default (172.18.0.0/16) on server-2."],
       ["10.88.0.0/16", "Overlaps your private network (10.88.0.0/24)."],
       ["100.64.1.0/24", "Overlaps Tailscale's addresses (100.64.0.0/10)."],
-      ["192.168.1.0/25", "Overlaps io's own network (192.168.1.0/24 on eth0)."],
+      [
+        "192.168.1.0/25",
+        "Overlaps server-2's own network (192.168.1.0/24 on eth0).",
+      ],
       [
         "8.8.8.0/24",
         "Use a private range: 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16.",
@@ -164,7 +174,7 @@ describe("the subnet line", () => {
   });
 
   it("shows -- and stays off before the server reports its networks", () => {
-    expect(subnetLine("", { name: "io", bridges: null }, null)).toEqual({
+    expect(subnetLine("", { name: "server-2", bridges: null }, null)).toEqual({
       ok: false,
       text: "--",
     });
@@ -173,16 +183,16 @@ describe("the subnet line", () => {
 
 describe("the name line", () => {
   it("takes a Docker network name nobody has", () => {
-    expect(nameLine("apps-inner", io)).toEqual({
+    expect(nameLine("apps-inner", serverTwo)).toEqual({
       ok: false,
-      text: "io already has a network named apps-inner.",
+      text: "server-2 already has a network named apps-inner.",
     });
-    expect(nameLine("-x", io).ok).toBe(false);
-    expect(nameLine("", io)).toEqual({
+    expect(nameLine("-x", serverTwo).ok).toBe(false);
+    expect(nameLine("", serverTwo)).toEqual({
       ok: false,
       text: "Letters, digits, dots, dashes and underscores.",
     });
-    expect(nameLine("shared.cache", io)).toEqual({
+    expect(nameLine("shared.cache", serverTwo)).toEqual({
       ok: true,
       text: "Letters, digits, dots, dashes and underscores.",
     });
@@ -190,7 +200,7 @@ describe("the name line", () => {
 
   it("names the stack that makes a network with that name itself", () => {
     const server = {
-      name: "io",
+      name: "server-2",
       bridges: { ...report, claimed: ["default-env_public", "orphan_net"] },
       stacks: [stack("default"), stack("default-env")],
     };
@@ -204,7 +214,7 @@ describe("the name line", () => {
       text: "The default-env stack makes its own public network with this name. Write external: true there, or pick another name.",
     });
     expect(nameLine("orphan_net", server).text).toBe(
-      "A stack on io makes its own network with this name. Write external: true there, or pick another name.",
+      "A stack on server-2 makes its own network with this name. Write external: true there, or pick another name.",
     );
   });
 });
@@ -224,21 +234,21 @@ networks:
     expect(composeLines(report.networks[0]!, "app")).toContain(
       "  apps-inner:\n    name: apps-inner\n",
     );
-    expect(composeNote("full", "io")).toBe(
-      "Only Full Access stacks on io can use it.",
+    expect(composeNote("full", "server-2")).toBe(
+      "Only Full Access stacks on server-2 can use it.",
     );
-    expect(composeNote("contained", "io")).toBe(
-      "Contained stacks on io join it; a Full Access stack joins as a guest.",
+    expect(composeNote("contained", "server-2")).toBe(
+      "Contained stacks on server-2 join it; a Full Access stack joins as a guest.",
     );
-    expect(composeNote("outside", "io")).toBe(
-      "Only Full Access stacks on io can use it.",
+    expect(composeNote("outside", "server-2")).toBe(
+      "Only Full Access stacks on server-2 can use it.",
     );
   });
 
   it("deletes only what nothing uses", () => {
     expect(deleteText(report.networks[1]!)).toEqual({
       title: "Delete default-env_public?",
-      body: "grafana and umami still use it. Take it out of their compose files first.",
+      body: "grafana and tracker still use it. Take it out of their compose files first.",
       ok: false,
     });
     expect(deleteText({ ...report.networks[0]!, members: [] })).toEqual({
@@ -252,13 +262,13 @@ networks:
 describe("network boxes in the stack dialog", () => {
   it("gives a Contained stack its offers and what it may reach", () => {
     expect(
-      networkBoxes(joining("apps-inner"), io, "kuma", "contained"),
+      networkBoxes(joining("apps-inner"), serverTwo, "panel", "contained"),
     ).toEqual([
       {
         name: "apps-inner",
         kind: "contained",
         guest: false,
-        address: "kuma's web is 172.24.0.3 here.",
+        address: "panel's web is 172.24.0.3 here.",
         offers: [{ service: "web", value: "3001/tcp" }],
         reach: [
           {
@@ -268,7 +278,7 @@ describe("network boxes in the stack dialog", () => {
             gone: false,
           },
           {
-            entry: "adguard.adns:53/udp",
+            entry: "resolver.adns:53/udp",
             guest: false,
             ticked: false,
             gone: false,
@@ -282,7 +292,7 @@ describe("network boxes in the stack dialog", () => {
 
   it("gives a Full Access stack a guest box with offers only", () => {
     expect(
-      networkBoxes(joining("apps-inner", "postgres"), io, "db", "full"),
+      networkBoxes(joining("apps-inner", "postgres"), serverTwo, "db", "full"),
     ).toEqual([
       {
         name: "apps-inner",
@@ -300,20 +310,24 @@ describe("network boxes in the stack dialog", () => {
   it("refuses a service whose name another stack already has on the network", () => {
     expect(
       networkBoxes(
-        joining("apps-inner", "adguard"),
-        io,
+        joining("apps-inner", "resolver"),
+        serverTwo,
         "pihole",
         "contained",
       )[0]!.refusal,
     ).toBe(
-      "apps-inner already has a service named adguard, from adns. Rename this one in the compose file.",
+      "apps-inner already has a service named resolver, from adns. Rename this one in the compose file.",
     );
   });
 
   it("tells a new service where its address comes from", () => {
     expect(
-      networkBoxes(joining("apps-inner", "app"), io, "status", "contained")[0]!
-        .address,
+      networkBoxes(
+        joining("apps-inner", "app"),
+        serverTwo,
+        "status",
+        "contained",
+      )[0]!.address,
     ).toBe("app gets an address from 172.24.0.0/24 when it starts.");
   });
 
@@ -322,15 +336,16 @@ describe("network boxes in the stack dialog", () => {
       text: string,
       project = "status",
       access: "contained" | "full" = "contained",
-    ) => networkBoxes(text, io, project, access).map((box) => box.refusal);
+    ) =>
+      networkBoxes(text, serverTwo, project, access).map((box) => box.refusal);
     expect(refusal(joining("default-env_public"))).toEqual([
       "A Contained stack cannot join default-env_public, a Full Access network.",
     ]);
     expect(refusal(joining("proxy"))).toEqual([
-      "proxy on io was not made by Krynodes as a Contained network. Create one under Docker Networks.",
+      "proxy on server-2 was not made by Krynodes as a Contained network. Create one under Docker Networks.",
     ]);
     expect(refusal(joining("shared-cache"))).toEqual([
-      "shared-cache is not on io. Create it under Docker Networks first.",
+      "shared-cache is not on server-2. Create it under Docker Networks first.",
     ]);
     expect(
       refusal(
@@ -356,13 +371,13 @@ describe("network boxes in the stack dialog", () => {
       "app runs 2 copies; a service on a Contained network runs one, so its address stays fixed.",
     ]);
     expect(
-      networkBoxes(joining("default-env_public"), io, "grafana", "full"),
+      networkBoxes(joining("default-env_public"), serverTwo, "grafana", "full"),
     ).toEqual([]);
     expect(
       networkBoxes(
         "services:\n  web:\n    image: x\n",
-        io,
-        "kuma",
+        serverTwo,
+        "panel",
         "contained",
       ),
     ).toEqual([]);
@@ -370,16 +385,16 @@ describe("network boxes in the stack dialog", () => {
 });
 
 describe("what the stack dialog sends for its networks", () => {
-  const kumaBoxes = networkBoxes(
+  const panelBoxes = networkBoxes(
     joining("apps-inner"),
-    io,
-    "kuma",
+    serverTwo,
+    "panel",
     "contained",
   );
 
   it("sends the offers and the ticked ports of other stacks", () => {
     expect(
-      stackNetworkArgs(kumaBoxes, {}, { "apps-inner/old.gone:80/tcp": false }),
+      stackNetworkArgs(panelBoxes, {}, { "apps-inner/old.gone:80/tcp": false }),
     ).toEqual({
       args: {
         offers: "apps-inner/web=3001/tcp",
@@ -389,16 +404,16 @@ describe("what the stack dialog sends for its networks", () => {
     });
     expect(
       stackNetworkArgs(
-        kumaBoxes,
+        panelBoxes,
         { "apps-inner/web": "3001/tcp, 9000/udp" },
         {
           "apps-inner/postgres.db:5432/tcp": false,
-          "apps-inner/adguard.adns:53/udp": true,
+          "apps-inner/resolver.adns:53/udp": true,
         },
       ).args,
     ).toEqual({
       offers: "apps-inner/web=3001/tcp,apps-inner/web=9000/udp",
-      peers: "apps-inner/adguard.adns:53/udp,apps-inner/old.gone:80/tcp",
+      peers: "apps-inner/resolver.adns:53/udp,apps-inner/old.gone:80/tcp",
     });
   });
 
@@ -409,7 +424,7 @@ describe("what the stack dialog sends for its networks", () => {
   it("sends only offers for a guest", () => {
     const boxes = networkBoxes(
       joining("apps-inner", "postgres"),
-      io,
+      serverTwo,
       "db",
       "full",
     );
@@ -423,39 +438,39 @@ describe("what the stack dialog sends for its networks", () => {
   it("stops at a refusal or a port that is not one", () => {
     expect(
       stackNetworkArgs(
-        networkBoxes(joining("proxy"), io, "status", "contained"),
+        networkBoxes(joining("proxy"), serverTwo, "status", "contained"),
         {},
         {},
       ).problem,
     ).toBe(
-      "proxy on io was not made by Krynodes as a Contained network. Create one under Docker Networks.",
+      "proxy on server-2 was not made by Krynodes as a Contained network. Create one under Docker Networks.",
     );
     expect(
-      stackNetworkArgs(kumaBoxes, { "apps-inner/web": "3001" }, {}).problem,
-    ).toBe("web offers 3001; write a port such as 3001/tcp.");
+      stackNetworkArgs(panelBoxes, { "apps-inner/web": "3001" }, {}).problem,
+    ).toBe("web offers 3001; write it as number/tcp.");
     expect(
-      stackNetworkArgs(kumaBoxes, { "apps-inner/web": "70000/tcp" }, {})
+      stackNetworkArgs(panelBoxes, { "apps-inner/web": "70000/tcp" }, {})
         .problem,
-    ).toBe("web offers 70000/tcp; write a port such as 3001/tcp.");
+    ).toBe("web offers 70000/tcp; write it as number/tcp.");
   });
 });
 
 describe("moving a stack that uses Krynodes networks", () => {
   const empty: BridgesReport = { networks: [], taken: [], claimed: [] };
-  const kumaMoving = {
-    ...kuma,
-    network: { ...kuma.network!, peers: ["apps-inner/postgres.db:5432/tcp"] },
+  const panelMoving = {
+    ...panel,
+    network: { ...panel.network!, peers: ["apps-inner/postgres.db:5432/tcp"] },
   };
-  const from = { ...io, stacks: [kumaMoving, adns, db] };
+  const from = { ...serverTwo, stacks: [panelMoving, adns, db] };
 
   it("creates the network first and says who loses what", () => {
     expect(
-      moveLines(kumaMoving, from, { name: "vps-2", bridges: empty }),
+      moveLines(panelMoving, from, { name: "vps-2", bridges: empty }),
     ).toEqual({
       lines: [
         "+ Creates apps-inner on vps-2 first · Contained · 172.24.0.0/24",
-        "kuma reaches postgres.db on apps-inner. db stays on io, so kuma loses that after the move.",
-        "adns reaches web.kuma on apps-inner. It loses that once kuma leaves io.",
+        "panel reaches postgres.db on apps-inner. db stays on server-2, so panel loses that after the move.",
+        "adns reaches web.panel on apps-inner. It loses that once panel leaves server-2.",
       ],
       refusal: null,
       creates: [
@@ -466,7 +481,7 @@ describe("moving a stack that uses Krynodes networks", () => {
 
   it("refuses a target whose network already has a service of that name", () => {
     expect(
-      moveLines(kumaMoving, from, {
+      moveLines(panelMoving, from, {
         name: "vps-2",
         bridges: {
           ...empty,
@@ -487,18 +502,18 @@ describe("moving a stack that uses Krynodes networks", () => {
 
   it("refuses a target whose subnet or name is taken", () => {
     expect(
-      moveLines(kumaMoving, from, {
+      moveLines(panelMoving, from, {
         name: "vps-2",
         bridges: {
           ...empty,
-          taken: [{ range: "172.24.0.0/16", by: "umami_default" }],
+          taken: [{ range: "172.24.0.0/16", by: "tracker_default" }],
         },
       }).refusal,
     ).toBe(
-      "apps-inner's subnet 172.24.0.0/24 overlaps umami_default (172.24.0.0/16) on vps-2. Move is off.",
+      "apps-inner's subnet 172.24.0.0/24 overlaps tracker_default (172.24.0.0/16) on vps-2. Move is off.",
     );
     expect(
-      moveLines(kumaMoving, from, {
+      moveLines(panelMoving, from, {
         name: "vps-2",
         bridges: {
           ...empty,
@@ -516,7 +531,7 @@ describe("moving a stack that uses Krynodes networks", () => {
       "vps-2 already has a network named apps-inner that Krynodes did not make. Move is off.",
     );
     expect(
-      moveLines(kumaMoving, from, {
+      moveLines(panelMoving, from, {
         name: "vps-2",
         bridges: {
           ...empty,

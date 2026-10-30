@@ -77,15 +77,15 @@ func newFakeAPI(t *testing.T) (*fakeAPI, *API) {
 func TestTheCredentialIsExchangedOnceForAToken(t *testing.T) {
 	fake, api := newFakeAPI(t)
 	fake.reply["GET /api/v2/tailnet/-/devices"] = `{"devices":[
-		{"id":"1","nodeId":"nA","name":"pivox.tail4d2a.ts.net","addresses":["100.101.7.20"],"tags":["tag:kry"],"advertisedRoutes":["192.168.1.0/24"]},
-		{"id":"2","nodeId":"nB","name":"laptop.tail4d2a.ts.net","addresses":["100.101.7.33"],"user":"owner@example.com"}]}`
+		{"id":"1","nodeId":"nA","name":"server-1.tail0000.ts.net","addresses":["100.101.7.20"],"tags":["tag:kry"],"advertisedRoutes":["192.168.1.0/24"]},
+		{"id":"2","nodeId":"nB","name":"laptop.tail0000.ts.net","addresses":["100.101.7.33"],"user":"owner@example.com"}]}`
 	fake.reply["GET /api/v2/tailnet/-/acl"] = "{\n  // mine\n}\n"
 	devices, err := api.Devices(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []Device{
-		{ID: "nA", Name: "pivox", Addresses: []string{"100.101.7.20"}, Tags: []string{"tag:kry"}, User: false, Routes: []string{"192.168.1.0/24"}},
+		{ID: "nA", Name: "server-1", Addresses: []string{"100.101.7.20"}, Tags: []string{"tag:kry"}, User: false, Routes: []string{"192.168.1.0/24"}},
 		{ID: "nB", Name: "laptop", Addresses: []string{"100.101.7.33"}, Tags: []string{}, User: true, Routes: []string{}},
 	}
 	if !reflect.DeepEqual(devices, want) {

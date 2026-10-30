@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/Kleavox/krynodes/agent/internal/config"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
 	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 )
@@ -153,7 +157,7 @@ func (e Executor) savePolicy(ctx context.Context, request Request, command Comma
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	next := tailscale.Splice(body, policy, lines, args["expected"] == "")
+	next := tailscale.ApproveExitNodes(tailscale.Splice(body, policy, lines, args["expected"] == ""))
 	if err := api.Validate(ctx, next); err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -198,4 +202,159 @@ func (e Executor) joinTailnet(ctx context.Context, request Request) Result {
 		Addresses []string `json:"addresses"`
 		Name      *string  `json:"name"`
 	}{status.ID, status.Addresses, status.Name}, true)
+}
+
+const (
+	exitNodeConf = "/etc/sysctl.d/99-krynodes-exit-node.conf"
+	forwarding   = "net.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n"
+	dnsSettle    = 20 * time.Second
+	dnsEvery     = 2 * time.Second
+)
+
+func onOff(args map[string]string) (bool, error) {
+	switch args["on"] {
+	case "1":
+		return true, nil
+	case "0":
+		return false, nil
+	}
+	return false, errors.New("turn it on or off")
+}
+
+func (e Executor) onTailnet(ctx context.Context, args map[string]string) (bool, error) {
+	on, err := onOff(args)
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(e.path(tailscale.Binary)); err != nil {
+		return false, errors.New("tailscale is not installed")
+	}
+	if tailscale.Status(ctx, tailscale.Runner(e.Run)).State != "running" {
+		return false, errors.New("this server is not on a tailnet")
+	}
+	return on, nil
+}
+
+func (e Executor) sysctl(ctx context.Context) error {
+	if output, _, err := e.Run(ctx, "sysctl", "--system"); err != nil {
+		return fmt.Errorf("sysctl --system: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func (e Executor) exitNode(ctx context.Context, request Request, command Command) Result {
+	on, err := e.onTailnet(ctx, command.Args)
+	if err != nil {
+		return e.refuse(request.ID, err)
+	}
+	run, file := tailscale.Runner(e.Run), e.path(exitNodeConf)
+	if !on {
+		if err := tailscale.Set(ctx, run, "--advertise-exit-node=false"); err != nil {
+			return e.refuse(request.ID, err)
+		}
+		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return e.failed(request, err, "")
+		}
+		if err := e.sysctl(ctx); err != nil {
+			log.Printf("exit node off: %v", err)
+		}
+		if err := e.masquerade(ctx, false); err != nil {
+			log.Printf("exit node off: %v", err)
+		}
+		return Result{ID: request.ID, OK: true, Output: "no longer an exit node", FinishedAt: e.stamp()}
+	}
+	if err := writeWhole(filepath.Dir(file), filepath.Base(file), []byte(forwarding), 0o644); err != nil {
+		return e.failed(request, err, "")
+	}
+	err = e.sysctl(ctx)
+	if err == nil {
+		err = e.masquerade(ctx, true)
+	}
+	if err == nil {
+		err = tailscale.Set(ctx, run, "--advertise-exit-node=true")
+	}
+	if err != nil {
+		os.Remove(file)
+		e.sysctl(ctx)
+		e.masquerade(ctx, false)
+		return e.refuse(request.ID, err)
+	}
+	return Result{ID: request.ID, OK: true, Output: "offered as an exit node", FinishedAt: e.stamp()}
+}
+
+func (e Executor) tailscaleDNS(ctx context.Context, request Request, command Command) Result {
+	on, err := e.onTailnet(ctx, command.Args)
+	if err != nil {
+		return e.refuse(request.ID, err)
+	}
+	run := tailscale.Runner(e.Run)
+	if !on {
+		if err := tailscale.Set(ctx, run, "--accept-dns=false"); err != nil {
+			return e.refuse(request.ID, err)
+		}
+		return Result{ID: request.ID, OK: true, Output: "no longer uses Tailscale DNS", FinishedAt: e.stamp()}
+	}
+	cfg, err := config.Load(e.ConfigPath)
+	if err != nil {
+		return e.failed(request, err, "")
+	}
+	endpoint, err := url.Parse(cfg.Endpoint)
+	if err != nil {
+		return e.failed(request, err, "")
+	}
+	host := endpoint.Hostname()
+	if err := tailscale.Set(ctx, run, "--accept-dns=true"); err != nil {
+		return e.refuse(request.ID, err)
+	}
+	if e.resolves(ctx, host) {
+		return Result{ID: request.ID, OK: true, Output: "uses Tailscale DNS", FinishedAt: e.stamp()}
+	}
+	failure := fmt.Errorf("Tailscale DNS was turned back off: this server could not resolve %s with it.", host)
+	if err := tailscale.Set(ctx, run, "--accept-dns=false"); err != nil {
+		failure = fmt.Errorf("this server could not resolve %s with Tailscale DNS, and turning it back off failed: %w", host, err)
+	}
+	return e.refuse(request.ID, failure)
+}
+
+func (e Executor) resolves(ctx context.Context, host string) bool {
+	timeout, every := e.HealthTimeout, e.HealthEvery
+	if timeout == 0 {
+		timeout = dnsSettle
+	}
+	if every == 0 {
+		every = dnsEvery
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	lookup := e.lookupIP()
+	for {
+		if addresses, err := lookup(ctx, host); err == nil && len(addresses) > 0 {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(every):
+		}
+	}
+}
+
+func (e Executor) leaveExitNodeWhenQuarantined(ctx context.Context) {
+	if e.QuarantineMark == "" {
+		return
+	}
+	if _, err := os.Stat(e.QuarantineMark); err != nil {
+		return
+	}
+	if _, err := os.Stat(e.path(exitNodeConf)); err != nil {
+		return
+	}
+	if err := tailscale.Set(ctx, tailscale.Runner(e.Run), "--advertise-exit-node=false"); err != nil {
+		log.Printf("quarantined exit node: %v", err)
+		return
+	}
+	os.Remove(e.path(exitNodeConf))
+	if err := e.masquerade(ctx, false); err != nil {
+		log.Printf("quarantined exit node: %v", err)
+	}
 }

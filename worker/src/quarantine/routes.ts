@@ -12,7 +12,7 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import { createBatch, sweepStatements } from "../actions/store";
-import { pokeSoon } from "../fleet/client";
+import { fleetDenials, pokeSoon } from "../fleet/client";
 import { decodeJson, toB64url } from "../lib/b64url";
 import { assertionUv } from "../lib/webauthn";
 import { changeStatement } from "../routes/network";
@@ -30,7 +30,15 @@ import { warningOf } from "./events";
 import { quarantine, trustedBy, type Timeline } from "./quarantine";
 import { readSettings, settingsText, writeSettings } from "./settings";
 
-const ACCEPTS = ["ssh-key", "ssh-login", "user", "sudo", "port"];
+const ACCEPTS = [
+  "ssh-key",
+  "ssh-login",
+  "user",
+  "sudo",
+  "port",
+  "firewall",
+  "confinement",
+];
 
 const SHORT: Record<string, string> = {
   "ssh-key": "new key",
@@ -39,6 +47,8 @@ const SHORT: Record<string, string> = {
   sudo: "new sudo rule",
   port: "new port",
   rule: "removed rule",
+  firewall: "new firewall rule",
+  confinement: "denial",
   quiet: "quiet agent",
 };
 
@@ -324,6 +334,20 @@ export function registerQuarantineRoutes(
     },
   );
 
+  app.get("/api/nodes/:id/denials", requireOperator, async (context) => {
+    const node = await ownedNode(context, context.req.param("id"));
+    if (!node) return notFound(context);
+    const held = await fleetDenials(
+      context.env,
+      context.get("identity").id,
+      node.id,
+    );
+    return context.json({
+      count: held?.count ?? null,
+      lines: held?.lines ?? [],
+    });
+  });
+
   app.get("/api/nodes/:id/quarantine", requireOperator, async (context) => {
     const db = context.env.DB;
     const owner = context.get("identity").id;
@@ -346,10 +370,16 @@ export function registerQuarantineRoutes(
         }>(),
       db
         .prepare(
-          "SELECT project, at, tried, count FROM stopped_stacks WHERE node_id = ? ORDER BY project",
+          "SELECT project, at, tried, count, why FROM stopped_stacks WHERE node_id = ? ORDER BY project",
         )
         .bind(node.id)
-        .all<{ project: string; at: string; tried: string; count: number }>(),
+        .all<{
+          project: string;
+          at: string;
+          tried: string;
+          count: number;
+          why: string | null;
+        }>(),
       db
         .prepare(
           "SELECT project FROM stacks WHERE node_id = ? ORDER BY project",
@@ -439,6 +469,7 @@ export function registerQuarantineRoutes(
         at: stack.at,
         tried: parsed<string[]>(stack.tried, []),
         count: stack.count,
+        ...(stack.why === "confinement" ? { why: "confinement" } : {}),
       })),
       changeThese: {
         stacks: stacks.results.map((stack) => stack.project),

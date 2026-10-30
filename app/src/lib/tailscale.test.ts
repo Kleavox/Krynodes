@@ -11,6 +11,10 @@ import {
   changedLines,
   connectSteps,
   disconnectSteps,
+  dnsLine,
+  dnsText,
+  exitNodeLine,
+  exitNodeText,
   joinedLines,
   joinSteps,
   keepChange,
@@ -42,8 +46,8 @@ const TABLET = "100.101.7.32";
 const IPAD = "100.101.7.40";
 const TV = "100.101.7.41";
 const NAME: Record<string, string> = {
-  [P]: "pivox",
-  [I]: "io",
+  [P]: "server-1",
+  [I]: "server-2",
   [V1]: "vps-1",
   [V2]: "vps-2",
   [V4]: "vps-4",
@@ -66,35 +70,35 @@ const server = (
   report: {
     state: "running",
     addresses: [ADDRESS[nodeId]!],
-    name: `${NAME[nodeId]}.tail4d2a.ts.net`,
+    name: `${NAME[nodeId]}.tail0000.ts.net`,
     keyExpiry: null,
     id: `n${NAME[nodeId]!.replace("-", "")}CNTRL`,
-    tailnet: "tail4d2a.ts.net",
+    tailnet: "tail0000.ts.net",
     tags: ["tag:kry"],
     peers: 8,
     reach: [{ from: [LAPTOP, PHONE], ports: ["22/tcp"] }],
-    names: { [IPAD]: "ipad", [TV]: "tv", [ADDRESS[I]!]: "io" },
+    names: { [IPAD]: "ipad", [TV]: "tv", [ADDRESS[I]!]: "server-2" },
     ...over,
   },
   vault: { set: SET, holders: 4 },
   signedIn: false,
 });
 
-const PIVOX_REACH = [
+const SERVER_ONE_REACH = [
   { from: [LAPTOP, PHONE, TABLET], ports: ["22/tcp", "53", "80/tcp"] },
   { from: [ADDRESS[I]!], ports: ["53/udp"] },
   { from: [IPAD, TV], ports: ["80/tcp"] },
 ];
 
 const SERVERS = [
-  server(P, { reach: PIVOX_REACH }),
+  server(P, { reach: SERVER_ONE_REACH }),
   server(I),
   server(V1),
   server(V2),
 ];
 
 const CONNECTED: TailnetConnected = {
-  tailnet: "tail4d2a.ts.net",
+  tailnet: "tail0000.ts.net",
   clientId: "kT9xQ2hN4CNTRL",
   setId: SET,
   rules: [
@@ -125,10 +129,10 @@ const listener = (
 const LISTENERS = {
   [P]: [
     listener("0.0.0.0", 22, "tcp", "sshd"),
-    listener("0.0.0.0", 53, "tcp", "AdGuardHome"),
-    listener("0.0.0.0", 53, "udp", "AdGuardHome"),
-    listener("::", 80, "tcp", "AdGuardHome"),
-    listener("0.0.0.0", 3000, "tcp", "AdGuardHome"),
+    listener("0.0.0.0", 53, "tcp", "Resolver"),
+    listener("0.0.0.0", 53, "udp", "Resolver"),
+    listener("::", 80, "tcp", "Resolver"),
+    listener("0.0.0.0", 3000, "tcp", "Resolver"),
     listener("0.0.0.0", 41641, "udp", "tailscaled"),
     listener("127.0.0.1", 5353, "udp", "resolved"),
     listener("10.88.0.4", 9000, "tcp", "app"),
@@ -168,21 +172,21 @@ async function serverKey() {
 describe("before Connect", () => {
   it("is amber only when some server lets every device reach every port", () => {
     expect(beforeConnect(OPEN)).toEqual({
-      heading: "Tailscale tail4d2a.ts.net",
+      heading: "Tailscale tail0000.ts.net",
       title:
         "Every device on your tailnet can reach every port on your servers",
       note: "Each server reads this from its own Tailscale. It comes from the default rule in your policy file.",
       rows: [
         {
           nodeId: P,
-          name: "pivox",
+          name: "server-1",
           address: "100.101.7.20",
           devices: "8 devices",
           ports: "All ports",
         },
         {
           nodeId: I,
-          name: "io",
+          name: "server-2",
           address: "100.101.7.11",
           devices: "8 devices",
           ports: "All ports",
@@ -232,10 +236,10 @@ describe("Start With These Rules", () => {
       rows.map((row) => [row.from, row.to, row.ports, row.ticked, row.locked]),
     ).toEqual([
       ["Your devices", "All servers", "22/tcp", true, false],
-      ["Your devices", "pivox", "53 · 80/tcp", true, false],
-      ["Your devices", "pivox", "3000/tcp", false, false],
-      ["Your devices", "io", "8080/tcp", false, false],
-      ["io", "pivox", "53/udp", true, false],
+      ["Your devices", "server-1", "53 · 80/tcp", true, false],
+      ["Your devices", "server-1", "3000/tcp", false, false],
+      ["Your devices", "server-2", "8080/tcp", false, false],
+      ["server-2", "server-1", "53/udp", true, false],
       ["Your servers", "your devices", "Never", false, true],
     ]);
     expect(rows.map((row) => row.inUse)).toEqual([
@@ -274,13 +278,13 @@ describe("Start With These Rules", () => {
     const ticked = rows.filter((row) => row.ticked).map((row) => row.id);
     expect(losesAccess(OPEN, rows, ticked)).toEqual([
       "Every server → your devices",
-      "Servers → each other, except io → pivox 53/udp",
-      "Your devices → pivox 3000/tcp, io 8080/tcp, and every other port",
+      "Servers → each other, except server-2 → server-1 53/udp",
+      "Your devices → server-1 3000/tcp, server-2 8080/tcp, and every other port",
     ]);
     expect(losesAccess(OPEN, rows, [])).toEqual([
       "Every server → your devices",
       "Servers → each other",
-      "Your devices → all servers 22/tcp, pivox 53 · 80/tcp, pivox 3000/tcp, io 8080/tcp, and every other port",
+      "Your devices → all servers 22/tcp, server-1 53 · 80/tcp, server-1 3000/tcp, server-2 8080/tcp, and every other port",
     ]);
   });
 });
@@ -297,14 +301,14 @@ describe("the Network page once connected", () => {
       },
       {
         index: 2,
-        route: "Your devices → pivox",
+        route: "Your devices → server-1",
         ports: "53 · 80/tcp",
         locked: false,
         editable: true,
       },
       {
         index: 3,
-        route: "io → pivox",
+        route: "server-2 → server-1",
         ports: "53/udp",
         locked: false,
         editable: true,
@@ -342,18 +346,21 @@ describe("the Network page once connected", () => {
     expect(outsideRows(CONNECTED, SERVERS)).toEqual([
       {
         id: `${P}:${IPAD},${TV}`,
-        route: "ipad, tv → pivox",
+        route: "ipad, tv → server-1",
         ports: "80/tcp",
       },
     ]);
     expect(
       outsideRows(CONNECTED, [
         server(P, {
-          reach: [...PIVOX_REACH, { from: ["*"], ports: ["*"] }],
+          reach: [...SERVER_ONE_REACH, { from: ["*"], ports: ["*"] }],
         }),
         ...SERVERS.slice(1),
       ]).map((row) => `${row.route} · ${row.ports}`),
-    ).toEqual(["ipad, tv → pivox · 80/tcp", "Everyone → pivox · every port"]);
+    ).toEqual([
+      "ipad, tv → server-1 · 80/tcp",
+      "Everyone → server-1 · every port",
+    ]);
   });
 
   it("names who may reach a server, one source per line", () => {
@@ -365,7 +372,7 @@ describe("the Network page once connected", () => {
           ports: "22/tcp · 53 · 80/tcp",
           outside: false,
         },
-        { source: "io", ports: "53/udp", outside: false },
+        { source: "server-2", ports: "53/udp", outside: false },
         { source: "ipad, tv", ports: "80/tcp", outside: true },
       ],
     });
@@ -381,7 +388,7 @@ describe("the Network page once connected", () => {
     expect(
       applied(
         server(P, {
-          reach: [...PIVOX_REACH, { from: ["*"], ports: ["*"] }],
+          reach: [...SERVER_ONE_REACH, { from: ["*"], ports: ["*"] }],
         }),
         CONNECTED,
         SERVERS,
@@ -392,7 +399,7 @@ describe("the Network page once connected", () => {
         server(P, {
           reach: [
             { from: [LAPTOP, PHONE], ports: ["22/tcp", "53"] },
-            ...PIVOX_REACH.slice(1),
+            ...SERVER_ONE_REACH.slice(1),
           ],
         }),
         CONNECTED,
@@ -410,7 +417,7 @@ describe("the Network page once connected", () => {
       {
         nodeId: I,
         title: "Tailscale Rules not applied yet",
-        text: "io's Tailscale has not taken the rules saved 6 minutes ago. Is tailscaled running?",
+        text: "server-2's Tailscale has not taken the rules saved 6 minutes ago. Is tailscaled running?",
       },
     ]);
   });
@@ -421,7 +428,7 @@ describe("the Network page once connected", () => {
         '{"src":["autogroup:member"],"dst":["100.101.7.20","fd7a:115c:a1e0::20"],"ip":["tcp:53","udp:53","tcp:80"]}',
         [server(P, { addresses: ["100.101.7.20", "fd7a:115c:a1e0::20"] })],
       ),
-    ).toBe("Your devices → pivox · 53 · 80/tcp");
+    ).toBe("Your devices → server-1 · 53 · 80/tcp");
     expect(
       ruleText(
         `{"src":["100.101.7.44"],"dst":["100.101.7.10","100.101.7.11","100.101.7.12","100.101.7.20"],"ip":["*"]}`,
@@ -433,7 +440,7 @@ describe("the Network page once connected", () => {
     );
     expect(ruleText("not a grant", SERVERS)).toBe("not a grant");
     expect(ruleText({ from: I, to: P, ports: ["53/udp"] }, SERVERS)).toBe(
-      "io → pivox · 53/udp",
+      "server-2 → server-1 · 53/udp",
     );
     expect(ruleText({ from: "devices", to: "rest" }, SERVERS)).toBe(
       "Your devices → everything except your servers",
@@ -451,7 +458,7 @@ describe("the Network page once connected", () => {
             id: "a",
             kind: "device",
             at: "2026-10-26T20:12:00Z",
-            device: { name: "nas-7.tail4d2a.ts.net", tag: "tag:kry" },
+            device: { name: "nas-7.tail0000.ts.net", tag: "tag:kry" },
           },
           {
             id: "b",
@@ -473,7 +480,7 @@ describe("the Network page once connected", () => {
       {
         id: "a",
         title: "nas-7",
-        detail: "nas-7.tail4d2a.ts.net",
+        detail: "nas-7.tail0000.ts.net",
         tag: "tag:kry",
         text: "Joined at 03:12 with your servers' tag, but Krynodes never signed it in. Your rules give it nothing. Enroll it, or remove it in Tailscale's admin console.",
         lines: [],
@@ -495,27 +502,27 @@ describe("the Network page once connected", () => {
   it("says what a new rule does and what a removed one stops", () => {
     expect(
       addRuleEffect({ from: "devices", to: P, ports: ["3000/tcp"] }, SERVERS),
-    ).toBe("Your devices can now reach pivox on 3000/tcp.");
+    ).toBe("Your devices can now reach server-1 on 3000/tcp.");
     expect(
       addRuleEffect(
         { from: I, to: "servers", ports: ["22/tcp", "9100/tcp"] },
         SERVERS,
       ),
-    ).toBe("io can now reach all servers on 22/tcp and 9100/tcp.");
+    ).toBe("server-2 can now reach all servers on 22/tcp and 9100/tcp.");
     expect(
       removeText({ from: I, to: P, ports: ["53/udp"] }, SERVERS, [P, V1, V2]),
     ).toEqual({
-      title: "Remove io → pivox?",
-      body: "io can no longer reach pivox on 53/udp over Tailscale. io is not on your private network, so its DNS lookups to pivox stop.",
+      title: "Remove server-2 → server-1?",
+      body: "server-2 can no longer reach server-1 on 53/udp over Tailscale. server-2 is not on your private network, so its DNS lookups to server-1 stop.",
     });
     expect(
       removeText({ from: P, to: I, ports: ["8080/tcp"] }, SERVERS, [I]).body,
     ).toBe(
-      "pivox can no longer reach io on 8080/tcp over Tailscale. pivox is not on your private network, so its connections to io on 8080/tcp stop.",
+      "server-1 can no longer reach server-2 on 8080/tcp over Tailscale. server-1 is not on your private network, so its connections to server-2 on 8080/tcp stop.",
     );
     expect(
       removeText({ from: I, to: P, ports: ["53/udp"] }, SERVERS, [I, P]).body,
-    ).toBe("io can no longer reach pivox on 53/udp over Tailscale.");
+    ).toBe("server-2 can no longer reach server-1 on 53/udp over Tailscale.");
     expect(
       removeText(
         { from: "devices", to: "servers", ports: ["22/tcp"] },
@@ -531,7 +538,7 @@ describe("the Network page once connected", () => {
   it("says a server signed in with a one-time key is on the tailnet", () => {
     const joined = server(V4, {
       addresses: ["100.101.7.13"],
-      name: "vps-4.tail4d2a.ts.net",
+      name: "vps-4.tail0000.ts.net",
     });
     expect(
       joinedLines(joined.report!, "vps-4", CONNECTED, [...SERVERS, joined]),
@@ -542,7 +549,7 @@ describe("the Network page once connected", () => {
       lines: [
         {
           mark: "✓",
-          title: "100.101.7.13 · vps-4.tail4d2a.ts.net",
+          title: "100.101.7.13 · vps-4.tail0000.ts.net",
           detail: [],
         },
         {
@@ -577,7 +584,7 @@ describe("the steps", () => {
     const input = {
       secret: "tskey-client-k1",
       set: SET,
-      tailnet: "tail4d2a.ts.net",
+      tailnet: "tail0000.ts.net",
       clientId: "kT9xQ2hN4CNTRL",
       webhookSecret: "whsec",
     };
@@ -591,7 +598,7 @@ describe("the steps", () => {
       holders: [...one, { nodeId: I, sealKey: await serverKey() }],
     });
     expect(two.ok && two.tailscale).toEqual({
-      tailnet: "tail4d2a.ts.net",
+      tailnet: "tail0000.ts.net",
       clientId: "kT9xQ2hN4CNTRL",
       webhookSecret: "whsec",
     });
@@ -727,8 +734,8 @@ describe("a changed Krynodes rule", () => {
 
   it("shows what was taken out and put in, in words", () => {
     expect(changedLines(SAVED, NOW, SERVERS)).toEqual([
-      "- Your devices → pivox · 53 · 80/tcp",
-      "+ Your devices → pivox · 53 · 80/tcp · 3000/tcp",
+      "- Your devices → server-1 · 53 · 80/tcp",
+      "+ Your devices → server-1 · 53 · 80/tcp · 3000/tcp",
     ]);
   });
 
@@ -778,7 +785,7 @@ describe("Add Rule and Edit Rule", () => {
 
   it("offers what listens on the target with its process, apart from what is allowed already", () => {
     expect(form({ ticked: ["3000/tcp"], other: " 9100/tcp " })).toEqual({
-      options: [{ port: "3000/tcp", process: "AdGuardHome" }],
+      options: [{ port: "3000/tcp", process: "Resolver" }],
       allowed: ["22/tcp", "53", "80/tcp"],
       rule: { from: "devices", to: P, ports: ["3000/tcp", "9100/tcp"] },
       problem: null,
@@ -792,9 +799,9 @@ describe("Add Rule and Edit Rule", () => {
       form({ index: 2, ticked: ["53", "80/tcp", "9100/tcp"] }),
     ).toMatchObject({
       options: [
-        { port: "53", process: "AdGuardHome" },
-        { port: "80/tcp", process: "AdGuardHome" },
-        { port: "3000/tcp", process: "AdGuardHome" },
+        { port: "53", process: "Resolver" },
+        { port: "80/tcp", process: "Resolver" },
+        { port: "3000/tcp", process: "Resolver" },
         { port: "9100/tcp", process: null },
       ],
       allowed: ["22/tcp"],
@@ -821,5 +828,91 @@ describe("Add Rule and Edit Rule", () => {
       problem: "A server always reaches itself. Pick another one.",
       ready: false,
     });
+  });
+});
+
+describe("Exit Node and Tailscale DNS rows", () => {
+  const running: TailscaleReport = {
+    state: "running",
+    addresses: ["100.101.7.20"],
+    name: "server-1.tail0000.ts.net",
+    keyExpiry: null,
+  };
+
+  it("says what an agent before 0.7.4 cannot do yet", () => {
+    for (const line of [exitNodeLine, dnsLine]) {
+      expect(line(running, "0.7.3")).toEqual({
+        text: "Needs agent 0.7.4 or newer",
+        warn: false,
+        changes: false,
+      });
+    }
+  });
+
+  it("shows -- when the server could not read it", () => {
+    for (const line of [exitNodeLine, dnsLine]) {
+      expect(line(running, "0.7.4")).toEqual({
+        text: "--",
+        warn: false,
+        changes: true,
+      });
+      expect(
+        line({ ...running, exitNode: null, acceptDNS: null }, "0.7.4").text,
+      ).toBe("--");
+    }
+  });
+
+  it("names off, on and waiting for Tailscale's approval", () => {
+    const exit = (advertised: boolean, approved: boolean) =>
+      exitNodeLine({ ...running, exitNode: { advertised, approved } }, "0.7.4");
+    expect(exit(false, false)).toEqual({
+      text: "Off",
+      warn: false,
+      changes: true,
+    });
+    expect(exit(true, true)).toEqual({
+      text: "On",
+      warn: false,
+      changes: true,
+    });
+    expect(exit(true, false)).toEqual({
+      text: "Waiting for approval in Tailscale",
+      warn: true,
+      changes: true,
+    });
+    expect(dnsLine({ ...running, acceptDNS: true }, "0.7.4").text).toBe("On");
+    expect(dnsLine({ ...running, acceptDNS: false }, "0.7.4").text).toBe("Off");
+  });
+
+  it("explains the exit node before turning it on or off", () => {
+    expect(exitNodeText("server-1", true, true)).toEqual([
+      "Devices on your tailnet can send all their internet traffic through server-1.",
+      "Their traffic counts against server-1's bandwidth. A device using it loses internet while server-1 is down, until it picks no exit node.",
+      "Tailscale approves it through the rules Krynodes keeps for tag:kry.",
+    ]);
+    expect(exitNodeText("server-1", true, false)[2]).toBe(
+      "Approve it in Tailscale's admin console (Machines → server-1 → Edit route settings).",
+    );
+    expect(exitNodeText("server-1", false, true)).toEqual([
+      "server-1 stops offering itself as an exit node. A device using it loses internet until it picks another exit node or none.",
+    ]);
+  });
+
+  it("explains Tailscale DNS before turning it on or off", () => {
+    expect(dnsText("server-1", true)).toEqual([
+      "server-1 looks names up through Tailscale, so it finds your devices and servers by their tailnet names.",
+      "A DNS server running on server-1 keeps working, but server-1's own lookups go through Tailscale.",
+      "If server-1 cannot find Krynodes by name this way, Tailscale DNS is turned back off.",
+    ]);
+    expect(dnsText("server-1", false)).toEqual([
+      "server-1 looks names up with its own DNS settings again.",
+    ]);
+  });
+
+  it("names both steps in History", () => {
+    const step = (action: "exitnode" | "dns") =>
+      tailnetActionText({ kind: "host", name: "tailscale", action }, "vps-2");
+    expect(step("exitnode")).toBe("Change Exit Node on vps-2");
+    expect(step("dns")).toBe("Change Tailscale DNS on vps-2");
   });
 });

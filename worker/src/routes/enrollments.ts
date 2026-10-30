@@ -25,6 +25,7 @@ const setupSchema = z.object({
   docker: z.boolean().default(false),
   rebootHour: z.number().int().min(0).max(23).nullable().default(null),
   network: z.boolean().default(false),
+  confine: z.boolean().default(false),
   adminUser: z.boolean().default(false),
 });
 
@@ -87,6 +88,7 @@ function installArgs(
   const steps = [
     ...(setup.recommended ? ["recommended"] : []),
     ...(setup.docker ? ["docker"] : []),
+    ...(setup.confine ? ["confine"] : []),
   ];
   if (steps.length > 0) {
     args.push("--setup", steps.join(","));

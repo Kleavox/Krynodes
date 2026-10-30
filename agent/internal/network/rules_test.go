@@ -8,9 +8,9 @@ import (
 )
 
 var ruleMembers = []Member{
-	{Node: nodeA, Name: "io", Address: "10.88.0.1"},
+	{Node: nodeA, Name: "server-2", Address: "10.88.0.1"},
 	{Node: nodeB, Name: "vps-2", Address: "10.88.0.2"},
-	{Node: nodeC, Name: "pivox", Address: "10.88.0.3"},
+	{Node: nodeC, Name: "server-1", Address: "10.88.0.3"},
 }
 
 func TestServingToAllServersAddsNoServeRule(t *testing.T) {
@@ -44,7 +44,7 @@ func TestAnUnknownOrOwnChosenServerIsSkipped(t *testing.T) {
 
 func TestRepliesPassFirstAndAPlaceIsReachedFromEveryBridge(t *testing.T) {
 	_, reach := Rules("10.88.0.2", ruleMembers, []StackRules{
-		{Project: "umami", Bridges: []string{"krc111111111111", "krc222222222222"}, Reaches: []string{"10.88.0.1:5432/tcp"}},
+		{Project: "tracker", Bridges: []string{"krc111111111111", "krc222222222222"}, Reaches: []string{"10.88.0.1:5432/tcp"}},
 		{Project: "lone", Bridges: []string{"krc333333333333"}},
 	})
 	want := []string{
@@ -52,9 +52,9 @@ func TestRepliesPassFirstAndAPlaceIsReachedFromEveryBridge(t *testing.T) {
 		"-A KRY-REACH -d 10.88.0.1/32 -i krc111111111111 -p tcp -m tcp --dport 5432 -j RETURN",
 		"-A KRY-REACH -d 10.88.0.1/32 -i krc222222222222 -p tcp -m tcp --dport 5432 -j RETURN",
 		"-A KRY-REACH -i krc111111111111 -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
-		"-A KRY-REACH -i krc111111111111 -m comment --comment kry-reach:umami -j DROP",
+		"-A KRY-REACH -i krc111111111111 -m comment --comment kry-reach:tracker -j DROP",
 		"-A KRY-REACH -i krc222222222222 -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
-		"-A KRY-REACH -i krc222222222222 -m comment --comment kry-reach:umami -j DROP",
+		"-A KRY-REACH -i krc222222222222 -m comment --comment kry-reach:tracker -j DROP",
 		"-A KRY-REACH -i krc333333333333 -m limit --limit 600/min -j LOG --log-prefix \"kry-reach \" --log-level 6",
 		"-A KRY-REACH -i krc333333333333 -m comment --comment kry-reach:lone -j DROP",
 		"-A KRY-REACH -j DROP",
@@ -119,10 +119,10 @@ func TestPlacesAndServesAreReadFromTheirArgs(t *testing.T) {
 		t.Fatalf("places %v err %v", places, err)
 	}
 	for bad, says := range map[string]string{
-		"vps-2:5432/tcp":     "is not a place such as",
+		"vps-2:5432/tcp":     "is not a place written as",
 		"10.88.0.2:5432/tcp": "is this server",
 		"10.99.0.2:5432/tcp": "is outside the private network",
-		"10.88.0.1:0/tcp":    "is not a place such as",
+		"10.88.0.1:0/tcp":    "is not a place written as",
 	} {
 		if _, err := ParsePlaces(bad, "10.88.0.0/24", "10.88.0.2"); err == nil || !strings.Contains(err.Error(), says) {
 			t.Fatalf("%q: %v", bad, err)

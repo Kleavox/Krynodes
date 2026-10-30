@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import * as versions from "./versions";
 import {
   agentHasFeatures,
+  agentHasSecurity,
   agentSupported,
   FEATURE_AGENT,
   compareVersions,
   MIN_AGENT_VERSION,
+  SECURITY_AGENT,
 } from "./versions";
 
 describe("agent versions", () => {
@@ -38,11 +40,22 @@ describe("agent versions", () => {
     expect(agentHasFeatures(null)).toBe(false);
   });
 
-  it("keeps one feature gate above the minimum and none below it", () => {
+  it("gates Exit Node, Tailscale DNS, the firewall and confinement on agent 0.7.4", () => {
+    expect(SECURITY_AGENT).toBe("0.7.4");
+    expect(agentHasSecurity("0.7.4")).toBe(true);
+    expect(agentHasSecurity("0.7.10")).toBe(true);
+    expect(agentHasSecurity("0.7.3")).toBe(false);
+    expect(agentHasSecurity("dev")).toBe(true);
+    expect(agentHasSecurity(null)).toBe(false);
+  });
+
+  it("keeps the feature gates above the minimum and none below it", () => {
     expect(Object.keys(versions).sort()).toEqual([
       "FEATURE_AGENT",
       "MIN_AGENT_VERSION",
+      "SECURITY_AGENT",
       "agentHasFeatures",
+      "agentHasSecurity",
       "agentSupported",
       "compareVersions",
     ]);

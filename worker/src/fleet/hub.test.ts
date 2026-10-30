@@ -18,7 +18,7 @@ const heartbeat = (
   results: CheckResult[] = [],
 ): AgentHeartbeat => ({
   nodeId: NODE,
-  hostname: "pivox",
+  hostname: "server-1",
   operatingSystem: "linux",
   architecture: "amd64",
   agentVersion: "0.7.0",
@@ -171,6 +171,75 @@ describe("FleetHub", () => {
     await t.send(ws, BASE + 65_000, heartbeat(30, [result("UP")]));
     expect(t.changes() - before).toBe(0);
     expect(ws.replies()).toHaveLength(2);
+  });
+
+  it("holds the denials in memory, out of the stored beat and of D1", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    const denials = {
+      count: 2,
+      lines: [
+        {
+          at: "2026-10-01T07:59:00Z",
+          program: "cat",
+          wanted: "read shadow",
+          stack: "panel",
+        },
+      ],
+    };
+    const before = t.changes();
+    await t.send(ws, BASE + 65_000, { ...heartbeat(10), denials });
+    expect(t.changes() - before).toBe(0);
+    expect(
+      (ws.deserializeAttachment() as { beat: Record<string, unknown> }).beat,
+    ).not.toHaveProperty("denials");
+    const served = (await (
+      await t.hub.fetch(new Request(`https://fleet/denials?node=${NODE}`))
+    ).json()) as unknown;
+    expect(served).toEqual({ ...denials, at: BASE + 65_000 });
+    const unknown = await t.hub.fetch(
+      new Request("https://fleet/denials?node=someone-else"),
+    );
+    expect(await unknown.json()).toBeNull();
+  });
+
+  it("reads a server's checks once, again after a poke, a status change or ten minutes", async () => {
+    const t = setup();
+    const reads: string[] = [];
+    const prepare = t.sqlite.prepare.bind(t.sqlite);
+    t.sqlite.prepare = ((sql: string) => {
+      if (/FROM checks WHERE node_id/u.test(sql)) reads.push(sql);
+      return prepare(sql);
+    }) as typeof t.sqlite.prepare;
+    const ws = await t.connect();
+    await t.send(ws, BASE + 1_000, heartbeat(10, [result("UP")]));
+    reads.length = 0;
+    for (let beat = 0; beat < 10; beat += 1) {
+      await t.send(
+        ws,
+        BASE + 5_000 + beat * 60_000,
+        heartbeat(10, [result("UP")]),
+      );
+    }
+    expect(reads).toHaveLength(1);
+    await t.hub.fetch(
+      new Request("https://fleet/poke", {
+        method: "POST",
+        body: JSON.stringify({ nodeIds: [NODE] }),
+      }),
+    );
+    await t.send(ws, BASE + 605_000, heartbeat(10, [result("UP")]));
+    expect(reads).toHaveLength(2);
+    await t.send(ws, BASE + 665_000, heartbeat(10, [result("DOWN")]));
+    expect(reads).toHaveLength(2);
+    await t.send(ws, BASE + 725_000, heartbeat(10, [result("UP")]));
+    expect(reads).toHaveLength(3);
+    await t.send(ws, BASE + 785_000, heartbeat(10, [result("UP")]));
+    await t.send(ws, BASE + 845_000, heartbeat(10, [result("UP")]));
+    expect(reads).toHaveLength(4);
+    await t.send(ws, BASE + 1_385_000, heartbeat(10, [result("UP")]));
+    expect(reads).toHaveLength(5);
   });
 
   it("writes one averaged history row when the next window starts", async () => {
@@ -363,6 +432,12 @@ describe("FleetHub", () => {
     });
     const ws = await t.connect();
     await t.send(ws, BASE + 5_000, disk(80));
+    await t.hub.fetch(
+      new Request("https://fleet/poke", {
+        method: "POST",
+        body: JSON.stringify({ nodeIds: [NODE] }),
+      }),
+    );
     const prepare = t.db.prepare.bind(t.db);
     let broken = true;
     t.db.prepare = ((sql: string) => {
@@ -960,7 +1035,7 @@ describe("FleetHub", () => {
       targets: [NODE, OTHER].map((nodeId) => ({
         nodeId,
         kind: "docker" as const,
-        name: "adguard",
+        name: "resolver",
       })),
       requestedBy: "owner@example.test",
       now: BASE,
@@ -1070,7 +1145,7 @@ describe("FleetHub", () => {
       .prepare(
         `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
            status, requested_by, requested_at, deliverable_at, sent_at)
-         VALUES (?, ?, 0, 'rolling', ?, 'docker', 'adguard', 'restart', 'sent', 'owner', ?, ?, ?)`,
+         VALUES (?, ?, 0, 'rolling', ?, 'docker', 'resolver', 'restart', 'sent', 'owner', ?, ?, ?)`,
       )
       .run(
         action,
@@ -1233,5 +1308,30 @@ describe("FleetHub", () => {
       `[Krynodes] ${NODE}: 1 serious security finding`,
     ]);
     expect(t.mail[1]!.text).toContain("os-eol detail");
+  });
+});
+
+describe("FleetHub list version", () => {
+  const version = async (hub: FleetHub) =>
+    (
+      (await (
+        await hub.fetch(new Request("https://fleet/version"))
+      ).json()) as {
+        version: string;
+      }
+    ).version;
+
+  it("moves on a change and stands through a quiet heartbeat", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10, [result("UP")]));
+    const settled = await version(t.hub);
+    await t.send(ws, BASE + 65_000, heartbeat(20, [result("UP")]));
+    expect(await version(t.hub)).toBe(settled);
+    await t.send(ws, BASE + 125_000, heartbeat(20, [result("DOWN")]));
+    const failed = await version(t.hub);
+    expect(failed).not.toBe(settled);
+    t.hub.announce(["services"]);
+    expect(await version(t.hub)).not.toBe(failed);
   });
 });

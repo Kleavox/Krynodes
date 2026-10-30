@@ -193,7 +193,7 @@ describe("compose actions", () => {
         await call("POST", "/api/actions", {
           action: "restart",
           targets: [
-            { nodeId: A, kind: "docker", name: "adguard", signed: command() },
+            { nodeId: A, kind: "docker", name: "resolver", signed: command() },
           ],
         })
       ).status,

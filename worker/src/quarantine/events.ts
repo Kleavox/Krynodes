@@ -12,6 +12,8 @@ export const WARNING_KINDS: readonly string[] = [
   "sudo",
   "port",
   "rule",
+  "firewall",
+  "confinement",
   "quiet",
 ];
 
@@ -40,6 +42,10 @@ export function warningOf(kind: string, detail: Record<string, string>) {
       );
     case "rule":
       return "removed firewall rule";
+    case "firewall":
+      return "firewall rule added outside Krynodes";
+    case "confinement":
+      return `denial for ${detail.program ?? "a program"}`;
     default:
       return "quiet agent";
   }
@@ -110,7 +116,14 @@ export async function intake(
   const warned: (WarningMail | null)[] = [];
   const stopped: (StoppedMail | null)[] = [];
   const knocks: { from: string; count: number }[] = [];
+  const strong: string[] = [];
   for (const event of events) {
+    if (event.kind === "confinement" && event.detail.strong === "1") {
+      strong.push(
+        event.detail.what || "SELinux or AppArmor changed outside Krynodes",
+      );
+      continue;
+    }
     if (event.kind === "knock") {
       knocks.push({
         from: event.detail.from ?? "",
@@ -120,13 +133,16 @@ export async function intake(
     }
     if (event.kind === "stack" && event.detail.stopped === "true") {
       const project = event.detail.stack ?? "";
-      const tried = (event.detail.tried ?? "").split(" ").filter(Boolean);
+      const denied = event.detail.why === "confinement";
+      const tried = denied
+        ? [event.detail.wanted ?? ""].filter(Boolean)
+        : (event.detail.tried ?? "").split(" ").filter(Boolean);
       statements.push(
         db
           .prepare(
-            `INSERT INTO stopped_stacks (node_id, project, at, tried, count) VALUES (?, ?, ?, ?, ?)
+            `INSERT INTO stopped_stacks (node_id, project, at, tried, count, why) VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT (node_id, project) DO UPDATE SET at = excluded.at, tried = excluded.tried,
-               count = excluded.count
+               count = excluded.count, why = excluded.why
              WHERE stopped_stacks.at <> excluded.at`,
           )
           .bind(
@@ -135,12 +151,15 @@ export async function intake(
             event.at,
             JSON.stringify(tried),
             Number(event.detail.count) || tried.length,
+            denied ? "confinement" : null,
           ),
         changeStatement(db, {
           owner: node.owner,
           at: iso(now),
           change: `Stop ${project} on ${node.name}`,
-          detail: `A container tried ${event.detail.count ?? "--"} places it was not given`,
+          detail: denied
+            ? `SELinux or AppArmor denied ${event.detail.program || "a container"} ${event.detail.wanted ?? ""}`.trim()
+            : `A container tried ${event.detail.count ?? "--"} places it was not given`,
           requestedBy: QUARANTINE_ACTOR,
           deviceId: null,
           nodes: [nodeId],
@@ -158,6 +177,12 @@ export async function intake(
           count: Number(event.detail.count) || tried.length,
           tried: tried.slice(0, 4),
           at: event.at,
+          ...(denied
+            ? {
+                why: "confinement" as const,
+                program: event.detail.program ?? "",
+              }
+            : {}),
         },
         null,
       );
@@ -210,6 +235,11 @@ export async function intake(
     );
     taken.nodes.push(...started);
     if (started[0]) taken.quarantined.push(started[0]);
+  }
+  if (strong[0] !== undefined) {
+    const started = await quarantine(db, { nodeId, why: strong[0], now });
+    taken.nodes.push(...started.nodes);
+    if (started.started) taken.quarantined.push(nodeId);
   }
   return taken;
 }

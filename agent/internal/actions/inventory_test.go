@@ -21,7 +21,7 @@ func inventoryOf(services []Service, now time.Time) (Inventory, error) {
 
 const unitList = `nginx.service                 loaded    active   running A high performance web server
 shadowsocks-libev.service     loaded    inactive dead    Shadowsocks-libev Default Server Service
-● adguard.service             loaded    failed   failed  AdGuard Home
+● resolver.service             loaded    failed   failed  Resolver
 ssh.service                   loaded    active   running OpenBSD Secure Shell server
 cron.service                  loaded    active   running Regular background program processing daemon
 old.service                   loaded    inactive dead    Something disabled
@@ -39,7 +39,7 @@ func TestUnitsBecomeServices(t *testing.T) {
 	want := []Service{
 		{Kind: "systemd", Name: "nginx.service", State: "running"},
 		{Kind: "systemd", Name: "shadowsocks-libev.service", State: "stopped"},
-		{Kind: "systemd", Name: "adguard.service", State: "failed"},
+		{Kind: "systemd", Name: "resolver.service", State: "failed"},
 		{Kind: "systemd", Name: "cron.service", State: "running", System: true},
 		{Kind: "systemd", Name: "backup.service", State: "starting"},
 	}
@@ -49,12 +49,12 @@ func TestUnitsBecomeServices(t *testing.T) {
 }
 
 func TestContainersBecomeServices(t *testing.T) {
-	got, stacks := parseContainers("adguard\trunning\nweb,web/alias\texited\nbroken\tdead\nbad/name\trunning\nwarming\trestarting\n\n")
+	got, stacks := parseContainers("resolver\trunning\nweb,web/alias\texited\nbroken\tdead\nbad/name\trunning\nwarming\trestarting\n\n")
 	if len(stacks) != 0 {
 		t.Fatalf("containers without compose labels form no stack, got %#v", stacks)
 	}
 	want := []Service{
-		{Kind: "docker", Name: "adguard", State: "running"},
+		{Kind: "docker", Name: "resolver", State: "running"},
 		{Kind: "docker", Name: "web", State: "stopped"},
 		{Kind: "docker", Name: "broken", State: "failed"},
 		{Kind: "docker", Name: "warming", State: "starting"},
@@ -136,7 +136,7 @@ func TestUnitsStoppedThroughKrynodesStayListed(t *testing.T) {
 	got := parseUnits(unitList, files, []string{"manual.service", "openvpn@server.service", "gone.service", "nginx.service", "ssh.service"})
 	want := []Service{
 		{Kind: "systemd", Name: "nginx.service", State: "running"},
-		{Kind: "systemd", Name: "adguard.service", State: "failed"},
+		{Kind: "systemd", Name: "resolver.service", State: "failed"},
 		{Kind: "systemd", Name: "cron.service", State: "running", System: true},
 		{Kind: "systemd", Name: "backup.service", State: "starting"},
 		{Kind: "systemd", Name: "manual.service", State: "stopped"},
@@ -215,7 +215,7 @@ func TestAnInventoryListsAtMost50RemovedStacksTheNewestFirst(t *testing.T) {
 
 const composeContainers = "listmonk_db\texited\tlistmonk\t/opt/listmonk\t/opt/listmonk/docker-compose.yaml\t2026-09-25 11:37:02 +0700 WIB\n" +
 	"listmonk_app\trunning\tlistmonk\t/opt/listmonk\t/opt/listmonk/docker-compose.yml,/opt/listmonk/a-override.yml\t2026-09-25 11:56:10 +0700 +0700\n" +
-	"adguard\trunning\t\t\t\t2026-09-20 08:00:00 +0700 WIB\n"
+	"resolver\trunning\t\t\t\t2026-09-20 08:00:00 +0700 WIB\n"
 
 func TestAStackUsesTheNewestContainersComposeFilesInTheirOrder(t *testing.T) {
 	services, stacks := parseContainers(composeContainers)
@@ -265,7 +265,7 @@ func TestDockerStateIsReportedEvenWithoutAStack(t *testing.T) {
 			}
 			if name == "docker" {
 				if item.docker {
-					return []byte("adguard\trunning\t\t\t\t2026-09-30 10:00:00 +0000 UTC\n"), 0, nil
+					return []byte("resolver\trunning\t\t\t\t2026-09-30 10:00:00 +0000 UTC\n"), 0, nil
 				}
 				return nil, -1, errors.New("executable file not found")
 			}
@@ -309,7 +309,7 @@ func TestTheInventoryHashChangesWhenDockerChanges(t *testing.T) {
 
 func TestTheInventoryHashChangesWhenAStackIsRemoved(t *testing.T) {
 	first, _ := NewInventory(Parts{Docker: "ready"}, executorNow)
-	second, _ := NewInventory(Parts{Docker: "ready", Removed: []reporter.RemovedStack{{Project: "kuma", Directory: "/opt/kuma", RemovedAt: "2026-09-29T10:00:00Z"}}}, executorNow)
+	second, _ := NewInventory(Parts{Docker: "ready", Removed: []reporter.RemovedStack{{Project: "panel", Directory: "/opt/panel", RemovedAt: "2026-09-29T10:00:00Z"}}}, executorNow)
 	if first.Hash == second.Hash || len(second.Removed) != 1 {
 		t.Fatalf("removed stacks must be part of the inventory: %#v", second)
 	}

@@ -3,6 +3,7 @@ package recipes
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -110,6 +111,11 @@ func InstallDocker(ctx context.Context, env Env, args map[string]string) (Docker
 			return DockerResult{}, err
 		}
 	}
+	if missing != nil && args["selinux"] == "1" {
+		if _, _, err := MergeDaemon(env, "selinux-enabled", true); err != nil {
+			return DockerResult{}, err
+		}
+	}
 	if _, err := env.install(ctx, packages...); err != nil {
 		return DockerResult{}, err
 	}
@@ -124,6 +130,30 @@ func InstallDocker(ctx context.Context, env Env, args map[string]string) (Docker
 		message = "Docker " + version + " with Compose"
 	}
 	return DockerResult{Message: message, Installed: missing != nil}, nil
+}
+
+func MergeDaemon(env Env, key string, value any) (string, bool, error) {
+	body, err := os.ReadFile(env.path(DockerDaemon))
+	existed := err == nil
+	settings := map[string]any{}
+	if existed && strings.TrimSpace(string(body)) != "" {
+		if err := json.Unmarshal(body, &settings); err != nil {
+			return "", true, fmt.Errorf("%s is not readable JSON: %w", DockerDaemon, err)
+		}
+	}
+	settings[key] = value
+	merged, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return "", existed, err
+	}
+	return string(body), existed, env.write(DockerDaemon, string(merged)+"\n", 0o644)
+}
+
+func RestoreDaemon(env Env, previous string, existed bool) error {
+	if !existed {
+		return env.remove(DockerDaemon)
+	}
+	return env.write(DockerDaemon, previous, 0o644)
 }
 
 func dockerRepository(ctx context.Context, env Env, platform Platform) error {

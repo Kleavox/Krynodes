@@ -8,11 +8,11 @@ import (
 
 func TestHeartbeatResponseCarriesActionsAndARefresh(t *testing.T) {
 	var response HeartbeatResponse
-	body := `{"ok":true,"intervalSeconds":60,"configVersion":"v1","refresh":true,"actions":[{"id":"0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01","kind":"docker","name":"adguard","action":"restart","expiresAt":"2026-09-29T10:10:00.000Z"}]}`
+	body := `{"ok":true,"intervalSeconds":60,"configVersion":"v1","refresh":true,"actions":[{"id":"0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01","kind":"docker","name":"resolver","action":"restart","expiresAt":"2026-09-29T10:10:00.000Z"}]}`
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !response.Refresh || len(response.Actions) != 1 || response.Actions[0].Name != "adguard" || response.Actions[0].Action != "restart" {
+	if !response.Refresh || len(response.Actions) != 1 || response.Actions[0].Name != "resolver" || response.Actions[0].Action != "restart" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }

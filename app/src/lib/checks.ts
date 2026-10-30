@@ -105,7 +105,7 @@ export function checkTargetProblem(
   }
   if (kind === "TCP") {
     const match = /^([a-zA-Z0-9.-]+):([0-9]{1,5})$/u.exec(value);
-    if (!match) return "Use host:port, such as 127.0.0.1:5432.";
+    if (!match) return "Use host:port.";
     const port = Number(match[2]);
     return port >= 1 && port <= 65_535
       ? null

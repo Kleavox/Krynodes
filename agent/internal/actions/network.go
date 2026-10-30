@@ -792,6 +792,7 @@ func (e Executor) WatchLinks(ctx context.Context, every time.Duration) {
 		e.WriteLinks(ctx)
 		e.syncRules(ctx)
 		e.watchKnocks(ctx)
+		e.watchDenials(ctx)
 		e.watchServer(ctx)
 		e.syncTailnet(ctx)
 		select {

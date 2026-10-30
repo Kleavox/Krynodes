@@ -547,7 +547,7 @@ describe("network actions", () => {
     ).join(" ");
     expect((await ask(A, "probe", { port: "51820", peers })).status).toBe(400);
     expect(
-      (await ask(A, "probe", { port: "51820", peers: "141.95.0.21:51820" }))
+      (await ask(A, "probe", { port: "51820", peers: "203.0.113.21:51820" }))
         .status,
     ).toBe(201);
     expect(

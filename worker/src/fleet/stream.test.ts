@@ -9,7 +9,7 @@ const BASE = Math.floor(Date.parse("2026-10-01T08:00:00Z") / WINDOW) * WINDOW;
 
 const beat = (cpu: number | null, uptime = 100): AgentHeartbeat => ({
   nodeId: NODE,
-  hostname: "pivox",
+  hostname: "server-1",
   operatingSystem: "linux",
   architecture: "amd64",
   agentVersion: "0.3.0",
@@ -169,7 +169,7 @@ describe("stream state", () => {
         lastSeen: BASE + 5_000,
         connectedAt: state.connectedAt,
         agentVersion: "0.3.0",
-        hostname: "pivox",
+        hostname: "server-1",
         metrics: beat(10).metrics,
       },
     });

@@ -1,6 +1,9 @@
+import type { Denials } from "@krynodes/protocol";
+import type { MiddlewareHandler } from "hono";
+
 import { windowSize } from "../agent/windows";
 import type { Env } from "../env";
-import type { KrynodesContext } from "../routes/shared";
+import type { KrynodesContext, KrynodesEnv } from "../routes/shared";
 import type { LiveNode } from "./stream";
 
 export const streamsOn = (env: Env) => Boolean(env.FLEET);
@@ -36,6 +39,42 @@ export async function fleetLive(
   }
 }
 
+const UNCHANGED_FOR_MS = 5 * 60_000;
+
+async function fleetVersion(env: Env, ownerId: string): Promise<string | null> {
+  if (!streamsOn(env)) return null;
+  try {
+    const response = await hubFor(env, ownerId).fetch("https://fleet/version");
+    if (!response.ok) throw new Error(`hub answered ${response.status}`);
+    const { version } = (await response.json()) as { version?: unknown };
+    return typeof version === "string" ? version : null;
+  } catch (error) {
+    console.error("[kry fleet]", error);
+    return null;
+  }
+}
+
+const bare = (tag: string) => tag.trim().replace(/^W\//u, "");
+
+export const unchangedList: MiddlewareHandler<KrynodesEnv> = async (
+  context,
+  next,
+) => {
+  const version = await fleetVersion(context.env, context.get("identity").id);
+  if (version === null) return next();
+  const tag = `"${version}-${Math.floor(Date.now() / UNCHANGED_FOR_MS)}"`;
+  const headers = { etag: tag, "cache-control": "private, no-cache" };
+  const sent = context.req.header("if-none-match");
+  if (sent?.split(",").some((one) => bare(one) === tag)) {
+    return context.body(null, 304, headers);
+  }
+  await next();
+  if (context.res.status !== 200) return;
+  for (const [name, value] of Object.entries(headers)) {
+    context.res.headers.set(name, value);
+  }
+};
+
 export async function fleetLinks(
   env: Env,
   ownerId: string,
@@ -48,6 +87,24 @@ export async function fleetLinks(
       string,
       { at: number; links: unknown[] }
     >;
+  } catch (error) {
+    console.error("[kry fleet]", error);
+    return null;
+  }
+}
+
+export async function fleetDenials(
+  env: Env,
+  ownerId: string,
+  nodeId: string,
+): Promise<Denials | null> {
+  if (!streamsOn(env)) return null;
+  try {
+    const response = await hubFor(env, ownerId).fetch(
+      `https://fleet/denials?node=${encodeURIComponent(nodeId)}`,
+    );
+    if (!response.ok) throw new Error(`hub answered ${response.status}`);
+    return (await response.json()) as Denials | null;
   } catch (error) {
     console.error("[kry fleet]", error);
     return null;
@@ -70,7 +127,7 @@ export async function pokeNodes(
   }
 }
 
-async function announce(
+export async function announce(
   env: Env,
   ownerId: string,
   topics: string[],
@@ -83,19 +140,6 @@ async function announce(
     });
   } catch (error) {
     console.error("[kry fleet]", error);
-  }
-}
-
-export function announceSoon(
-  context: KrynodesContext,
-  ownerId: string,
-  topics: string[],
-): void {
-  const work = announce(context.env, ownerId, topics);
-  try {
-    context.executionCtx.waitUntil(work);
-  } catch {
-    work.catch(() => undefined);
   }
 }
 

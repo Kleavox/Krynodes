@@ -10,8 +10,8 @@ describe("SSH public keys", () => {
   it("reads a key line's type, blob and a label made safe for the install command", () => {
     expect(parseKeyLine(LAPTOP)).toEqual({
       type: "ssh-ed25519",
-      blob: "AAAAC3NzaC1lZDI1NTE5AAAAIN+aw2ekALRgy/qt38BoTs6eGn55s71g0oi0WM0vVl+z",
-      label: "j5mus-laptop",
+      blob: "AAAAC3NzaC1lZDI1NTE5AAAAIJQIdIFdIOrfxkgPwGXPHesM4bMreTr2K6zwvH2eRuGK",
+      label: "user1-laptop",
     });
     expect(parseKeyLine(`  ${PHONE}  `)?.label).toBe("phone");
     expect(parseKeyLine(ECDSA, 2)).toMatchObject({

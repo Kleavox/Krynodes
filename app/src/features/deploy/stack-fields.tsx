@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useBridges } from "@/features/nodes/use-bridges";
-import { useNetwork } from "@/lib/api";
+import { useNetwork, useServices } from "@/lib/api";
 import {
   KIND_TAG,
   networkBoxes,
@@ -297,7 +297,7 @@ export function ReachField({
       <Input
         id="stack-reach"
         value={value}
-        placeholder="3000/tcp"
+        placeholder="number/tcp"
         autoComplete="off"
         spellCheck={false}
         className="font-mono"
@@ -313,22 +313,34 @@ export function ReachField({
         )}
       >
         {problem ??
-          "Ports on this server the stack may open, such as 3000/tcp, separated by commas. Ports other stacks publish count too. Leave it empty to keep the server closed to it."}
+          "Ports on this server the stack may open, written as number/tcp, separated by commas. Ports other stacks publish count too. Leave it empty to keep the server closed to it."}
       </p>
     </div>
   );
 }
 
 export function FullAccessSummary({
+  nodeId,
   text,
   member,
   onText,
 }: {
+  nodeId: string;
   text: string;
   member: Member | null;
   onText: (text: string) => void;
 }) {
-  const box = opensBox(text, member);
+  const security = useServices().data?.nodes.find(
+    (node) => node.id === nodeId,
+  )?.security;
+  const wall = security?.firewall;
+  const box = opensBox(
+    text,
+    member,
+    wall?.closed ? wall.open : null,
+    security?.confinement?.system === "selinux" &&
+      security.confinement.docker === true,
+  );
   if (!box) return null;
   return (
     <div
@@ -635,7 +647,7 @@ function Box({
               <Input
                 id={`offer-${key}`}
                 className="font-mono"
-                placeholder="3001/tcp"
+                placeholder="number/tcp"
                 autoComplete="off"
                 spellCheck={false}
                 value={offers[key] ?? offer.value}
@@ -681,9 +693,8 @@ function Box({
           )}
           <p className="text-xs text-muted-foreground">
             Reach a ticked one by that name, such as{" "}
-            {box.reach[0]?.entry.replace(/\/(tcp|udp)$/u, "") ??
-              "postgres.db:5432"}
-            . Everything else on {box.name} stays closed.
+            {box.reach[0]?.entry.replace(/\/(tcp|udp)$/u, "") ?? "name:port"}.
+            Everything else on {box.name} stays closed.
           </p>
         </fieldset>
       )}

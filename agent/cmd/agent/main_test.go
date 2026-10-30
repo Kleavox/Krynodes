@@ -164,17 +164,17 @@ func TestTheExecutorCanReadStacksUnderHomeDirectories(t *testing.T) {
 }
 
 func TestTrustArgumentsMayStartWithADash(t *testing.T) {
-	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.kleavox.xyz", "--", "-abc.-7.KEY", "def.-257.KEY"})
+	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.example.org", "--", "-abc.-7.KEY", "def.-257.KEY"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !options.initial || options.origin != "https://kry.kleavox.xyz" || len(options.keys) != 2 || options.keys[0] != "-abc.-7.KEY" {
+	if !options.initial || options.origin != "https://kry.example.org" || len(options.keys) != 2 || options.keys[0] != "-abc.-7.KEY" {
 		t.Fatalf("options %+v", options)
 	}
 }
 
 func TestTrustArgumentsCarryTheGrant(t *testing.T) {
-	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.kleavox.xyz", "--grant", "--", "-abc.-7.KEY"})
+	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.example.org", "--grant", "--", "-abc.-7.KEY"})
 	if err != nil || !options.grant || len(options.keys) != 1 {
 		t.Fatalf("options %+v err %v", options, err)
 	}
@@ -184,7 +184,7 @@ func TestTrustArgumentsCarryTheGrant(t *testing.T) {
 }
 
 func TestTrustArgumentsCarryTheDeviceThatEnrolled(t *testing.T) {
-	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.kleavox.xyz", "--access", "-abc", "--", "-abc.-7.KEY", "def.-7.KEY"})
+	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.example.org", "--access", "-abc", "--", "-abc.-7.KEY", "def.-7.KEY"})
 	if err != nil || options.access != "-abc" || options.grant || len(options.keys) != 2 {
 		t.Fatalf("options %+v err %v", options, err)
 	}
@@ -327,17 +327,18 @@ func TestUninstallLeavesNothingOfKrynodesBehind(t *testing.T) {
 func TestSetupChecksItsFlagsBeforeAnythingElse(t *testing.T) {
 	for args, want := range map[string]string{
 		"--everything":                   "flag provided but not defined",
-		"":                               "choose --recommended, --docker, --network or more",
+		"":                               "choose --recommended, --confine, --docker, --network or more",
+		"--confine":                      "root",
 		"--network 10.0.0.0/24":          "--network takes a /24 of 10.88.0.0/16",
 		"--network 10.88.3.0/24":         "root",
 		"--recommended --reboot-hour 24": "--reboot-hour is 0 to 23",
 		"--docker extra":                 `unexpected argument "extra"`,
 		"--recommended --docker":         "root",
-		"--admin root --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "--admin takes a user name such as musyaf, not root",
-		"--admin musyaf":                  "--admin needs one to four --admin-key",
-		"--admin musyaf --admin-key AAAA": "is not a key such as",
-		"--admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop":                "--admin-key needs --admin",
-		"--admin musyaf --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "root",
+		"--admin root --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "--admin takes your user name, not root",
+		"--admin user1":                  "--admin needs one to four --admin-key",
+		"--admin user1 --admin-key AAAA": "is not a key written as",
+		"--admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop":               "--admin-key needs --admin",
+		"--admin user1 --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "root",
 	} {
 		err := run(append([]string{"setup"}, strings.Fields(args)...))
 		if err == nil || !strings.Contains(err.Error(), want) {
@@ -396,7 +397,7 @@ func TestAdminUserIsACommandForOneName(t *testing.T) {
 	if err := run([]string{"admin-user"}); err == nil || err.Error() != "usage: kry admin-user <name>" {
 		t.Fatalf("err %v", err)
 	}
-	if err := run([]string{"admin-user", "musyaf"}); err == nil || !strings.Contains(err.Error(), "root") {
+	if err := run([]string{"admin-user", "user1"}); err == nil || !strings.Contains(err.Error(), "root") {
 		t.Fatalf("admin-user must need root on Linux: %v", err)
 	}
 }

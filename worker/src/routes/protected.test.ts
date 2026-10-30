@@ -251,7 +251,7 @@ describe("dashboard actions that destroy or hide", () => {
     expect(refused.status).toBe(403);
     expect(await refused.json()).toMatchObject({
       code: "NOT_YOUR_DEVICE",
-      message: "laptop belongs to friend. Use one of your own devices.",
+      message: "laptop belongs to friend. Use one of your own passkeys.",
     });
   });
 

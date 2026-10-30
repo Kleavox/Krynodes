@@ -15,13 +15,19 @@ import type {
   ActionRecord,
   CheckKind,
   CheckRecord,
+  FirewallOpening,
   NetworkServer,
   NetworkView,
   NodeRecord,
   ServicesResponse,
   StackEntry,
 } from "../types";
-import { summarize, usePrivateAddress, usesPrivateIp } from "./compose";
+import {
+  summarize,
+  unconfinedServices,
+  usePrivateAddress,
+  usesPrivateIp,
+} from "./compose";
 import { agentGap, FIRST_REPORT } from "./devices";
 import {
   capitalize,
@@ -786,7 +792,7 @@ export function parsePlaces(
     if (!found || Number(port) < 1 || Number(port) > 65535) {
       const [name = item, number = ""] = item.split(/[:/]/u);
       return refuse(
-        `${item} is not a place such as ${name}:${/^\d{1,5}$/u.test(number) ? number : "5432"}/tcp.`,
+        `${item} is not a place such as ${name}:${/^\d{1,5}$/u.test(number) ? number : "port"}/tcp.`,
       );
     }
     const numeric = IPV4.test(host);
@@ -853,6 +859,8 @@ export const servesProblem = (rows: ServeRow[]) =>
 export function opensBox(
   text: string,
   member: { name: string; address: string | null } | null,
+  closed: FirewallOpening[] | null = null,
+  selinux = false,
 ): {
   lines: string[];
   notes: string[];
@@ -875,7 +883,14 @@ export function opensBox(
     summary.docker.length > 0 &&
       `Controls Docker, which is root on the server: ${list(summary.docker)}`,
   ].filter((line): line is string => Boolean(line));
+  const unconfined = selinux ? unconfinedServices(text) : [];
   const opened = summary.internet.length > 0;
+  const shut = closed
+    ? summary.internet.filter(
+        (port) =>
+          !closed.some((open) => `${open.port}/${open.protocol}` === port),
+      )
+    : [];
   const shared = member !== null && summary.private.length > 0;
   const moved = member
     ? summarize(usePrivateAddress(text)).private.filter(
@@ -896,16 +911,24 @@ export function opensBox(
         : []),
       ...(member ? ["Reaches every server on the private network"] : []),
       ...risks,
+      ...(unconfined.length > 0
+        ? [`Not confined by SELinux: ${list(unconfined)}`]
+        : []),
     ],
     notes: [
-      ...(opened
+      ...(opened && !closed
         ? [
             "Docker opens these ports past ufw, so a firewall does not close them.",
           ]
         : []),
+      ...(shut.length > 0
+        ? [
+            `${new Intl.ListFormat("en").format(shut)} ${shut.length === 1 ? "is" : "are"} closed by the firewall. Open ${shut.length === 1 ? "it" : "them"} in the server's Firewall section.`,
+          ]
+        : []),
       ...(summary.internet.some((port) => port.startsWith("53/"))
         ? [
-            "Port 53 open to everyone makes an open resolver that others can abuse. Limit it with AdGuard’s Allowed clients, or use DNS-over-TLS.",
+            "Port 53 open to everyone makes an open resolver that others can abuse. Limit who may ask in your DNS server’s settings, or use DNS-over-TLS.",
           ]
         : []),
       ...(shared

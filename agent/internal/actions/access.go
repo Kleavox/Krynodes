@@ -59,7 +59,7 @@ func hostPortsFrom(command Command, access string, current []string) ([]string, 
 		}
 		match := hostPortPattern.FindStringSubmatch(entry)
 		if match == nil {
-			return nil, fmt.Errorf("%s is not a port such as 3000/tcp", entry)
+			return nil, fmt.Errorf("%s is not a port written as number/tcp", entry)
 		}
 		if number, _ := strconv.Atoi(match[1]); number < 1 || number > 65535 {
 			return nil, fmt.Errorf("%s is not a port between 1 and 65535", entry)

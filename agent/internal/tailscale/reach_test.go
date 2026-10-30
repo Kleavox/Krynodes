@@ -10,7 +10,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
-const pivoxStatus = `{"BackendState":"Running","MagicDNSSuffix":"tail4d2a.ts.net","Self":{"ID":"nSelf1CNTRL","DNSName":"pivox.tail4d2a.ts.net.","TailscaleIPs":["100.101.7.20","fd7a:115c:a1e0::20"],"Tags":["tag:kry"]},"Peer":{"k1":{"DNSName":"io.tail4d2a.ts.net.","TailscaleIPs":["100.101.7.11","fd7a:115c:a1e0::11"]},"k2":{"DNSName":"laptop.tail4d2a.ts.net.","TailscaleIPs":["100.101.7.33"]}}}`
+const serverOneStatus = `{"BackendState":"Running","MagicDNSSuffix":"tail0000.ts.net","Self":{"ID":"nSelf1CNTRL","DNSName":"server-1.tail0000.ts.net.","TailscaleIPs":["100.101.7.20","fd7a:115c:a1e0::20"],"Tags":["tag:kry"]},"Peer":{"k1":{"DNSName":"server-2.tail0000.ts.net.","TailscaleIPs":["100.101.7.11","fd7a:115c:a1e0::11"]},"k2":{"DNSName":"laptop.tail0000.ts.net.","TailscaleIPs":["100.101.7.33"]}}}`
 
 func filter(body string, err error) Local {
 	return func(_ context.Context, path string) ([]byte, error) {
@@ -35,7 +35,7 @@ func TestEachSourceSetIsOneEntryWithItsPortsOnThisServer(t *testing.T) {
 		{"SrcIPs":["100.101.7.34","100.101.7.33"],"DstPorts":[{"IP":"100.101.7.20","Ports":{"First":53,"Last":53}},{"IP":"100.101.7.20","Ports":{"First":8000,"Last":8100}}],"IPProto":[17]},
 		{"SrcIPs":["100.101.7.11"],"DstPorts":[{"IP":"100.101.7.20","Ports":{"First":0,"Last":65535}}],"IPProto":[1]}
 	]`
-	peers := map[string]string{"100.101.7.11": "io", "100.101.7.33": "laptop"}
+	peers := map[string]string{"100.101.7.11": "server-2", "100.101.7.33": "laptop"}
 	reach, names := Reach([]byte(rules), []string{"100.101.7.20", "fd7a:115c:a1e0::20"}, peers)
 	want := []reporter.TailscaleReach{
 		{From: []string{"100.101.7.11"}, Ports: []string{"53/udp"}},
@@ -44,7 +44,7 @@ func TestEachSourceSetIsOneEntryWithItsPortsOnThisServer(t *testing.T) {
 	if !reflect.DeepEqual(reach, want) {
 		t.Fatalf("got %+v", reach)
 	}
-	if !maps.Equal(names, map[string]string{"100.101.7.11": "io", "100.101.7.33": "laptop"}) {
+	if !maps.Equal(names, map[string]string{"100.101.7.11": "server-2", "100.101.7.33": "laptop"}) {
 		t.Fatalf("names %v", names)
 	}
 	shuffled := `[
@@ -59,18 +59,18 @@ func TestEachSourceSetIsOneEntryWithItsPortsOnThisServer(t *testing.T) {
 }
 
 func TestTheReportCarriesTheServersTagTailnetAndWhoMayReachIt(t *testing.T) {
-	report := Report(context.Background(), answer(pivoxStatus, nil), filter(`[{"SrcIPs":["100.101.7.11"],"DstPorts":[{"IP":"100.101.7.20","Ports":{"First":22,"Last":22}}],"IPProto":[6]}]`, nil))
-	if report.State != "running" || *report.ID != "nSelf1CNTRL" || *report.Tailnet != "tail4d2a.ts.net" || !reflect.DeepEqual(report.Tags, []string{"tag:kry"}) || report.Peers != 2 {
+	report := Report(context.Background(), answer(serverOneStatus, nil), filter(`[{"SrcIPs":["100.101.7.11"],"DstPorts":[{"IP":"100.101.7.20","Ports":{"First":22,"Last":22}}],"IPProto":[6]}]`, nil))
+	if report.State != "running" || *report.ID != "nSelf1CNTRL" || *report.Tailnet != "tail0000.ts.net" || !reflect.DeepEqual(report.Tags, []string{"tag:kry"}) || report.Peers != 2 {
 		t.Fatalf("got %+v", report)
 	}
-	if report.Reach == nil || !reflect.DeepEqual(*report.Reach, []reporter.TailscaleReach{{From: []string{"100.101.7.11"}, Ports: []string{"22/tcp"}}}) || !maps.Equal(report.Names, map[string]string{"100.101.7.11": "io"}) {
+	if report.Reach == nil || !reflect.DeepEqual(*report.Reach, []reporter.TailscaleReach{{From: []string{"100.101.7.11"}, Ports: []string{"22/tcp"}}}) || !maps.Equal(report.Names, map[string]string{"100.101.7.11": "server-2"}) {
 		t.Fatalf("reach %+v names %v", report.Reach, report.Names)
 	}
 }
 
 func TestAFilterThatCannotBeReadLeavesTheRestOfTheReport(t *testing.T) {
 	for _, local := range []Local{nil, filter("", errors.New("403 Forbidden"))} {
-		report := Report(context.Background(), answer(pivoxStatus, nil), local)
+		report := Report(context.Background(), answer(serverOneStatus, nil), local)
 		if report.State != "running" || report.Reach != nil || *report.ID != "nSelf1CNTRL" || report.Peers != 2 || report.Names == nil {
 			t.Fatalf("got %+v", report)
 		}

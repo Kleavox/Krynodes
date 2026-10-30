@@ -29,7 +29,7 @@ func New() *API {
 		Tunnels:  map[string]string{},
 		Ingress:  map[string][]cloudflare.Rule{},
 		Records:  map[string]cloudflare.Record{},
-		Apps:     map[string]cloudflare.App{"dash": {ID: "dash", Name: "Krynodes", Domain: "kry.kleavox.xyz", AUD: "aud-1"}},
+		Apps:     map[string]cloudflare.App{"dash": {ID: "dash", Name: "Krynodes", Domain: "kry.example.org", AUD: "aud-1"}},
 		Policies: map[string][]cloudflare.Policy{"dash": {{ID: "pol-1", Name: "Owner", Decision: "allow", Reusable: true}}},
 	}
 }
@@ -62,8 +62,8 @@ func (f *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	switch {
 	case path == "/zones":
-		if r.URL.Query().Get("name") == "kleavox.xyz" {
-			reply([]any{map[string]any{"id": "zone-1", "name": "kleavox.xyz", "account": map[string]any{"id": "acc-1"}}})
+		if r.URL.Query().Get("name") == "example.org" {
+			reply([]any{map[string]any{"id": "zone-1", "name": "example.org", "account": map[string]any{"id": "acc-1"}}})
 		} else {
 			reply([]any{})
 		}

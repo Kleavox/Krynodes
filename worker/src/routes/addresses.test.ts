@@ -33,7 +33,7 @@ async function setup(device: {
   const access = device.inAccess === false ? [] : [print];
   sqlite
     .prepare(
-      `UPDATE nodes SET name = 'pivox', ipv4 = '203.0.113.12', ipv4_at = ?,
+      `UPDATE nodes SET name = 'server-1', ipv4 = '203.0.113.12', ipv4_at = ?,
          interfaces = '[{"name":"eth0","address":"192.168.1.5"}]', trust_report = ?
        WHERE id = ?`,
     )

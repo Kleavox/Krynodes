@@ -19,6 +19,7 @@ import (
 const (
 	hostUnit      = "krynodes-host.service"
 	staleHostWork = 40 * time.Minute
+	wasKey        = "was:"
 )
 
 var errHostBusy = errors.New("Krynodes is still changing this server; try again when that finishes")
@@ -122,7 +123,9 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		return Result{}, true
 	case (server && (request.Action == "unlock" || request.Action == "release")) ||
 		(request.Name == "docker" && request.Action == "install") ||
-		(request.Name == "tailscale" && (request.Action == "signin" || request.Action == "join")) ||
+		(request.Name == "tailscale" && slices.Contains([]string{"signin", "join", "exitnode", "dns"}, request.Action)) ||
+		(request.Name == "firewall" && slices.Contains([]string{"open", "close", "putback"}, request.Action)) ||
+		(request.Name == "confinement" && request.Action == "containers") ||
 		(!server && slices.Contains(Recipes, request.Name) && (request.Action == "apply" || request.Action == "undo")):
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
@@ -206,6 +209,10 @@ func (e Executor) HostApply(ctx context.Context) error {
 	}
 	defer root.Close()
 	processed, takes := false, false
+	var before []string
+	if len(entries) > 0 && e.readFirewall().Closed {
+		before = recipes.ReadRules(ctx, e.recipeEnv()).Lines
+	}
 	for _, entry := range entries {
 		name := entry.Name()
 		if !requestName.MatchString(name) {
@@ -230,6 +237,10 @@ func (e Executor) HostApply(ctx context.Context) error {
 	}
 	if processed {
 		os.Remove(filepath.Join(e.StateDir, "security.json"))
+		e.learnRules(ctx, before)
+		if err := e.syncPublish(ctx); err != nil {
+			log.Printf("published ports: %v", err)
+		}
 	}
 	if takes {
 		e.retake(ctx, false)
@@ -256,6 +267,12 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 	}
 	env := e.recipeEnv()
 	state := e.readRecipes()
+	if request.Name == "confinement" {
+		if err := e.markConfinement(request.Action); err != nil {
+			return e.failed(request, err, "")
+		}
+		defer e.markConfinement(request.Action)
+	}
 	save := func(output string) Result {
 		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
 			return e.failed(request, err, "")
@@ -264,15 +281,20 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 	}
 	switch request.Action {
 	case "apply":
-		if _, on := state.Applied[request.Name]; on {
-			return e.refuse(request.ID, errors.New("already on; turn it off first"))
-		}
 		args := map[string]string{}
 		maps.Copy(args, command.Args)
 		delete(args, recipes.NetworkPort)
+		closed := request.Name == "firewall" && args["closed"] == "1"
+		prior, on := state.Applied[request.Name]
+		if on && (!closed || prior.Saved["closed"] == "1") {
+			return e.refuse(request.ID, errors.New("already on; turn it off first"))
+		}
+		if closed {
+			args["ports"] = e.keepUnseen(ctx, env, args["ports"])
+		}
 		record := e.readNetwork()
 		opens := request.Name == "firewall" && record.Joined && record.Firewall == "" && record.Port != 0 && recipes.Detect(env).Family != recipes.RHEL
-		if opens {
+		if opens || (closed && record.Joined && record.Port != 0) {
 			args[recipes.NetworkPort] = strconv.Itoa(record.Port)
 		}
 		saved, err := recipes.Apply(ctx, env, request.Name, args)
@@ -285,8 +307,22 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 				log.Printf("remember the network's ufw rules: %v", err)
 			}
 		}
-		state.Applied[request.Name] = appliedRecipe{At: e.Now(), Saved: saved}
-		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
+		kept := maps.Clone(saved)
+		for key, value := range prior.Saved {
+			kept[wasKey+key] = value
+		}
+		state.Applied[request.Name] = appliedRecipe{At: e.Now(), Saved: kept}
+		err = nil
+		if closed {
+			err = e.rememberClosed(ctx, env, args["ports"])
+		}
+		if err == nil {
+			err = writeJSON(e.StateDir, "recipes.json", state, 0o640)
+		}
+		if err != nil {
+			if closed {
+				os.Remove(filepath.Join(e.StateDir, firewallFile))
+			}
 			if back := recipes.Undo(ctx, env, request.Name, saved); back != nil {
 				err = fmt.Errorf("%w; turning it off again also failed: %v", err, back)
 			}
@@ -294,16 +330,31 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		}
 		return Result{ID: request.ID, OK: true, Output: "applied", FinishedAt: e.stamp()}
 	case "undo":
-		if err := recipes.Undo(ctx, env, request.Name, state.Applied[request.Name].Saved); err != nil {
+		saved, was := map[string]string{}, map[string]string{}
+		for key, value := range state.Applied[request.Name].Saved {
+			if old, ok := strings.CutPrefix(key, wasKey); ok {
+				was[old] = value
+			} else {
+				saved[key] = value
+			}
+		}
+		if err := recipes.Undo(ctx, env, request.Name, saved); err != nil {
 			return e.refuse(request.ID, err)
 		}
 		delete(state.Applied, request.Name)
+		if len(was) > 0 {
+			state.Applied[request.Name] = appliedRecipe{At: e.Now(), Saved: was}
+		}
+		if saved["closed"] == "1" {
+			os.Remove(filepath.Join(e.StateDir, firewallFile))
+			e.reopenNetwork(ctx)
+		}
 		return save("undone")
 	case "install":
 		if request.Name != "docker" {
 			return e.refuse(request.ID, fmt.Errorf("%s cannot be installed", request.Name))
 		}
-		result, err := recipes.InstallDocker(ctx, env, command.Args)
+		result, err := recipes.InstallDocker(ctx, env, e.installArgs(command.Args))
 		if err != nil {
 			return e.refuse(request.ID, err)
 		}
@@ -321,6 +372,14 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		return e.signIn(ctx, request, command)
 	case "join":
 		return e.joinTailnet(ctx, request)
+	case "exitnode":
+		return e.exitNode(ctx, request, command)
+	case "dns":
+		return e.tailscaleDNS(ctx, request, command)
+	case "open", "close", "putback":
+		return e.changeFirewall(ctx, request, command)
+	case "containers":
+		return e.confineContainers(ctx, request, command)
 	}
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }

@@ -310,7 +310,7 @@ describe("the packages report", () => {
     const running = {
       state: "running" as const,
       addresses: ["100.101.7.12"],
-      name: "vps-2.tail4d2a.ts.net",
+      name: "vps-2.tail0000.ts.net",
       keyExpiry: null,
     };
     await inventory(A, { tailscale: running });

@@ -144,13 +144,13 @@ func TestThePackageListIsSentOnlyWhenItChanged(t *testing.T) {
 	if sent := poll(); sent.Packages == nil || sent.Tailscale == nil {
 		t.Fatalf("first report %+v", sent)
 	}
-	write([]Service{{Kind: "docker", Name: "adguard", State: "running"}}, packages)
+	write([]Service{{Kind: "docker", Name: "resolver", State: "running"}}, packages)
 	if sent := poll(); sent.Packages != nil || sent.Tailscale == nil || sent.Services == nil {
 		t.Fatalf("an unchanged package list was sent again: %+v", sent)
 	}
 	changed := *packages
 	changed.Installed = 2
-	write([]Service{{Kind: "docker", Name: "adguard", State: "running"}}, &changed)
+	write([]Service{{Kind: "docker", Name: "resolver", State: "running"}}, &changed)
 	if sent := poll(); sent.Packages == nil || sent.Packages.Installed != 2 {
 		t.Fatalf("a changed package list was not sent: %+v", sent)
 	}

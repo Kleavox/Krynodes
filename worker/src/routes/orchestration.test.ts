@@ -81,11 +81,11 @@ function routes() {
     .run(A);
   const env = {
     DB: db,
-    PUBLIC_ORIGIN: "https://kry.kleavox.xyz",
+    PUBLIC_ORIGIN: "https://kry.example.org",
   } as unknown as Env;
   const call = (method: string, path: string, body?: unknown) =>
     app.request(
-      `https://kry.kleavox.xyz${path}`,
+      `https://kry.example.org${path}`,
       {
         method,
         headers: { "content-type": "application/json" },
@@ -363,10 +363,10 @@ describe("operations in steps", () => {
     const args = {
       service: "app",
       port: "9000",
-      hostname: "listmonk-a.kleavox.xyz",
+      hostname: "listmonk-a.example.org",
       mode: "path",
       path: "/admin",
-      zone: "kleavox.xyz",
+      zone: "example.org",
       aud: "aud-1",
     };
     const open = await t.operate("expose", [
@@ -401,7 +401,7 @@ describe("operations in steps", () => {
         kind: "compose",
         name: "listmonk",
         action: "unexpose",
-        args: { hostname: "listmonk-a.kleavox.xyz", zone: "kleavox.xyz" },
+        args: { hostname: "listmonk-a.example.org", zone: "example.org" },
         attachFrom: 0,
       }),
       step({ nodeId: A, kind: "compose", name: "listmonk", action: "purge" }),
@@ -438,9 +438,9 @@ describe("operations in steps", () => {
         args: {
           service: "app",
           port: "9000",
-          hostname: "listmonk-a.kleavox.xyz",
+          hostname: "listmonk-a.example.org",
           mode: "allow",
-          zone: "kleavox.xyz",
+          zone: "example.org",
           aud: "aud-1",
         },
         attachFrom: 0,
@@ -476,9 +476,9 @@ describe("operations in steps", () => {
           args: {
             service: "app",
             port: "9000",
-            hostname: "listmonk-a.kleavox.xyz",
+            hostname: "listmonk-a.example.org",
             mode: "allow",
-            zone: "kleavox.xyz",
+            zone: "example.org",
             aud: "aud-1",
             source: set,
           },
@@ -503,14 +503,14 @@ describe("operations in steps", () => {
         args: { set: NEXT, holders: "3" },
       }),
     );
-    const response = await t.operate("split", stores, { zone: "kleavox.xyz" });
+    const response = await t.operate("split", stores, { zone: "example.org" });
     expect(response.status).toBe(201);
     expect(
       t.rows().every((row) => row.mode === "parallel" && row.ready === 1),
     ).toBe(true);
     expect(
       t.sqlite.prepare("SELECT zone, set_id FROM cloudflare").get(),
-    ).toEqual({ zone: "kleavox.xyz", set_id: null });
+    ).toEqual({ zone: "example.org", set_id: null });
   });
 
   it("allows one token change at a time", async () => {
@@ -526,10 +526,10 @@ describe("operations in steps", () => {
         }),
       );
     expect(
-      (await t.operate("split", split(NEXT), { zone: "kleavox.xyz" })).status,
+      (await t.operate("split", split(NEXT), { zone: "example.org" })).status,
     ).toBe(201);
     const second = await t.operate("split", split(SET), {
-      zone: "kleavox.xyz",
+      zone: "example.org",
     });
     expect(second.status).toBe(409);
     expect(await code(second)).toBe("TOKEN_BUSY");
@@ -542,16 +542,16 @@ describe("operations in steps", () => {
         args: {
           service: "app",
           port: "9000",
-          hostname: "listmonk-a.kleavox.xyz",
+          hostname: "listmonk-a.example.org",
           mode: "everyone",
-          zone: "kleavox.xyz",
+          zone: "example.org",
         },
       }),
     ]);
     expect(await code(open)).toBe("TOKEN_BUSY");
     t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
     expect(
-      (await t.operate("split", split(SET), { zone: "kleavox.xyz" })).status,
+      (await t.operate("split", split(SET), { zone: "example.org" })).status,
     ).toBe(201);
   });
 
@@ -579,7 +579,7 @@ describe("operations in steps", () => {
     };
     pending("store", 11);
     pending("release", 1);
-    const busy = await t.operate("split", split(), { zone: "kleavox.xyz" });
+    const busy = await t.operate("split", split(), { zone: "example.org" });
     expect(busy.status).toBe(409);
     expect(await busy.json()).toMatchObject({
       code: "TOKEN_BUSY",
@@ -590,7 +590,7 @@ describe("operations in steps", () => {
       .prepare("UPDATE actions SET status = 'done' WHERE action = 'release'")
       .run();
     expect(
-      (await t.operate("split", split(), { zone: "kleavox.xyz" })).status,
+      (await t.operate("split", split(), { zone: "example.org" })).status,
     ).toBe(201);
   });
 
@@ -613,7 +613,7 @@ describe("operations in steps", () => {
           holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
           set: NEXT,
           cleanup: B,
-          zone: "kleavox.xyz",
+          zone: "example.org",
         },
         attachFrom: 0,
       }),
@@ -661,7 +661,7 @@ describe("operations in steps", () => {
         args: {
           holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
           set: NEXT,
-          zone: "kleavox.xyz",
+          zone: "example.org",
         },
         attachFrom: 0,
       }),
@@ -696,7 +696,7 @@ describe("operations in steps", () => {
           holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
           set: NEXT,
           cleanup: B,
-          zone: "kleavox.xyz",
+          zone: "example.org",
         },
         attachFrom: 0,
       }),
@@ -954,7 +954,7 @@ describe("single steps of agent 0.7.0", () => {
     const t = routes();
     t.sqlite
       .prepare(
-        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'kuma', '/var/lib/kry-exec/compose/kuma', 1, 1, 1, 0, datetime('now'))",
+        "INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at) VALUES (?, 'panel', '/var/lib/kry-exec/compose/panel', 1, 1, 1, 0, datetime('now'))",
       )
       .run(A);
     expect(
@@ -962,7 +962,7 @@ describe("single steps of agent 0.7.0", () => {
         await single(t, {
           nodeId: A,
           kind: "compose",
-          name: "kuma",
+          name: "panel",
           action: "adopt",
         }),
       ),
@@ -972,7 +972,7 @@ describe("single steps of agent 0.7.0", () => {
         await single(t, {
           nodeId: A,
           kind: "compose",
-          name: "kuma",
+          name: "panel",
           action: "edit",
           compose: "services: {}\n",
         })
@@ -988,7 +988,7 @@ describe("single steps of agent 0.7.0", () => {
     const made = step({
       nodeId: B,
       kind: "compose",
-      name: "kuma",
+      name: "panel",
       action: "create",
       compose: "services: {}\n",
     });
@@ -1009,7 +1009,7 @@ async function hub() {
   const { db, sqlite } = createTestDb();
   sqlite
     .prepare(
-      "INSERT INTO cloudflare (owner_user_id, zone, set_id, updated_at) VALUES ('standalone', 'kleavox.xyz', ?, datetime('now'))",
+      "INSERT INTO cloudflare (owner_user_id, zone, set_id, updated_at) VALUES ('standalone', 'example.org', ?, datetime('now'))",
     )
     .run(SET);
   for (const id of [A, B, C]) {
@@ -1079,7 +1079,7 @@ async function hub() {
     });
   const env = {
     DB: db,
-    PUBLIC_ORIGIN: "https://kry.kleavox.xyz",
+    PUBLIC_ORIGIN: "https://kry.example.org",
   } as unknown as Env;
   const operate = async (
     kind: string,
@@ -1087,7 +1087,7 @@ async function hub() {
     extra = {},
   ) => {
     const response = await app.request(
-      "https://kry.kleavox.xyz/api/operations",
+      "https://kry.example.org/api/operations",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1151,7 +1151,7 @@ describe("steps that feed the next", () => {
           args: { set: NEXT, holders: "3" },
         }),
       ),
-      { zone: "kleavox.xyz" },
+      { zone: "example.org" },
     );
     expect(current()).toBe(SET);
     await t.beat(A);
@@ -1175,7 +1175,7 @@ describe("steps that feed the next", () => {
           args: { set: NEXT, holders: "1" },
         }),
       ],
-      { zone: "kleavox.xyz" },
+      { zone: "example.org" },
     );
     await t.beat(A);
     await t.finish(A, id!, "stored");
@@ -1205,7 +1205,7 @@ describe("steps that feed the next", () => {
         args: {
           holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
           set: NEXT,
-          zone: "kleavox.xyz",
+          zone: "example.org",
         },
         attachFrom: 0,
       }),
@@ -1272,10 +1272,10 @@ describe("steps that feed the next", () => {
     const args = {
       service: "app",
       port: "9000",
-      hostname: "listmonk-a.kleavox.xyz",
+      hostname: "listmonk-a.example.org",
       mode: "path",
       path: "/admin",
-      zone: "kleavox.xyz",
+      zone: "example.org",
       aud: "aud-1",
     };
     const [exposeId] = await t.operate("expose", [
@@ -1292,7 +1292,7 @@ describe("steps that feed the next", () => {
       A,
       exposeId!,
       JSON.stringify({
-        hostname: "listmonk-a.kleavox.xyz",
+        hostname: "listmonk-a.example.org",
         expires: "2027-10-05T00:00:00Z",
       }),
     );
@@ -1319,7 +1319,7 @@ describe("steps that feed the next", () => {
         kind: "compose",
         name: "listmonk",
         action: "unexpose",
-        args: { hostname: "listmonk-a.kleavox.xyz", zone: "kleavox.xyz" },
+        args: { hostname: "listmonk-a.example.org", zone: "example.org" },
       }),
     ]);
     await t.beat(A);
@@ -1409,7 +1409,7 @@ describe("the inventory of agent 0.7.0", () => {
     const t = routes();
     t.sqlite
       .prepare(
-        "INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, path, created_by, created_at) VALUES ('listmonk-a.kleavox.xyz', ?, 'listmonk', 'app', 9000, 'allow', NULL, 'owner@example.test', datetime('now'))",
+        "INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, path, created_by, created_at) VALUES ('listmonk-a.example.org', ?, 'listmonk', 'app', 9000, 'allow', NULL, 'owner@example.test', datetime('now'))",
       )
       .run(A);
     t.sqlite.prepare("UPDATE nodes SET security = ? WHERE id = ?").run(
@@ -1438,7 +1438,7 @@ describe("the inventory of agent 0.7.0", () => {
     expect(node.security).toMatchObject({ lockdown: false });
     expect(node.webAddresses).toEqual([
       {
-        hostname: "listmonk-a.kleavox.xyz",
+        hostname: "listmonk-a.example.org",
         project: "listmonk",
         service: "app",
         port: 9000,
@@ -1452,7 +1452,7 @@ describe("the inventory of agent 0.7.0", () => {
     const cloudflare = (await (
       await t.call("GET", "/api/cloudflare")
     ).json()) as { zone: string };
-    expect(cloudflare.zone).toBe("kleavox.xyz");
+    expect(cloudflare.zone).toBe("example.org");
   });
 
   it("hides sealed outputs and keeps a read compose for one day", async () => {
@@ -1508,11 +1508,11 @@ describe("the Cloudflare token", () => {
     } as unknown as Env;
     t.sqlite
       .prepare(
-        "INSERT INTO cloudflare (owner_user_id, zone, set_id, updated_at) VALUES ('standalone', 'kleavox.xyz', ?, datetime('now'))",
+        "INSERT INTO cloudflare (owner_user_id, zone, set_id, updated_at) VALUES ('standalone', 'example.org', ?, datetime('now'))",
       )
       .run(SET);
     const address = t.sqlite.prepare(
-      "INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at, expires_at) VALUES ('listmonk-a.kleavox.xyz', ?, 'listmonk', 'app', 9000, 'allow', 'owner@example.test', datetime('now'), ?)",
+      "INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at, expires_at) VALUES ('listmonk-a.example.org', ?, 'listmonk', 'app', 9000, 'allow', 'owner@example.test', datetime('now'), ?)",
     );
     const now = Date.parse("2026-10-05T10:00:00.000Z");
     address.run(A, "2026-12-01T00:00:00Z");

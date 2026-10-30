@@ -3,14 +3,16 @@ import { describe, expect, it } from "vitest";
 
 import { ContainerNames, namesState, renameNote } from "./container-names";
 
-const one = "services:\n  adguard:\n    image: adguard/adguardhome\n";
+const one = "services:\n  resolver:\n    image: example/resolver\n";
 const three =
   "services:\n  broker:\n    image: redis:7\n  db:\n    image: postgres:17\n  webserver:\n    image: paperless\n";
 
 const owner =
   (taken: string[] = []) =>
   (name: string) =>
-    taken.includes(name) ? `io already runs a container named ${name}.` : null;
+    taken.includes(name)
+      ? `server-2 already runs a container named ${name}.`
+      : null;
 
 const draw = (
   text: string,
@@ -29,15 +31,15 @@ const draw = (
 
 describe("Container Names under a stack's name", () => {
   it("is not there until the compose file has a service", () => {
-    expect(draw("", "uptime-kuma")).toBe("");
+    expect(draw("", "panel")).toBe("");
   });
 
   it("stays closed and shows the one name, or how many", () => {
-    const single = draw(one, "adguard-home");
+    const single = draw(one, "resolver");
     expect(single).toContain("<details");
     expect(single).not.toMatch(/<details[^>]*\sopen/u);
     expect(single).toContain("Container Names");
-    expect(single).toContain('value="adguard-home"');
+    expect(single).toContain('value="resolver"');
     expect(draw(three, "paperless")).toContain("3 containers");
   });
 
@@ -46,7 +48,9 @@ describe("Container Names under a stack's name", () => {
       "cloudflared",
     ]);
     expect(markup).toContain("1 to fix");
-    expect(markup).toContain("io already runs a container named cloudflared.");
+    expect(markup).toContain(
+      "server-2 already runs a container named cloudflared.",
+    );
     expect(markup).toContain('aria-invalid="true"');
   });
 

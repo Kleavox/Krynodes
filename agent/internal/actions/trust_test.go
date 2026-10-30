@@ -329,7 +329,7 @@ func TestParseTrustArgsReadsKeysAndGrant(t *testing.T) {
 			t.Errorf("%v should be refused", bad)
 		}
 	}
-	if _, err := ParseTrustArgs("kry.kleavox.xyz", []string{"cred-1.-7." + key.PublicKey}, false, ""); err == nil {
+	if _, err := ParseTrustArgs("kry.example.org", []string{"cred-1.-7." + key.PublicKey}, false, ""); err == nil {
 		t.Error("an origin without a scheme should be refused")
 	}
 }

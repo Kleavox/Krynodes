@@ -86,7 +86,7 @@ export function SetupOptions<T extends SetupChoice>({
             className="h-8 font-mono"
             autoComplete="off"
             spellCheck={false}
-            placeholder="musyaf"
+            placeholder="Your user name"
             value={name}
             disabled={adminLocked}
             autoFocus={!adminLocked}

@@ -47,7 +47,7 @@ describe("ports a Contained stack may reach on its server", () => {
 
   it("names what it cannot take", () => {
     expect(parseHostPorts("3000").problem).toBe(
-      "3000 is not a port such as 3000/tcp.",
+      "3000 is not a port written as number/tcp.",
     );
     expect(parseHostPorts("70000/tcp").problem).toBe(
       "70000/tcp is not a port between 1 and 65535.",
@@ -116,7 +116,7 @@ const data: ServicesResponse = {
         },
         {
           kind: "docker",
-          name: "adguard",
+          name: "resolver",
           state: "running",
           since: null,
           system: false,
@@ -140,18 +140,18 @@ const data: ServicesResponse = {
   actions: [],
 };
 
-const nodes = [node("n1", "Callisto"), node("n2", "Pivox")];
+const nodes = [node("n1", "Server A"), node("n2", "Server B")];
 
 describe("stacks", () => {
   it("groups one project across servers and puts unhealthy stacks first", () => {
     const groups = groupStacks(data, nodes, "");
     expect(groups.map((group) => group.project)).toEqual(["shop", "listmonk"]);
     expect(groups[1]!.members.map((member) => member.node.name)).toEqual([
-      "Callisto",
-      "Pivox",
+      "Server A",
+      "Server B",
     ]);
     expect(
-      groupStacks(data, nodes, "PIVOX").map((group) => group.project),
+      groupStacks(data, nodes, "SERVER B").map((group) => group.project),
     ).toEqual(["listmonk"]);
   });
 
@@ -210,13 +210,13 @@ describe("stacks", () => {
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
-        node: node("n1", "Callisto", "0.4.1"),
+        node: node("n1", "Server A", "0.4.1"),
       }),
     ).toBe("Needs agent 0.7.0");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
-        node: { ...node("n1", "Callisto", "0.7.0"), agent_version: null },
+        node: { ...node("n1", "Server A", "0.7.0"), agent_version: null },
       }),
     ).toBe("Waiting for First Report");
     expect(
@@ -274,13 +274,13 @@ describe("stacks", () => {
       output: null,
       deviceId: null,
     };
-    expect(actionText(deploy, "Callisto")).toBe("Deploying…");
+    expect(actionText(deploy, "Server A")).toBe("Deploying…");
     expect(
       outcomeText(
         { ...deploy, status: "done", finishedAt: "2026-09-29T10:03:00.000Z" },
-        "Callisto",
+        "Server A",
       ),
-    ).toEqual({ ok: true, text: "listmonk deployed on Callisto" });
+    ).toEqual({ ok: true, text: "listmonk deployed on Server A" });
     expect(
       outcomeText(
         {
@@ -289,16 +289,16 @@ describe("stacks", () => {
           status: "done",
           finishedAt: "2026-09-29T10:03:00.000Z",
         },
-        "Callisto",
+        "Server A",
       ),
-    ).toEqual({ ok: true, text: "listmonk rolled back on Callisto" });
+    ).toEqual({ ok: true, text: "listmonk rolled back on Server A" });
   });
 });
 
 describe("stack commands", () => {
   const member = (running: number, total: number, agent = "0.7.0") => ({
-    node: node("n1", "pivox", agent),
-    stack: stack("kuma", { running, total }),
+    node: node("n1", "server-1", agent),
+    stack: stack("panel", { running, total }),
     trusted: true,
     trust: trusted,
     action: null,
@@ -334,28 +334,28 @@ describe("stack commands", () => {
       docker,
     });
     expect(
-      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("ready")),
+      newStackBlocker(node("n1", "server-1", "0.7.0"), entry("ready")),
     ).toBeNull();
-    expect(newStackBlocker(node("n1", "pivox", "0.4.1"), entry("ready"))).toBe(
-      "Needs agent 0.7.0",
-    );
+    expect(
+      newStackBlocker(node("n1", "server-1", "0.4.1"), entry("ready")),
+    ).toBe("Needs agent 0.7.0");
     expect(
       newStackBlocker(
-        { ...node("n1", "pivox", "0.7.0"), agent_version: null },
+        { ...node("n1", "server-1", "0.7.0"), agent_version: null },
         entry("ready"),
       ),
     ).toBe("Waiting for First Report");
     expect(
-      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("missing")),
+      newStackBlocker(node("n1", "server-1", "0.7.0"), entry("missing")),
     ).toBe("No Docker");
     expect(
-      newStackBlocker(node("n1", "pivox", "0.7.0"), entry("no-compose")),
+      newStackBlocker(node("n1", "server-1", "0.7.0"), entry("no-compose")),
     ).toBe("Docker without Compose");
-    expect(newStackBlocker(node("n1", "pivox", "0.7.0"), entry(null))).toBe(
+    expect(newStackBlocker(node("n1", "server-1", "0.7.0"), entry(null))).toBe(
       "Docker Not Reported Yet",
     );
     expect(
-      newStackBlocker(node("n1", "pivox", "0.7.0"), {
+      newStackBlocker(node("n1", "server-1", "0.7.0"), {
         ...entry("ready"),
         trust: null,
       }),
@@ -363,8 +363,8 @@ describe("stack commands", () => {
   });
 
   it("checks a stack name the way the server does", () => {
-    expect(stackNameProblem("uptime-kuma", [])).toBeNull();
-    expect(stackNameProblem("AdGuard Home", [])).toBeNull();
+    expect(stackNameProblem("panel", [])).toBeNull();
+    expect(stackNameProblem("Resolver", [])).toBeNull();
     expect(stackNameProblem("", [])).toBe("Give the stack a name.");
     expect(stackNameProblem("!!!", [])).toBe(
       "Use at least one letter or digit.",
@@ -372,23 +372,23 @@ describe("stack commands", () => {
     expect(stackNameProblem("k".repeat(65), [])).toBe(
       "Keep the name to 64 characters.",
     );
-    expect(stackNameProblem("Kuma", ["kuma"])).toBe(
-      "This server already runs a stack named kuma.",
+    expect(stackNameProblem("Panel", ["panel"])).toBe(
+      "This server already runs a stack named panel.",
     );
-    expect(stackNameProblem("kuma", [], ["kuma"])).toBe(
-      "A stack named kuma waits in Removed. Restore it or delete it permanently first.",
+    expect(stackNameProblem("panel", [], ["panel"])).toBe(
+      "A stack named panel waits in Removed. Restore it or delete it permanently first.",
     );
   });
 });
 
 describe("stack and container names", () => {
-  const one = "services:\n  adguard:\n    image: adguard/adguardhome\n";
+  const one = "services:\n  resolver:\n    image: example/resolver\n";
   const three =
     "services:\n  broker:\n    image: redis:7\n  db:\n    image: postgres:17\n  webserver:\n    image: paperless\n";
 
   it("turns a display name into the folder and project name", () => {
-    expect(stackSlug("AdGuard Home")).toBe("adguard-home");
-    expect(stackSlug("  Uptime   Kuma! ")).toBe("uptime-kuma");
+    expect(stackSlug("Resolver")).toBe("resolver");
+    expect(stackSlug("  Uptime   Panel! ")).toBe("uptime-panel");
     expect(stackSlug("my_app")).toBe("my_app");
     expect(stackSlug("Pi-hole · DNS")).toBe("pi-hole-dns");
     expect(stackSlug("!!!")).toBe("");
@@ -398,8 +398,8 @@ describe("stack and container names", () => {
   });
 
   it("names one container after the stack and several after their services", () => {
-    expect(containerNames(one, "adguard-home")).toEqual([
-      { service: "adguard", suggested: "adguard-home", value: "adguard-home" },
+    expect(containerNames(one, "resolver")).toEqual([
+      { service: "resolver", suggested: "resolver", value: "resolver" },
     ]);
     expect(containerNames(three, "paperless").map((row) => row.value)).toEqual([
       "paperless-broker",
@@ -491,12 +491,12 @@ describe("stack and container names", () => {
     ).toBe("taken");
   });
 
-  const io = {
+  const serverTwo = {
     stacks: [
       stack("monitoring", {
         title: "Monitoring",
         containers: ["status"],
-        services: ["uptime-kuma", "db"],
+        services: ["panel", "db"],
       }),
       stack("blog", { services: ["web"] }),
       stack("paperless", { containers: ["paperless-db"], services: ["db"] }),
@@ -527,16 +527,18 @@ describe("stack and container names", () => {
   };
 
   it("names the stack that owns a container name on the server", () => {
-    const owner = nameOwner(io, "paperless", "io");
-    expect(owner("uptime-kuma")).toBe(
-      "uptime-kuma is a service of Monitoring on io.",
+    const owner = nameOwner(serverTwo, "paperless", "server-2");
+    expect(owner("panel")).toBe(
+      "panel is a service of Monitoring on server-2.",
     );
-    expect(owner("status")).toBe("status is a container of Monitoring on io.");
+    expect(owner("status")).toBe(
+      "status is a container of Monitoring on server-2.",
+    );
     expect(owner("blog-web-1")).toBe(
-      "blog-web-1 is a container of blog on io.",
+      "blog-web-1 is a container of blog on server-2.",
     );
     expect(owner("portainer")).toBe(
-      "io already runs a container named portainer.",
+      "server-2 already runs a container named portainer.",
     );
     expect(owner("web.monitoring")).toBe(
       "Names ending in .monitoring are kept for the services of Monitoring.",
@@ -545,44 +547,52 @@ describe("stack and container names", () => {
       "Names ending in .paperless are kept for the services of this stack.",
     );
     expect(owner("paperless-db")).toBeNull();
-    expect(owner("db")).toBe("db is a service of Monitoring on io.");
-    expect(nameOwner(undefined, "paperless", "io")("anything")).toBeNull();
+    expect(owner("db")).toBe("db is a service of Monitoring on server-2.");
+    expect(
+      nameOwner(undefined, "paperless", "server-2")("anything"),
+    ).toBeNull();
   });
 
   it("refuses a display name another stack on the server has", () => {
-    expect(sameTitle("monitoring", io.stacks, "io")).toBe(
-      "Another stack on io is called Monitoring.",
+    expect(sameTitle("monitoring", serverTwo.stacks, "server-2")).toBe(
+      "Another stack on server-2 is called Monitoring.",
     );
-    expect(sameTitle("Blog", io.stacks, "io")).toBe(
-      "Another stack on io is called blog.",
+    expect(sameTitle("Blog", serverTwo.stacks, "server-2")).toBe(
+      "Another stack on server-2 is called blog.",
     );
-    expect(sameTitle("Monitoring", io.stacks, "io", "monitoring")).toBeNull();
-    expect(sameTitle("Status", io.stacks, "io")).toBeNull();
+    expect(
+      sameTitle("Monitoring", serverTwo.stacks, "server-2", "monitoring"),
+    ).toBeNull();
+    expect(sameTitle("Status", serverTwo.stacks, "server-2")).toBeNull();
   });
 
   it("says why a server cannot take a stack that moves", () => {
-    const moving = stack("kuma", {
-      title: "Uptime Kuma",
-      names: { web: "uptime-kuma" },
+    const moving = stack("panel", {
+      title: "Panel",
+      names: { web: "panel" },
     });
-    expect(moveClash(moving, { ...io, leftovers: ["kuma"] }, "io")).toBe(
-      "Files left from an earlier kuma are still on io. Delete them there first.",
+    expect(
+      moveClash(moving, { ...serverTwo, leftovers: ["panel"] }, "server-2"),
+    ).toBe(
+      "Files left from an earlier panel are still on server-2. Delete them there first.",
     );
-    expect(moveClash(moving, io, "io")).toBe(
-      "uptime-kuma is a service of Monitoring on io.",
+    expect(moveClash(moving, serverTwo, "server-2")).toBe(
+      "panel is a service of Monitoring on server-2.",
     );
     expect(
       moveClash(
         { ...moving, names: {} },
         {
-          ...io,
-          stacks: [...io.stacks, stack("kuma-2", { title: "Uptime Kuma" })],
+          ...serverTwo,
+          stacks: [...serverTwo.stacks, stack("panel-2", { title: "Panel" })],
         },
-        "io",
+        "server-2",
       ),
-    ).toBe("Another stack on io is called Uptime Kuma.");
-    expect(moveClash({ ...moving, names: {} }, io, "io")).toBeNull();
-    expect(moveClash(moving, undefined, "io")).toBeNull();
+    ).toBe("Another stack on server-2 is called Panel.");
+    expect(
+      moveClash({ ...moving, names: {} }, serverTwo, "server-2"),
+    ).toBeNull();
+    expect(moveClash(moving, undefined, "server-2")).toBeNull();
   });
 });
 
@@ -598,7 +608,7 @@ describe("removed stacks", () => {
         ...data.nodes[0]!,
         docker: "ready",
         removed: [
-          removed("kuma", "2026-10-04T10:00:00.000Z"),
+          removed("panel", "2026-10-04T10:00:00.000Z"),
           removed("shop", "2026-10-05T08:00:00.000Z", "/home/alice/shop"),
         ],
       },
@@ -615,7 +625,7 @@ describe("removed stacks", () => {
         mode: "parallel",
         nodeId: "n1",
         kind: "compose",
-        name: "kuma",
+        name: "panel",
         action: "restore",
         status: "queued",
         requestedBy: "owner@example.test",
@@ -629,20 +639,20 @@ describe("removed stacks", () => {
       },
     ],
   };
-  const fleet = [node("n1", "Callisto"), node("n2", "Pivox")];
+  const fleet = [node("n1", "Server A"), node("n2", "Server B")];
 
   it("lists the newest first with what blocks a restore", () => {
     const list = removedStacks(bin, fleet, "");
     expect(
       list.map((item) => [item.project, item.node.name, item.blocker]),
     ).toEqual([
-      ["shop", "Callisto", null],
-      ["kuma", "Callisto", null],
-      ["ghost", "Pivox", "Docker Not Reported Yet"],
+      ["shop", "Server A", null],
+      ["panel", "Server A", null],
+      ["ghost", "Server B", "Docker Not Reported Yet"],
     ]);
     expect(list[1]!.action?.action).toBe("restore");
     expect(
-      removedStacks(bin, fleet, "pivox").map((item) => item.project),
+      removedStacks(bin, fleet, "server b").map((item) => item.project),
     ).toEqual(["ghost"]);
     expect(
       removedStacks(bin, fleet, "sho").map((item) => item.project),
@@ -658,8 +668,8 @@ describe("removed stacks", () => {
   });
 
   it("knows which folders Krynodes made", () => {
-    expect(ownFolder("/var/lib/kry-exec/compose/kuma")).toBe(true);
-    expect(ownFolder("/var/lib/kry-exec/compose/kuma/sub")).toBe(false);
+    expect(ownFolder("/var/lib/kry-exec/compose/panel")).toBe(true);
+    expect(ownFolder("/var/lib/kry-exec/compose/panel/sub")).toBe(false);
     expect(ownFolder("/home/alice/shop")).toBe(false);
   });
 });
@@ -680,31 +690,31 @@ describe("one list per server", () => {
     const lists = serverLists(data, nodes, all);
     expect(shape(lists)).toEqual([
       [
-        "Callisto",
+        "Server A",
         [
           ["shop", []],
           ["listmonk", ["listmonk-db-1", "listmonk_app"]],
         ],
-        ["adguard"],
+        ["resolver"],
       ],
-      ["Pivox", [["listmonk", []]], []],
+      ["Server B", [["listmonk", []]], []],
     ]);
     expect(lists[0]!.stacks[1]!.peers.map((peer) => peer.node.name)).toEqual([
-      "Callisto",
-      "Pivox",
+      "Server A",
+      "Server B",
     ]);
   });
 
   it("searches stacks, their containers and servers, and filters what is not running", () => {
     expect(shape(serverLists(data, nodes, { ...all, query: "db" }))).toEqual([
-      ["Callisto", [["listmonk", ["listmonk-db-1", "listmonk_app"]]], []],
+      ["Server A", [["listmonk", ["listmonk-db-1", "listmonk_app"]]], []],
     ]);
-    expect(shape(serverLists(data, nodes, { ...all, query: "PIVOX" }))).toEqual(
-      [["Pivox", [["listmonk", []]], []]],
-    );
+    expect(
+      shape(serverLists(data, nodes, { ...all, query: "SERVER B" })),
+    ).toEqual([["Server B", [["listmonk", []]], []]]);
     expect(
       shape(serverLists(data, nodes, { ...all, notRunning: true })),
-    ).toEqual([["Callisto", [["shop", []]], []]]);
+    ).toEqual([["Server A", [["shop", []]], []]]);
   });
 
   it("finds a stack by its display name", () => {
@@ -724,7 +734,7 @@ describe("one list per server", () => {
     expect(
       shape(serverLists(titled, nodes, { ...all, query: "weekly news" })),
     ).toEqual([
-      ["Callisto", [["listmonk", ["listmonk-db-1", "listmonk_app"]]], []],
+      ["Server A", [["listmonk", ["listmonk-db-1", "listmonk_app"]]], []],
     ]);
     expect(
       groupStacks(titled, nodes, "Weekly").map((group) => [
@@ -795,13 +805,13 @@ describe("one list per server", () => {
       ]),
     ).toEqual([
       [
-        "Callisto",
+        "Server A",
         "7 running · 1 partly · 1 stopped · 1 failed",
         ["shop", "vault", "listmonk", "proxy"],
-        ["cron.service", "adguard", "nginx.service"],
+        ["cron.service", "nginx.service", "resolver"],
         3,
       ],
-      ["Pivox", "1 running", ["listmonk"], [], 0],
+      ["Server B", "1 running", ["listmonk"], [], 0],
     ]);
     expect(
       serverBoxes(withUnits, nodes, { ...options, showSystem: true })[0]!
@@ -811,12 +821,12 @@ describe("one list per server", () => {
       serverBoxes(withUnits, nodes, { ...options, kind: "systemd" }).map(
         (box) => [box.node.name, box.stacks.length, box.members.length],
       ),
-    ).toEqual([["Callisto", 0, 2]]);
+    ).toEqual([["Server A", 0, 2]]);
     expect(
-      serverBoxes(withUnits, nodes, { ...options, query: "pivox" }).map(
+      serverBoxes(withUnits, nodes, { ...options, query: "server b" }).map(
         (box) => box.node.name,
       ),
-    ).toEqual(["Pivox"]);
+    ).toEqual(["Server B"]);
     expect(
       serverBoxes(withUnits, nodes, { ...options, query: "nginx" }).map(
         (box) => [
@@ -824,7 +834,7 @@ describe("one list per server", () => {
           box.members.map((member) => member.entry.name),
         ],
       ),
-    ).toEqual([["Callisto", ["nginx.service"]]]);
+    ).toEqual([["Server A", ["nginx.service"]]]);
     expect(foldedText(3)).toBe("+ 3 system services");
     expect(foldedText(1)).toBe("+ 1 system service");
   });
@@ -858,7 +868,7 @@ describe("one list per server", () => {
 
 describe("moving a stack with web addresses", () => {
   const address = {
-    hostname: "listmonk-pivox.kleavox.xyz",
+    hostname: "listmonk-server-1.example.org",
     project: "listmonk",
     service: "app",
     port: 9000,
@@ -907,9 +917,9 @@ describe("what needs attention on Services", () => {
     since: string | null = null,
   ) => ({ kind: "docker" as const, name, state, since, system: false });
   const servers = [
-    node("pv", "pivox", "0.7.0"),
-    node("io", "io", "0.7.0"),
-    node("cl", "calisto", "0.7.0"),
+    node("pv", "server-1", "0.7.0"),
+    node("server-2", "server-2", "0.7.0"),
+    node("cl", "server-3", "0.7.0"),
   ];
   const estate: ServicesResponse = {
     nodes: [
@@ -928,16 +938,16 @@ describe("what needs attention on Services", () => {
         trust: trusted,
       },
       {
-        id: "io",
+        id: "server-2",
         inventoryAt: null,
         refreshRequestedAt: null,
         stacks: [
-          stack("umami", { running: 1, total: 2, rollback: true }),
+          stack("tracker", { running: 1, total: 2, rollback: true }),
           stack("blog"),
         ],
         services: [
-          container("umami-app-1", "running"),
-          container("umami-db-1", "stopped"),
+          container("tracker-app-1", "running"),
+          container("tracker-db-1", "stopped"),
           container("blog-web-1", "running"),
           container("blog-db-1", "running"),
         ],
@@ -976,21 +986,21 @@ describe("what needs attention on Services", () => {
     }),
     failed({
       id: "f3",
-      nodeId: "io",
-      name: "umami",
+      nodeId: "server-2",
+      name: "tracker",
       action: "deploy",
       finishedAt: ago(60),
       output:
-        "Container umami-db-1 Error\ndependency failed to start: container umami-db-1 exited (1)",
+        "Container tracker-db-1 Error\ndependency failed to start: container tracker-db-1 exited (1)",
     }),
     failed({
       id: "f4",
-      nodeId: "io",
+      nodeId: "server-2",
       name: "blog",
       action: "stop",
       finishedAt: ago(5),
     }),
-    failed({ id: "f5", nodeId: "io", name: "newapp", action: "create" }),
+    failed({ id: "f5", nodeId: "server-2", name: "newapp", action: "create" }),
     failed({ id: "f6", nodeId: "gone", name: "pihole" }),
   ];
 
@@ -1006,9 +1016,16 @@ describe("what needs attention on Services", () => {
         problem.primary,
       ]),
     ).toEqual([
-      ["calisto", "systemd", "backup", "Failed", "Failed 40m ago", "start"],
       [
-        "io",
+        "server-1",
+        "stack",
+        "pihole",
+        "0 of 1 running",
+        "Restart failed 30m ago: port 53 is already allocated",
+        "start",
+      ],
+      [
+        "server-2",
         "stack",
         "blog",
         "2 of 2 running",
@@ -1016,33 +1033,26 @@ describe("what needs attention on Services", () => {
         "restart",
       ],
       [
-        "io",
+        "server-2",
         "stack",
-        "umami",
+        "tracker",
         "1 of 2 running",
-        "Deploy failed 1h ago: dependency failed to start: container umami-db-1 exited (1)",
+        "Deploy failed 1h ago: dependency failed to start: container tracker-db-1 exited (1)",
         "rollback",
       ],
-      [
-        "pivox",
-        "stack",
-        "pihole",
-        "0 of 1 running",
-        "Restart failed 30m ago: port 53 is already allocated",
-        "start",
-      ],
+      ["server-3", "systemd", "backup", "Failed", "Failed 40m ago", "start"],
     ]);
-    expect(problems[3]!.target).toEqual({
+    expect(problems[0]!.target).toEqual({
       nodeId: "pv",
-      nodeName: "pivox",
+      nodeName: "server-1",
       kind: "compose",
       name: "pihole",
     });
-    expect(problems[3]!.stack?.stack.project).toBe("pihole");
-    expect(problems[3]!.blocker).toBeNull();
-    expect(problems[0]!.target.name).toBe("backup.service");
-    expect(problems[0]!.stack).toBeNull();
-    expect(problems[0]!.blocker).toBe("Not Trusted Yet");
+    expect(problems[0]!.stack?.stack.project).toBe("pihole");
+    expect(problems[0]!.blocker).toBeNull();
+    expect(problems[3]!.target.name).toBe("backup.service");
+    expect(problems[3]!.stack).toBeNull();
+    expect(problems[3]!.blocker).toBe("Not Trusted Yet");
   });
 
   it("says what stopped and when without a failed action", () => {

@@ -20,8 +20,8 @@ const (
 func containedServer(t *testing.T) (Executor, *fakeRun) {
 	t.Helper()
 	executor, run := stackExecutor(t)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	if result := runRequest(t, executor, createRequest(t, idA, "panel", panelText)); !result.OK {
 		t.Fatalf("result %#v", result)
 	}
 	run.calls = nil
@@ -82,33 +82,33 @@ func portRule(tool, verb, bridge, protocol, port string) string {
 	return tool + " " + verb + " -i " + bridge + " -p " + protocol + " -m " + protocol + " --dport " + port + " -j ACCEPT"
 }
 
-func reachingKuma(t *testing.T, ports string) (Executor, *fakeRun, Result) {
+func reachingPanel(t *testing.T, ports string) (Executor, *fakeRun, Result) {
 	t.Helper()
 	executor, run := stackExecutor(t)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-	bridge := bridgeName("kuma", "default")
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	bridge := bridgeName("panel", "default")
 	run.failing = map[string]string{}
 	for _, tool := range []string{"iptables", "ip6tables"} {
 		run.failing[portRule(tool, "-C KRY-CONTAINED", bridge, "tcp", "3000")] = ""
 		run.failing[portRule(tool, "-C KRY-CONTAINED", bridge, "udp", "53")] = ""
 	}
-	result := runRequest(t, executor, composeRequest(t, idA, "kuma", "create", func(command *Command) {
-		command.Compose = kumaText
+	result := runRequest(t, executor, composeRequest(t, idA, "panel", "create", func(command *Command) {
+		command.Compose = panelText
 		command.Args = map[string]string{"hostPorts": ports}
 	}))
 	return executor, run, result
 }
 
 func TestAContainedStackReachesTheServerOnlyOnTheChosenPorts(t *testing.T) {
-	executor, run, result := reachingKuma(t, " 3000/tcp, 53/udp,3000/tcp ")
+	executor, run, result := reachingPanel(t, " 3000/tcp, 53/udp,3000/tcp ")
 	if !result.OK {
 		t.Fatalf("result %#v", result)
 	}
 	var meta stackMeta
-	if err := readJSON(filepath.Join(kumaDir(executor), "krynodes.json"), &meta); err != nil || !slices.Equal(meta.HostPorts, []string{"3000/tcp", "53/udp"}) {
+	if err := readJSON(filepath.Join(panelDir(executor), "krynodes.json"), &meta); err != nil || !slices.Equal(meta.HostPorts, []string{"3000/tcp", "53/udp"}) {
 		t.Fatalf("meta %#v err %v", meta, err)
 	}
-	bridge := bridgeName("kuma", "default")
+	bridge := bridgeName("panel", "default")
 	for _, tool := range []string{"iptables", "ip6tables"} {
 		for _, rule := range []string{portRule(tool, "-I KRY-CONTAINED 1", bridge, "tcp", "3000"), portRule(tool, "-I KRY-CONTAINED 1", bridge, "udp", "53")} {
 			if !slices.Contains(run.calls, rule) {
@@ -119,13 +119,13 @@ func TestAContainedStackReachesTheServerOnlyOnTheChosenPorts(t *testing.T) {
 }
 
 func TestTheReachIsInPlaceBeforeTheStackStarts(t *testing.T) {
-	executor, run, result := reachingKuma(t, "3000/tcp")
+	executor, run, result := reachingPanel(t, "3000/tcp")
 	if !result.OK {
 		t.Fatalf("result %#v", result)
 	}
-	allow := slices.Index(run.calls, portRule("iptables", "-I KRY-CONTAINED 1", bridgeName("kuma", "default"), "tcp", "3000"))
+	allow := slices.Index(run.calls, portRule("iptables", "-I KRY-CONTAINED 1", bridgeName("panel", "default"), "tcp", "3000"))
 	enter := slices.Index(run.calls, "iptables -I INPUT 1 -i krc+ -j KRY-CONTAINED")
-	up := slices.Index(run.calls, composeCall(kumaDir(executor), "compose.krynodes.json", "up -d"))
+	up := slices.Index(run.calls, composeCall(panelDir(executor), "compose.krynodes.json", "up -d"))
 	if allow < 0 || up < 0 || allow > up {
 		t.Fatalf("an app that calls the server as it starts must find the port open: %q", run.calls)
 	}
@@ -140,14 +140,14 @@ func TestOnlyRealPortsOfAContainedStackMayBeReached(t *testing.T) {
 		many = append(many, strconv.Itoa(port)+"/tcp")
 	}
 	for _, ports := range []string{"70000/tcp", "0/tcp", "3000/sctp", "3000", "tcp/3000", strings.Join(many, ",")} {
-		if _, _, result := reachingKuma(t, ports); result.OK {
+		if _, _, result := reachingPanel(t, ports); result.OK {
 			t.Fatalf("%q was taken", ports)
 		}
 	}
 	executor, run := stackExecutor(t)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-	result := runRequest(t, executor, composeRequest(t, idA, "kuma", "create", func(command *Command) {
-		command.Compose = kumaText
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	result := runRequest(t, executor, composeRequest(t, idA, "panel", "create", func(command *Command) {
+		command.Compose = panelText
 		command.Access = "full"
 		command.Args = map[string]string{"hostPorts": "3000/tcp"}
 	}))
@@ -157,13 +157,13 @@ func TestOnlyRealPortsOfAContainedStackMayBeReached(t *testing.T) {
 }
 
 func TestReadingAStackShowsTheChosenPorts(t *testing.T) {
-	executor, run, result := reachingKuma(t, "3000/tcp")
+	executor, run, result := reachingPanel(t, "3000/tcp")
 	if !result.OK {
 		t.Fatalf("result %#v", result)
 	}
-	withStacks(&executor, Stack{Project: "kuma", Directory: kumaDir(executor), Files: []string{filepath.Join(kumaDir(executor), "compose.yaml")}})
+	withStacks(&executor, Stack{Project: "panel", Directory: panelDir(executor), Files: []string{filepath.Join(panelDir(executor), "compose.yaml")}})
 	run.failing = map[string]string{}
-	read := runRequest(t, executor, composeRequest(t, idB, "kuma", "read", nil))
+	read := runRequest(t, executor, composeRequest(t, idB, "panel", "read", nil))
 	var shown composeRead
 	if !read.OK || json.Unmarshal([]byte(read.Output), &shown) != nil || !slices.Equal(shown.HostPorts, []string{"3000/tcp"}) {
 		t.Fatalf("read %#v", read)
@@ -185,11 +185,11 @@ func TestTheReachKeepsOrClearsOnEdit(t *testing.T) {
 }
 
 func TestAPortTheStackNoLongerNeedsIsClosed(t *testing.T) {
-	executor, run, result := reachingKuma(t, "3000/tcp")
+	executor, run, result := reachingPanel(t, "3000/tcp")
 	if !result.OK {
 		t.Fatalf("result %#v", result)
 	}
-	bridge := bridgeName("kuma", "default")
+	bridge := bridgeName("panel", "default")
 	run.calls = nil
 	run.failing = map[string]string{}
 	listed := "-N KRY-CONTAINED\n" +

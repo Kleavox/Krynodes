@@ -21,7 +21,7 @@ import (
 
 const (
 	peerNode     = "11111111-1111-4111-8111-111111111111"
-	peerEndpoint = "141.95.0.21:51820"
+	peerEndpoint = "203.0.113.21:51820"
 	wg0Address   = `{"ifname":"wg0","mtu":1420,"linkinfo":{"info_kind":"wireguard"},"addr_info":[{"family":"inet","local":"10.0.0.1","prefixlen":24}]}`
 )
 
@@ -35,7 +35,7 @@ func networkExecutor(t *testing.T) (Executor, *fakeRun) {
 	rootFile(t, executor, "/usr/bin/wg", "")
 	rootFile(t, executor, "/etc/hosts", "127.0.0.1 localhost\n")
 	rootFile(t, executor, "/etc/ufw/ufw.conf", "ENABLED=yes\n")
-	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[{"family":"inet","local":"141.95.0.30","prefixlen":24}]},` + wg0Address + `]`
+	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[{"family":"inet","local":"203.0.113.30","prefixlen":24}]},` + wg0Address + `]`
 	run.respond["ip -j route show default"] = `[{"dev":"eth0"}]`
 	run.respond["wg show all listen-port"] = "wg0\t51820\n"
 	return executor, run
@@ -102,7 +102,7 @@ func twoMembers(t *testing.T, executor Executor, version int, keys network.Keys,
 		parent = applied.Hash
 	}
 	return network.Document{V: 1, Version: version, Range: "10.88.0.0/24", Port: 51820, MTU: 1420, Parent: parent, Blocked: []string{}, Members: []network.Member{
-		{Node: peerNode, Name: "io", Address: "10.88.0.1", Key: peer.Public, Signer: peer.Signer, Port: 51820, Endpoint: &endpoint, PSK: map[string]string{testNode: "eyJ2IjoxfQ"}},
+		{Node: peerNode, Name: "server-2", Address: "10.88.0.1", Key: peer.Public, Signer: peer.Signer, Port: 51820, Endpoint: &endpoint, PSK: map[string]string{testNode: "eyJ2IjoxfQ"}},
 		{Node: testNode, Name: "vps-2", Address: "10.88.0.2", Key: keys.Public, Signer: keys.Signer, Port: 51821, PSK: map[string]string{peerNode: sealed}},
 	}}
 }
@@ -181,7 +181,7 @@ func TestAServerJoinsInTheOrderTheSpecSays(t *testing.T) {
 	if readRoot(t, executor, network.DropInPath) != network.DropInBody {
 		t.Fatal("the Docker drop-in is missing")
 	}
-	if hosts := readRoot(t, executor, network.HostsPath); !strings.Contains(hosts, "10.88.0.1 io.kry\n10.88.0.2 vps-2.kry\n") || !strings.HasPrefix(hosts, "127.0.0.1 localhost\n") {
+	if hosts := readRoot(t, executor, network.HostsPath); !strings.Contains(hosts, "10.88.0.1 server-2.kry\n10.88.0.2 vps-2.kry\n") || !strings.HasPrefix(hosts, "127.0.0.1 localhost\n") {
 		t.Fatalf("hosts:\n%s", hosts)
 	}
 	for _, call := range run.calls {
@@ -233,7 +233,7 @@ func TestLeavingRemovesExactlyWhatKrynodesMade(t *testing.T) {
 	run.calls = nil
 	endpoint := peerEndpoint
 	alone := network.Document{V: 1, Version: 2, Range: "10.88.0.0/24", Port: 51820, MTU: 1420, Parent: executor.readNetwork().Applied.Hash, Members: []network.Member{
-		{Node: peerNode, Name: "io", Address: "10.88.0.1", Key: peer.Public, Signer: peer.Signer, Port: 51820, Endpoint: &endpoint, PSK: map[string]string{}},
+		{Node: peerNode, Name: "server-2", Address: "10.88.0.1", Key: peer.Public, Signer: peer.Signer, Port: 51820, Endpoint: &endpoint, PSK: map[string]string{}},
 	}}
 	if result := hostRun(t, executor, applyDocument(t, idC, alone)); !result.OK {
 		t.Fatalf("leave %+v", result)
@@ -363,7 +363,7 @@ func TestAnAnnouncedKeyIsTakenOnlyWithTheMembersSignature(t *testing.T) {
 	}
 	stranger, _ := peerKeys(t)
 	bad := askNetwork(t, idC, "announce", map[string]string{"node": peerNode, "key": fresh.Public, "signature": stranger.Announce(peerNode)})
-	if result := hostRun(t, executor, bad); result.OK || !strings.Contains(result.Output, "not signed by io") {
+	if result := hostRun(t, executor, bad); result.OK || !strings.Contains(result.Output, "not signed by server-2") {
 		t.Fatalf("bad %+v", result)
 	}
 	if config := readRoot(t, executor, network.ConfigPath); !strings.Contains(config, "PublicKey = "+peer.Public) {
@@ -458,7 +458,7 @@ func TestATestCountsBeforeAndAfterAndWalksLargeSizesDown(t *testing.T) {
 	run.respond["systemctl is-active wg-quick@kry0.service"] = "active\n"
 	run.respond["ping -n -c 5 -i 0.2 -W 1 -I kry0 10.88.0.1"] = "5 packets transmitted, 4 received, 20% packet loss, time 804ms\nrtt min/avg/max/mdev = 1.1/4.2/8.0/1.0 ms\n"
 	run.respond["ping -n -c 2 -W 1 -M do -s 1352 -I kry0 10.88.0.1"] = "2 packets transmitted, 2 received, 0% packet loss\n"
-	run.respond["ip -j route get 141.95.0.21"] = `[{"dst":"141.95.0.21","prefsrc":"141.95.0.30"}]`
+	run.respond["ip -j route get 203.0.113.21"] = `[{"dst":"203.0.113.21","prefsrc":"203.0.113.30"}]`
 	writeRequest(t, executor.RequestDir, idC+".json", askNetwork(t, idC, "test", map[string]string{"peer": peerNode, "address": "10.88.0.1", "mtu": "1420"}))
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
@@ -485,7 +485,7 @@ func TestATestCountsBeforeAndAfterAndWalksLargeSizesDown(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Output), &found); !result.OK || err != nil {
 		t.Fatalf("%+v (%v)", result, err)
 	}
-	if !found.Up || !found.HasKey || found.Version == nil || *found.Version != 1 || found.Clock != executorNow.Unix() || found.PublicAddress == nil || *found.PublicAddress != "141.95.0.30" {
+	if !found.Up || !found.HasKey || found.Version == nil || *found.Version != 1 || found.Clock != executorNow.Unix() || found.PublicAddress == nil || *found.PublicAddress != "203.0.113.30" {
 		t.Fatalf("found %+v", found)
 	}
 	if found.Handshakes.Sent != 700 || found.Handshakes.Received != 300 || found.Handshakes.Answered != 1 || found.Handshakes.Third != nil {
@@ -537,12 +537,12 @@ func TestTheLinksRideTheHeartbeat(t *testing.T) {
 func TestEndpointsChangeOnlyThePeersOfTheNetwork(t *testing.T) {
 	executor, run, _, peer, _ := joinedServer(t)
 	stranger, _ := peerKeys(t)
-	writeRequest(t, executor.RequestDir, idC+".json", askNetwork(t, idC, "endpoints", map[string]string{"endpoints": peer.Public + " 141.95.0.99:51820 " + stranger.Public + " 203.0.113.9:51820"}))
+	writeRequest(t, executor.RequestDir, idC+".json", askNetwork(t, idC, "endpoints", map[string]string{"endpoints": peer.Public + " 203.0.113.99:51820 " + stranger.Public + " 203.0.113.9:51820"}))
 	run.calls = nil
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if result := readResult(t, executor, idC); !result.OK || !slices.Contains(run.calls, "wg set kry0 peer "+peer.Public+" endpoint 141.95.0.99:51820") {
+	if result := readResult(t, executor, idC); !result.OK || !slices.Contains(run.calls, "wg set kry0 peer "+peer.Public+" endpoint 203.0.113.99:51820") {
 		t.Fatalf("%+v %v", result, run.calls)
 	}
 	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, stranger.Public) }) {
@@ -553,7 +553,7 @@ func TestEndpointsChangeOnlyThePeersOfTheNetwork(t *testing.T) {
 func TestTheInventoryNamesWhatStacksPointAt(t *testing.T) {
 	executor, _, _, _, _ := joinedServer(t)
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services:\n  web:\n    environment:\n      DB: postgres://io.kry:5432/shop\n      OLD: 10.89.0.1\n"), 0o640); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("services:\n  web:\n    environment:\n      DB: postgres://server-2.kry:5432/shop\n      OLD: 10.89.0.1\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("CACHE=10.88.0.1\n"), 0o640); err != nil {
@@ -569,7 +569,7 @@ func TestTheInventoryNamesWhatStacksPointAt(t *testing.T) {
 	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if inventory.Network == nil || inventory.Network.Prepared != nil || !slices.Equal(inventory.Network.Points, []reporter.NetworkPoint{{Stack: "shop", Target: "10.88.0.1"}, {Stack: "shop", Target: "io.kry"}}) {
+	if inventory.Network == nil || inventory.Network.Prepared != nil || !slices.Equal(inventory.Network.Points, []reporter.NetworkPoint{{Stack: "shop", Target: "10.88.0.1"}, {Stack: "shop", Target: "server-2.kry"}}) {
 		t.Fatalf("network %+v", inventory.Network)
 	}
 }

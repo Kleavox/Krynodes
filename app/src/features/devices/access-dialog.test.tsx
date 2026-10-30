@@ -24,9 +24,9 @@ const phone: DeviceRecord = {
 
 describe("ticking servers or passkeys", () => {
   const ticks = [
-    { key: "io", label: "io", checked: true, was: true },
-    { key: "calisto", label: "calisto", checked: true, was: false },
-    { key: "pivox", label: "pivox", checked: false, was: true },
+    { key: "server-2", label: "server-2", checked: true, was: true },
+    { key: "server-3", label: "server-3", checked: true, was: false },
+    { key: "server-1", label: "server-1", checked: false, was: true },
   ];
 
   it("uses checkboxes, never switches", () => {

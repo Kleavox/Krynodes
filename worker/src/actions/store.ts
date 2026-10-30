@@ -82,7 +82,13 @@ export type ActionVerb =
   | "save"
   | "key"
   | "join"
-  | "admin";
+  | "admin"
+  | "exitnode"
+  | "dns"
+  | "open"
+  | "close"
+  | "putback"
+  | "containers";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";
@@ -151,6 +157,9 @@ export const DELIVER_SQL = `UPDATE actions SET status = 'sent', sent_at = ?1
     WHERE place = 1 OR bytes <= 524288
     ORDER BY place LIMIT 10)
   RETURNING id, kind, name, action, deliverable_at, signed, attachment`;
+
+export const PENDING_SQL = `SELECT EXISTS (SELECT 1 FROM actions
+  WHERE status IN ('queued', 'sent') AND node_id = ?1) AS pending`;
 
 export const EXPIRE_SQL = `UPDATE actions SET status = 'expired', finished_at = ?1,
     attachment = NULL
@@ -405,6 +414,11 @@ export async function heartbeatActions(
   nodeId: string,
   now: number,
 ) {
+  const pending = await db
+    .prepare(PENDING_SQL)
+    .bind(nodeId)
+    .first<{ pending: number }>();
+  if (!pending?.pending) return [];
   await db.batch(sweepStatements(db, now));
   return deliverActions(db, nodeId, now);
 }

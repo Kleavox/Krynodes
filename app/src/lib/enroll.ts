@@ -6,6 +6,7 @@ export interface EnrollSetup {
   docker: boolean;
   rebootHour: number | null;
   network?: true;
+  confine?: true;
   adminUser?: true;
   adminName?: string;
 }
@@ -20,6 +21,7 @@ export const enrollSetup = (
     ? Math.floor(toUtcHour(choice.hour, offset))
     : null,
   ...(choice.network ? { network: true as const } : {}),
+  ...(choice.confine ? { confine: true as const } : {}),
   ...(choice.adminUser
     ? { adminUser: true as const, adminName: (choice.adminName ?? "").trim() }
     : {}),

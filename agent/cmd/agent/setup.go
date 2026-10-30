@@ -21,6 +21,7 @@ func setupCommand(args []string) error {
 	flags := flag.NewFlagSet("setup", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	recommended := flags.Bool("recommended", false, "apply the recommended protections")
+	confine := flags.Bool("confine", false, "turn on SELinux or AppArmor")
 	docker := flags.Bool("docker", false, "install Docker with Compose")
 	hour := flags.Int("reboot-hour", -1, "restart hour in UTC, 0 to 23")
 	join := flags.String("network", "", "get ready to join the private network in this range")
@@ -37,10 +38,10 @@ func setupCommand(args []string) error {
 	switch {
 	case flags.NArg() > 0:
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
-	case !*recommended && !*docker && *join == "" && *admin == "" && len(adminKeys) == 0:
-		return errors.New("choose --recommended, --docker, --network or more")
+	case !*recommended && !*confine && !*docker && *join == "" && *admin == "" && len(adminKeys) == 0:
+		return errors.New("choose --recommended, --confine, --docker, --network or more")
 	case *admin != "" && !recipes.ValidAdminName(*admin):
-		return errors.New("--admin takes a user name such as musyaf, not root")
+		return errors.New("--admin takes your user name, not root")
 	case *admin != "" && (len(adminKeys) == 0 || len(adminKeys) > 4):
 		return errors.New("--admin needs one to four --admin-key")
 	case *admin == "" && len(adminKeys) > 0:
@@ -52,12 +53,12 @@ func setupCommand(args []string) error {
 	case runtime.GOOS != "linux" || os.Geteuid() != 0:
 		return errors.New("setup must run as root on Linux")
 	}
-	options := actions.SetupOptions{Recommended: *recommended, Docker: *docker, Network: *join, Admin: *admin, AdminKeys: adminKeys, Terminal: terminal{}}
+	options := actions.SetupOptions{Recommended: *recommended, Confine: *confine, Docker: *docker, Network: *join, Admin: *admin, AdminKeys: adminKeys, Terminal: terminal{}}
 	if *hour >= 0 {
 		options.RebootHour = hour
 	}
 	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
-	return executor.Setup(context.Background(), options, os.Stdout, askTerminal)
+	return executor.Setup(context.Background(), options, os.Stdout)
 }
 
 func askTerminal(question string) (bool, bool) {

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import { announceSoon } from "./fleet/client";
+import { announce } from "./fleet/client";
 import { securityHeaders } from "./lib/security-headers";
 import {
   requireGuardInProduction,
@@ -106,7 +106,7 @@ app.use("/api/*", async (context, next) => {
   }
   const identity = context.get("identity");
   if (identity) {
-    announceSoon(context, identity.id, topicsFor(context.req.path));
+    await announce(context.env, identity.id, topicsFor(context.req.path));
   }
 });
 

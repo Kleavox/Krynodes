@@ -158,7 +158,7 @@ function checkChange(env: Env, fleet: Fleet, change: TrustChange, now: number) {
       throw new Refusal(
         409,
         "NOT_TRUSTED",
-        `${node.name} trusts no device yet. Use Trust on servers first.`,
+        `${node.name} trusts no passkey yet. Use Trust on servers first.`,
       );
     }
     if (change.version <= (node.report?.version ?? 0)) {
@@ -210,7 +210,7 @@ async function notify(env: Env, fleet: Fleet, title: string, openedBy: string) {
       title,
       openedBy:
         fleet.devices.find((device) => device.id === openedBy)?.name ??
-        "an unknown device",
+        "an unknown passkey",
     });
   } catch (error) {
     console.error("[kry proposals]", error);
@@ -434,7 +434,7 @@ export function registerProposalRoutes(
           if (!names.has(key.id)) names.set(key.id, key.name);
         }
         const name = (device: string) =>
-          names.get(device) ?? "A removed device";
+          names.get(device) ?? "A removed passkey";
         return {
           id: row.id,
           title: row.title,

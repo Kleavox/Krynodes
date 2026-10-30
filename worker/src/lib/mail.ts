@@ -353,6 +353,8 @@ export interface StoppedMail {
   count: number;
   tried: string[];
   at: string;
+  why?: "confinement";
+  program?: string;
 }
 
 const listed = (names: string[]) =>
@@ -417,6 +419,30 @@ function warningParts(mail: WarningMail): {
         rows: [
           ["Rule", `${value("chain")} · ${value("rule")}`],
           ["Removed", added],
+        ],
+      };
+    case "confinement": {
+      const system =
+        (
+          { selinux: "SELinux", apparmor: "AppArmor" } as Record<string, string>
+        )[value("system")] ?? "SELinux or AppArmor";
+      return {
+        heading: `${system} denied ${value("program")}`,
+        what: `${system} denied ${value("program")} (${value("type")}) ${value("wanted")}. If you do not know why ${value("program")} would need it`,
+        rows: [
+          ["Program", `${value("program")} (${value("type")})`],
+          ["Wanted", value("wanted")],
+          ["Denied", added],
+        ],
+      };
+    }
+    case "firewall":
+      return {
+        heading: "a firewall rule was added outside Krynodes",
+        what: "A rule that lets traffic in was added to the firewall and not through Krynodes. If you did not add it",
+        rows: [
+          ["Rule", value("rule")],
+          ["Added", added],
         ],
       };
     case "port":
@@ -527,7 +553,11 @@ export async function sendStoppedEmail(
   mail: StoppedMail,
 ): Promise<void> {
   const heading = `${mail.project} on ${mail.nodeName} was stopped`;
-  const intro = `A container in ${mail.project} tried ${mail.count} places it was not given. Krynodes stopped the stack, and it stays stopped after a reboot. ${mail.nodeName} is still trusted.`;
+  const denied = `${mail.tried[0] ?? "--"} (${mail.program || "--"})`;
+  const intro =
+    mail.why === "confinement"
+      ? `SELinux or AppArmor denied a container in ${mail.project} ${denied}. Krynodes stopped the stack, and it stays stopped after a reboot. ${mail.nodeName} is still trusted.`
+      : `A container in ${mail.project} tried ${mail.count} places it was not given. Krynodes stopped the stack, and it stays stopped after a reboot. ${mail.nodeName} is still trusted.`;
   const more = mail.count - mail.tried.length;
   await deliver(env, {
     title: `[Krynodes] ${heading}`,
@@ -537,12 +567,14 @@ export async function sendStoppedEmail(
     intro,
     rows: [
       ["Stack", mail.project],
-      [
-        "Tried",
-        mail.tried.length === 0
-          ? plural(mail.count, "place")
-          : `${mail.tried.join(", ")}${more > 0 ? ` and ${more} more` : ""}`,
-      ],
+      mail.why === "confinement"
+        ? ["Denied", denied]
+        : [
+            "Tried",
+            mail.tried.length === 0
+              ? plural(mail.count, "place")
+              : `${mail.tried.join(", ")}${more > 0 ? ` and ${more} more` : ""}`,
+          ],
       ["Stopped", utcTime(mail.at)],
       ["Change", `The secrets of ${mail.project}, listed on the server page`],
     ],

@@ -45,9 +45,9 @@ func sealFor(t *testing.T, executor Executor, value any) string {
 	return sealed
 }
 
-func kumaReady(t *testing.T, executor Executor, run *fakeRun, service map[string]any, extra map[string]any) string {
+func panelReady(t *testing.T, executor Executor, run *fakeRun, service map[string]any, extra map[string]any) string {
 	t.Helper()
-	dir := kumaDir(executor)
+	dir := panelDir(executor)
 	run.respond = map[string]string{
 		composeCall(dir, "compose.yaml", "config --format json"):                     resolved(t, dir, service, extra),
 		composeCall(dir, "compose.krynodes.json", psStates):                          "web\trunning\t\t0\n",
@@ -79,8 +79,8 @@ func accessOf(t *testing.T, dir string) string {
 
 func TestAContainedStackGetsLimitsAndItsOwnBridge(t *testing.T) {
 	executor, run := stackExecutor(t)
-	dir := kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+	dir := panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	if result := runRequest(t, executor, createRequest(t, idA, "panel", panelText)); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	config := krynodesConfig(t, dir)
@@ -90,7 +90,7 @@ func TestAContainedStackGetsLimitsAndItsOwnBridge(t *testing.T) {
 	}
 	network := config["networks"].(map[string]any)["default"].(map[string]any)
 	bridge := network["driver_opts"].(map[string]any)["com.docker.network.bridge.name"].(string)
-	if !strings.HasPrefix(bridge, "krc") || len(bridge) > 15 || network["name"] != "kuma_default" {
+	if !strings.HasPrefix(bridge, "krc") || len(bridge) > 15 || network["name"] != "panel_default" {
 		t.Fatalf("network %#v", network)
 	}
 	if accessOf(t, dir) != "contained" {
@@ -108,12 +108,12 @@ func TestAContainedStackAskingForMoreThanItsShareIsRefused(t *testing.T) {
 	for label, extra := range cases {
 		t.Run(label, func(t *testing.T) {
 			executor, run := stackExecutor(t)
-			service := kumaService(kumaDir(executor))
+			service := panelService(panelDir(executor))
 			for key, value := range extra {
 				service[key] = value
 			}
-			kumaReady(t, executor, run, service, nil)
-			result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText))
+			panelReady(t, executor, run, service, nil)
+			result := runRequest(t, executor, createRequest(t, idA, "panel", panelText))
 			if result.OK || !strings.Contains(result.Output, "Full access") {
 				t.Fatalf("result %#v", result)
 			}
@@ -123,11 +123,11 @@ func TestAContainedStackAskingForMoreThanItsShareIsRefused(t *testing.T) {
 
 func TestAFullAccessStackRunsAsWritten(t *testing.T) {
 	executor, run := stackExecutor(t)
-	service := kumaService(kumaDir(executor))
+	service := panelService(panelDir(executor))
 	service["privileged"] = true
 	service["network_mode"] = "host"
-	dir := kumaReady(t, executor, run, service, nil)
-	request := composeRequest(t, idA, "kuma", "create", func(c *Command) { c.Compose, c.Access = kumaText, "full" })
+	dir := panelReady(t, executor, run, service, nil)
+	request := composeRequest(t, idA, "panel", "create", func(c *Command) { c.Compose, c.Access = panelText, "full" })
 	if result := runRequest(t, executor, request); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
@@ -141,12 +141,12 @@ func TestAFullAccessStackRunsAsWritten(t *testing.T) {
 
 func TestContainedStacksCannotReachTheServerOrTheCloudMetadata(t *testing.T) {
 	executor, run := stackExecutor(t)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
 	run.failing = map[string]string{
 		"iptables -C DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP": "",
 		"iptables -C INPUT -i krc+ -j KRY-CONTAINED":                 "",
 	}
-	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+	if result := runRequest(t, executor, createRequest(t, idA, "panel", panelText)); !result.OK {
 		t.Fatalf("result %#v", result)
 	}
 	for _, call := range []string{"iptables -I DOCKER-USER -i krc+ -d 169.254.169.254 -j DROP", "iptables -I INPUT 1 -i krc+ -j KRY-CONTAINED", "ip6tables -C INPUT -i krc+ -j KRY-CONTAINED"} {
@@ -162,13 +162,13 @@ func TestContainedStacksCannotReachTheServerOrTheCloudMetadata(t *testing.T) {
 func TestAnOlderContainedStackIsCheckedAgainBeforeItIsRecreated(t *testing.T) {
 	for _, verb := range []string{"deploy", "rollback"} {
 		executor, run := stackExecutor(t)
-		dir, stack := ownKuma(t, executor, "contained", kumaText)
+		dir, stack := ownPanel(t, executor, "contained", panelText)
 		withStacks(&executor, stack)
-		old := `{"name":"kuma","services":{"web":{"image":"louislam/uptime-kuma:1","logging":{"driver":"syslog","options":{"syslog-address":"tcp://127.0.0.1:6379"}}}}}`
+		old := `{"name":"panel","services":{"web":{"image":"example/panel:1","logging":{"driver":"syslog","options":{"syslog-address":"tcp://127.0.0.1:6379"}}}}}`
 		if err := os.WriteFile(filepath.Join(dir, "compose.krynodes.json"), []byte(old), 0o640); err != nil {
 			t.Fatal(err)
 		}
-		result := runRequest(t, executor, composeRequest(t, idA, "kuma", verb, nil))
+		result := runRequest(t, executor, composeRequest(t, idA, "panel", verb, nil))
 		if result.OK || !strings.Contains(result.Output, "syslog") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasSuffix(call, " up -d") || strings.HasSuffix(call, " pull") }) {
 			t.Fatalf("%s: %#v %q", verb, result, run.calls)
 		}
@@ -177,8 +177,8 @@ func TestAnOlderContainedStackIsCheckedAgainBeforeItIsRecreated(t *testing.T) {
 
 func TestTheContainmentIsInPlaceBeforeDockerStartsAtBoot(t *testing.T) {
 	executor, run := stackExecutor(t)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-	if result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText)); !result.OK {
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	if result := runRequest(t, executor, createRequest(t, idA, "panel", panelText)); !result.OK {
 		t.Fatalf("result %#v", result)
 	}
 	run.calls = nil
@@ -215,9 +215,9 @@ func TestNoGuardRulesWithoutAContainedStack(t *testing.T) {
 
 func TestSecretsAreWrittenForTheServerOnly(t *testing.T) {
 	executor, run := stackExecutor(t)
-	dir := kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	dir := panelReady(t, executor, run, panelService(panelDir(executor)), nil)
 	secrets := sealFor(t, executor, map[string]string{"SMTP_PASSWORD": "hunter 2$", "EMPTY": ""})
-	request := composeRequest(t, idA, "kuma", "create", func(c *Command) { c.Compose, c.Secrets = kumaText, secrets })
+	request := composeRequest(t, idA, "panel", "create", func(c *Command) { c.Compose, c.Secrets = panelText, secrets })
 	if result := runRequest(t, executor, request); !result.OK {
 		t.Fatalf("result %#v", result)
 	}
@@ -248,8 +248,8 @@ func TestSecretsThatCannotBeWrittenSafelyAreRefused(t *testing.T) {
 	for label, secrets := range cases {
 		t.Run(label, func(t *testing.T) {
 			executor, run := stackExecutor(t)
-			kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-			request := composeRequest(t, idA, "kuma", "create", func(c *Command) { c.Compose, c.Secrets = kumaText, secrets(executor) })
+			panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+			request := composeRequest(t, idA, "panel", "create", func(c *Command) { c.Compose, c.Secrets = panelText, secrets(executor) })
 			if result := runRequest(t, executor, request); result.OK || slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, " up ") }) {
 				t.Fatalf("result %#v calls %q", result, run.calls)
 			}
@@ -275,11 +275,11 @@ func TestAStackThatDoesNotFitOnTheDiskIsRefusedBeforePulling(t *testing.T) {
 			}
 			return free, nil
 		}
-		dir := kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+		dir := panelReady(t, executor, run, panelService(panelDir(executor)), nil)
 		run.respond["docker info --format {{.DockerRootDir}}"] = "/var/lib/docker\n"
-		run.respond["docker manifest inspect -v louislam/uptime-kuma:1"] = manifest(400_000_000, 200_000_000)
-		run.failing = map[string]string{"docker image inspect --format {{.Id}} louislam/uptime-kuma:1": "No such image"}
-		result := runRequest(t, executor, createRequest(t, idA, "kuma", kumaText))
+		run.respond["docker manifest inspect -v example/panel:1"] = manifest(400_000_000, 200_000_000)
+		run.failing = map[string]string{"docker image inspect --format {{.Id}} example/panel:1": "No such image"}
+		result := runRequest(t, executor, createRequest(t, idA, "panel", panelText))
 		pulled := slices.Contains(run.calls, composeCall(dir, "compose.krynodes.json", "pull"))
 		if free == 1<<30 && (result.OK || pulled || !strings.Contains(result.Output, "2.2 GB") || !strings.Contains(result.Output, "1.1 GB free")) {
 			t.Fatalf("result %#v pulled %v", result, pulled)
@@ -303,15 +303,15 @@ func TestImageSizesComeFromTheServersPlatform(t *testing.T) {
 	}
 }
 
-func ownKuma(t *testing.T, executor Executor, access, text string) (string, Stack) {
+func ownPanel(t *testing.T, executor Executor, access, text string) (string, Stack) {
 	t.Helper()
-	dir := kumaDir(executor)
+	dir := panelDir(executor)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
 		"compose.yaml":          text,
-		"compose.krynodes.json": `{"name":"kuma"}`,
+		"compose.krynodes.json": `{"name":"panel"}`,
 		"krynodes.json":         `{"access":"` + access + `"}`,
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o640); err != nil {
@@ -322,7 +322,7 @@ func ownKuma(t *testing.T, executor Executor, access, text string) (string, Stac
 	if access == "full" {
 		file = "compose.yaml"
 	}
-	return dir, Stack{Project: "kuma", Directory: dir, Files: []string{filepath.Join(dir, file)}, Running: 1, Total: 1}
+	return dir, Stack{Project: "panel", Directory: dir, Files: []string{filepath.Join(dir, file)}, Running: 1, Total: 1}
 }
 
 func withStacks(executor *Executor, stacks ...Stack) {
@@ -331,34 +331,34 @@ func withStacks(executor *Executor, stacks ...Stack) {
 	}
 }
 
-const kumaNext = "services:\n  web:\n    image: louislam/uptime-kuma:2\n"
+const panelNext = "services:\n  web:\n    image: example/panel:2\n"
 
 func TestEditReplacesTheComposeFileAndKeepsThePreviousOne(t *testing.T) {
 	executor, run := stackExecutor(t)
-	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
 	withStacks(&executor, stack)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-	request := composeRequest(t, idA, "kuma", "edit", func(c *Command) { c.Compose = kumaNext })
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	request := composeRequest(t, idA, "panel", "edit", func(c *Command) { c.Compose = panelNext })
 	if result := runRequest(t, executor, request); !result.OK {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	current, _ := os.ReadFile(filepath.Join(dir, "compose.yaml"))
 	previous, _ := os.ReadFile(filepath.Join(dir, "compose.previous.yaml"))
-	if string(current) != kumaNext || string(previous) != kumaText || accessOf(t, dir) != "contained" {
+	if string(current) != panelNext || string(previous) != panelText || accessOf(t, dir) != "contained" {
 		t.Fatalf("current %q previous %q", current, previous)
 	}
 }
 
 func TestAFailedEditPutsThePreviousComposeBack(t *testing.T) {
 	executor, run := stackExecutor(t)
-	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
 	withStacks(&executor, stack)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
 	run.failing = map[string]string{composeCall(dir, "compose.krynodes.json", "pull"): "manifest unknown"}
-	request := composeRequest(t, idA, "kuma", "edit", func(c *Command) { c.Compose = kumaNext })
+	request := composeRequest(t, idA, "panel", "edit", func(c *Command) { c.Compose = panelNext })
 	result := runRequest(t, executor, request)
 	current, _ := os.ReadFile(filepath.Join(dir, "compose.yaml"))
-	if result.OK || string(current) != kumaText || run.calls[len(run.calls)-1] == composeCall(dir, "compose.krynodes.json", "pull") {
+	if result.OK || string(current) != panelText || run.calls[len(run.calls)-1] == composeCall(dir, "compose.krynodes.json", "pull") {
 		t.Fatalf("result %#v current %q calls %q", result, current, run.calls)
 	}
 	if !slices.Contains(run.calls, composeCall(dir, "compose.krynodes.json", "up -d")) {
@@ -368,7 +368,7 @@ func TestAFailedEditPutsThePreviousComposeBack(t *testing.T) {
 
 func TestEditIsOnlyForStacksKrynodesMade(t *testing.T) {
 	executor, run := stackExecutor(t, listmonk)
-	request := composeRequest(t, idA, "listmonk", "edit", func(c *Command) { c.Compose = kumaNext })
+	request := composeRequest(t, idA, "listmonk", "edit", func(c *Command) { c.Compose = panelNext })
 	if result := runRequest(t, executor, request); result.OK || !strings.Contains(result.Output, "Move into Krynodes") || len(run.calls) != 0 {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
@@ -376,7 +376,7 @@ func TestEditIsOnlyForStacksKrynodesMade(t *testing.T) {
 
 func TestReadShowsTheComposeFileItsFilesAndPinnedImages(t *testing.T) {
 	executor, run := stackExecutor(t)
-	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
 	withStacks(&executor, stack)
 	for name, body := range map[string]string{"config.toml": strings.Repeat("x", 100), ".env": "A='1'\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
@@ -384,11 +384,11 @@ func TestReadShowsTheComposeFileItsFilesAndPinnedImages(t *testing.T) {
 		}
 	}
 	run.respond = map[string]string{
-		"docker ps -a --no-trunc --filter label=com.docker.compose.project=kuma --format {{.ID}}": "abc\n",
-		"docker inspect --format " + imageFormat + " abc":                                         "web\tlouislam/uptime-kuma:1\tsha256:111\n",
-		"docker image inspect --format {{json .RepoDigests}} sha256:111":                          `["louislam/uptime-kuma@sha256:aaa"]`,
+		"docker ps -a --no-trunc --filter label=com.docker.compose.project=panel --format {{.ID}}": "abc\n",
+		"docker inspect --format " + imageFormat + " abc":                                          "web\texample/panel:1\tsha256:111\n",
+		"docker image inspect --format {{json .RepoDigests}} sha256:111":                           `["example/panel@sha256:aaa"]`,
 	}
-	result := runRequest(t, executor, composeRequest(t, idA, "kuma", "read", nil))
+	result := runRequest(t, executor, composeRequest(t, idA, "panel", "read", nil))
 	var read struct {
 		Compose string            `json:"compose"`
 		Access  string            `json:"access"`
@@ -398,23 +398,23 @@ func TestReadShowsTheComposeFileItsFilesAndPinnedImages(t *testing.T) {
 	if !result.OK || json.Unmarshal([]byte(result.Output), &read) != nil {
 		t.Fatalf("result %#v", result)
 	}
-	if read.Compose != kumaText || read.Access != "contained" || !reflect.DeepEqual(read.Files, []composeFile{{Name: "config.toml", Size: 100}}) || read.Images["web"] != "louislam/uptime-kuma:1@sha256:aaa" {
+	if read.Compose != panelText || read.Access != "contained" || !reflect.DeepEqual(read.Files, []composeFile{{Name: "config.toml", Size: 100}}) || read.Images["web"] != "example/panel:1@sha256:aaa" {
 		t.Fatalf("read %#v", read)
 	}
 }
 
 func TestReadNamesTheSecretsButNeverTheirValues(t *testing.T) {
 	executor, _ := stackExecutor(t)
-	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
 	withStacks(&executor, stack)
-	result := runRequest(t, executor, composeRequest(t, idA, "kuma", "read", nil))
+	result := runRequest(t, executor, composeRequest(t, idA, "panel", "read", nil))
 	if !result.OK || !strings.Contains(result.Output, `"secrets":[]`) {
 		t.Fatalf("a stack without secrets says so: %#v", result)
 	}
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("SMTP_PASSWORD='hunter2'\n# note\nA='1'\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result = runRequest(t, executor, composeRequest(t, idB, "kuma", "read", nil))
+	result = runRequest(t, executor, composeRequest(t, idB, "panel", "read", nil))
 	var read struct {
 		Secrets []string `json:"secrets"`
 	}
@@ -426,13 +426,13 @@ func TestReadNamesTheSecretsButNeverTheirValues(t *testing.T) {
 func editSecrets(t *testing.T, env string, change func(Executor) string) (Result, string, string) {
 	t.Helper()
 	executor, run := stackExecutor(t)
-	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
 	withStacks(&executor, stack)
-	kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
+	panelReady(t, executor, run, panelService(panelDir(executor)), nil)
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(env), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	request := composeRequest(t, idA, "kuma", "edit", func(c *Command) { c.Compose, c.Secrets = kumaNext, change(executor) })
+	request := composeRequest(t, idA, "panel", "edit", func(c *Command) { c.Compose, c.Secrets = panelNext, change(executor) })
 	result := runRequest(t, executor, request)
 	current, _ := os.ReadFile(filepath.Join(dir, ".env"))
 	previous, _ := os.ReadFile(filepath.Join(dir, ".env.previous"))
@@ -471,7 +471,7 @@ func TestEditRefusesToKeepASecretTheServerDoesNotHave(t *testing.T) {
 
 func TestExportSealsSecretsAndFilesForTheTarget(t *testing.T) {
 	executor, _ := stackExecutor(t)
-	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
 	withStacks(&executor, stack)
 	for name, body := range map[string]string{"config.toml": "x=1", ".env": "SMTP_PASSWORD='hunter2'\n# note\nPLAIN=yes\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
@@ -482,7 +482,7 @@ func TestExportSealsSecretsAndFilesForTheTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := composeRequest(t, idA, "kuma", "export", func(c *Command) { c.Args = map[string]string{"key": seal.Public(target)} })
+	request := composeRequest(t, idA, "panel", "export", func(c *Command) { c.Args = map[string]string{"key": seal.Public(target)} })
 	result := runRequest(t, executor, request)
 	if !result.OK {
 		t.Fatalf("result %#v", result)
@@ -502,13 +502,13 @@ func TestExportSealsSecretsAndFilesForTheTarget(t *testing.T) {
 
 func TestExportRefusesFilesBeyond32KB(t *testing.T) {
 	executor, _ := stackExecutor(t)
-	dir, stack := ownKuma(t, executor, "contained", kumaText)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
 	withStacks(&executor, stack)
 	if err := os.WriteFile(filepath.Join(dir, "big.bin"), make([]byte, 33<<10), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	target, _ := ecdh.P256().GenerateKey(rand.Reader)
-	request := composeRequest(t, idA, "kuma", "export", func(c *Command) { c.Args = map[string]string{"key": seal.Public(target)} })
+	request := composeRequest(t, idA, "panel", "export", func(c *Command) { c.Args = map[string]string{"key": seal.Public(target)} })
 	if result := runRequest(t, executor, request); result.OK || !strings.Contains(result.Output, "32 KB") {
 		t.Fatalf("result %#v", result)
 	}
@@ -516,9 +516,9 @@ func TestExportRefusesFilesBeyond32KB(t *testing.T) {
 
 func TestANewStackFromAMoveWritesItsFilesAndSecrets(t *testing.T) {
 	executor, run := stackExecutor(t)
-	dir := kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-	request := composeRequest(t, idA, "kuma", "create", func(c *Command) {
-		c.Compose, c.Secrets = kumaText, sealFor(t, executor, map[string]string{"A": "2", "B": "3"})
+	dir := panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	request := composeRequest(t, idA, "panel", "create", func(c *Command) {
+		c.Compose, c.Secrets = panelText, sealFor(t, executor, map[string]string{"A": "2", "B": "3"})
 	})
 	request.Attachment = sealFor(t, executor, moveBundle{Env: map[string]string{"A": "1", "C": "4"}, Files: map[string][]byte{"config.toml": []byte("x=1")}})
 	if result := runRequest(t, executor, request); !result.OK {
@@ -534,8 +534,8 @@ func TestANewStackFromAMoveWritesItsFilesAndSecrets(t *testing.T) {
 func TestAMoveCannotWriteOutsideItsFolder(t *testing.T) {
 	for _, name := range []string{"../escape", "a/b", ".env", "compose.yaml", "krynodes.json", ""} {
 		executor, run := stackExecutor(t)
-		kumaReady(t, executor, run, kumaService(kumaDir(executor)), nil)
-		request := createRequest(t, idA, "kuma", kumaText)
+		panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+		request := createRequest(t, idA, "panel", panelText)
 		request.Attachment = sealFor(t, executor, moveBundle{Files: map[string][]byte{name: []byte("x")}})
 		if result := runRequest(t, executor, request); result.OK {
 			t.Fatalf("%q must be refused", name)
@@ -604,7 +604,7 @@ func TestAnAdoptThatCannotCopyInTimeBringsTheOldStackBack(t *testing.T) {
 
 func TestTheInventoryNamesAccessAndPublicPorts(t *testing.T) {
 	executor, _ := stackExecutor(t)
-	_, stack := ownKuma(t, executor, "contained", kumaText)
+	_, stack := ownPanel(t, executor, "contained", panelText)
 	stack.Public = []string{"3001/tcp"}
 	withStacks(&executor, stack)
 	if err := executor.Execute(context.Background()); err != nil {
@@ -620,7 +620,7 @@ func TestTheInventoryNamesAccessAndPublicPorts(t *testing.T) {
 }
 
 func TestPublishedPortsOffTheServerAreCountedAsPublic(t *testing.T) {
-	_, stacks := parseContainers("kuma-web-1\trunning\tkuma\t/srv/kuma\t/srv/kuma/compose.yaml\t2026-09-25 11:37:02 +0700 WIB\t0.0.0.0:3001->3001/tcp, :::3001->3001/tcp, 127.0.0.1:9000->9000/tcp, [::1]:9001->9001/tcp, 0.0.0.0:53->53/udp, 80/tcp\n")
+	_, stacks := parseContainers("panel-web-1\trunning\tpanel\t/srv/panel\t/srv/panel/compose.yaml\t2026-09-25 11:37:02 +0700 WIB\t0.0.0.0:3001->3001/tcp, :::3001->3001/tcp, 127.0.0.1:9000->9000/tcp, [::1]:9001->9001/tcp, 0.0.0.0:53->53/udp, 80/tcp\n")
 	if len(stacks) != 1 || !slices.Equal(stacks[0].Public, []string{"3001/tcp", "53/udp"}) {
 		t.Fatalf("stacks %#v", stacks)
 	}
