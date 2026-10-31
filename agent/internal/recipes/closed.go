@@ -234,21 +234,51 @@ func OpeningOf(tool, line string) (network.Opening, bool) {
 	return open[0], true
 }
 
-func Drift(ctx context.Context, env Env, rules Rules, known []string, networkPort string) []string {
-	var ssh []string
-	drift := []string{}
+type Watched struct {
+	Drift    []string
+	Unlisted []string
+	Missing  []string
+}
+
+func WatchRules(ctx context.Context, env Env, rules Rules, known, other []string, open []network.Opening, networkPort string) Watched {
+	ssh := sshPorts(ctx, env)
+	watched := Watched{Drift: []string{}}
+	listed := func(line string) bool {
+		return slices.Contains(other, line) || slices.ContainsFunc(open, func(opening network.Opening) bool { return slices.Contains(linesOf(rules, opening), line) })
+	}
 	for _, line := range rules.Lines {
-		if slices.Contains(known, line) || !lets(line) {
-			continue
-		}
-		if ssh == nil {
-			ssh = sshPorts(ctx, env)
-		}
-		if !rules.system(line, ssh, networkPort) {
-			drift = append(drift, line)
+		switch {
+		case !lets(line) || rules.system(line, ssh, networkPort):
+		case !slices.Contains(known, line):
+			watched.Drift = append(watched.Drift, line)
+		case !listed(line):
+			watched.Unlisted = append(watched.Unlisted, line)
 		}
 	}
-	return drift
+	for _, want := range rules.wanted(ssh, "", nil) {
+		limit := strings.Replace(want.line, "allow ", "limit ", 1)
+		if !slices.Contains(rules.Lines, want.line) && !slices.Contains(rules.Lines, limit) && (want.line != "port:22/tcp" || !slices.Contains(rules.Lines, "service:ssh")) {
+			watched.Missing = append(watched.Missing, want.line)
+		}
+	}
+	return watched
+}
+
+func FollowSSH(ctx context.Context, env Env) ([]string, error) {
+	rules := ReadRules(ctx, env)
+	if rules.Tool == "" {
+		return nil, nil
+	}
+	missing := WatchRules(ctx, env, rules, nil, nil, nil, "").Missing
+	for at, line := range missing {
+		if err := rules.change(ctx, env, "add", line, "krynodes"); err != nil {
+			return missing[:at], err
+		}
+	}
+	if len(missing) == 0 {
+		return nil, nil
+	}
+	return missing, rules.reload(ctx, env)
 }
 
 func lets(line string) bool {

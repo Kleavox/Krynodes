@@ -204,6 +204,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 		return err
 	}
 	e.finishExitNodeOff(ctx, dir)
+	e.followSSH(ctx, dir)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err

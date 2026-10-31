@@ -139,7 +139,8 @@ function RecipeDialog({
         : [...ports, port],
     );
   const kept = closing ? (wall?.other ?? []) : [];
-  const shutting = closedMode ? closingPorts(stacks, ports) : [];
+  const shutting =
+    closedMode && report ? closingPorts(stacks, report, ports) : [];
   const firewallArgs: Record<string, string> = closedMode
     ? {
         closed: "1",

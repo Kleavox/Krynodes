@@ -231,10 +231,11 @@ type Firewall struct {
 }
 
 type Listener struct {
-	Address  string `json:"address"`
-	Port     int    `json:"port"`
-	Protocol string `json:"protocol"`
-	Process  string `json:"process"`
+	Address    string `json:"address"`
+	Port       int    `json:"port"`
+	Protocol   string `json:"protocol"`
+	Process    string `json:"process"`
+	Standalone bool   `json:"standalone,omitempty"`
 }
 
 type VaultReport struct {

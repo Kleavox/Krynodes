@@ -320,7 +320,7 @@ describe("addresses that are not public", () => {
     expect(node.stacks).toMatchObject([{ project: "db", network }]);
   });
 
-  it("never sends the addresses a server's listeners are bound to", async () => {
+  it("sends what listens on a server, never the addresses it is bound to", async () => {
     const { call, sqlite } = setup();
     const services = async () =>
       (await (await call("GET", "/api/services")).json()) as {
@@ -333,8 +333,12 @@ describe("addresses that are not public", () => {
       for (const ranges of [[], ["100.64.0.0/10"]]) {
         await call("PUT", "/api/settings/private-ranges", { ranges });
         const body = await services();
-        expect(body.nodes[0]!.security).not.toHaveProperty("listeners");
+        expect(body.nodes[0]!.security.listeners).toEqual([
+          { port: 57969, protocol: "tcp", process: "tailscaled" },
+          { port: 41641, protocol: "udp", process: "tailscaled" },
+        ]);
         expect(JSON.stringify(body)).not.toContain("100.79.66.29");
+        expect(JSON.stringify(body)).not.toContain("0.0.0.0");
       }
     }
   });

@@ -411,7 +411,7 @@ func (e Executor) publicContainers(ctx context.Context) []reporter.Listener {
 			continue
 		}
 		for _, bound := range publicBindings(fields[1]) {
-			bound.Process = fields[0]
+			bound.Process, bound.Standalone = fields[0], fields[2] == ""
 			public = addListener(public, bound)
 		}
 	}

@@ -819,16 +819,21 @@ While it is off, Security shows "Root can log in over SSH." as a note.
 
 **Firewall** (agent 0.7.4). Turn On closes the firewall: incoming connections
 are refused except every port SSH listens on, the private network's port, ICMP
-and the open ports you choose. Ports Docker publishes are closed too, by a
+and the open ports you choose; its dialog lists what listens on the server,
+by stack, container or program, to tick. Ports Docker publishes are closed too, by a
 Krynodes chain in `DOCKER-USER` (`KRY-PUBLISH`, put back at boot before Docker
 starts), unless that port is open from that source; replies, and connections
 containers make themselves, are untouched. A firewall turned on before 0.7.4,
 or by someone else, shows **On · open ports are not managed by Krynodes** and
 offers **Close Everything Else**: its allow rules are listed ticked (untick one
 to close it) and become open ports, and the dialog names every port Docker
-publishes that will close. Turn Off puts back the ufw or firewalld state
-Krynodes found and removes the chain. If SSH is not let in once the firewall is
-up, Krynodes turns it back off and says so.
+publishes that will close, with its stack or container. Turn Off puts back the
+ufw or firewalld state Krynodes found and removes the chain. If SSH is not let
+in once the firewall is up, Krynodes turns it back off and says so. When SSH
+moves to another port while the firewall is closed, Krynodes opens the new
+port at its next check, within five minutes, so keep your SSH session open
+until then; the old port is not closed for you, it shows as an open port you
+can close.
 
 **Open Ports.** While the firewall is closed, the server page has a
 **Firewall** section under Security: one row per open port, who may reach it

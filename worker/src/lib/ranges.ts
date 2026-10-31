@@ -8,6 +8,7 @@ export interface Listener {
   port: number;
   protocol: "tcp" | "udp";
   process: string;
+  standalone?: boolean;
 }
 
 export interface Finding {

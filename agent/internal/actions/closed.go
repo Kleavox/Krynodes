@@ -17,7 +17,10 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
-const firewallFile = "firewall.json"
+const (
+	firewallFile   = "firewall.json"
+	sshPortsMarker = "ssh-ports"
+)
 
 type closedFirewall struct {
 	Closed bool              `json:"closed"`
@@ -176,13 +179,52 @@ func (e Executor) firewallDrift(ctx context.Context) {
 		return
 	}
 	hour := strconv.FormatInt(e.Now().Truncate(time.Hour).Unix(), 10)
-	drift := recipes.Drift(ctx, e.recipeEnv(), rules, state.Known, e.networkPort())
-	for _, line := range drift {
+	watched := recipes.WatchRules(ctx, e.recipeEnv(), rules, state.Known, state.Other, state.Open, e.networkPort())
+	for _, line := range watched.Drift {
 		e.event("firewall", "firewall:"+shortHash(line, hour), map[string]string{"rule": line, "item": line})
 	}
-	if !slices.Equal(drift, state.Drift) {
-		state.Drift = drift
+	if len(watched.Missing) > 0 {
+		if err := writeJSON(filepath.Join(e.StateDir, "host"), sshPortsMarker, struct{}{}, 0o640); err != nil {
+			log.Printf("keep SSH's new port open: %v", err)
+		}
+	}
+	for _, line := range watched.Unlisted {
+		state.list(line)
+	}
+	if len(watched.Unlisted) > 0 || !slices.Equal(watched.Drift, state.Drift) {
+		state.Drift = watched.Drift
 		writeJSON(e.StateDir, firewallFile, state, 0o640)
+	}
+}
+
+func (state *closedFirewall) list(rule string) {
+	opening, single := recipes.OpeningOf(state.Tool, rule)
+	if single && !slices.ContainsFunc(state.Open, func(open network.Opening) bool { return open.Key() == opening.Key() }) {
+		state.Open = append(state.Open, opening)
+	} else {
+		state.Other = append(state.Other, rule)
+	}
+}
+
+func (e Executor) followSSH(ctx context.Context, dir string) {
+	marker := filepath.Join(dir, sshPortsMarker)
+	if _, err := os.Stat(marker); err != nil {
+		return
+	}
+	os.Remove(marker)
+	state := e.readFirewall()
+	if !state.Closed {
+		return
+	}
+	added, err := recipes.FollowSSH(ctx, e.recipeEnv())
+	if err != nil {
+		log.Printf("keep SSH's new port open: %v", err)
+	}
+	if len(added) > 0 {
+		state.Known = append(state.Known, added...)
+		if err := writeJSON(e.StateDir, firewallFile, state, 0o640); err != nil {
+			log.Printf("remember SSH's new port: %v", err)
+		}
 	}
 }
 
@@ -196,12 +238,7 @@ func (e Executor) acceptFirewall(request Request, rule string) Result {
 	}
 	state.Known = append(state.Known, rule)
 	state.Drift = slices.DeleteFunc(state.Drift, func(line string) bool { return line == rule })
-	opening, single := recipes.OpeningOf(state.Tool, rule)
-	if single && !slices.ContainsFunc(state.Open, func(open network.Opening) bool { return open.Key() == opening.Key() }) {
-		state.Open = append(state.Open, opening)
-	} else {
-		state.Other = append(state.Other, rule)
-	}
+	state.list(rule)
 	if err := writeJSON(e.StateDir, firewallFile, state, 0o640); err != nil {
 		return e.failed(request, err, "")
 	}

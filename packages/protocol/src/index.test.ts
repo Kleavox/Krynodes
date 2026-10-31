@@ -950,7 +950,16 @@ describe("orchestration messages of agent 0.5.0", () => {
     expect(request({ security: { ...security, listeners: [listener] } })).toBe(
       true,
     );
+    expect(
+      request({
+        security: {
+          ...security,
+          listeners: [{ ...listener, standalone: true }],
+        },
+      }),
+    ).toBe(true);
     for (const bad of [
+      { ...listener, standalone: "yes" },
       { ...listener, port: 70000 },
       { ...listener, protocol: "sctp" },
       { ...listener, address: "x".repeat(65) },

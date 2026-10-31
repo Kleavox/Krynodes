@@ -372,3 +372,66 @@ func TestTheFirewallReportStaysWithinWhatTheDashboardTakes(t *testing.T) {
 		t.Fatalf("open %d drift %d first %q", len(report.Open), len(report.Drift), report.Drift[0])
 	}
 }
+
+func TestAClosedFirewallFollowsSSHToANewPortAndShowsTheOldOne(t *testing.T) {
+	executor, run := closedUfwServer(t)
+	run.respond["sshd -T"] = "port 2222\n"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(executor.StateDir, "host", "ssh-ports")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the exec unit left nothing for the host unit: %v", err)
+	}
+	handAdds(run, "ufw allow 2222/tcp comment krynodes", "allow 2222/tcp comment 'krynodes'")
+	run.calls = nil
+	if err := executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, run, "ufw allow 2222/tcp comment krynodes")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("the marker stays")
+	}
+	if state := executor.readFirewall(); !slices.Contains(state.Known, "allow 2222/tcp") {
+		t.Fatalf("the new SSH rule is not Krynodes' own: %+v", state)
+	}
+	run.respond["sshd -T"] = "port 2223\n"
+	run.calls = nil
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(marker)
+	if events := firewallEvents(t, executor); len(events) != 0 {
+		t.Fatalf("a port Krynodes opened for SSH warned: %+v", events)
+	}
+	state := executor.readFirewall()
+	keys := []string{}
+	for _, opening := range state.Open {
+		keys = append(keys, opening.String())
+	}
+	if !reflect.DeepEqual(keys, []string{"80/tcp@everyone", "22/tcp@everyone", "2222/tcp@everyone"}) || len(state.Drift) != 0 {
+		t.Fatalf("ports SSH left are not shown as open ports: %q %+v", keys, state)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw --force delete") }) {
+		t.Fatalf("a port was closed without the owner: %q", run.calls)
+	}
+
+	rocky, run := securityExecutor(t)
+	rootFile(t, rocky, "/etc/os-release", "ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.4\"\n")
+	run.respond["sshd -T"] = "port 2222\n"
+	run.respond["firewall-cmd --state"] = "running\n"
+	run.respond["firewall-cmd --get-default-zone"] = "public\n"
+	run.respond["firewall-cmd --zone=public --list-ports"] = "22/tcp\n"
+	run.respond["firewall-cmd --permanent --zone=public --list-ports"] = "22/tcp\n"
+	if err := writeJSON(rocky.StateDir, firewallFile, closedFirewall{Closed: true, Tool: "firewalld", Open: []network.Opening{}, Known: []string{"port:22/tcp"}}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := rocky.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run.calls = nil
+	if err := rocky.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, run, "firewall-cmd --permanent --zone=public --add-port=2222/tcp", "firewall-cmd --reload")
+}
