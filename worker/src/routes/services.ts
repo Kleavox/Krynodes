@@ -301,14 +301,18 @@ function securityReport(
     if (finding && Array.isArray(report.findings))
       report.findings.push(finding);
   }
-  const { listeners: _, ...shown } = Array.isArray(report.findings)
+  const { listeners, ...shown } = Array.isArray(report.findings)
     ? filterListeners(
         report as { findings: Finding[]; listeners?: Listener[] },
         ranges,
         network ?? undefined,
       )
     : report;
-  return shown;
+  if (!Array.isArray(listeners)) return shown;
+  return {
+    ...shown,
+    listeners: listeners.map(({ address: _, ...listener }) => listener),
+  };
 }
 
 function parsed(text: string | null): unknown {

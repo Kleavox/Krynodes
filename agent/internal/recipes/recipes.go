@@ -45,6 +45,22 @@ func (e Env) path(name string) string {
 	return filepath.Join(e.Root, filepath.FromSlash(name))
 }
 
+func (e Env) real(name string) string {
+	root, err := filepath.EvalSymlinks(e.path("/"))
+	if err != nil {
+		return name
+	}
+	full, err := filepath.EvalSymlinks(e.path(name))
+	if err != nil {
+		return name
+	}
+	inside, err := filepath.Rel(root, full)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return name
+	}
+	return path.Clean("/" + filepath.ToSlash(inside))
+}
+
 func (e Env) run(ctx context.Context, name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, stepTimeout)
 	defer cancel()
@@ -149,13 +165,14 @@ func admins(env Env) []account {
 			}
 		}
 	}
+	return slices.DeleteFunc(shellUsers(env), func(user account) bool { return user.uid != "0" && !sudoers[user.name] })
+}
+
+func shellUsers(env Env) []account {
 	var found []account
 	for _, line := range lines(env.path("/etc/passwd")) {
 		fields := strings.Split(line, ":")
-		if len(fields) != 7 || strings.HasSuffix(fields[6], "nologin") || strings.HasSuffix(fields[6], "false") {
-			continue
-		}
-		if fields[2] == "0" || sudoers[fields[0]] {
+		if len(fields) == 7 && !strings.HasSuffix(fields[6], "nologin") && !strings.HasSuffix(fields[6], "false") {
 			found = append(found, account{fields[0], fields[2], fields[5]})
 		}
 	}
@@ -213,6 +230,14 @@ func keyLogin(settings map[string][]string) bool {
 }
 
 func SSHLogins(ctx context.Context, env Env) []string {
+	logins := []string{}
+	for _, account := range keyLogins(ctx, env, admins(env)) {
+		logins = append(logins, account.name)
+	}
+	return logins
+}
+
+func keyLogins(ctx context.Context, env Env, accounts []account) []account {
 	global := sshSettings(ctx, env)
 	names := map[string]string{}
 	members := map[string][]string{}
@@ -239,8 +264,8 @@ func SSHLogins(ctx context.Context, env Env) []string {
 	inGroup := func(patterns []string, user string) bool {
 		return slices.ContainsFunc(members[user], func(group string) bool { return matches(patterns, group) })
 	}
-	logins := []string{}
-	for _, account := range admins(env) {
+	var logins []account
+	for _, account := range accounts {
 		user := account.name
 		settings := global
 		if !strings.ContainsAny(user, ",= ") {
@@ -262,7 +287,7 @@ func SSHLogins(ctx context.Context, env Env) []string {
 		case inGroup(settings["denygroups"], user):
 		case len(settings["allowgroups"]) > 0 && !inGroup(settings["allowgroups"], user):
 		default:
-			logins = append(logins, user)
+			logins = append(logins, account)
 		}
 	}
 	return logins

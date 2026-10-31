@@ -11,6 +11,7 @@ import (
 
 const (
 	PublishChain       = "KRY-PUBLISH"
+	TailscaleChain     = "KRY-TAILSCALE"
 	FromEveryone       = "everyone"
 	FromTailscale      = "tailscale"
 	FromAddresses      = "addresses"
@@ -132,6 +133,22 @@ func (o Opening) FirewalldRules() []string {
 		rules = append(rules, fmt.Sprintf(`rich:rule family="%s" source address="%s" port port="%d" protocol="%s" accept`, family, source, o.Port, o.Protocol))
 	}
 	return rules
+}
+
+func TailscaleGuard(open []Opening, ipv6 bool) []string {
+	prefix := "-A " + TailscaleChain + " "
+	var drops []string
+	for _, opening := range open {
+		for _, source := range TailscaleRanges {
+			if opening.From == FromTailscale && strings.Contains(source, ":") == ipv6 {
+				drops = append(drops, fmt.Sprintf("%s-s %s -p %s -m %s --dport %d -j DROP", prefix, source, opening.Protocol, opening.Protocol, opening.Port))
+			}
+		}
+	}
+	if drops == nil {
+		return nil
+	}
+	return append([]string{prefix + "-i " + TailscaleInterface + " -j RETURN", prefix + "-m conntrack ! --ctstate NEW -j RETURN"}, drops...)
 }
 
 func Publish(open []Opening, ipv6 bool) []string {

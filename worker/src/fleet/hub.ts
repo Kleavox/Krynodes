@@ -918,6 +918,7 @@ export class FleetHub {
     const mails = marked.length > 0 ? await this.notify(marked, now) : [];
     await disk.store?.();
     if (beat.denials) this.denials.set(node.id, { ...beat.denials, at: now });
+    else this.denials.delete(node.id);
     let taken: Intake | null = null;
     try {
       const network =

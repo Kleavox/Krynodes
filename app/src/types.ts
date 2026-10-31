@@ -515,10 +515,11 @@ export interface SecurityReport {
   rebootHour: number | null;
   platform?: Platform;
   listeners?: {
-    address: string;
+    address?: string;
     port: number;
     protocol: "tcp" | "udp";
     process: string;
+    standalone?: boolean;
   }[];
   firewall?: {
     closed: boolean;
@@ -759,7 +760,12 @@ export interface TailnetServer {
   report: TailscaleReport | null;
   vault: VaultReport | null;
   signedIn: boolean;
-  listeners?: NonNullable<SecurityReport["listeners"]>;
+  listeners?: {
+    address: string;
+    port: number;
+    protocol: "tcp" | "udp";
+    process: string;
+  }[];
 }
 
 export interface TailnetConnected {

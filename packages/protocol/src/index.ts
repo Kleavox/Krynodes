@@ -616,6 +616,7 @@ export const securityReportSchema = z.strictObject({
         port: z.number().int().min(0).max(65_535),
         protocol: z.enum(["tcp", "udp"]),
         process: z.string().max(64),
+        standalone: z.boolean().optional(),
       }),
     )
     .max(100)

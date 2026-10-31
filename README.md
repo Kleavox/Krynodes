@@ -819,21 +819,29 @@ While it is off, Security shows "Root can log in over SSH." as a note.
 
 **Firewall** (agent 0.7.4). Turn On closes the firewall: incoming connections
 are refused except every port SSH listens on, the private network's port, ICMP
-and the open ports you choose. Ports Docker publishes are closed too, by a
+and the open ports you choose; its dialog lists what listens on the server,
+by stack, container or program, to tick. Ports Docker publishes are closed too, by a
 Krynodes chain in `DOCKER-USER` (`KRY-PUBLISH`, put back at boot before Docker
 starts), unless that port is open from that source; replies, and connections
 containers make themselves, are untouched. A firewall turned on before 0.7.4,
 or by someone else, shows **On · open ports are not managed by Krynodes** and
 offers **Close Everything Else**: its allow rules are listed ticked (untick one
 to close it) and become open ports, and the dialog names every port Docker
-publishes that will close. Turn Off puts back the ufw or firewalld state
-Krynodes found and removes the chain. If SSH is not let in once the firewall is
-up, Krynodes turns it back off and says so.
+publishes that will close, with its stack or container. Turn Off puts back the
+ufw or firewalld state Krynodes found and removes the chain. If SSH is not let
+in once the firewall is up, Krynodes turns it back off and says so. When SSH
+moves to another port while the firewall is closed, Krynodes opens the new
+port at its next check, within five minutes, so keep your SSH session open
+until then; the old port is not closed for you, it shows as an open port you
+can close.
 
 **Open Ports.** While the firewall is closed, the server page has a
 **Firewall** section under Security: one row per open port, who may reach it
 (Everyone, Tailscale, or one to eight addresses or ranges you type) and what
 listens on it. SSH and the private network's port are locked rows, always open.
+firewalld can only name Tailscale's address ranges, so on firewalld a port open
+from Tailscale is also held to the `tailscale0` interface by a Krynodes chain
+in `INPUT` (`KRY-TAILSCALE`); ufw names the interface itself.
 **Open Port**, **Change From** and **Close Port** each take your passkey and
 show in History. A rule added outside Krynodes (`ufw allow`,
 `firewall-cmd --add-port`) is a warning (see Quarantine); **It Was Me** keeps it
@@ -853,7 +861,8 @@ is a grey note on Security, not a finding.
   is turned on in the boot settings when the kernel starts without it. The row
   says _restart to finish_; Krynodes never restarts the server.
 - Before SELinux enforces, Krynodes labels every SSH port other than 22 and
-  the home folders outside `/home` of users who log in with a key, installing
+  the home folders of users who log in with a key that really sit outside
+  `/home` (a home behind a link counts where the link leads), installing
   `semanage` (`policycoreutils-python-utils`) when it needs it, so SSH keeps
   working. When it cannot, it refuses and says why. It edits only the
   `SELINUX=` line of `/etc/selinux/config`, keeping the old value, and never

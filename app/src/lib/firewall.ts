@@ -124,10 +124,25 @@ export function turnOnRows(
     }));
 }
 
-export const closingPorts = (stacks: Stack[], kept: string[]) =>
-  published(stacks)
-    .filter((entry) => !kept.includes(entry.key))
-    .map((entry) => `${entry.key} · ${entry.project}`);
+export const closingPorts = (
+  stacks: Stack[],
+  report: SecurityReport,
+  kept: string[],
+) => [
+  ...new Set(
+    [
+      ...published(stacks),
+      ...(report.listeners ?? [])
+        .filter((listener) => listener.standalone)
+        .map((listener) => ({
+          key: openingKey(listener),
+          project: listener.process,
+        })),
+    ]
+      .filter((entry) => !kept.includes(entry.key))
+      .map((entry) => `${entry.key} · ${entry.project}`),
+  ),
+];
 
 export const fromArg = (
   opening: Pick<FirewallOpening, "from" | "addresses">,

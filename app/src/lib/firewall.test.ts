@@ -187,13 +187,31 @@ describe("the firewall dialogs", () => {
   });
 
   it("names every port Docker publishes that closes, with its stack", () => {
-    expect(closingPorts(stacks, ["443/tcp"])).toEqual(["3000/tcp · grafana"]);
-    expect(closingPorts(stacks, ["3000/tcp"])).toEqual([]);
+    expect(closingPorts(stacks, report(), ["443/tcp"])).toEqual([
+      "3000/tcp · grafana",
+    ]);
+    expect(closingPorts(stacks, report(), ["3000/tcp"])).toEqual([]);
     const outside = [
       ...stacks,
       { project: "wiki", access: null, public: ["8080/tcp"] },
     ];
-    expect(closingPorts(outside, ["3000/tcp"])).toEqual(["8080/tcp · wiki"]);
+    expect(closingPorts(outside, report(), ["3000/tcp"])).toEqual([
+      "8080/tcp · wiki",
+    ]);
+  });
+
+  it("names a port a container outside any stack publishes, with the container", () => {
+    const seen = report({
+      listeners: [
+        ...listeners,
+        { port: 9000, protocol: "tcp", process: "minio", standalone: true },
+        { port: 9000, protocol: "tcp", process: "minio", standalone: true },
+      ],
+    });
+    expect(closingPorts(stacks, seen, ["3000/tcp"])).toEqual([
+      "9000/tcp · minio",
+    ]);
+    expect(closingPorts(stacks, seen, ["3000/tcp", "9000/tcp"])).toEqual([]);
   });
 
   it("writes the open ports as the recipe reads them", () => {

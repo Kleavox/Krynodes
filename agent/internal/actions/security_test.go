@@ -1002,3 +1002,25 @@ func TestAServerWithNeitherReportsNoSystem(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestAPortAContainerOutsideAStackPublishesIsMarked(t *testing.T) {
+	executor, run := securityExecutor(t)
+	healthyServer(t, executor, run)
+	rootFile(t, executor, "/etc/ufw/ufw.conf", "ENABLED=no\n")
+	run.respond[listening] = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n"
+	run.respond["docker ps --format "+portsFormat] = "web-1\t0.0.0.0:8080->80/tcp\tshop\nwiki\t0.0.0.0:8081->80/tcp\t\n"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var inventory Inventory
+	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	want := []reporter.Listener{
+		{Address: "0.0.0.0", Port: 8080, Protocol: "tcp", Process: "web-1"},
+		{Address: "0.0.0.0", Port: 8081, Protocol: "tcp", Process: "wiki", Standalone: true},
+	}
+	if !slices.Equal(inventory.Security.Listeners, want) {
+		t.Fatalf("listeners %#v", inventory.Security.Listeners)
+	}
+}
