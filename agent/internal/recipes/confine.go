@@ -92,11 +92,10 @@ func setSELinux(env Env, value string) error {
 }
 
 func loginHomes(ctx context.Context, env Env) []string {
-	logins := SSHLogins(ctx, env)
 	homes := []string{}
-	for _, account := range admins(env) {
-		home := strings.TrimRight(account.home, "/")
-		if slices.Contains(logins, account.name) && home != "" && home != "/root" && home != "/home" && !strings.HasPrefix(home, "/home/") && !slices.Contains(homes, home) {
+	for _, account := range keyLogins(ctx, env, shellUsers(env)) {
+		home := strings.TrimRight(env.real(account.home), "/")
+		if home != "" && home != "/root" && home != "/home" && !strings.HasPrefix(home, "/home/") && !slices.Contains(homes, home) {
 			homes = append(homes, home)
 		}
 	}

@@ -112,3 +112,47 @@ func TestAnOpenFirewallHasNoPublishChain(t *testing.T) {
 		t.Fatalf("a firewall never closed costs no commands: %v %q", err, run.calls)
 	}
 }
+
+func TestFirewalldLetsATailscalePortInOnlyThroughTailscale(t *testing.T) {
+	executor, run, open := closedServer(t, "443/tcp@everyone,8443/tcp@tailscale,53/udp@tailscale")
+	if err := writeJSON(executor.StateDir, firewallFile, closedFirewall{Closed: true, Tool: "firewalld", Open: open}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	run.failing["iptables -C INPUT -j KRY-TAILSCALE"] = ""
+	run.failing["ip6tables -C INPUT -j KRY-TAILSCALE"] = ""
+	if err := executor.syncPublish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"tailscale.v4": "*filter\n:KRY-TAILSCALE - [0:0]\n-A KRY-TAILSCALE -i tailscale0 -j RETURN\n-A KRY-TAILSCALE -m conntrack ! --ctstate NEW -j RETURN\n-A KRY-TAILSCALE -s 100.64.0.0/10 -p tcp -m tcp --dport 8443 -j DROP\n-A KRY-TAILSCALE -s 100.64.0.0/10 -p udp -m udp --dport 53 -j DROP\nCOMMIT\n",
+		"tailscale.v6": "*filter\n:KRY-TAILSCALE - [0:0]\n-A KRY-TAILSCALE -i tailscale0 -j RETURN\n-A KRY-TAILSCALE -m conntrack ! --ctstate NEW -j RETURN\n-A KRY-TAILSCALE -s fd7a:115c:a1e0::/48 -p tcp -m tcp --dport 8443 -j DROP\n-A KRY-TAILSCALE -s fd7a:115c:a1e0::/48 -p udp -m udp --dport 53 -j DROP\nCOMMIT\n",
+	}
+	for file, rules := range want {
+		if body, err := os.ReadFile(filepath.Join(executor.StateDir, file)); err != nil || string(body) != rules {
+			t.Fatalf("%s %q %v", file, body, err)
+		}
+	}
+	mustRun(t, run, "iptables -I INPUT 1 -j KRY-TAILSCALE", "ip6tables -I INPUT 1 -j KRY-TAILSCALE")
+
+	everyone, _ := network.ParseOpenings("443/tcp@everyone")
+	if err := writeJSON(executor.StateDir, firewallFile, closedFirewall{Closed: true, Tool: "firewalld", Open: everyone}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	run.respond["iptables -S KRY-TAILSCALE"] = "-N KRY-TAILSCALE\n"
+	run.calls = nil
+	if err := executor.syncPublish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, run, "iptables -D INPUT -j KRY-TAILSCALE", "iptables -F KRY-TAILSCALE", "iptables -X KRY-TAILSCALE")
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "tailscale.v4")); !os.IsNotExist(err) {
+		t.Fatal("the guard stays after the last Tailscale port closed")
+	}
+
+	ufw, run, _ := closedServer(t, "8443/tcp@tailscale")
+	if err := ufw.syncPublish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "KRY-TAILSCALE") }) {
+		t.Fatalf("ufw matches tailscale0 itself: %q", run.calls)
+	}
+}

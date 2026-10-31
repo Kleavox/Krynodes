@@ -2,6 +2,8 @@ package recipes
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -209,5 +211,35 @@ func TestConfinementNeedsSELinuxOrAppArmor(t *testing.T) {
 	write(t, env, "/etc/os-release", "ID=alpine\n")
 	if _, err := Apply(context.Background(), env, "confinement", nil); err == nil {
 		t.Fatal("applied on a server with neither")
+	}
+}
+
+func TestSELinuxLabelsTheHomeOfEveryKeyLoginNotOnlyAdmins(t *testing.T) {
+	env, run := selinuxServer(t, "0", "SELINUX=permissive\n")
+	write(t, env, "/etc/passwd", read(env, "/etc/passwd")+"deploy:x:1002:1002::/srv/deploy:/bin/bash\n")
+	write(t, env, "/srv/deploy/.ssh/authorized_keys", "ssh-ed25519 AAAA deploy\n")
+	if _, err := Apply(context.Background(), env, "confinement", nil); err != nil {
+		t.Fatal(err)
+	}
+	calledInOrder(t, run, "semanage fcontext -a -e /home /srv/deploy", "restorecon -R /srv/deploy", "setenforce 1")
+}
+
+func TestSELinuxLabelsTheRealFolderOfAHomeBehindALink(t *testing.T) {
+	env, run := selinuxServer(t, "0", "SELINUX=permissive\n")
+	if err := os.MkdirAll(env.path("/data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(env.path("/home"), env.path("/data/home")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(env.path("/data/home"), env.path("/home")); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+	if _, err := Apply(context.Background(), env, "confinement", nil); err != nil {
+		t.Fatal(err)
+	}
+	calledInOrder(t, run, "semanage fcontext -a -e /home /data/home/other", "restorecon -R /data/home/other", "setenforce 1")
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, filepath.Base(env.Root)) }) {
+		t.Fatalf("labelled a path outside the server: %q", run.calls)
 	}
 }

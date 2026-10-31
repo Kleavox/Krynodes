@@ -834,6 +834,9 @@ up, Krynodes turns it back off and says so.
 **Firewall** section under Security: one row per open port, who may reach it
 (Everyone, Tailscale, or one to eight addresses or ranges you type) and what
 listens on it. SSH and the private network's port are locked rows, always open.
+firewalld can only name Tailscale's address ranges, so on firewalld a port open
+from Tailscale is also held to the `tailscale0` interface by a Krynodes chain
+in `INPUT` (`KRY-TAILSCALE`); ufw names the interface itself.
 **Open Port**, **Change From** and **Close Port** each take your passkey and
 show in History. A rule added outside Krynodes (`ufw allow`,
 `firewall-cmd --add-port`) is a warning (see Quarantine); **It Was Me** keeps it
@@ -853,7 +856,8 @@ is a grey note on Security, not a finding.
   is turned on in the boot settings when the kernel starts without it. The row
   says _restart to finish_; Krynodes never restarts the server.
 - Before SELinux enforces, Krynodes labels every SSH port other than 22 and
-  the home folders outside `/home` of users who log in with a key, installing
+  the home folders of users who log in with a key that really sit outside
+  `/home` (a home behind a link counts where the link leads), installing
   `semanage` (`policycoreutils-python-utils`) when it needs it, so SSH keeps
   working. When it cannot, it refuses and says why. It edits only the
   `SELINUX=` line of `/etc/selinux/config`, keeping the old value, and never
