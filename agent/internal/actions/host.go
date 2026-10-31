@@ -203,6 +203,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	e.finishExitNodeOff(ctx, dir)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err

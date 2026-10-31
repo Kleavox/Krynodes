@@ -202,6 +202,11 @@ describe("FleetHub", () => {
       new Request("https://fleet/denials?node=someone-else"),
     );
     expect(await unknown.json()).toBeNull();
+    await t.send(ws, BASE + 125_000, heartbeat(10));
+    const forgotten = await t.hub.fetch(
+      new Request(`https://fleet/denials?node=${NODE}`),
+    );
+    expect(await forgotten.json()).toBeNull();
   });
 
   it("reads a server's checks once, again after a poke, a status change or ten minutes", async () => {

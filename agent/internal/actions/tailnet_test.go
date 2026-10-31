@@ -643,10 +643,40 @@ func TestAQuarantinedServerStopsOfferingItselfAsAnExitNode(t *testing.T) {
 	if err := os.WriteFile(executor.QuarantineMark, nil, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := executor.Execute(context.Background()); err != nil {
+	for range 2 {
+		if err := executor.Execute(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stopped := 0
+	for _, call := range run.calls {
+		if call == "tailscale set --advertise-exit-node=false" {
+			stopped++
+		}
+	}
+	if _, err := os.Stat(executor.path(exitNodeFile)); err != nil || stopped != 1 || slices.Contains(run.calls, "sysctl --system") {
+		t.Fatalf("the exec unit only stops advertising: file %v calls %v", err, run.calls)
+	}
+	if err := executor.HostApply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(executor.path(exitNodeFile)); !os.IsNotExist(err) || !slices.Contains(run.calls, "tailscale set --advertise-exit-node=false") {
-		t.Fatalf("file %v calls %v", err, run.calls)
+	if _, err := os.Stat(executor.path(exitNodeFile)); !os.IsNotExist(err) || !slices.Contains(run.calls, "sysctl --system") {
+		t.Fatalf("the host unit takes the rest: file %v calls %v", err, run.calls)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(executor.StateDir, "host")); len(entries) != 0 {
+		t.Fatalf("left in host: %v", entries)
+	}
+	rootFile(t, executor, exitNodeFile, "net.ipv4.ip_forward = 1\n")
+	if err := os.Remove(executor.QuarantineMark); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(executor.StateDir, "host"), exitNodeOff, struct{}{}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(executor.path(exitNodeFile)); err != nil {
+		t.Fatalf("a server that is not quarantined keeps its exit node: %v", err)
 	}
 }

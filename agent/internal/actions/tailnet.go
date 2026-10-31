@@ -206,6 +206,7 @@ func (e Executor) joinTailnet(ctx context.Context, request Request) Result {
 
 const (
 	exitNodeConf = "/etc/sysctl.d/99-krynodes-exit-node.conf"
+	exitNodeOff  = "exit-node-off"
 	forwarding   = "net.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n"
 	dnsSettle    = 20 * time.Second
 	dnsEvery     = 2 * time.Second
@@ -252,14 +253,8 @@ func (e Executor) exitNode(ctx context.Context, request Request, command Command
 		if err := tailscale.Set(ctx, run, "--advertise-exit-node=false"); err != nil {
 			return e.refuse(request.ID, err)
 		}
-		if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := e.dropForwarding(ctx); err != nil {
 			return e.failed(request, err, "")
-		}
-		if err := e.sysctl(ctx); err != nil {
-			log.Printf("exit node off: %v", err)
-		}
-		if err := e.masquerade(ctx, false); err != nil {
-			log.Printf("exit node off: %v", err)
 		}
 		return Result{ID: request.ID, OK: true, Output: "no longer an exit node", FinishedAt: e.stamp()}
 	}
@@ -339,22 +334,57 @@ func (e Executor) resolves(ctx context.Context, host string) bool {
 	}
 }
 
-func (e Executor) leaveExitNodeWhenQuarantined(ctx context.Context) {
-	if e.QuarantineMark == "" {
-		return
+func (e Executor) dropForwarding(ctx context.Context) error {
+	if err := os.Remove(e.path(exitNodeConf)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	if _, err := os.Stat(e.QuarantineMark); err != nil {
+	if err := e.sysctl(ctx); err != nil {
+		log.Printf("exit node off: %v", err)
+	}
+	if err := e.masquerade(ctx, false); err != nil {
+		log.Printf("exit node off: %v", err)
+	}
+	return nil
+}
+
+func (e Executor) quarantined() bool {
+	if e.QuarantineMark == "" {
+		return false
+	}
+	_, err := os.Stat(e.QuarantineMark)
+	return err == nil
+}
+
+func (e Executor) leaveExitNodeWhenQuarantined(ctx context.Context) {
+	if !e.quarantined() {
 		return
 	}
 	if _, err := os.Stat(e.path(exitNodeConf)); err != nil {
+		return
+	}
+	host := filepath.Join(e.StateDir, "host")
+	if _, err := os.Stat(filepath.Join(host, exitNodeOff)); err == nil {
 		return
 	}
 	if err := tailscale.Set(ctx, tailscale.Runner(e.Run), "--advertise-exit-node=false"); err != nil {
 		log.Printf("quarantined exit node: %v", err)
 		return
 	}
-	os.Remove(e.path(exitNodeConf))
-	if err := e.masquerade(ctx, false); err != nil {
+	if err := writeJSON(host, exitNodeOff, struct{}{}, 0o640); err != nil {
+		log.Printf("quarantined exit node: %v", err)
+	}
+}
+
+func (e Executor) finishExitNodeOff(ctx context.Context, dir string) {
+	marker := filepath.Join(dir, exitNodeOff)
+	if _, err := os.Stat(marker); err != nil {
+		return
+	}
+	os.Remove(marker)
+	if !e.quarantined() {
+		return
+	}
+	if err := e.dropForwarding(ctx); err != nil {
 		log.Printf("quarantined exit node: %v", err)
 	}
 }
