@@ -3,9 +3,11 @@ package recipes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
+	"time"
 )
 
 type Family string
@@ -13,6 +15,12 @@ type Family string
 const (
 	Debian Family = "debian"
 	RHEL   Family = "rhel"
+)
+
+const (
+	lockWait  = 10 * time.Minute
+	lockRetry = 5 * time.Second
+	listsLock = "/var/lib/apt/lists/lock"
 )
 
 var ErrUnsupported = errors.New("Protections and Docker setup support Debian, Ubuntu and RHEL-family servers")
@@ -66,7 +74,22 @@ func Detect(env Env) Platform {
 }
 
 func (e Env) apt(ctx context.Context, args ...string) error {
-	return e.run(ctx, "env", append([]string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", "DPkg::Lock::Timeout=300"}, args...)...)
+	command := append([]string{"DEBIAN_FRONTEND=noninteractive", "apt-get", "-o", fmt.Sprintf("DPkg::Lock::Timeout=%d", int(lockWait.Seconds()))}, args...)
+	for waited := time.Duration(0); ; waited += lockRetry {
+		err := e.run(ctx, "env", command...)
+		if err == nil || waited >= lockWait || !strings.Contains(err.Error(), listsLock) {
+			return err
+		}
+		e.pause(lockRetry)
+	}
+}
+
+func (e Env) pause(d time.Duration) {
+	if e.Sleep == nil {
+		time.Sleep(d)
+		return
+	}
+	e.Sleep(d)
 }
 
 func (e Env) has(ctx context.Context, pkg string) bool {

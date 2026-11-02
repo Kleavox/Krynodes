@@ -385,7 +385,7 @@ func TestHostApplyRunsTheRecipeAndReports(t *testing.T) {
 	if err := executor.HostApply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if result := readResult(t, executor, idA); !result.OK || !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q unattended-upgrades") {
+	if result := readResult(t, executor, idA); !result.OK || !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q unattended-upgrades") {
 		t.Fatalf("result %#v calls %q", result, run.calls)
 	}
 	if entries, _ := os.ReadDir(filepath.Join(executor.StateDir, "host")); len(entries) != 0 {

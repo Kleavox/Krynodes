@@ -230,7 +230,7 @@ func TestAppArmorNotRunningIsInstalledAndStarted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	calledInOrder(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q apparmor apparmor-utils", "systemctl enable --now apparmor")
+	calledInOrder(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q apparmor apparmor-utils", "systemctl enable --now apparmor")
 	if strings.Contains(saved["installed"], "apparmor ") || saved["installed"] == "apparmor" {
 		t.Fatalf("apparmor itself is never purged: %v", saved)
 	}

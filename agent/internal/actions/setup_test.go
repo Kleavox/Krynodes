@@ -11,7 +11,7 @@ import (
 
 const trixie = "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION_CODENAME=trixie\nID=debian\n"
 
-const upgradesInstall = "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q unattended-upgrades"
+const upgradesInstall = "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q unattended-upgrades"
 
 func setupServer(t *testing.T) (Executor, *fakeRun) {
 	t.Helper()
@@ -170,7 +170,7 @@ func TestSetupSkipsWhatIsOnAndGoesOnAfterAFailure(t *testing.T) {
 	executor, run := setupServer(t)
 	writeJSON(executor.StateDir, "recipes.json", recipeState{Applied: map[string]appliedRecipe{"fail2ban": {At: executorNow}}}, 0o640)
 	os.Remove(executor.path("/root/.ssh/authorized_keys"))
-	run.failing["env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q unattended-upgrades"] = "E: Unable to locate package"
+	run.failing["env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q unattended-upgrades"] = "E: Unable to locate package"
 	got := runSetup(t, executor, SetupOptions{Recommended: true})
 	for _, line := range []string{
 		"✗ Automatic security updates: ",

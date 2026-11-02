@@ -65,7 +65,7 @@ func TestUninstallTurnsProtectionsOffAndKeepsAppsRunning(t *testing.T) {
 	}
 	for _, call := range []string{
 		"docker start abc",
-		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q unattended-upgrades",
+		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q unattended-upgrades",
 		"docker rm -f krynodes-tunnel",
 		"docker image rm " + cloudflaredImage,
 		"iptables -D DOCKER-USER -i " + guardBridges + " -d " + metadataAddress + " -j DROP",
