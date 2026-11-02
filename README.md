@@ -152,10 +152,13 @@ with its daily timer on. dnf must find security notices; CentOS Stream
 publishes none, so Security updates stay off there. Restart when needed wants
 something that marks a needed restart: unattended-upgrades' kernel hook,
 update-notifier, or `dnf needs-restarting`. `sshd -T` must show passwords or
-root login off for every user with a key. fail2ban's SSH jail must answer. The
-firewall must list SSH as allowed after Krynodes turns it on. Docker must have
-published packages for the system's codename and architecture. Turning a
-protection off never asks. Other systems (Fedora among them) run the agent, the
+root login off for every user with a key. fail2ban's SSH jail must answer
+within 30 seconds of its restart. The firewall must list SSH as allowed after
+Krynodes turns it on. Docker must have published packages for the system's
+codename and architecture. A package Krynodes installs waits up to 10 minutes
+for another apt, for its lock and for its package lists alike: a new server
+often runs its first unattended upgrade while it enrolls. Turning a protection
+off never asks. Other systems (Fedora among them) run the agent, the
 checks and the Security check, but not Protections or Docker setup.
 
 Releases are cut by `.github/workflows/agent-release.yml` whenever

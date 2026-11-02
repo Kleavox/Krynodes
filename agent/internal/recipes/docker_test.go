@@ -132,7 +132,7 @@ func TestDockerOnDebianUsesDockersRepository(t *testing.T) {
 		if got := read(env, "/etc/apt/sources.list.d/docker.list"); got != want {
 			t.Fatalf("%s: list %q", key, got)
 		}
-		mustCall(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q "+dockerLine, "systemctl enable --now docker")
+		mustCall(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q "+dockerLine, "systemctl enable --now docker")
 	}
 }
 
@@ -167,7 +167,7 @@ func TestDockerLeavesARepositoryTheOwnerAddedAlone(t *testing.T) {
 	if len(*fetched) != 0 || exists(env, "/etc/apt/sources.list.d/docker.list") {
 		t.Fatalf("fetched %q", *fetched)
 	}
-	mustCall(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q "+dockerLine)
+	mustCall(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q "+dockerLine)
 }
 
 func TestDockerOnRHELUsesDockersRepoFile(t *testing.T) {
@@ -211,7 +211,7 @@ func TestDockerWithoutComposeGetsOnlyThePlugin(t *testing.T) {
 	if err != nil || result != (DockerResult{Message: "Docker 26.1.5 with Compose"}) {
 		t.Fatalf("result %+v err %v", result, err)
 	}
-	mustCall(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q docker-compose-plugin")
+	mustCall(t, run, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q docker-compose-plugin")
 	if slices.Contains(run.calls, "systemctl enable --now docker") || exists(env, "/etc/docker/daemon.json") {
 		t.Fatalf("the running Docker is left as it is: %q", run.calls)
 	}

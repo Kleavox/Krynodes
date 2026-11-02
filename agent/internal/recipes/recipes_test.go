@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRun struct {
@@ -16,6 +17,7 @@ type fakeRun struct {
 	respond map[string]string
 	failing map[string]bool
 	effects map[string]func()
+	slept   time.Duration
 }
 
 func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, int, error) {
@@ -25,15 +27,41 @@ func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, i
 		effect()
 	}
 	if f.failing[call] {
+		if answer := f.respond[call]; answer != "" {
+			return []byte(answer), 100, errors.New("exit status 100")
+		}
 		return []byte("failed"), 1, errors.New("exit status 1")
 	}
 	return []byte(f.respond[call]), 0, nil
 }
 
+func (f *fakeRun) sleep(d time.Duration) {
+	f.slept += d
+}
+
+func (f *fakeRun) count(call string) int {
+	n := 0
+	for _, made := range f.calls {
+		if made == call {
+			n++
+		}
+	}
+	return n
+}
+
+func (f *fakeRun) failTimes(call string, times int) {
+	f.failing[call] = true
+	f.effects[call] = func() {
+		if f.count(call) > times {
+			delete(f.failing, call)
+		}
+	}
+}
+
 func newEnv(t *testing.T) (Env, *fakeRun) {
 	t.Helper()
 	run := &fakeRun{respond: map[string]string{}, failing: map[string]bool{}, effects: map[string]func(){}}
-	env := Env{Root: t.TempDir(), Run: run.run}
+	env := Env{Root: t.TempDir(), Run: run.run, Sleep: run.sleep}
 	write(t, env, "/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION_CODENAME=bookworm\nID=debian\n")
 	return env, run
 }
@@ -103,7 +131,7 @@ func TestSecurityUpdatesStayOffWhenAnotherFileTurnsThemOff(t *testing.T) {
 	if exists(env, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades") {
 		t.Fatal("the drop-in is taken back")
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q unattended-upgrades") {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q unattended-upgrades") {
 		t.Fatalf("calls %q", run.calls)
 	}
 }
@@ -167,7 +195,7 @@ func TestAutomaticSecurityUpdates(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "security-updates", nil); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q unattended-upgrades") {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q unattended-upgrades") {
 		t.Fatalf("calls %q", run.calls)
 	}
 	if !strings.Contains(read(env, "/etc/apt/apt.conf.d/52krynodes-auto-upgrades"), `APT::Periodic::Unattended-Upgrade "1";`) {
@@ -263,7 +291,24 @@ func TestFail2banIsTakenBackWhenItsJailDoesNotStart(t *testing.T) {
 	if exists(env, "/etc/fail2ban/jail.d/krynodes.local") {
 		t.Fatal("the jail is taken back")
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q fail2ban python3-systemd") {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q fail2ban python3-systemd") {
+		t.Fatalf("calls %q", run.calls)
+	}
+	if run.slept != 30*time.Second || run.count("fail2ban-client status sshd") != 31 {
+		t.Fatalf("slept %v calls %q", run.slept, run.calls)
+	}
+}
+
+func TestFail2banIsAskedAgainUntilItsJailAnswers(t *testing.T) {
+	env, run := newEnv(t)
+	run.failTimes("fail2ban-client status sshd", 2)
+	if _, err := Apply(context.Background(), env, "fail2ban", nil); err != nil {
+		t.Fatal(err)
+	}
+	if run.count("fail2ban-client status sshd") != 3 || run.slept != 2*time.Second || !exists(env, "/etc/fail2ban/jail.d/krynodes.local") {
+		t.Fatalf("slept %v calls %q", run.slept, run.calls)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "purge") }) {
 		t.Fatalf("calls %q", run.calls)
 	}
 }
@@ -296,7 +341,7 @@ func TestRepeatedLoginFailuresAreBlocked(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "fail2ban", nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range []string{"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q fail2ban python3-systemd", "systemctl enable --now fail2ban", "systemctl restart fail2ban"} {
+	for _, call := range []string{"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q fail2ban python3-systemd", "systemctl enable --now fail2ban", "systemctl restart fail2ban"} {
 		if !slices.Contains(run.calls, call) {
 			t.Fatalf("missing %q in %q", call, run.calls)
 		}
@@ -559,7 +604,7 @@ func TestAFailedProtectionTakesBackThePackagesItInstalled(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "fail2ban", nil); err == nil {
 		t.Fatal("the failure is reported")
 	}
-	purge := "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q fail2ban"
+	purge := "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q fail2ban"
 	if exists(env, "/etc/fail2ban/jail.d/krynodes.local") || !slices.Contains(run.calls, purge) {
 		t.Fatalf("calls %q", run.calls)
 	}
@@ -582,7 +627,7 @@ func TestUndoRemovesOnlyThePackagesItInstalled(t *testing.T) {
 	if err := Undo(context.Background(), env, "fail2ban", saved); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q fail2ban") {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q fail2ban") {
 		t.Fatalf("calls %q", run.calls)
 	}
 	kept, err := Apply(context.Background(), env, "security-updates", nil)

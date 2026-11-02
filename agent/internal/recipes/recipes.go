@@ -22,6 +22,7 @@ type Env struct {
 	Root  string
 	Run   Runner
 	Fetch Fetcher
+	Sleep func(time.Duration)
 }
 
 const (
@@ -409,7 +410,7 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 		if err := env.run(ctx, "systemctl", "restart", "fail2ban"); err != nil {
 			return nil, env.takeBack(ctx, err, fresh, jail)
 		}
-		if err := env.run(ctx, "fail2ban-client", "status", "sshd"); err != nil {
+		if err := env.jailAnswers(ctx); err != nil {
 			return nil, env.takeBack(ctx, fmt.Errorf("fail2ban started, but its SSH jail did not: %w", err), fresh, jail)
 		}
 		return installed(fresh), nil
@@ -427,6 +428,18 @@ func Apply(ctx context.Context, env Env, id string, args map[string]string) (map
 }
 
 const NetworkPort = "networkPort"
+
+const jailWait = 30 * time.Second
+
+func (e Env) jailAnswers(ctx context.Context) error {
+	for waited := time.Duration(0); ; waited += time.Second {
+		err := e.run(ctx, "fail2ban-client", "status", "sshd")
+		if err == nil || waited >= jailWait {
+			return err
+		}
+		e.pause(time.Second)
+	}
+}
 
 func sshChange(ctx context.Context, env Env, file, body string, took func(context.Context, Env) error) error {
 	config, _ := os.ReadFile(env.path("/etc/ssh/sshd_config"))

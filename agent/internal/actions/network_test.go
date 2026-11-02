@@ -157,7 +157,7 @@ func TestAServerJoinsInTheOrderTheSpecSays(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Output), &answer); !result.OK || err != nil || answer.Port != 51821 || answer.MTU == nil || *answer.MTU != 1500 || answer.Key == "" || answer.Signer == "" {
 		t.Fatalf("prepare %+v (%v)", result, err)
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q wireguard-tools") || !executor.readNetwork().Tools {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q wireguard-tools") || !executor.readNetwork().Tools {
 		t.Fatalf("the tools were not installed as Krynodes': %v", run.calls)
 	}
 	keys, _ := network.Load(executor.networkDir(), false)
@@ -215,7 +215,7 @@ func TestUnprepareTakesTheKeyAndOnlyToolsKrynodesAdded(t *testing.T) {
 	if _, err := os.Stat(executor.networkDir()); !os.IsNotExist(err) {
 		t.Fatalf("the key stays: %v", err)
 	}
-	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q wireguard-tools") {
+	if !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q wireguard-tools") {
 		t.Fatalf("Krynodes' tools stay: %v", run.calls)
 	}
 

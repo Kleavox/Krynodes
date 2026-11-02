@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 var releases = map[string]string{
@@ -71,9 +72,9 @@ func TestPackagesFollowTheFamily(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, call := range []string{
-		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 update -q",
-		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y -q curl gnupg",
-		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 purge -y -q curl",
+		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -q",
+		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q curl gnupg",
+		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q curl",
 	} {
 		if !slices.Contains(run.calls, call) {
 			t.Fatalf("missing %q in %q", call, run.calls)
@@ -95,6 +96,38 @@ func TestPackagesFollowTheFamily(t *testing.T) {
 	}
 	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "apt-get") }) {
 		t.Fatalf("no apt on RHEL: %q", run.calls)
+	}
+}
+
+const (
+	aptUpdate = "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -q"
+	listsHeld = "Reading package lists...\nE: Could not get lock /var/lib/apt/lists/lock. It is held by process 4242 (apt-get)\nE: Unable to lock directory /var/lib/apt/lists/"
+)
+
+func TestPackageListsAnotherAptHoldsAreWaitedFor(t *testing.T) {
+	env, run := newEnv(t)
+	run.respond[aptUpdate] = listsHeld
+	run.failTimes(aptUpdate, 2)
+	if _, err := env.install(context.Background(), "ufw"); err != nil {
+		t.Fatal(err)
+	}
+	if run.count(aptUpdate) != 3 || run.slept != 10*time.Second || !slices.Contains(run.calls, "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q ufw") {
+		t.Fatalf("slept %v calls %q", run.slept, run.calls)
+	}
+}
+
+func TestPackageListsAreWaitedForTenMinutesAndNothingElseIsWaitedFor(t *testing.T) {
+	env, run := newEnv(t)
+	run.respond[aptUpdate] = listsHeld
+	run.failing[aptUpdate] = true
+	_, err := env.install(context.Background(), "ufw")
+	if err == nil || !strings.Contains(err.Error(), "/var/lib/apt/lists/lock") || run.slept != 10*time.Minute || run.count(aptUpdate) != 121 {
+		t.Fatalf("err %v slept %v updates %d", err, run.slept, run.count(aptUpdate))
+	}
+	env, run = newEnv(t)
+	run.failing[aptUpdate] = true
+	if _, err := env.install(context.Background(), "ufw"); err == nil || run.slept != 0 || run.count(aptUpdate) != 1 {
+		t.Fatalf("err %v slept %v calls %q", err, run.slept, run.calls)
 	}
 }
 
