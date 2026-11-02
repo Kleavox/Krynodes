@@ -271,6 +271,33 @@ export function toActionRecord(row: ActionRow) {
   };
 }
 
+interface Confined {
+  system?: "selinux" | "apparmor" | null;
+  mode?: string | null;
+  complain?: number | null;
+  managed?: boolean;
+  restart?: boolean;
+}
+
+function confinementFinding(
+  found: Confined | undefined,
+): { id: "confinement"; severity: "warning"; detail: string } | null {
+  if (!found?.system) return null;
+  const name = found.system === "selinux" ? "SELinux" : "AppArmor";
+  const detail = found.managed
+    ? found.restart
+      ? `${name} finishes at the next restart`
+      : null
+    : found.mode === "permissive"
+      ? "SELinux is permissive"
+      : found.mode === "on" && found.complain
+        ? `AppArmor has ${found.complain} ${found.complain === 1 ? "profile" : "profiles"} in complain mode`
+        : found.mode === "enforcing" || found.mode === "on"
+          ? `${name} enforces, but Krynodes does not manage it`
+          : `${name} is off`;
+  return detail ? { id: "confinement", severity: "warning", detail } : null;
+}
+
 function securityReport(
   text: string | null,
   ranges: string[],
@@ -281,6 +308,7 @@ function securityReport(
   const report = parsed(text) as {
     findings?: unknown;
     listeners?: Listener[];
+    confinement?: Confined;
     platform?: {
       name: string;
       id?: unknown;
@@ -301,6 +329,9 @@ function securityReport(
     if (finding && Array.isArray(report.findings))
       report.findings.push(finding);
   }
+  const confined = confinementFinding(report.confinement);
+  if (confined && Array.isArray(report.findings))
+    report.findings.push(confined);
   const { listeners, ...shown } = Array.isArray(report.findings)
     ? filterListeners(
         report as { findings: Finding[]; listeners?: Listener[] },

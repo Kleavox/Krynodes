@@ -38,15 +38,15 @@ describe("setup sent with the enroll command", () => {
     });
   });
 
-  it("turns on SELinux or AppArmor only when it is ticked", () => {
-    const base = { recommended: false, docker: false, hour: 3, network: false };
-    expect(enrollSetup({ ...base, confine: true }, 0)).toEqual({
+  it("never sends SELinux or AppArmor, which every new server gets", () => {
+    const ticked = {
       recommended: false,
       docker: false,
-      rebootHour: null,
+      hour: 3,
+      network: false,
       confine: true,
-    });
-    expect(enrollSetup({ ...base, confine: false }, 0)).toEqual({
+    };
+    expect(enrollSetup(ticked, 0)).toEqual({
       recommended: false,
       docker: false,
       rebootHour: null,

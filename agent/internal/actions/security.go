@@ -203,6 +203,10 @@ func (e Executor) recipeEnv() recipes.Env {
 	return recipes.Env{Root: e.Root, Run: recipes.Runner(e.Run), Fetch: e.Fetch}
 }
 
+func (e Executor) CheckConfine(ctx context.Context) error {
+	return recipes.CheckConfine(ctx, e.recipeEnv())
+}
+
 func (e Executor) automaticUpdates(ctx context.Context, family recipes.Family) bool {
 	if family == recipes.RHEL {
 		for _, timer := range []string{"krynodes-security-updates.timer", "dnf-automatic-install.timer"} {

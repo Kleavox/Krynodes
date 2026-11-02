@@ -4,7 +4,6 @@ import type { Confinement } from "../types";
 
 import {
   confinementActionText,
-  confinementNote,
   confinementRow,
   confineText,
   denialLines,
@@ -51,7 +50,7 @@ describe("the SELinux or AppArmor row", () => {
     expect(confinementRow(selinux({ managed: true }))).toEqual({
       title: "SELinux",
       text: "Enforcing · managed by Krynodes",
-      actions: ["denials", "undo"],
+      actions: ["denials"],
     });
     expect(
       confinementRow(
@@ -95,7 +94,7 @@ describe("the SELinux or AppArmor row", () => {
       ),
     ).toMatchObject({
       text: "Off · restart to finish · managed by Krynodes",
-      actions: ["denials", "undo"],
+      actions: ["denials"],
     });
     expect(
       confinementRow(
@@ -120,45 +119,24 @@ describe("the SELinux or AppArmor row", () => {
   it("confines containers only where Krynodes manages SELinux and Docker runs", () => {
     expect(
       confinementRow(selinux({ managed: true, docker: false })).actions,
-    ).toEqual(["denials", "containers", "undo"]);
+    ).toEqual(["denials", "containers"]);
     expect(
       confinementRow(selinux({ managed: true, docker: true })).actions,
-    ).toEqual(["denials", "uncontain", "undo"]);
+    ).toEqual(["denials", "uncontain"]);
     expect(confinementRow(selinux({ docker: false })).actions).toEqual([
       "denials",
       "manage",
     ]);
     expect(
       confinementRow(apparmor({ managed: true, docker: true })).actions,
-    ).toEqual(["denials", "undo"]);
-  });
-});
-
-describe("the grey note on Security", () => {
-  it("says only when it is permissive or off", () => {
-    expect(confinementNote(selinux({ mode: "permissive" }))).toBe(
-      "SELinux is permissive",
-    );
-    expect(confinementNote(selinux({ mode: "disabled" }))).toBe(
-      "SELinux is off",
-    );
-    expect(confinementNote(selinux({ mode: "kernel-off" }))).toBe(
-      "SELinux is off",
-    );
-    expect(confinementNote(apparmor({ mode: "off" }))).toBe("AppArmor is off");
-    expect(confinementNote(apparmor({ mode: "kernel-off" }))).toBe(
-      "AppArmor is off",
-    );
-    expect(confinementNote(selinux())).toBeNull();
-    expect(confinementNote(apparmor({ complain: 2 }))).toBeNull();
-    expect(confinementNote(undefined)).toBeNull();
+    ).toEqual(["denials"]);
   });
 });
 
 describe("what each step says before it runs", () => {
   const none = { count: 0, lines: [] };
 
-  it("turns SELinux on, says what may stop, and that Undo is one click", () => {
+  it("turns SELinux on, says what may stop, and that it stays on", () => {
     const text = confineText(
       "on",
       selinux({ mode: "permissive", docker: false }),
@@ -183,7 +161,7 @@ describe("what each step says before it runs", () => {
       "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
       "2 denials in the last 24 hours. What was denied stops working once SELinux enforces.",
       "Containers are not confined until you choose Confine Containers on this row.",
-      "Undo is one click and stops SELinux enforcing.",
+      "It stays on: Krynodes needs it on every server.",
     ]);
     expect(
       confineText("on", selinux({ mode: "disabled" }), "server-1", none, [])
@@ -192,7 +170,7 @@ describe("what each step says before it runs", () => {
       "SELinux is set to enforcing and finishes when you restart the server. The first boot labels every file and restarts once more. Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.",
       "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
       "No denials in the last 24 hours.",
-      "Undo is one click and stops SELinux enforcing.",
+      "It stays on: Krynodes needs it on every server.",
     ]);
     expect(
       confineText("on", selinux({ mode: "kernel-off" }), "server-1", none, [])
@@ -224,7 +202,7 @@ describe("what each step says before it runs", () => {
         none,
         [],
       ).lines.at(-1),
-    ).toBe("Undo is one click and puts them back in complain mode.");
+    ).toBe("It stays on: Krynodes needs it on every server.");
     expect(
       confineText("on", apparmor({ mode: "off" }), "server-1", none, [])
         .lines[0],
@@ -243,9 +221,7 @@ describe("what each step says before it runs", () => {
         none,
         [],
       ).lines.at(-1),
-    ).toBe(
-      "Undo is one click and stops Krynodes managing it; AppArmor stays on.",
-    );
+    ).toBe("It stays on: Krynodes needs it on every server.");
   });
 
   it("lets Krynodes manage what is already enforcing", () => {
@@ -259,28 +235,12 @@ describe("what each step says before it runs", () => {
         "SELinux stays as it is.",
         "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
         "Containers are not confined until you choose Confine Containers on this row.",
-        "Undo is one click and only stops Krynodes managing it.",
+        "It stays on: Krynodes needs it on every server.",
       ],
     });
   });
 
-  it("undoes, and confines containers naming every stack that restarts", () => {
-    expect(
-      confineText("undo", selinux({ managed: true }), "server-1", none, []),
-    ).toEqual({
-      title: "Undo SELinux on server-1?",
-      button: "Undo",
-      destructive: true,
-      lines: [
-        "SELinux goes back to how Krynodes found it: permissive if it was permissive or off, enforcing if it already was. Krynodes stops acting on its denials.",
-      ],
-    });
-    expect(
-      confineText("undo", apparmor({ managed: true }), "server-1", none, [])
-        .lines,
-    ).toEqual([
-      "Profiles Krynodes moved to enforce go back to complain mode; AppArmor stays on. Krynodes stops acting on its denials.",
-    ]);
+  it("confines containers naming every stack that restarts", () => {
     expect(
       confineText(
         "containers",

@@ -201,6 +201,20 @@ describe("Enroll Defaults", () => {
     expect(text(html)).toContain("Restart Hour (Your Time)");
   });
 
+  it("says SELinux or AppArmor is always turned on, with nothing to untick", () => {
+    const html = withQueries(
+      <ProtectionOptions
+        value={{ recommended: false, docker: false, hour: 3, network: false }}
+        onChange={none}
+      />,
+    );
+    expect(text(html)).toContain(
+      "SELinux or AppArmor is turned on on every new server.",
+    );
+    expect(text(html)).not.toContain("Turn On SELinux or AppArmor");
+    expect(html.match(/type="checkbox"/g)).toHaveLength(1);
+  });
+
   it("does not offer Add Admin User itself", () => {
     const html = withQueries(
       <SetupOptions

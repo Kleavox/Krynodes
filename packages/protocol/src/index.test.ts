@@ -1500,9 +1500,9 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     stack: "panel",
   };
 
-  it("turns on, undoes and confines containers, signed", () => {
+  it("turns on and confines containers, signed, and is never undone", () => {
     expect(parses("confinement", "apply")).toBe(true);
-    expect(parses("confinement", "undo")).toBe(true);
+    expect(parses("confinement", "undo")).toBe(false);
     expect(parses("confinement", "containers")).toBe(true);
     expect(parses("confinement", "containers", false)).toBe(false);
     expect(parses("firewall", "containers")).toBe(false);

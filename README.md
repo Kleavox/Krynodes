@@ -105,10 +105,14 @@ The Enroll dialog can also set the server up in the same command: **Install
 Docker**, **Join Private Network** and **Add Admin User** (with this server's
 user name). They start from **Settings → Enroll defaults**, and Docker and the
 private network can change until the server enrolls. **Apply recommended
-protections** (with a restart hour in your time) and **Turn On SELinux or
-AppArmor** (unticked at first) are set only in Enroll defaults and apply to
-every new server. After enrolling, the script runs `kry setup`, which prints
-what it found and did:
+protections** (with a restart hour in your time) is set only in Enroll defaults
+and applies to every new server. SELinux or AppArmor is turned on on every new
+server, with nothing to untick: before enrolling, the script runs `kry setup
+--confine --check` and stops with _The server was not added._ when the server
+has neither, when its boot settings cannot be changed (no `grubby` for
+SELinux, no grub or `cmdline.txt` for AppArmor), or when SELinux would block a
+user who logs in with a key and has no `.ssh` folder. After enrolling, the
+script runs `kry setup`, which prints what it found and did:
 
 ```text
 Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
@@ -858,18 +862,27 @@ port is closed says so under What This Stack Opens.
 
 **SELinux and AppArmor** (agent 0.7.4). Protections has one more row, named
 after what the server has: SELinux on RHEL-family servers, AppArmor on Debian
-and Ubuntu, never both. It is not part of Apply recommended. Permissive or off
-is a grey note on Security, not a finding.
+and Ubuntu, never both. It is not part of Apply recommended. Krynodes needs it
+on every server (Worker after agent 0.7.7): a server where Krynodes does not
+manage it yet, such as one enrolled before, shows a warning on Security
+(_SELinux is permissive_, _AppArmor is off_, _AppArmor has 2 profiles in
+complain mode_, _SELinux enforces, but Krynodes does not manage it_), and so
+does a managed one until its restart (_SELinux finishes at the next restart_).
+The warning never mails and never quarantines; Turn On or Let Krynodes Manage
+clears it.
 
 - **Let Krynodes Manage** (already enforcing) changes nothing on the server.
   **Turn On** goes straight to enforcing: SELinux from Permissive at once; from
   Disabled it is set to enforcing and finishes at the next restart (the first
   boot labels every file and restarts once more). When the kernel starts with
-  `selinux=0`, Krynodes also takes that out of the boot settings (`grubby`),
-  and Undo before the restart puts it back. AppArmor enforces its
-  profiles in complain mode, is installed and started when it is missing, or
-  is turned on in the boot settings when the kernel starts without it. The row
-  says _restart to finish_; Krynodes never restarts the server.
+  `selinux=0`, Krynodes also takes that out of the boot settings (`grubby`).
+  AppArmor enforces its profiles in complain mode, is installed and started
+  when it is missing, or is turned on in the boot settings when the kernel
+  starts without it: a grub drop-in where `/etc/default/grub` exists, otherwise
+  ` apparmor=1 security=apparmor` at the end of the one line of
+  `/boot/firmware/cmdline.txt` (a Raspberry Pi) or `/boot/cmdline.txt`, the
+  first that holds `root=`. A step that fails puts the boot settings back. The
+  row says _restart to finish_; Krynodes never restarts the server.
 - Before SELinux enforces, Krynodes labels every SSH port other than 22 and
   the `.ssh` folder (`ssh_home_t`) of users who log in with a key whose home
   really sits outside `/home` (a home behind a link counts where the link
@@ -878,9 +891,9 @@ is a grey note on Security, not a finding.
   working. When it cannot, it refuses and says why. It edits only the
   `SELINUX=` line of `/etc/selinux/config`, keeping the old value, and never
   sets booleans, adds policy modules or runs `audit2allow`.
-- **Undo** is one click: SELinux goes back to how Krynodes found it
-  (permissive at most, or enforcing when it already was), AppArmor's profiles
-  go back to complain mode. AppArmor is never turned off.
+- **No Undo.** Once Krynodes manages SELinux or AppArmor it stays on, on new
+  and old servers alike; the Worker refuses an Undo. AppArmor is never turned
+  off.
 - **Docker under SELinux.** Docker installed while Krynodes manages SELinux
   starts with `selinux-enabled`. On a server that runs Docker already,
   **Confine Containers** (the row's ⋯) adds it to `daemon.json`, restarts
@@ -894,8 +907,10 @@ is a grey note on Security, not a finding.
 - Security lists containers started outside Krynodes that run unconfined
   (AppArmor or seccomp `unconfined`, or no SELinux label while Docker confines)
   as a warning.
-- **Turn On SELinux or AppArmor** in Enroll defaults, and `kry setup
---confine`, do the same while a server enrolls.
+- Every new server's install command holds `confine`, so `kry setup
+--confine` does the same while it enrolls. Release agent 0.7.7 before the
+  Worker that serves this installer: an older agent has no `--check`, and the
+  new installer would add no server.
 
 **Denials.** Every 30 seconds the agent reads new denials, from
 `/var/log/audit/audit.log` (following rotation) or from the kernel log when
@@ -918,10 +933,10 @@ SELinux set to permissive or off, a policy loaded outside a package install, a
 new local policy module (even during an update: packages install theirs at a
 lower priority), auditd stopped, AppArmor turned off, or a profile moved to
 complain or unloaded, each outside Krynodes, quarantine the server at once.
-`setsebool -P` and `semanage` load the policy, so they count too: to change a
-boolean or a label for good, Undo first, change it, then Let Krynodes Manage
-again. Krynodes' own Turn On, Undo and Confine Containers write a mark first,
-so they never count. One event per stack or program an hour. **Blind spots:**
+`setsebool -P` and `semanage` load the policy, so they count too: with no
+Undo, changing a boolean or a label for good on a managed server quarantines
+it, and Release Server brings it back. Krynodes' own Turn On and Confine
+Containers write a mark first, so they never count. One event per stack or program an hour. **Blind spots:**
 `dontaudit` rules hide some denials, unconfined processes raise none, and a
 boolean changed until the next restart (`setsebool` without `-P`) is not
 watched.

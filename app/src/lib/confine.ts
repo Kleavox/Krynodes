@@ -3,7 +3,7 @@ import { SECURITY_AGENT } from "@krynodes/protocol/versions";
 import type { ActionRecord, Confinement, DenialsView } from "../types";
 
 export type ConfineStep =
-  "denials" | "manage" | "on" | "containers" | "uncontain" | "undo";
+  "denials" | "manage" | "on" | "containers" | "uncontain";
 
 export const systemName = (system: Confinement["system"] | undefined) =>
   system === "selinux"
@@ -63,7 +63,6 @@ export function confinementRow(found: Confinement | undefined): {
         "denials",
         ...(selinux && found.docker === false ? ["containers" as const] : []),
         ...(selinux && found.docker === true ? ["uncontain" as const] : []),
-        "undo",
       ]
     : [
         "denials",
@@ -75,20 +74,6 @@ export function confinementRow(found: Confinement | undefined): {
   return { title: systemName(found.system), text, actions };
 }
 
-export function confinementNote(found: Confinement | undefined): string | null {
-  if (found?.system === "selinux") {
-    return found.mode === "permissive"
-      ? "SELinux is permissive"
-      : found.mode === "disabled" || found.mode === "kernel-off"
-        ? "SELinux is off"
-        : null;
-  }
-  return found?.system === "apparmor" &&
-    (found.mode === "off" || found.mode === "kernel-off")
-    ? "AppArmor is off"
-    : null;
-}
-
 const listed = (names: string[]) => new Intl.ListFormat("en").format(names);
 
 function denialsSoFar(denials: DenialsView, name: string): string {
@@ -97,35 +82,26 @@ function denialsSoFar(denials: DenialsView, name: string): string {
   return `${denials.count} ${denials.count === 1 ? "denial" : "denials"} in the last 24 hours. What was denied stops working once ${name} enforces.`;
 }
 
-function turnOnLines(found: Confinement): { first: string; undo: string } {
+function turnOnLine(found: Confinement): string {
   const labels =
     "Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.";
   if (found.system === "selinux") {
     const relabel = `The first boot labels every file and restarts once more. ${labels}`;
-    return {
-      first:
-        found.mode === "kernel-off"
-          ? `SELinux is off when the server boots. Krynodes turns it on in the boot settings and sets it to enforcing, and it finishes when you restart the server. ${relabel}`
-          : found.mode === "disabled"
-            ? `SELinux is set to enforcing and finishes when you restart the server. ${relabel}`
-            : `SELinux starts enforcing now. ${labels}`,
-      undo: "Undo is one click and stops SELinux enforcing.",
-    };
+    return found.mode === "kernel-off"
+      ? `SELinux is off when the server boots. Krynodes turns it on in the boot settings and sets it to enforcing, and it finishes when you restart the server. ${relabel}`
+      : found.mode === "disabled"
+        ? `SELinux is set to enforcing and finishes when you restart the server. ${relabel}`
+        : `SELinux starts enforcing now. ${labels}`;
   }
   if (found.mode === "on" && found.complain) {
-    return {
-      first: `The ${found.complain} profiles in complain mode start enforcing now.`,
-      undo: "Undo is one click and puts them back in complain mode.",
-    };
+    return `The ${found.complain} profiles in complain mode start enforcing now.`;
   }
-  return {
-    first:
-      found.mode === "kernel-off"
-        ? "AppArmor is off when the server boots. Krynodes turns it on in the boot settings, and it starts when you restart the server."
-        : "Krynodes installs AppArmor if it is missing and turns it on now.",
-    undo: "Undo is one click and stops Krynodes managing it; AppArmor stays on.",
-  };
+  return found.mode === "kernel-off"
+    ? "AppArmor is off when the server boots. Krynodes turns it on in the boot settings, and it starts when you restart the server."
+    : "Krynodes installs AppArmor if it is missing and turns it on now.";
 }
+
+const STAYS = "It stays on: Krynodes needs it on every server.";
 
 export function confineText(
   step: Exclude<ConfineStep, "denials">,
@@ -149,37 +125,19 @@ export function confineText(
         title: `Let Krynodes manage ${name} on ${nodeName}?`,
         button: "Let Krynodes Manage",
         destructive: false,
-        lines: [
-          `${name} stays as it is.`,
-          acting,
-          ...unconfined,
-          "Undo is one click and only stops Krynodes managing it.",
-        ],
+        lines: [`${name} stays as it is.`, acting, ...unconfined, STAYS],
       };
-    case "on": {
-      const { first, undo } = turnOnLines(found);
+    case "on":
       return {
         title: `Turn on ${name} on ${nodeName}?`,
         button: "Turn On",
         destructive: false,
         lines: [
-          first,
+          turnOnLine(found),
           acting,
           denialsSoFar(denials, name),
           ...unconfined,
-          undo,
-        ],
-      };
-    }
-    case "undo":
-      return {
-        title: `Undo ${name} on ${nodeName}?`,
-        button: "Undo",
-        destructive: true,
-        lines: [
-          found.system === "selinux"
-            ? "SELinux goes back to how Krynodes found it: permissive if it was permissive or off, enforcing if it already was. Krynodes stops acting on its denials."
-            : "Profiles Krynodes moved to enforce go back to complain mode; AppArmor stays on. Krynodes stops acting on its denials.",
+          STAYS,
         ],
       };
     case "containers":

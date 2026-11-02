@@ -25,7 +25,6 @@ const setupSchema = z.object({
   docker: z.boolean().default(false),
   rebootHour: z.number().int().min(0).max(23).nullable().default(null),
   network: z.boolean().default(false),
-  confine: z.boolean().default(false),
   adminUser: z.boolean().default(false),
 });
 
@@ -88,13 +87,11 @@ function installArgs(
   const steps = [
     ...(setup.recommended ? ["recommended"] : []),
     ...(setup.docker ? ["docker"] : []),
-    ...(setup.confine ? ["confine"] : []),
+    "confine",
   ];
-  if (steps.length > 0) {
-    args.push("--setup", steps.join(","));
-    if (setup.recommended && setup.rebootHour !== null) {
-      args.push("--reboot-hour", String(setup.rebootHour));
-    }
+  args.push("--setup", steps.join(","));
+  if (setup.recommended && setup.rebootHour !== null) {
+    args.push("--reboot-hour", String(setup.rebootHour));
   }
   if (setup.network && range) args.push("--network", range);
   if (setup.adminUser && setup.admin) {

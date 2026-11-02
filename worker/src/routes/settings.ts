@@ -38,7 +38,6 @@ const enrollDefaultsSchema = z.preprocess(
     docker: z.boolean(),
     hour: z.number().int().min(0).max(23),
     network: z.boolean().default(false),
-    confine: z.boolean().default(false),
     keys: keysSchema.default([]),
   }),
 );
@@ -50,7 +49,6 @@ const ENROLL_DEFAULTS: EnrollDefaults = {
   docker: true,
   hour: 3,
   network: false,
-  confine: false,
   keys: [],
 };
 

@@ -227,7 +227,7 @@ describe("dashboard actions that destroy or hide", () => {
     );
     expect(enroll.status).toBe(201);
     expect(await t.installer(enroll)).toContain(
-      ` --trust ${ORIGIN} --grant -- phone.-7.${t.phone.publicKey}'`,
+      ` --trust ${ORIGIN} --grant -- phone.-7.${t.phone.publicKey} --setup confine'`,
     );
   });
 

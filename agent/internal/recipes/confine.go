@@ -13,8 +13,63 @@ import (
 
 const (
 	semanageTool = "policycoreutils-python-utils"
+	grubConfig   = "/etc/default/grub"
 	grubAppArmor = "/etc/default/grub.d/krynodes-apparmor.cfg"
+	bootWords    = " apparmor=1 security=apparmor"
 )
+
+func bootFile(env Env) string {
+	if _, err := os.Stat(env.path(grubConfig)); err == nil {
+		return grubConfig
+	}
+	for _, file := range []string{"/boot/firmware/cmdline.txt", "/boot/cmdline.txt"} {
+		if body, err := os.ReadFile(env.path(file)); err == nil && strings.Contains(string(body), "root=") {
+			return file
+		}
+	}
+	return ""
+}
+
+func editCmdline(env Env, file string, add bool) error {
+	full := env.path(file)
+	info, err := os.Stat(full)
+	if err != nil {
+		return err
+	}
+	body, err := os.ReadFile(full)
+	if err != nil {
+		return err
+	}
+	line, rest, found := strings.Cut(string(body), "\n")
+	if found {
+		rest = "\n" + rest
+	}
+	if add {
+		line += bootWords
+	} else {
+		line = strings.TrimSuffix(line, bootWords)
+	}
+	return env.write(file, line+rest, info.Mode().Perm())
+}
+
+func CheckConfine(ctx context.Context, env Env) error {
+	state := confine.Read(env.Root, string(Detect(env).Family))
+	switch {
+	case state.System == "":
+		return errors.New("this server has neither SELinux nor AppArmor, which Krynodes needs on every server")
+	case state.System == confine.AppArmor && state.Mode == confine.KernelOff && bootFile(env) == "":
+		return errors.New("AppArmor is off when this server boots, and Krynodes found no grub or cmdline.txt to turn it on")
+	case state.System == confine.SELinux && state.Mode == confine.KernelOff && env.run(ctx, "sh", "-c", "command -v grubby") != nil:
+		return errors.New("SELinux is off when this server boots, and Krynodes found no grubby to turn it on")
+	case state.System == confine.SELinux && state.Mode != confine.Enforcing:
+		for _, home := range loginHomes(ctx, env) {
+			if _, err := os.Stat(env.path(home + "/.ssh")); err != nil {
+				return fmt.Errorf("SELinux would block key logins into %s: its keys are not in %s/.ssh", home, home)
+			}
+		}
+	}
+	return nil
+}
 
 func confineOn(ctx context.Context, env Env) (map[string]string, error) {
 	state := confine.Read(env.Root, string(Detect(env).Family))
@@ -62,6 +117,9 @@ func confineOff(ctx context.Context, env Env, saved map[string]string) error {
 					return err
 				}
 			}
+		}
+		if file := saved["cmdline"]; file != "" {
+			return editCmdline(env, file, false)
 		}
 		if saved["restart"] == "1" {
 			if err := env.remove(grubAppArmor); err != nil {
@@ -230,19 +288,39 @@ func apparmorOn(ctx context.Context, env Env, state confine.State) (map[string]s
 		}
 		return err
 	}
+	boot := func(err error) error { return back(err) }
 	if state.Mode == confine.KernelOff {
-		if err := env.write(grubAppArmor, "GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX apparmor=1 security=apparmor\"\n", 0o644); err != nil {
-			return nil, back(err)
-		}
-		if err := env.run(ctx, "update-grub"); err != nil {
-			env.remove(grubAppArmor)
-			return nil, back(err)
+		switch file := bootFile(env); file {
+		case "":
+			return nil, back(errors.New("AppArmor is off when this server boots, and Krynodes found no grub or cmdline.txt to turn it on"))
+		case grubConfig:
+			if err := env.write(grubAppArmor, "GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX apparmor=1 security=apparmor\"\n", 0o644); err != nil {
+				return nil, back(err)
+			}
+			if err := env.run(ctx, "update-grub"); err != nil {
+				env.remove(grubAppArmor)
+				return nil, back(err)
+			}
+			boot = func(err error) error {
+				env.remove(grubAppArmor)
+				env.run(ctx, "update-grub")
+				return back(err)
+			}
+		default:
+			if err := editCmdline(env, file, true); err != nil {
+				return nil, back(err)
+			}
+			saved["cmdline"] = file
+			boot = func(err error) error {
+				editCmdline(env, file, false)
+				return back(err)
+			}
 		}
 		saved["restart"] = "1"
 	}
 	if state.Mode != confine.On {
 		if err := env.run(ctx, "systemctl", "enable", "--now", "apparmor"); err != nil {
-			return nil, back(err)
+			return nil, boot(err)
 		}
 	}
 	enforced := []string{}
@@ -251,7 +329,7 @@ func apparmorOn(ctx context.Context, env Env, state confine.State) (map[string]s
 			for _, done := range enforced {
 				env.run(ctx, "aa-complain", done)
 			}
-			return nil, back(fmt.Errorf("AppArmor could not enforce %s: %w", profile, err))
+			return nil, boot(fmt.Errorf("AppArmor could not enforce %s: %w", profile, err))
 		}
 		enforced = append(enforced, profile)
 	}

@@ -379,6 +379,7 @@ export function hostVerbFits(name: string, action: string): boolean {
   }
   if (FIREWALL_VERBS.includes(action)) return name === "firewall";
   if (action === "containers") return name === "confinement";
+  if (name === "confinement") return action === "apply";
   if (action === "uninstall") return name === "server";
   if (name === "docker") return action === "install";
   const recipe = (RECIPES as readonly string[]).includes(name);

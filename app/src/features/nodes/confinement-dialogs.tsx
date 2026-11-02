@@ -59,7 +59,7 @@ export function ConfineDialog({
   const submit = () =>
     run.mutate(
       {
-        action: step === "undo" ? "undo" : containers ? "containers" : "apply",
+        action: containers ? "containers" : "apply",
         targets: [
           {
             nodeId: node.id,
