@@ -200,6 +200,9 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
   if [ "$mode" = "enroll" ]; then
     "$bin" enroll --endpoint "$endpoint" --token "$token"
   fi
+  if [ -n "$setup" ] || [ -n "$network" ] || [ -n "$admin" ]; then
+    "$bin" setup $setup_flags --begin || true
+  fi
   "$bin" install-service
   if [ -n "$trust_origin" ]; then
     "$bin" trust --initial --origin "$trust_origin" "$@"

@@ -338,6 +338,10 @@ func TestSetupChecksItsFlagsBeforeAnythingElse(t *testing.T) {
 		"--restart":                       "root",
 		"--finish":                        "root",
 		"--finish --upgrade":              "--finish goes alone",
+		"--begin":                         "--begin goes with the setup flags",
+		"--begin --finish":                "--finish goes alone",
+		"--begin --confine --check":       "--check goes with --confine alone",
+		"--begin --recommended --restart": "root",
 		"--network 10.0.0.0/24":           "--network takes a /24 of 10.88.0.0/16",
 		"--network 10.88.3.0/24":          "root",
 		"--recommended --reboot-hour 24":  "--reboot-hour is 0 to 23",
@@ -450,5 +454,16 @@ func TestAFailingCommandPrintsOnlyItsError(t *testing.T) {
 	}
 	if string(output) != "--check goes with --confine alone\n" {
 		t.Fatalf("output %q", output)
+	}
+}
+
+func TestInstallServiceSharesTheRelayFiles(t *testing.T) {
+	want := []string{
+		filepath.Join(actions.StateDir, "events.json"),
+		filepath.Join(actions.StateDir, "network.json"),
+		filepath.Join(actions.StateDir, "setup.json"),
+	}
+	if got := agentReadFiles(); !slices.Equal(got, want) {
+		t.Fatalf("got %v", got)
 	}
 }

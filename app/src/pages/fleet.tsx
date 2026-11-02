@@ -746,6 +746,19 @@ function NodeCard({
   const live = state === "online" || state === "offline";
   const quarantined = fleetQuarantine(node, now);
   const running = setting !== null && !setting.stopped;
+  if (!opensServer(node, now)) {
+    return (
+      <article className="flex flex-col gap-3 rounded-lg border bg-card p-3.5">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="min-w-0 truncate font-medium" title={node.name}>
+            {node.name}
+          </h2>
+          <StatusChip tone="work" label="Setting Up" pulse />
+        </div>
+        <SetupProgress />
+      </article>
+    );
+  }
   return (
     <article
       className={cn(
@@ -760,18 +773,14 @@ function NodeCard({
             className="flex min-w-0 items-center gap-1.5 font-medium"
             title={node.name}
           >
-            {opensServer(node, now) ? (
-              <button
-                type="button"
-                onClick={onSelect}
-                aria-pressed={selected}
-                className="min-w-0 truncate outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring"
-              >
-                {node.name}
-              </button>
-            ) : (
-              <span className="min-w-0 truncate">{node.name}</span>
-            )}
+            <button
+              type="button"
+              onClick={onSelect}
+              aria-pressed={selected}
+              className="min-w-0 truncate outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring"
+            >
+              {node.name}
+            </button>
             <DockerMark nodeId={node.id} />
             <SecurityMark nodeId={node.id} />
           </h2>
@@ -830,7 +839,7 @@ function NodeCard({
         </div>
       )}
       {running ? (
-        <SetupProgress view={setting} />
+        <SetupProgress />
       ) : live ? (
         <>
           {state === "online" ? (
@@ -881,31 +890,17 @@ function NodeCard({
 }
 
 function setupLine(view: SetupView): string {
-  if (view.stopped) return `Setup stopped at ${view.label}`;
-  return view.step === null
-    ? `Setting Up · ${view.label}`
-    : `Setting Up · ${view.label} · ${view.step} of ${view.of}`;
+  return view.stopped ? `Setup stopped at ${view.label}` : view.label;
 }
 
-function SetupProgress({ view }: { view: SetupView }) {
-  const filled =
-    view.step !== null && view.of ? (view.step / view.of) * 100 : 8;
+function SetupProgress() {
   return (
-    <div role="status" className="flex flex-col gap-2">
-      <p className="flex items-center justify-between gap-2 text-sm">
-        <span className="truncate">{view.label}</span>
-        {view.step !== null && (
-          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-            Step {view.step} of {view.of}
-          </span>
-        )}
-      </p>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-primary motion-safe:animate-pulse"
-          style={{ width: `${filled}%` }}
-        />
-      </div>
+    <div
+      role="status"
+      aria-label="Setting Up"
+      className="h-1.5 overflow-hidden rounded-full bg-muted"
+    >
+      <div className="h-full w-1/3 rounded-full bg-primary motion-safe:animate-loading" />
     </div>
   );
 }
@@ -974,27 +969,47 @@ function FleetTable({
           </tr>
         </thead>
         <tbody className="divide-y">
-          {rows.map(({ node, state, severity, reasons, operation, setup }) => (
-            <tr
-              key={node.id}
-              className={cn(
-                "relative transition-colors hover:bg-card-hover",
-                node.id === selectedId && "bg-accent hover:bg-accent",
-              )}
-            >
-              <td className="px-3 py-2.5">
-                <div className="flex min-w-0 items-center gap-2">
-                  <StatusDot
-                    tone={
-                      node.quarantine || halted(operation)
-                        ? "bad"
-                        : operation
-                          ? "warn"
-                          : nodeTone(state)
-                    }
-                    pulse={operation !== null && !halted(operation)}
-                  />
-                  {opensServer(node, now) ? (
+          {rows.map(({ node, state, severity, reasons, operation, setup }) =>
+            !opensServer(node, now) ? (
+              <tr key={node.id}>
+                <td className="px-3 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <StatusDot tone="work" pulse />
+                    <span
+                      className="min-w-0 truncate font-medium"
+                      title={node.name}
+                    >
+                      {node.name}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 truncate pl-4 font-mono text-[11px] text-warning">
+                    Setting Up
+                  </p>
+                </td>
+                <td colSpan={6} className="px-3 py-2.5">
+                  <SetupProgress />
+                </td>
+              </tr>
+            ) : (
+              <tr
+                key={node.id}
+                className={cn(
+                  "relative transition-colors hover:bg-card-hover",
+                  node.id === selectedId && "bg-accent hover:bg-accent",
+                )}
+              >
+                <td className="px-3 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <StatusDot
+                      tone={
+                        node.quarantine || halted(operation)
+                          ? "bad"
+                          : operation
+                            ? "warn"
+                            : nodeTone(state)
+                      }
+                      pulse={operation !== null && !halted(operation)}
+                    />
                     <button
                       type="button"
                       onClick={() => onSelect(node.id)}
@@ -1004,66 +1019,61 @@ function FleetTable({
                     >
                       {node.name}
                     </button>
-                  ) : (
-                    <span
-                      className="min-w-0 truncate font-medium"
-                      title={node.name}
-                    >
-                      {node.name}
-                    </span>
-                  )}
-                  <DockerMark nodeId={node.id} />
-                  <SecurityMark nodeId={node.id} />
-                </div>
-                <p
-                  className={cn(
-                    "mt-0.5 truncate pl-4 font-mono text-[11px] text-muted-foreground",
-                    state !== "offline" &&
-                      reasons.length > 0 &&
-                      SEVERITY_TEXT[severity],
-                  )}
-                >
-                  {operation ? (
-                    <span
-                      className={
-                        halted(operation) ? "text-destructive" : "text-warning"
-                      }
-                    >
-                      <OperationText operation={operation} />
-                    </span>
-                  ) : setup ? (
-                    <span className="text-warning">{setupLine(setup)}</span>
-                  ) : state === "offline" ? (
-                    "Offline"
-                  ) : reasons.length > 0 ? (
-                    reasons.join(" · ")
-                  ) : (
-                    systemLine(node)
-                  )}
-                </p>
-                <AddressesButton node={node} className="mt-0.5 pl-4" />
-              </td>
-              {nodeUsage(node).map((item) => (
-                <td key={item.label} className="px-3 py-2.5">
-                  <Meter
-                    label={item.label}
-                    value={item.value}
-                    stale={state === "offline"}
-                    hideLabel
-                  />
+                    <DockerMark nodeId={node.id} />
+                    <SecurityMark nodeId={node.id} />
+                  </div>
+                  <p
+                    className={cn(
+                      "mt-0.5 truncate pl-4 font-mono text-[11px] text-muted-foreground",
+                      state !== "offline" &&
+                        reasons.length > 0 &&
+                        SEVERITY_TEXT[severity],
+                    )}
+                  >
+                    {operation ? (
+                      <span
+                        className={
+                          halted(operation)
+                            ? "text-destructive"
+                            : "text-warning"
+                        }
+                      >
+                        <OperationText operation={operation} />
+                      </span>
+                    ) : setup ? (
+                      <span className="text-warning">{setupLine(setup)}</span>
+                    ) : state === "offline" ? (
+                      "Offline"
+                    ) : reasons.length > 0 ? (
+                      reasons.join(" · ")
+                    ) : (
+                      systemLine(node)
+                    )}
+                  </p>
+                  <AddressesButton node={node} className="mt-0.5 pl-4" />
                 </td>
-              ))}
-              <td className="px-3 py-2.5 font-mono text-xs">
-                <ChecksCell checks={checksFor(node.id)} state={state} />
-              </td>
-              <td className="px-3 py-2.5">
-                <AgentVersion node={node} release={release} now={now} />
-              </td>
-              <td className="px-3 py-2.5 text-right font-mono text-xs text-muted-foreground">
-                {capitalize(timeAgo(node.last_seen_at, now))}
-              </td>
-            </tr>
-          ))}
+                {nodeUsage(node).map((item) => (
+                  <td key={item.label} className="px-3 py-2.5">
+                    <Meter
+                      label={item.label}
+                      value={item.value}
+                      stale={state === "offline"}
+                      hideLabel
+                    />
+                  </td>
+                ))}
+                <td className="px-3 py-2.5 font-mono text-xs">
+                  <ChecksCell checks={checksFor(node.id)} state={state} />
+                </td>
+                <td className="px-3 py-2.5">
+                  <AgentVersion node={node} release={release} now={now} />
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono text-xs text-muted-foreground">
+                  {capitalize(timeAgo(node.last_seen_at, now))}
+                </td>
+              </tr>
+            ),
+          )}
         </tbody>
       </table>
     </div>

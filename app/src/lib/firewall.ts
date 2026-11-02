@@ -31,36 +31,33 @@ export const firewallActionText = (
 export function firewallStatus(
   report: SecurityReport,
   choice: RecipeChoice,
-): { text: string; actions: ("on" | "close" | "off")[] } {
+): { text: string; actions: ("on" | "close")[] } {
   const wall = report.firewall;
   if (wall?.closed) {
     const count = wall.open.length;
     return {
       text: `Closed · ${count === 0 ? "no open ports" : `${count} open port${count === 1 ? "" : "s"}`}`,
-      actions: ["off"],
+      actions: [],
     };
   }
   if (wall) {
     return {
       text: "On · open ports are not managed by Krynodes",
-      actions: choice.applied ? ["close", "off"] : ["close"],
+      actions: ["close"],
     };
   }
-  if (choice.applied) return { text: "On", actions: ["off"] };
+  if (choice.applied) return { text: "On", actions: [] };
   if (choice.outside) {
     return { text: "On · Set up outside Krynodes", actions: [] };
   }
   return { text: "Off", actions: choice.blocked ? [] : ["on"] };
 }
 
-export function closedText(name: string, step: "on" | "close" | "off") {
+export function closedText(name: string, step: "on" | "close") {
   if (step === "on") {
     return `Turns on ${name} and lets in only SSH, the private network and the ports you tick. Ports Docker publishes close too, unless you tick them.`;
   }
-  if (step === "close") {
-    return `Krynodes takes over ${name}. The open ports below stay open; untick one to close it. Everything else closes, ports Docker publishes too.`;
-  }
-  return `Puts ${name} back as Krynodes found it, and opens the ports Docker publishes again.`;
+  return `Krynodes takes over ${name}. The open ports below stay open; untick one to close it. Everything else closes, ports Docker publishes too.`;
 }
 
 export function fromText(

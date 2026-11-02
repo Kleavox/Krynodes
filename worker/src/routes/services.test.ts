@@ -1284,14 +1284,27 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     }
   });
 
-  it("refuses an Undo by name: SELinux and AppArmor stay on", async () => {
+  it("refuses an Undo of every protection, and still frees port 53 back", async () => {
     const t = current();
-    const undo = await t.send("undo", A);
-    expect(undo.status).toBe(400);
-    expect(await reply(undo)).toMatchObject({
-      code: "STAYS_ON",
-      message: "SELinux and AppArmor stay on once Krynodes manages them.",
-    });
+    for (const name of [
+      "confinement",
+      "security-updates",
+      "reboot-window",
+      "ssh-keys-only",
+      "no-root-login",
+      "fail2ban",
+      "firewall",
+    ]) {
+      const undo = await t.send("undo", A, undefined, name);
+      expect(undo.status, name).toBe(400);
+      expect(await reply(undo)).toMatchObject({
+        code: "STAYS_ON",
+        message: "Protections stay on once Krynodes turns them on.",
+      });
+    }
+    expect((await t.send("undo", A, undefined, "free-port-53")).status).toBe(
+      201,
+    );
   });
 
   it("sets an SELinux boolean by name, on or off, on agent 0.7.7 only", async () => {

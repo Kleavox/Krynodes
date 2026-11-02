@@ -50,5 +50,5 @@ func (e Executor) event(kind, id string, detail map[string]string) {
 	if len(log.Events) > eventsMax {
 		log.Events = log.Events[len(log.Events)-eventsMax:]
 	}
-	writeJSON(e.StateDir, eventsFile, log, 0o640)
+	writeJSON(e.StateDir, eventsFile, log, 0o644)
 }

@@ -3,7 +3,7 @@ import type { Setup } from "@krynodes/protocol";
 import type { NodeRecord } from "../types";
 import { parseTimestamp } from "./format";
 
-const STARTING_MS = 10 * 60_000;
+const SETTING_UP_MS = 60 * 60_000;
 
 const LABELS: Record<Setup["phase"], string> = {
   admin: "Adding Admin User",
@@ -18,8 +18,6 @@ const LABELS: Record<Setup["phase"], string> = {
 
 export interface SetupView {
   label: string;
-  step: number | null;
-  of: number | null;
   stopped: boolean;
 }
 
@@ -29,20 +27,16 @@ type SetupNode = Pick<
 >;
 
 export function setupView(node: SetupNode, now: number): SetupView | null {
-  if (node.setup) {
-    return {
-      label: LABELS[node.setup.phase],
-      step: node.setup.step,
-      of: node.setup.of,
-      stopped: node.setup.stopped === true,
-    };
+  if (node.setup?.stopped) {
+    return { label: LABELS[node.setup.phase], stopped: true };
   }
   if (
-    node.enrolled_at &&
-    !node.last_seen_at &&
-    now - parseTimestamp(node.enrolled_at) < STARTING_MS
+    node.setup ||
+    (node.enrolled_at &&
+      !node.last_seen_at &&
+      now - parseTimestamp(node.enrolled_at) < SETTING_UP_MS)
   ) {
-    return { label: "Starting", step: null, of: null, stopped: false };
+    return { label: "Setting Up", stopped: false };
   }
   return null;
 }

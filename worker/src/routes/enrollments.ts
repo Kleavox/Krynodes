@@ -20,23 +20,23 @@ import {
 
 const ENROLLMENT_TTL_MS = 30 * 60_000;
 
+const HOUR = z.number().int().min(0).max(23);
+
 const setupSchema = z.object({
-  recommended: z.boolean().default(false),
   docker: z.boolean().default(false),
-  rebootHour: z.number().int().min(0).max(23).nullable().default(null),
+  rebootHour: HOUR,
   network: z.boolean().default(false),
-  adminUser: z.boolean().default(false),
 });
 
 const createSchema = setupSchema.extend({
   adminName: z
     .string()
     .regex(ADMIN_NAME)
-    .refine((name) => name !== "root")
-    .optional(),
+    .refine((name) => name !== "root"),
 });
 
 const storedSchema = setupSchema.extend({
+  rebootHour: HOUR.nullable().default(null),
   admin: z
     .object({ name: z.string(), keys: z.array(z.string()) })
     .nullable()
@@ -85,18 +85,18 @@ function installArgs(
     );
   }
   const steps = [
-    ...(setup.recommended ? ["recommended"] : []),
+    "recommended",
     ...(setup.docker ? ["docker"] : []),
     "confine",
     "upgrade",
     "restart",
   ];
   args.push("--setup", steps.join(","));
-  if (setup.recommended && setup.rebootHour !== null) {
+  if (setup.rebootHour !== null) {
     args.push("--reboot-hour", String(setup.rebootHour));
   }
   if (setup.network && range) args.push("--network", range);
-  if (setup.adminUser && setup.admin) {
+  if (setup.admin) {
     args.push("--admin", setup.admin.name);
     setup.admin.keys.forEach((line, index) => {
       const key = parseKeyLine(line, index);
@@ -124,8 +124,14 @@ export function registerEnrollmentRoutes(
     if (!body.success) return invalidRequest(context);
     const { adminName, ...setup } = body.data;
     const { keys } = await readEnrollDefaults(context.env.DB);
-    if (setup.adminUser && keys.length > 0 && adminName === undefined) {
-      return invalidRequest(context);
+    if (keys.length === 0) {
+      return context.json(
+        {
+          code: "NO_ADMIN_KEYS",
+          message: "Add an SSH public key in Settings, Enroll Defaults first.",
+        },
+        409,
+      );
     }
     const fleet = await loadFleet(context.env.DB, context.get("identity").id);
     const refused = await confirmed(context, "enrollment.create", "new", fleet);
@@ -142,13 +148,7 @@ export function registerEnrollmentRoutes(
         context.get("identity").id,
         await sha256(token),
         expiresAt,
-        JSON.stringify({
-          ...setup,
-          admin:
-            setup.adminUser && adminName && keys.length > 0
-              ? { name: adminName, keys }
-              : null,
-        }),
+        JSON.stringify({ ...setup, admin: { name: adminName, keys } }),
         confirmingDevice(context),
       )
       .run();

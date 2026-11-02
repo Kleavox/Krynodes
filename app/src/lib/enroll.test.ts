@@ -3,69 +3,56 @@ import { describe, expect, it } from "vitest";
 import { enrollSetup } from "./enroll";
 
 describe("setup sent with the enroll command", () => {
-  it("sends what is ticked, with the restart hour in UTC", () => {
+  it("sends Docker and the restart hour in UTC", () => {
     expect(
       enrollSetup(
-        { recommended: true, docker: true, hour: 3, network: false },
+        { docker: true, hour: 3, network: false, adminName: "user1" },
         -420,
       ),
-    ).toEqual({ recommended: true, docker: true, rebootHour: 20 });
+    ).toEqual({ docker: true, rebootHour: 20, adminName: "user1" });
     expect(
       enrollSetup(
-        { recommended: false, docker: true, hour: 3, network: false },
-        -420,
-      ),
-    ).toEqual({ recommended: false, docker: true, rebootHour: null });
-    expect(
-      enrollSetup(
-        { recommended: true, docker: false, hour: 3, network: false },
+        { docker: false, hour: 3, network: false, adminName: "user1" },
         330,
       ),
-    ).toEqual({ recommended: true, docker: false, rebootHour: 8 });
+    ).toEqual({ docker: false, rebootHour: 8, adminName: "user1" });
   });
 
   it("asks for the private network only when it is ticked", () => {
     expect(
       enrollSetup(
-        { recommended: false, docker: false, hour: 3, network: true },
+        { docker: false, hour: 3, network: true, adminName: "user1" },
         0,
       ),
     ).toEqual({
-      recommended: false,
       docker: false,
-      rebootHour: null,
+      rebootHour: 3,
       network: true,
+      adminName: "user1",
     });
   });
 
-  it("never sends SELinux or AppArmor, which every new server gets", () => {
+  it("never sends the protections, SELinux or AppArmor, which every new server gets", () => {
     const ticked = {
       recommended: false,
       docker: false,
       hour: 3,
       network: false,
       confine: true,
+      adminName: "user1",
     };
     expect(enrollSetup(ticked, 0)).toEqual({
-      recommended: false,
       docker: false,
-      rebootHour: null,
+      rebootHour: 3,
+      adminName: "user1",
     });
   });
 
-  it("sends the admin user's name only when Add Admin User is ticked", () => {
-    const base = { recommended: false, docker: false, hour: 3, network: false };
-    expect(
-      enrollSetup({ ...base, adminUser: true, adminName: " user1 " }, 0),
-    ).toEqual({
-      recommended: false,
-      docker: false,
-      rebootHour: null,
-      adminUser: true,
+  it("always sends the admin user's name, trimmed", () => {
+    const base = { docker: false, hour: 3, network: false };
+    expect(enrollSetup({ ...base, adminName: " user1 " }, 0)).toMatchObject({
       adminName: "user1",
     });
-    expect(
-      enrollSetup({ ...base, adminUser: false, adminName: "user1" }, 0),
-    ).toEqual({ recommended: false, docker: false, rebootHour: null });
+    expect(enrollSetup(base, 0)).toMatchObject({ adminName: "" });
   });
 });

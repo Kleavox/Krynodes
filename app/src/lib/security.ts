@@ -9,6 +9,7 @@ export interface RecipeChoice {
   outside: boolean;
   blocked: string | null;
   hint: string | null;
+  undo: boolean;
 }
 
 const HINTS: Record<string, string> = {
@@ -118,6 +119,7 @@ export function recipeChoices(report: SecurityReport): RecipeChoice[] {
             ? null
             : protectionDetail(id, report)
           : (HINTS[id] ?? null),
+      undo: id === "free-port-53",
     };
   });
 }

@@ -634,13 +634,16 @@ export function registerServiceRoutes(
     if (
       action === "undo" &&
       targets.some(
-        (target) => target.kind === "host" && target.name === "confinement",
+        (target) =>
+          target.kind === "host" &&
+          target.name !== "free-port-53" &&
+          (RECIPES as readonly string[]).includes(target.name),
       )
     ) {
       return context.json(
         {
           code: "STAYS_ON",
-          message: "SELinux and AppArmor stay on once Krynodes manages them.",
+          message: "Protections stay on once Krynodes turns them on.",
         },
         400,
       );

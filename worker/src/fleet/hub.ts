@@ -706,7 +706,7 @@ export class FleetHub {
         : (
             await db
               .prepare(
-                `SELECT id, security, setup FROM nodes WHERE id IN (SELECT value FROM json_each(?))
+                `SELECT id, security, setup, last_seen_at FROM nodes WHERE id IN (SELECT value FROM json_each(?))
                  AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
               )
               .bind(ids)
@@ -714,6 +714,7 @@ export class FleetHub {
                 id: string;
                 security: string | null;
                 setup: string | null;
+                last_seen_at: string | null;
               }>()
           ).results;
     const known = new Map(rows.map((row) => [row.id, row]));
@@ -723,6 +724,7 @@ export class FleetHub {
       if (!known.has(nodeId)) {
         delete roster[nodeId];
       } else if (
+        known.get(nodeId)?.last_seen_at === null ||
         restarting(known.get(nodeId)?.security ?? null, seen, now) ||
         finishingSetup(known.get(nodeId)?.setup ?? null, seen, now) ||
         planned.has(nodeId)

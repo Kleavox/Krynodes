@@ -2,25 +2,18 @@ import type { SetupChoice } from "./api";
 import { toUtcHour } from "./security";
 
 export interface EnrollSetup {
-  recommended: boolean;
   docker: boolean;
-  rebootHour: number | null;
+  rebootHour: number;
   network?: true;
-  adminUser?: true;
-  adminName?: string;
+  adminName: string;
 }
 
 export const enrollSetup = (
   choice: SetupChoice,
   offset: number,
 ): EnrollSetup => ({
-  recommended: choice.recommended,
   docker: choice.docker,
-  rebootHour: choice.recommended
-    ? Math.floor(toUtcHour(choice.hour, offset))
-    : null,
+  rebootHour: Math.floor(toUtcHour(choice.hour, offset)),
   ...(choice.network ? { network: true as const } : {}),
-  ...(choice.adminUser
-    ? { adminUser: true as const, adminName: (choice.adminName ?? "").trim() }
-    : {}),
+  adminName: (choice.adminName ?? "").trim(),
 });
