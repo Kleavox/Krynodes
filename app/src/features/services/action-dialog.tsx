@@ -19,9 +19,12 @@ export interface ActionRequest {
   target: ActionTarget;
 }
 
-const DESCRIPTION: Record<ActionRequest["action"], string> = {
-  start: "The server runs it at its next report, within about a minute.",
-  restart: "The server runs it at its next report, within about a minute.",
+const SOON =
+  "Servers on agent 0.7.6 or newer start it within seconds; older ones at their next report.";
+
+export const DESCRIPTION: Record<ActionRequest["action"], string> = {
+  start: SOON,
+  restart: SOON,
   stop: "It stays stopped until you start it.",
   remove:
     "The container is deleted. One that belongs to a stack comes back on the stack's next Deploy.",

@@ -22,14 +22,17 @@ const (
 )
 
 type envelope struct {
-	ID       uint64          `json:"id"`
-	Type     string          `json:"type"`
-	Code     string          `json:"code"`
-	Response json.RawMessage `json:"response"`
-	Config   json.RawMessage `json:"config"`
+	ID       uint64                   `json:"id"`
+	Type     string                   `json:"type"`
+	Code     string                   `json:"code"`
+	Response json.RawMessage          `json:"response"`
+	Config   json.RawMessage          `json:"config"`
+	Actions  []reporter.ActionRequest `json:"actions"`
 }
 
 type Client struct {
+	Deliver func([]reporter.ActionRequest) error
+
 	endpoint string
 	token    string
 	version  string
@@ -244,6 +247,11 @@ func (c *Client) dispatch(message []byte) {
 		return
 	}
 	if answer.Type == "poke" {
+		if len(answer.Actions) > 0 && c.Deliver != nil {
+			if err := c.Deliver(answer.Actions); err != nil {
+				log.Printf("queue service actions: %v", err)
+			}
+		}
 		select {
 		case c.pokes <- struct{}{}:
 		default:

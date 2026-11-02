@@ -83,8 +83,10 @@ describe("agent stream route", () => {
     });
     const response = await t.call("/api/agent/stream", {
       ...upgrade,
+      "user-agent": "kry-agent/0.7.6",
       "x-kry-node": OTHER,
       "x-kry-owner": "intruder",
+      "x-kry-version": "9.9.9",
     });
     expect(await response.text()).toBe("from hub");
     const [{ name, request }] = hub.calls as [
@@ -95,6 +97,7 @@ describe("agent stream route", () => {
     expect(request.headers.get("x-kry-node")).toBe(NODE);
     expect(request.headers.get("x-kry-owner")).toBe("standalone");
     expect(request.headers.get("x-kry-interval")).toBe("60");
+    expect(request.headers.get("x-kry-version")).toBe("0.7.6");
     expect(request.headers.get("authorization")).toBeNull();
   });
 });

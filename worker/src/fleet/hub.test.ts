@@ -84,9 +84,15 @@ function setup() {
       },
     } as unknown as Env,
   );
-  const connect = async () => {
+  const connect = async (version: string | null = null) => {
     const ws = new FakeSocket();
-    await hub.accept(ws as unknown as WebSocket, NODE, "standalone", 60);
+    await hub.accept(
+      ws as unknown as WebSocket,
+      NODE,
+      "standalone",
+      60,
+      version,
+    );
     return ws;
   };
   let requests = 0;
@@ -1073,6 +1079,163 @@ describe("FleetHub", () => {
     });
     expect(next.replies()).toEqual([{ type: "poke" }]);
     expect(ws.replies()).toHaveLength(1);
+  });
+
+  describe("actions inside the poke", () => {
+    const queue = async (t: ReturnType<typeof setup>) => {
+      const batch = createBatch(t.db, {
+        action: "restart",
+        mode: "parallel",
+        targets: [{ nodeId: NODE, kind: "docker" as const, name: "resolver" }],
+        requestedBy: "owner@example.test",
+        now: BASE,
+      });
+      await t.db.batch(batch.statements);
+      return batch.actions[0]!.id;
+    };
+    const poke = async (t: ReturnType<typeof setup>) =>
+      (await t.hub
+        .fetch(
+          new Request("https://fleet/poke", {
+            method: "POST",
+            body: JSON.stringify({ nodeIds: [NODE] }),
+          }),
+        )
+        .then((response) => response.json())) as unknown;
+    const status = (t: ReturnType<typeof setup>, id: string) =>
+      t.sqlite.prepare("SELECT status FROM actions WHERE id = ?").get(id);
+
+    it("reads the agent's version when its stream opens", async () => {
+      const t = setup();
+      const pair = [new FakeSocket(), new FakeSocket()];
+      vi.stubGlobal("WebSocketPair", function () {
+        return { 0: pair[0], 1: pair[1] };
+      });
+      vi.stubGlobal(
+        "Response",
+        class extends Response {
+          constructor(body?: BodyInit | null, init?: ResponseInit) {
+            super(body, init?.status === 101 ? { status: 200 } : init);
+          }
+        },
+      );
+      await t.hub.fetch(
+        new Request("https://fleet/connect", {
+          headers: {
+            "x-kry-node": NODE,
+            "x-kry-owner": "standalone",
+            "x-kry-interval": "60",
+            "x-kry-version": "0.7.6",
+          },
+        }),
+      );
+      expect(pair[1]!.deserializeAttachment()).toMatchObject({
+        nodeId: NODE,
+        push: true,
+      });
+    });
+
+    it("pushes queued actions inside the poke to an agent that takes them", async () => {
+      const t = setup();
+      const ws = await t.connect("0.7.6");
+      const id = await queue(t);
+      vi.setSystemTime(BASE + 1_000);
+      expect(await poke(t)).toEqual({ poked: 1 });
+      expect(ws.replies()).toEqual([
+        {
+          type: "poke",
+          actions: [
+            {
+              id,
+              kind: "docker",
+              name: "resolver",
+              action: "restart",
+              expiresAt: expect.any(String),
+            },
+          ],
+        },
+      ]);
+      expect(status(t, id)).toEqual({ status: "sent" });
+    });
+
+    it("keeps actions for the heartbeat of an agent older than 0.7.6", async () => {
+      const t = setup();
+      const ws = await t.connect("0.7.5");
+      const id = await queue(t);
+      vi.setSystemTime(BASE + 1_000);
+      expect(await poke(t)).toEqual({ poked: 1 });
+      expect(ws.replies()).toEqual([{ type: "poke" }]);
+      expect(status(t, id)).toEqual({ status: "queued" });
+    });
+
+    it("still pokes when the actions cannot be read", async () => {
+      const t = setup();
+      const ws = await t.connect("0.7.6");
+      const prepare = vi.spyOn(t.db, "prepare").mockImplementation(() => {
+        throw new Error("D1 is down");
+      });
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        expect(await poke(t)).toEqual({ poked: 1 });
+        expect(ws.replies()).toEqual([{ type: "poke" }]);
+      } finally {
+        prepare.mockRestore();
+        logged.mockRestore();
+      }
+    });
+
+    it("pushes the next step of a batch inside the poke", async () => {
+      const t = setup();
+      const OTHER = "33333333-3333-4333-8333-333333333333";
+      seedNode(t.sqlite, { id: OTHER });
+      const ws = await t.connect();
+      const next = new FakeSocket();
+      await t.hub.accept(
+        next as unknown as WebSocket,
+        OTHER,
+        "standalone",
+        60,
+        "0.7.6",
+      );
+      const batch = createBatch(t.db, {
+        action: "restart",
+        mode: "rolling",
+        targets: [NODE, OTHER].map((nodeId) => ({
+          nodeId,
+          kind: "docker" as const,
+          name: "resolver",
+        })),
+        requestedBy: "owner@example.test",
+        now: BASE,
+      });
+      await t.db.batch(batch.statements);
+      await deliverActions(t.db, NODE, BASE);
+      await t.hub.webSocketMessage(
+        ws as unknown as WebSocket,
+        JSON.stringify({
+          id: 1,
+          type: "actions",
+          report: {
+            nodeId: NODE,
+            results: [
+              {
+                id: batch.actions[0]!.id,
+                ok: true,
+                exitCode: 0,
+                output: "",
+                finishedAt: new Date(BASE).toISOString(),
+              },
+            ],
+          },
+        }),
+      );
+      expect(next.replies()).toEqual([
+        {
+          type: "poke",
+          actions: [expect.objectContaining({ id: batch.actions[1]!.id })],
+        },
+      ]);
+    });
   });
 
   it("asks again for a stalled update and keeps the agent's reason, like the HTTP route", async () => {

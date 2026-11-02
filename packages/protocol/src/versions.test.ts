@@ -5,9 +5,11 @@ import {
   agentHasFeatures,
   agentHasSecurity,
   agentSupported,
+  agentTakesPush,
   FEATURE_AGENT,
   compareVersions,
   MIN_AGENT_VERSION,
+  PUSH_AGENT,
   SECURITY_AGENT,
 } from "./versions";
 
@@ -49,14 +51,25 @@ describe("agent versions", () => {
     expect(agentHasSecurity(null)).toBe(false);
   });
 
+  it("sends actions inside the poke from agent 0.7.6", () => {
+    expect(PUSH_AGENT).toBe("0.7.6");
+    expect(agentTakesPush("0.7.6")).toBe(true);
+    expect(agentTakesPush("0.7.10")).toBe(true);
+    expect(agentTakesPush("0.7.5")).toBe(false);
+    expect(agentTakesPush("dev")).toBe(true);
+    expect(agentTakesPush(null)).toBe(false);
+  });
+
   it("keeps the feature gates above the minimum and none below it", () => {
     expect(Object.keys(versions).sort()).toEqual([
       "FEATURE_AGENT",
       "MIN_AGENT_VERSION",
+      "PUSH_AGENT",
       "SECURITY_AGENT",
       "agentHasFeatures",
       "agentHasSecurity",
       "agentSupported",
+      "agentTakesPush",
       "compareVersions",
     ]);
   });

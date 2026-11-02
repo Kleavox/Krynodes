@@ -42,7 +42,11 @@ import {
   type WarningMail,
 } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
-import { agentConfigResponseSchema, type Denials } from "@krynodes/protocol";
+import {
+  agentConfigResponseSchema,
+  agentTakesPush,
+  type Denials,
+} from "@krynodes/protocol";
 import {
   drain,
   fold,
@@ -176,7 +180,13 @@ export class FleetHub {
       const interval = Number(request.headers.get("x-kry-interval") ?? "60");
       if (!nodeId || !ownerId) return new Response(null, { status: 400 });
       const [client, server] = Object.values(new WebSocketPair());
-      await this.accept(server!, nodeId, ownerId, interval);
+      await this.accept(
+        server!,
+        nodeId,
+        ownerId,
+        interval,
+        request.headers.get("x-kry-version"),
+      );
       return new Response(null, { status: 101, webSocket: client });
     }
     if (url.pathname === "/watch") {
@@ -238,25 +248,44 @@ export class FleetHub {
       const nodeIds = Array.isArray(body?.nodeIds)
         ? body.nodeIds.filter((id): id is string => typeof id === "string")
         : [];
-      return Response.json({ poked: this.poke(nodeIds) });
+      return Response.json({ poked: await this.poke(nodeIds) });
     }
     return new Response(null, { status: 404 });
   }
 
-  private poke(nodeIds: string[]): number {
+  private async poke(nodeIds: string[]): Promise<number> {
     if (nodeIds.length > 0) this.version.count += 1;
     let poked = 0;
+    let pushed = false;
     for (const nodeId of nodeIds) {
       this.checks.delete(nodeId);
-      for (const ws of this.ctx.getWebSockets(nodeId)) {
+      const sockets = this.ctx.getWebSockets(nodeId);
+      const actions = sockets.some(
+        (ws) => (ws.deserializeAttachment() as StreamState | null)?.push,
+      )
+        ? await heartbeatActions(this.env.DB, nodeId, Date.now()).catch(
+            (error: unknown) => {
+              console.error("[kry fleet]", error);
+              return [];
+            },
+          )
+        : [];
+      for (const ws of sockets) {
+        const push =
+          actions.length > 0 &&
+          (ws.deserializeAttachment() as StreamState | null)?.push;
         try {
-          ws.send(JSON.stringify({ type: "poke" }));
+          ws.send(
+            JSON.stringify(push ? { type: "poke", actions } : { type: "poke" }),
+          );
           poked += 1;
+          pushed ||= Boolean(push);
         } catch {
           continue;
         }
       }
     }
+    if (pushed) this.announce(["actions"]);
     return poked;
   }
 
@@ -265,6 +294,7 @@ export class FleetHub {
     nodeId: string,
     ownerId: string,
     interval: number,
+    version: string | null = null,
   ): Promise<void> {
     for (const old of this.ctx.getWebSockets(nodeId)) {
       await this.leave(old);
@@ -275,7 +305,10 @@ export class FleetHub {
       }
     }
     this.ctx.acceptWebSocket(ws, [nodeId]);
-    ws.serializeAttachment(newState(nodeId, ownerId, interval));
+    ws.serializeAttachment({
+      ...newState(nodeId, ownerId, interval),
+      ...(agentTakesPush(version) ? { push: true } : {}),
+    });
     this.checks.delete(nodeId);
     const roster = await this.roster();
     roster[nodeId] = {
@@ -397,7 +430,7 @@ export class FleetHub {
           Date.now(),
         );
         reply({ type: "actions", response });
-        this.poke(next);
+        await this.poke(next);
         this.announce(
           deleted
             ? ["all"]
@@ -492,7 +525,7 @@ export class FleetHub {
       delete stored[key];
     }
     await this.ctx.storage.put(CUTOFFS, stored);
-    this.poke(poke);
+    await this.poke(poke);
     this.announce(["all"]);
     await this.tell({ quarantined });
   }
@@ -975,9 +1008,9 @@ export class FleetHub {
           ...(trusted ? {} : { quarantined: true }),
         },
       });
-      if (network) this.poke(network.poke);
+      if (network) await this.poke(network.poke);
       if (poked.length > 0) {
-        this.poke(poked.filter((id) => id !== node.id));
+        await this.poke(poked.filter((id) => id !== node.id));
         this.announce(["all"]);
       }
       const topics = [

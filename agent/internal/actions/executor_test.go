@@ -706,3 +706,22 @@ func TestRequestsLargerThan1MBAreRefused(t *testing.T) {
 	writeRequest(t, executor.RequestDir, idA+".json", restart)
 	refusedWithoutRunning(t, executor, run, "too large")
 }
+
+func TestARunEmptiesTheWakeFolderBeforeAnythingElse(t *testing.T) {
+	executor, _ := newExecutor(t)
+	wake := filepath.Join(executor.StateDir, WakeDir)
+	if err := os.MkdirAll(wake, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wake, "now"), nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	broken := errors.New("systemd did not answer")
+	executor.Collect = func(context.Context, []string) (Snapshot, error) { return Snapshot{}, broken }
+	if err := executor.Execute(context.Background()); !errors.Is(err, broken) {
+		t.Fatalf("Execute returned %v", err)
+	}
+	if entries, _ := os.ReadDir(wake); len(entries) != 0 {
+		t.Fatalf("a failed run left %d wake markers, so systemd would start it again and again", len(entries))
+	}
+}

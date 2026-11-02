@@ -136,6 +136,7 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     headers.set("x-kry-node", node.id);
     headers.set("x-kry-owner", node.owner_user_id);
     headers.set("x-kry-interval", String(node.interval_seconds));
+    headers.set("x-kry-version", announced ?? "");
     return hubFor(context.env, node.owner_user_id).fetch(
       new Request("https://fleet/connect", { headers }),
     );

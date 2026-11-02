@@ -436,10 +436,18 @@ like any action and allowed for protected units because it only reads.
 
 The agent never runs anything itself:
 
-- It drops each request in `/var/lib/kry/actions`.
+- A request reaches an agent 0.7.6 or newer inside the poke on its live
+  connection, seconds after the passkey, whatever its checks are doing. An
+  older agent, or one that was offline, gets it with its next report. The
+  result goes back as soon as it is written.
+- It drops each request in `/var/lib/kry/actions` and leaves a marker in
+  `/var/lib/kry-exec/wake`, the only place outside its own folder it may
+  write.
 - The root oneshot `kry exec` does the work. The units `krynodes-exec.path` and
   `krynodes-exec.timer` start it, the timer every 5 minutes to refresh the list of
-  services. A run starts no new request after 20 minutes and leaves the rest
+  services. The path unit also watches the wake folder: each run empties it
+  first, so a request that arrives while a run is finishing starts the next
+  one at once. A run starts no new request after 20 minutes and leaves the rest
   to the next run, so nothing it started is cut off by the unit's one-hour
   limit; Move into Krynodes gives up copying the old folder after 15 minutes
   and starts the stack from it again.

@@ -437,3 +437,73 @@ func TestTheRelayMarksTheServerQuarantinedWhileTheWorkerSaysSo(t *testing.T) {
 		t.Fatalf("mark kept: %v", err)
 	}
 }
+
+func TestEnqueueAndRefreshLeaveAWakeMarkerForExec(t *testing.T) {
+	relay, _ := newRelay(t)
+	wake := filepath.Join(relay.StateDir, WakeDir)
+	if err := os.MkdirAll(wake, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	marked := func() bool {
+		entries, _ := os.ReadDir(wake)
+		return len(entries) > 0
+	}
+	if err := relay.Enqueue([]Request{{ID: idA, Kind: "docker", Name: "resolver", Action: "restart"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !marked() {
+		t.Fatal("Enqueue left no wake marker")
+	}
+	if err := os.RemoveAll(wake); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(wake, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if !marked() {
+		t.Fatal("Refresh left no wake marker")
+	}
+}
+
+func TestEnqueueStillWorksWithoutTheWakeFolder(t *testing.T) {
+	relay, _ := newRelay(t)
+	if err := relay.Enqueue([]Request{{ID: idA, Kind: "docker", Name: "resolver", Action: "restart"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(relay.RequestDir, idA+".json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type channelPoster chan reporter.ActionsReport
+
+func (posted channelPoster) PostActions(_ context.Context, report reporter.ActionsReport) (reporter.ActionsResponse, error) {
+	posted <- report
+	return reporter.ActionsResponse{OK: true}, nil
+}
+
+func TestAResultGoesOutWithoutWaitingForTheTick(t *testing.T) {
+	relay, _ := newRelay(t)
+	posted := make(channelPoster, 4)
+	relay.Server = posted
+	if err := relay.Enqueue([]Request{{ID: idA, Kind: "docker", Name: "resolver", Action: "restart"}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go relay.Watch(ctx, time.Hour)
+	if err := writeJSON(filepath.Join(relay.StateDir, "results"), idA+".json", Result{ID: idA, OK: true, FinishedAt: "t"}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case report := <-posted:
+		if len(report.Results) != 1 || report.Results[0].ID != idA {
+			t.Fatalf("posted %#v", report)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the result waited for the slow tick")
+	}
+}

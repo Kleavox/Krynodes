@@ -1,6 +1,7 @@
 export const MIN_AGENT_VERSION = "0.7.0";
 export const FEATURE_AGENT = "0.7.1";
 export const SECURITY_AGENT = "0.7.4";
+export const PUSH_AGENT = "0.7.6";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 
@@ -26,3 +27,6 @@ export const agentHasFeatures = (version: string | null | undefined) =>
 
 export const agentHasSecurity = (version: string | null | undefined) =>
   reaches(version, SECURITY_AGENT);
+
+export const agentTakesPush = (version: string | null | undefined) =>
+  reaches(version, PUSH_AGENT);

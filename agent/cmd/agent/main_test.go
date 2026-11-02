@@ -407,3 +407,22 @@ func TestHostApplyIsACommand(t *testing.T) {
 		t.Fatalf("host-apply must exist and need root on Linux: %v", err)
 	}
 }
+
+func TestTheExecutorIsStartedAgainForARequestThatCameWhileItRan(t *testing.T) {
+	wake := "/var/lib/kry-exec/wake"
+	path := execPathUnit()
+	for _, want := range []string{"PathChanged=/var/lib/kry/actions\n", "DirectoryNotEmpty=" + wake + "\n"} {
+		if !strings.Contains(path, want) {
+			t.Errorf("path unit is missing %q", want)
+		}
+	}
+	if agent := serviceUnit("/usr/local/bin/kry", defaultConfigPath); !strings.Contains(agent, "ReadWritePaths=-"+wake+"\n") {
+		t.Errorf("the agent cannot leave a wake marker:\n%s", agent)
+	}
+	if mode := stateDirectoryModes()[filepath.Join(actions.StateDir, actions.WakeDir)]; mode&os.ModeSticky == 0 || mode.Perm() != 0o770 {
+		t.Errorf("wake folder is %v; the agent writes there and only root may remove what it did not write", mode)
+	}
+	if !slices.Contains(restartedUnits(), "krynodes-exec.path") {
+		t.Error("an updated server must watch the wake folder without a reboot")
+	}
+}
