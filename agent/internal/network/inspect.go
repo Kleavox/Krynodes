@@ -113,7 +113,7 @@ func Read(ctx context.Context, root string, run Runner) Inspect {
 
 func kernel(ctx context.Context, root string, run Runner) Kernel {
 	var found Kernel
-	if release, err := os.ReadFile(filepath.Join(root, "proc", "sys", "kernel", "osrelease")); err == nil {
+	if release, err := os.ReadFile(filepath.Join(root, "/proc/sys/kernel/osrelease")); err == nil {
 		version := strings.TrimSpace(string(release))
 		found.Version = &version
 	}

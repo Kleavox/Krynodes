@@ -388,7 +388,7 @@ func (e Executor) createBridge(ctx context.Context, request Request, command Com
 		id = fields[len(fields)-1]
 	}
 	if kind == "contained" {
-		filter, _ := os.ReadFile(filepath.Join(e.Root, "proc", "sys", "net", "bridge", "bridge-nf-call-iptables"))
+		filter, _ := os.ReadFile(filepath.Join(e.Root, "/proc/sys/net/bridge/bridge-nf-call-iptables"))
 		if strings.TrimSpace(string(filter)) != "1" {
 			e.docker(ctx, collectTimeout, "remove network", "network", "rm", name)
 			return e.refuse(request.ID, errors.New(noFilter))
@@ -539,7 +539,7 @@ func (e Executor) bridgesReport(ctx context.Context) *reporter.Bridges {
 }
 
 func (e Executor) bridgeFiltered() bool {
-	filter, _ := os.ReadFile(filepath.Join(e.Root, "proc", "sys", "net", "bridge", "bridge-nf-call-iptables"))
+	filter, _ := os.ReadFile(filepath.Join(e.Root, "/proc/sys/net/bridge/bridge-nf-call-iptables"))
 	return strings.TrimSpace(string(filter)) == "1"
 }
 
