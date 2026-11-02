@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  publishesDns,
   moveCompose,
   portsOf,
   publishedPorts,
@@ -229,5 +230,35 @@ networks:
       { key: "public", name: "public", services: [] },
     ]);
     expect(sharedNetworksOf("services: [")).toEqual([]);
+  });
+});
+
+describe("publishesDns", () => {
+  const compose = (ports: string) =>
+    `services:\n  dns:\n    image: adguard/adguardhome\n    ports:\n${ports}`;
+  it("sees port 53 published on every address", () => {
+    for (const ports of [
+      '      - "53:53"\n',
+      '      - "53:53/udp"\n',
+      '      - "0.0.0.0:53:53/udp"\n',
+      '      - "[::]:53:53/tcp"\n',
+      "      - target: 53\n        published: 53\n        protocol: udp\n",
+    ]) {
+      expect(publishesDns(compose(ports)), ports).toBe(true);
+    }
+  });
+
+  it("leaves out port 53 on one address, another host port, or no ports", () => {
+    for (const ports of [
+      '      - "127.0.0.1:53:53"\n',
+      '      - "10.88.1.5:53:53/udp"\n',
+      '      - "5353:53/udp"\n',
+      "      - target: 53\n        published: 5353\n",
+      "      - target: 53\n        published: 53\n        host_ip: 127.0.0.1\n",
+    ]) {
+      expect(publishesDns(compose(ports)), ports).toBe(false);
+    }
+    expect(publishesDns("services:\n  web:\n    image: nginx\n")).toBe(false);
+    expect(publishesDns("not: [yaml")).toBe(false);
   });
 });

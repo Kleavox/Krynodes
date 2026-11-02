@@ -382,6 +382,20 @@ func TestARaspberryPiKernelIsComparedWithItsOwnFlavour(t *testing.T) {
 	}
 }
 
+func TestKernelWaitingWhenANewerKernelIsInstalled(t *testing.T) {
+	root := t.TempDir()
+	if KernelWaiting(root) {
+		t.Fatal("no dpkg status, yet a kernel waits")
+	}
+	put(t, root, "/var/lib/dpkg/status", "Package: linux-image-6.1.0-53-amd64\nStatus: install ok installed\nVersion: 6.1.148-1\n\nPackage: linux-image-6.1.0-54-amd64\nStatus: install ok installed\nVersion: 6.1.153-1\n")
+	for running, want := range map[string]bool{"6.1.0-53-amd64": true, "6.1.0-54-amd64": false, "6.1.0-55-amd64": false} {
+		put(t, root, "/proc/sys/kernel/osrelease", running+"\n")
+		if got := KernelWaiting(root); got != want {
+			t.Fatalf("running %s: got %v want %v", running, got, want)
+		}
+	}
+}
+
 func TestServicesStillOnDeletedLibrariesAreNamed(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "/proc/sys/kernel/osrelease", "6.1.0-27-amd64\n")

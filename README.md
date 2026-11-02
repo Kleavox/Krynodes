@@ -112,10 +112,14 @@ server, with nothing to untick: before enrolling, the script runs `kry setup
 has neither, when its boot settings cannot be changed (no `grubby` for
 SELinux, no grub or `cmdline.txt` for AppArmor), or when SELinux would block a
 user who logs in with a key and has no `.ssh` folder. After enrolling, the
-script runs `kry setup`, which prints what it found and did:
+script runs `kry setup`, which works in this order: the admin user, every
+package updated (`dnf upgrade`, or `apt-get upgrade --with-new-pkgs` keeping
+your config files), the protections, SELinux or AppArmor, Docker, the private
+network. It prints what it found and did:
 
 ```text
 Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
+✓ Packages updated
 ✓ Automatic security updates
 ✓ Restart when needed · 20:00 UTC
 – SSH keys only skipped: first let root or a sudo user log in over SSH with a key
@@ -123,18 +127,38 @@ Detected: Rocky Linux 9.4 (Blue Onyx) (dnf, firewalld)
 ✓ Firewall · closed
 ✓ SELinux · enforcing
 ✓ Docker 28.4.0 with Compose
+✓ Restart · the server restarts when the install finishes
 ```
+
+The last line shows only when the server needs a restart: a newer kernel is
+installed than the one running, the system asks for one
+(`/run/reboot-required`, `needs-restarting -r`), or SELinux or AppArmor was
+just switched on. The script then ends with `kry setup --finish`, which says
+_Restarting the server in 10 seconds to finish setup._ and restarts it once.
+This is the only restart Krynodes makes on its own, and only at enroll; the
+dashboard does not count the server offline while it comes back.
+
+The Enroll dialog closes by itself once the server enrolls. Until setup ends,
+the server's card in Fleet says **Setting Up** with the step it is on
+(`Updating Packages`, `Step 2 of 6`) and does not open; a server with a warning
+to answer opens anyway. A setup that stops reporting for a minute (the
+terminal closed, the server cut off) shows **Setup stopped at** the step it
+reached, and the server opens. A server that joins the private network shows
+**Join** on its card when setup ends.
 
 From agent 0.7.4 the firewall closes and asks nothing: only SSH, ICMP and the
 private network's port stay open, and ports Docker publishes close too. Open
 what a server needs afterwards in its Firewall section. A firewall that is
 already on is adopted: its allow rules stay open as open ports
 (`✓ Firewall · closed · kept open: 80/tcp`). A server whose SELinux is switched
-off prints `– SELinux: restart to finish`; Krynodes never restarts it itself.
+off prints `– SELinux: restart to finish`, and the restart at the end finishes
+it. Outside enroll Krynodes never restarts a server itself.
 
 A step that fails is printed and the next one runs; the server is enrolled
 either way, and the dashboard can turn the rest on later. `sudo kry setup
---recommended --confine --docker --reboot-hour 20` runs it again by hand.
+--recommended --confine --docker --upgrade --reboot-hour 20` runs it again by
+hand; it restarts nothing unless `--restart` is given and `sudo kry setup
+--finish` is run after it.
 
 Supported systems:
 
@@ -824,8 +848,10 @@ only accounts SSH really lets in with a key (`PermitRootLogin`, `AllowUsers`,
 leaves root's login rule alone. **Apply
 recommended** turns on the first five with one passkey confirmation, the firewall with
 the ports you tick. The agent connects outward, so none of them can cut
-Krynodes off. Free port 53 is not a finding: it is offered only for a server
-that will run a DNS server.
+Krynodes off. Free port 53 is not a finding and not offered here: New Stack
+offers it, on the compose field, when the file publishes port 53 on every
+address and systemd-resolved holds that port on the chosen server. Once it is
+on, it stays in this list with Turn off.
 
 **No root login** (agent 0.7.1) writes `PermitRootLogin no` in its own drop-in
 and is offered only once a sudo user other than root logs in with a key. It is
@@ -1072,8 +1098,9 @@ only its own links. From agent 0.7.0.
   cannot link, and their pair says so.
 - **Add Server** shows the address each server gets. **Join Private Network**
   in Enroll a server (and Enroll defaults) gets a new server ready while it
-  enrolls; the others learn its key only when you press **Join** (or **Not now**
-  undoes it), so a leaked install command cannot bring anyone in.
+  enrolls; the others learn its key only when you press **Join** on its Fleet
+  card or here (or **Not now** undoes it), so a leaked install command cannot
+  bring anyone in.
 - The page lists links with no answer first (a link to an offline server is
   not a problem), waiting servers, every server with **Links n of m**, Recent
   changes and This network. The menu item counts the links with no answer.

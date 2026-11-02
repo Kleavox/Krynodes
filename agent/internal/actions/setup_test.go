@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const trixie = "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION_CODENAME=trixie\nID=debian\n"
@@ -238,6 +239,97 @@ func TestSetupTurnsOnSELinuxOrAppArmorAndSaysWhatIsLeft(t *testing.T) {
 	rootFile(t, apparmor, profilesAt, "/usr/bin/man (complain)\n")
 	if got := runSetup(t, apparmor, SetupOptions{Confine: true}); !strings.HasSuffix(got, ")\n✓ AppArmor · enforcing\n") || !slices.Contains(run.calls, "aa-enforce /usr/bin/man") {
 		t.Fatalf("got\n%s\ncalls %q", got, run.calls)
+	}
+}
+
+const packagesUpgrade = "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --with-new-pkgs upgrade -y -q"
+
+func TestSetupWritesEachPhaseWithItsStepWhileItRuns(t *testing.T) {
+	executor, run := setupServer(t)
+	rootFile(t, executor, "/proc/sys/kernel/random/boot_id", "boot-1\n")
+	rootFile(t, executor, "/etc/kernel/postinst.d/unattended-upgrades", "")
+	seen := map[string]setupProgress{}
+	snapshot := func(call string) func() {
+		return func() { seen[call], _ = readState[setupProgress](executor.StateDir, setupFile) }
+	}
+	run.effects = map[string]func(){packagesUpgrade: snapshot("upgrade"), "docker version --format {{.Client.Version}}": snapshot("docker")}
+	got := runSetup(t, executor, SetupOptions{Upgrade: true, Recommended: true, Docker: true, Restart: true, RebootHour: hour(20)})
+	want := map[string]setupProgress{
+		"upgrade": {Phase: "upgrade", Step: 1, Of: 4, At: executorNow, Boot: "boot-1"},
+		"docker":  {Phase: "docker", Step: 3, Of: 4, At: executorNow, Boot: "boot-1"},
+	}
+	for call, progress := range want {
+		if found := seen[call]; found.Phase != progress.Phase || found.Step != progress.Step || found.Of != progress.Of || !found.At.Equal(progress.At) || found.Boot != progress.Boot {
+			t.Fatalf("%s: got %+v want %+v", call, found, progress)
+		}
+	}
+	if updated, protected := strings.Index(got, "✓ Packages updated\n"), strings.Index(got, "✓ Automatic security updates\n"); updated < 0 || protected < updated {
+		t.Fatalf("packages are updated before the protections:\n%s", got)
+	}
+	if strings.Contains(got, "Restart ·") {
+		t.Fatalf("nothing needs a restart:\n%s", got)
+	}
+	stateFileGone(t, executor, setupFile)
+}
+
+func TestSetupKeepsRestartWhenANewerKernelWaits(t *testing.T) {
+	for _, restart := range []bool{true, false} {
+		executor, _ := setupServer(t)
+		rootFile(t, executor, "/proc/sys/kernel/random/boot_id", "boot-1\n")
+		rootFile(t, executor, "/proc/sys/kernel/osrelease", "6.1.0-53-amd64\n")
+		rootFile(t, executor, "/var/lib/dpkg/status", "Package: linux-image-6.1.0-53-amd64\nStatus: install ok installed\nVersion: 6.1.148-1\n\nPackage: linux-image-6.1.0-54-amd64\nStatus: install ok installed\nVersion: 6.1.153-1\n")
+		got := runSetup(t, executor, SetupOptions{Upgrade: true, Restart: restart})
+		if !restart {
+			if strings.Contains(got, "Restart ·") {
+				t.Fatalf("no restart was asked for:\n%s", got)
+			}
+			stateFileGone(t, executor, setupFile)
+			continue
+		}
+		if !strings.HasSuffix(got, "✓ Packages updated\n✓ Restart · the server restarts when the install finishes\n") {
+			t.Fatalf("got\n%s", got)
+		}
+		if progress, _ := readState[setupProgress](executor.StateDir, setupFile); progress.Phase != "restart" || progress.Step != 2 || progress.Of != 2 || progress.Boot != "boot-1" {
+			t.Fatalf("progress %+v", progress)
+		}
+	}
+}
+
+func TestSetupPlansARestartWhenSELinuxNeedsOne(t *testing.T) {
+	executor, _ := setupServer(t)
+	rootFile(t, executor, "/etc/os-release", rockyRelease)
+	rootFile(t, executor, "/etc/selinux/config", "SELINUX=disabled\n")
+	got := runSetup(t, executor, SetupOptions{Confine: true, Restart: true})
+	if !strings.HasSuffix(got, ")\n– SELinux: restart to finish\n✓ Restart · the server restarts when the install finishes\n") {
+		t.Fatalf("got\n%s", got)
+	}
+	if progress, _ := readState[setupProgress](executor.StateDir, setupFile); progress.Phase != "restart" || progress.Step != 2 || progress.Of != 2 {
+		t.Fatalf("progress %+v", progress)
+	}
+}
+
+func TestFinishSetupRestartsOnlyForThisBoot(t *testing.T) {
+	for _, plan := range []struct {
+		progress setupProgress
+		restarts bool
+	}{
+		{setupProgress{Phase: "restart", Step: 2, Of: 2, Boot: "boot-1"}, true},
+		{setupProgress{Phase: "restart", Step: 2, Of: 2, Boot: "boot-0"}, false},
+		{setupProgress{Phase: "docker", Step: 1, Of: 2, Boot: "boot-1"}, false},
+	} {
+		executor, run := setupServer(t)
+		rootFile(t, executor, "/proc/sys/kernel/random/boot_id", "boot-1\n")
+		var waited time.Duration
+		executor.Sleep = func(d time.Duration) { waited += d }
+		writeJSON(executor.StateDir, setupFile, plan.progress, 0o640)
+		var out strings.Builder
+		if err := executor.FinishSetup(context.Background(), &out); err != nil {
+			t.Fatal(err)
+		}
+		restarted := slices.Contains(run.calls, "systemctl reboot --no-block")
+		if restarted != plan.restarts || (plan.restarts && (waited != 10*time.Second || out.String() != "Restarting the server in 10 seconds to finish setup.\n")) {
+			t.Fatalf("%+v: restarted %v waited %v out %q", plan.progress, restarted, waited, out.String())
+		}
 	}
 }
 

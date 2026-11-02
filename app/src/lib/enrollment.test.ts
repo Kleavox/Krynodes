@@ -12,7 +12,7 @@ describe("enrollmentStep", () => {
     expect(enrollmentStep(true, { status: "pending" })).toBe("waiting");
   });
 
-  it("celebrates once a server enrolled with the token", () => {
+  it("is done once a server enrolled with the token", () => {
     expect(
       enrollmentStep(true, {
         status: "used",
@@ -27,9 +27,9 @@ describe("enrollmentStep", () => {
 });
 
 describe("pollEnrollment", () => {
-  it("polls every ten seconds only while the token is unused", () => {
-    expect(pollEnrollment(undefined)).toBe(10_000);
-    expect(pollEnrollment({ status: "pending" })).toBe(10_000);
+  it("polls every three seconds only while the token is unused", () => {
+    expect(pollEnrollment(undefined)).toBe(3_000);
+    expect(pollEnrollment({ status: "pending" })).toBe(3_000);
     expect(pollEnrollment({ status: "used", node: null })).toBe(false);
     expect(pollEnrollment({ status: "expired" })).toBe(false);
   });

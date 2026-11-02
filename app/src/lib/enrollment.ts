@@ -15,5 +15,5 @@ export function enrollmentStep(
 export function pollEnrollment(
   status: EnrollmentStatus | undefined,
 ): number | false {
-  return !status || status.status === "pending" ? 10_000 : false;
+  return !status || status.status === "pending" ? 3_000 : false;
 }

@@ -161,6 +161,3 @@ export function adminBlocker(
   if (gap !== null) return `${gap} · ${node.name} runs ${node.agent_version}`;
   return keys.length === 0 ? NO_KEYS : null;
 }
-
-export const loginLine = (name: string, address: string | null) =>
-  address ? `ssh ${name}@${address}` : null;

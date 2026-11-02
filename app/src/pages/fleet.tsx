@@ -67,6 +67,7 @@ import {
 } from "@/lib/operations";
 import { busyText, namesServer, packageAttention } from "@/lib/packages";
 import { fleetQuarantine } from "@/lib/quarantine";
+import { opensServer, setupView, type SetupView } from "@/lib/setup";
 import { isPending, runningText } from "@/lib/services";
 import { layoutReportSlots, overlaps, type WorkSpan } from "@/lib/series";
 import { useMediaQuery } from "@/lib/use-media-query";
@@ -155,6 +156,7 @@ interface Row {
   work: WorkSpan[];
   raised: string[];
   notes: string[];
+  setup: SetupView | null;
 }
 
 export function FleetPage() {
@@ -257,13 +259,16 @@ export function FleetPage() {
           ) ?? null,
         raised: own.reasons,
         notes: own.notes,
+        setup: setupView(node, now),
         ...health,
       };
     })
     .sort(bySeverity);
   const counts = fleetCounts(rows);
   const visible = rows.filter((row) => matchesFleet(row, filter, query));
-  const selected = nodes.find((node) => node.id === selectedId) ?? null;
+  const selected =
+    nodes.find((node) => node.id === selectedId && opensServer(node, now)) ??
+    null;
   const select = (id: string) => setParam("node", id);
   const panel = selected && (
     <NodePanel
@@ -725,11 +730,22 @@ function NodeCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const { node, state, severity, reasons, notes, operation, busy, work } = row;
+  const {
+    node,
+    state,
+    severity,
+    reasons,
+    notes,
+    operation,
+    busy,
+    work,
+    setup: setting,
+  } = row;
   const devices = useDevices().data?.devices;
   const laid = laidSlots(node, recent, now, asOf, work);
   const live = state === "online" || state === "offline";
   const quarantined = fleetQuarantine(node, now);
+  const running = setting !== null && !setting.stopped;
   return (
     <article
       className={cn(
@@ -744,19 +760,25 @@ function NodeCard({
             className="flex min-w-0 items-center gap-1.5 font-medium"
             title={node.name}
           >
-            <button
-              type="button"
-              onClick={onSelect}
-              aria-pressed={selected}
-              className="min-w-0 truncate outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring"
-            >
-              {node.name}
-            </button>
+            {opensServer(node, now) ? (
+              <button
+                type="button"
+                onClick={onSelect}
+                aria-pressed={selected}
+                className="min-w-0 truncate outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-2 focus-visible:after:ring-ring"
+              >
+                {node.name}
+              </button>
+            ) : (
+              <span className="min-w-0 truncate">{node.name}</span>
+            )}
             <DockerMark nodeId={node.id} />
             <SecurityMark nodeId={node.id} />
           </h2>
           {quarantined ? (
             <StatusChip tone="bad" label={quarantined.chip} />
+          ) : running ? (
+            <StatusChip tone="work" label="Setting Up" pulse />
           ) : (
             <NodeStatus
               state={state}
@@ -783,12 +805,33 @@ function NodeCard({
       {state !== "offline" && (
         <Attention severity={severity} reasons={reasons} />
       )}
+      {setting?.stopped && (
+        <p className="flex items-center gap-1.5 text-xs text-warning">
+          <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+          <span className="truncate">Setup stopped at {setting.label}</span>
+        </p>
+      )}
       {state !== "offline" && notes.length > 0 && (
         <p className="-mt-1.5 truncate text-xs text-muted-foreground">
           {notes.join(" · ")}
         </p>
       )}
-      {live ? (
+      {!running && node.network?.state === "waiting" && (
+        <div className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-xs">
+          <span className="min-w-0 truncate">
+            <span className="font-medium">Private Network</span>{" "}
+            <span className="font-mono text-muted-foreground">Ready</span>
+          </span>
+          <Button asChild size="sm" className="relative z-10 h-8">
+            <Link to={`/network?join=${encodeURIComponent(node.id)}`}>
+              Join
+            </Link>
+          </Button>
+        </div>
+      )}
+      {running ? (
+        <SetupProgress view={setting} />
+      ) : live ? (
         <>
           {state === "online" ? (
             <div onClick={onSelect}>
@@ -834,6 +877,36 @@ function NodeCard({
         <AgentVersion node={node} release={release} now={now} />
       </div>
     </article>
+  );
+}
+
+function setupLine(view: SetupView): string {
+  if (view.stopped) return `Setup stopped at ${view.label}`;
+  return view.step === null
+    ? `Setting Up · ${view.label}`
+    : `Setting Up · ${view.label} · ${view.step} of ${view.of}`;
+}
+
+function SetupProgress({ view }: { view: SetupView }) {
+  const filled =
+    view.step !== null && view.of ? (view.step / view.of) * 100 : 8;
+  return (
+    <div role="status" className="flex flex-col gap-2">
+      <p className="flex items-center justify-between gap-2 text-sm">
+        <span className="truncate">{view.label}</span>
+        {view.step !== null && (
+          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+            Step {view.step} of {view.of}
+          </span>
+        )}
+      </p>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary motion-safe:animate-pulse"
+          style={{ width: `${filled}%` }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -901,7 +974,7 @@ function FleetTable({
           </tr>
         </thead>
         <tbody className="divide-y">
-          {rows.map(({ node, state, severity, reasons, operation }) => (
+          {rows.map(({ node, state, severity, reasons, operation, setup }) => (
             <tr
               key={node.id}
               className={cn(
@@ -921,15 +994,24 @@ function FleetTable({
                     }
                     pulse={operation !== null && !halted(operation)}
                   />
-                  <button
-                    type="button"
-                    onClick={() => onSelect(node.id)}
-                    aria-pressed={node.id === selectedId}
-                    className="min-w-0 truncate text-left font-medium outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset"
-                    title={node.name}
-                  >
-                    {node.name}
-                  </button>
+                  {opensServer(node, now) ? (
+                    <button
+                      type="button"
+                      onClick={() => onSelect(node.id)}
+                      aria-pressed={node.id === selectedId}
+                      className="min-w-0 truncate text-left font-medium outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset"
+                      title={node.name}
+                    >
+                      {node.name}
+                    </button>
+                  ) : (
+                    <span
+                      className="min-w-0 truncate font-medium"
+                      title={node.name}
+                    >
+                      {node.name}
+                    </span>
+                  )}
                   <DockerMark nodeId={node.id} />
                   <SecurityMark nodeId={node.id} />
                 </div>
@@ -949,6 +1031,8 @@ function FleetTable({
                     >
                       <OperationText operation={operation} />
                     </span>
+                  ) : setup ? (
+                    <span className="text-warning">{setupLine(setup)}</span>
                   ) : state === "offline" ? (
                     "Offline"
                   ) : reasons.length > 0 ? (

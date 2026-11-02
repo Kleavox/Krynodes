@@ -99,6 +99,20 @@ describe("enrollment tokens", () => {
     expect(await status(id)).toEqual({ status: "pending" });
   });
 
+  it("has the installer update every package and restart once at the end when needed", () => {
+    expect(INSTALLER).toContain(
+      'upgrade) setup_flags="$setup_flags --upgrade" ;;',
+    );
+    expect(INSTALLER).toContain(
+      'restart) setup_flags="$setup_flags --restart" ;;',
+    );
+    const finish = INSTALLER.indexOf('"$bin" setup --finish');
+    expect(finish).toBeGreaterThan(
+      INSTALLER.indexOf('echo "Check it with: sudo systemctl status krynodes"'),
+    );
+    expect(INSTALLER.slice(finish - 200, finish)).toContain("*,restart,*");
+  });
+
   it("points the command and the installer at AGENT_ORIGIN when it is set", async () => {
     const { create, script } = fleet({
       AGENT_ORIGIN: "https://kry.example.workers.dev",
@@ -111,7 +125,7 @@ describe("enrollment tokens", () => {
     expect(served.status).toBe(200);
     expect(served.text.startsWith("#!/bin/sh\n")).toBe(true);
     expect(tail(served.text)).toBe(
-      `{\n  kry_args='https://kry.example.workers.dev ${token} --setup confine'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.workers.dev ${token} --setup confine,upgrade,restart'\n  main $kry_args\n}\n`,
     );
     expect(served.text).not.toContain('main "$@"');
   });
@@ -124,7 +138,7 @@ describe("enrollment tokens", () => {
       rebootHour: 20,
     });
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine --reboot-hour 20'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 20'\n  main $kry_args\n}\n`,
     );
     const changed = await request("PATCH", `/api/enrollments/${id}`, {
       recommended: false,
@@ -133,7 +147,7 @@ describe("enrollment tokens", () => {
     });
     expect(changed.status).toBe(200);
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart'\n  main $kry_args\n}\n`,
     );
     expect(
       (
@@ -176,7 +190,7 @@ describe("enrollment tokens", () => {
     });
     const flags = `--admin user1 --admin-key ${blob(LAPTOP)}:user1-laptop --admin-key ${blob(PHONE)}:phone`;
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine ${flags}'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart ${flags}'\n  main $kry_args\n}\n`,
     );
     await request("PUT", "/api/settings/enroll-defaults", {
       recommended: true,
@@ -208,11 +222,11 @@ describe("enrollment tokens", () => {
     const { create, script, request } = fleet();
     const { token } = await create({ recommended: true, confine: false });
     expect(tail((await script(token)).text)).toContain(
-      "--setup recommended,confine",
+      "--setup recommended,confine,upgrade,restart",
     );
     const without = await create({ docker: true });
     expect(tail((await script(without.token)).text)).toContain(
-      "--setup docker,confine'",
+      "--setup docker,confine,upgrade,restart'",
     );
     expect(
       (
@@ -262,14 +276,14 @@ describe("enrollment tokens", () => {
     const { create, script, sqlite } = fleet();
     const { token } = await create({ docker: true, network: true });
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart'\n  main $kry_args\n}\n`,
     );
     sqlite.exec(
       `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
        VALUES ('standalone', '10.88.4.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
     );
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine --network 10.88.4.0/24'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart --network 10.88.4.0/24'\n  main $kry_args\n}\n`,
     );
     sqlite.exec("UPDATE network SET deleted = 1");
     expect(tail((await script(token)).text)).not.toContain("--network");

@@ -11,7 +11,6 @@ import {
   keysChanged,
   keysDigest,
   keyText,
-  loginLine,
 } from "./admin-user";
 
 const LAPTOP =
@@ -165,10 +164,5 @@ describe("Add Admin User at enroll and on a server", () => {
     expect(adminBlocker(node, [])).toBe(
       "Add your SSH public keys in Enroll Defaults first.",
     );
-  });
-
-  it("tells the owner how to log in once root cannot", () => {
-    expect(loginLine("user1", "192.0.2.40")).toBe("ssh user1@192.0.2.40");
-    expect(loginLine("user1", null)).toBeNull();
   });
 });

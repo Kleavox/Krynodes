@@ -125,6 +125,16 @@ func Purge(ctx context.Context, env Env, packages ...string) error {
 	return env.purge(ctx, packages...)
 }
 
+func Upgrade(ctx context.Context, env Env) error {
+	if Detect(env).Family == RHEL {
+		return env.run(ctx, "dnf", "upgrade", "-y", "-q")
+	}
+	if err := env.apt(ctx, "update", "-q"); err != nil {
+		return err
+	}
+	return env.apt(ctx, "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "--with-new-pkgs", "upgrade", "-y", "-q")
+}
+
 func (e Env) purge(ctx context.Context, packages ...string) error {
 	if Detect(e).Family == RHEL {
 		return e.run(ctx, "dnf", append([]string{"remove", "-y", "-q"}, packages...)...)

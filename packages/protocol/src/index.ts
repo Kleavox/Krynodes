@@ -158,6 +158,28 @@ export const denialsSchema = z.strictObject({
 
 export type Denials = z.infer<typeof denialsSchema>;
 
+export const SETUP_PHASES = [
+  "admin",
+  "upgrade",
+  "protections",
+  "selinux",
+  "apparmor",
+  "docker",
+  "network",
+  "restart",
+] as const;
+
+export const setupSchema = z
+  .strictObject({
+    phase: z.enum(SETUP_PHASES),
+    step: z.number().int().min(1).max(10),
+    of: z.number().int().min(1).max(10),
+    stopped: z.literal(true).optional(),
+  })
+  .refine((setup) => setup.step <= setup.of);
+
+export type Setup = z.infer<typeof setupSchema>;
+
 export const agentHeartbeatSchema = agentHostSchema.extend({
   nodeId: z.string().uuid(),
   metrics: metricSnapshotSchema,
@@ -178,6 +200,7 @@ export const agentHeartbeatSchema = agentHostSchema.extend({
   events: z.array(eventSchema).max(50).optional(),
   release: releaseSchema.optional(),
   denials: denialsSchema.optional(),
+  setup: setupSchema.optional(),
 });
 
 export const enrollmentResponseSchema = z.object({

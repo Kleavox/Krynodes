@@ -390,11 +390,67 @@ func TestAPendingReleaseIsReportedUntilItEnds(t *testing.T) {
 	}
 }
 
+func TestTheHeartbeatCarriesSetupWhileItRunsAndSaysWhereItStopped(t *testing.T) {
+	relay := watchingRelay(t)
+	boot := strings.TrimSpace(relay.Boot())
+	report := func(progress *setupProgress) *reporter.Setup {
+		t.Helper()
+		if progress != nil {
+			if err := writeJSON(relay.StateDir, setupFile, progress, 0o640); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var beat reporter.Heartbeat
+		relay.Report(&beat)
+		return beat.Setup
+	}
+	if got := report(nil); got != nil {
+		t.Fatalf("no setup yet %+v", got)
+	}
+	for _, step := range []struct {
+		progress setupProgress
+		want     *reporter.Setup
+	}{
+		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: boot}, &reporter.Setup{Phase: "upgrade", Step: 2, Of: 6}},
+		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-61 * time.Second), Boot: boot}, &reporter.Setup{Phase: "upgrade", Step: 2, Of: 6, Stopped: true}},
+		{setupProgress{Phase: "restart", Step: 6, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: "an-earlier-boot"}, nil},
+		{setupProgress{Phase: "docker", Step: 4, Of: 6, At: executorNow.Add(-25 * time.Hour), Boot: boot}, nil},
+	} {
+		if got := report(&step.progress); !reflect.DeepEqual(got, step.want) {
+			t.Fatalf("%+v: got %+v want %+v", step.progress, got, step.want)
+		}
+	}
+}
+
+func TestASetupChangeWakesTheHeartbeatOnce(t *testing.T) {
+	relay := watchingRelay(t)
+	relay.Beat = make(chan struct{}, 1)
+	relay.noticeSetup()
+	if len(relay.Beat) != 0 {
+		t.Fatal("woke the heartbeat with no setup running")
+	}
+	progress := setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow, Boot: strings.TrimSpace(relay.Boot())}
+	if err := writeJSON(relay.StateDir, setupFile, progress, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	relay.noticeSetup()
+	relay.noticeSetup()
+	if len(relay.Beat) != 1 {
+		t.Fatalf("a new phase woke the heartbeat %d times", len(relay.Beat))
+	}
+	<-relay.Beat
+	relay.Now = func() time.Time { return executorNow.Add(61 * time.Second) }
+	relay.noticeSetup()
+	if len(relay.Beat) != 1 {
+		t.Fatal("a setup that stopped did not wake the heartbeat")
+	}
+}
+
 func TestANewReleaseCodeWakesTheHeartbeatOnce(t *testing.T) {
 	relay := watchingRelay(t)
-	relay.Released = make(chan struct{}, 1)
+	relay.Beat = make(chan struct{}, 1)
 	relay.noticeRelease()
-	if len(relay.Released) != 0 {
+	if len(relay.Beat) != 0 {
 		t.Fatal("woke the heartbeat with no release code made")
 	}
 	pending := reporter.Release{Key: "a2V5", Signer: "c2lnbmVy", Seal: "c2VhbA", Token: strings.Repeat("a", 64), Expires: executorNow.Add(5 * time.Minute).Format(time.RFC3339)}
@@ -403,12 +459,12 @@ func TestANewReleaseCodeWakesTheHeartbeatOnce(t *testing.T) {
 	}
 	relay.noticeRelease()
 	relay.noticeRelease()
-	if len(relay.Released) != 1 {
-		t.Fatalf("a new code woke the heartbeat %d times", len(relay.Released))
+	if len(relay.Beat) != 1 {
+		t.Fatalf("a new code woke the heartbeat %d times", len(relay.Beat))
 	}
-	<-relay.Released
+	<-relay.Beat
 	relay.noticeRelease()
-	if len(relay.Released) != 0 {
+	if len(relay.Beat) != 0 {
 		t.Fatal("the same code woke the heartbeat again; it would beat every two seconds for ten minutes")
 	}
 	pending.Token = strings.Repeat("b", 64)
@@ -416,7 +472,7 @@ func TestANewReleaseCodeWakesTheHeartbeatOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	relay.noticeRelease()
-	if len(relay.Released) != 1 {
+	if len(relay.Beat) != 1 {
 		t.Fatal("a second code did not wake the heartbeat")
 	}
 }

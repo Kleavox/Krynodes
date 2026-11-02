@@ -22,6 +22,7 @@ export interface ComposeSummary {
 
 const LOOPBACK = /^(127\.|::1$|localhost$|\[::1\]$)/u;
 const PRIVATE_IP = /^\$\{?KRY_PRIVATE_IP\}?$/u;
+const EVERY_ADDRESS = /^(0\.0\.0\.0|::|\[::\])?$/u;
 
 function load(text: string): Loaded {
   const doc = parseDocument(text);
@@ -148,6 +149,27 @@ function published(
     }
   }
   return found;
+}
+
+export function publishesDns(text: string): boolean {
+  return Object.values(load(text).services ?? {}).some(
+    (service) =>
+      !!service &&
+      typeof service === "object" &&
+      list(service.ports).some((port) => {
+        if (typeof port === "string" || typeof port === "number") {
+          const parsed = shortPort(String(port));
+          return parsed.host === "53" && EVERY_ADDRESS.test(parsed.ip ?? "");
+        }
+        const long = (port ?? {}) as Record<string, unknown>;
+        return (
+          String(long.published) === "53" &&
+          EVERY_ADDRESS.test(
+            typeof long.host_ip === "string" ? long.host_ip : "",
+          )
+        );
+      }),
+  );
 }
 
 export const publishedPorts = (text: string) =>

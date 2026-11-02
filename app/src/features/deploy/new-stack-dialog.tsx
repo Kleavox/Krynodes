@@ -22,10 +22,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAction, useServices } from "@/lib/api";
+import { publishesDns } from "@/lib/compose";
 import { agentCurrent, agentGap } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import { toast } from "sonner";
 import { privateIpProblem } from "@/lib/network";
+import { dnsPortHeld } from "@/lib/security";
 import { isPending } from "@/lib/services";
 import {
   nameOwner,
@@ -113,6 +115,8 @@ function NewStackForm({
 
   const chosen = choices.find((choice) => choice.node.id === nodeId);
   const sealKey = entries.get(nodeId)?.sealKey ?? null;
+  const security = entries.get(nodeId)?.security;
+  const freeDns = !!security && dnsPortHeld(security) && publishesDns(text);
   const modern = chosen !== undefined && agentCurrent(chosen.node);
   const named =
     chosen !== undefined &&
@@ -356,6 +360,7 @@ function NewStackForm({
           {privateWrong && (
             <p className="text-xs text-destructive">{privateWrong}</p>
           )}
+          {chosen && freeDns && <FreeDnsPort node={chosen.node} />}
           {access === "contained" || !modern ? (
             <ul
               id="stack-file-notes"
@@ -437,5 +442,36 @@ function NewStackForm({
       </DialogFooter>
       <StackActionDialog request={clearing} onClose={() => setClearing(null)} />
     </DialogContent>
+  );
+}
+
+function FreeDnsPort({ node }: { node: NodeRecord }) {
+  const run = useSignedAction();
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border px-3.5 py-2.5">
+      <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+        systemd-resolved holds port 53 on {node.name}, so this stack cannot
+        publish it yet.
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={run.isPending}
+        onClick={() =>
+          run.mutate(
+            {
+              action: "apply",
+              targets: [
+                { nodeId: node.id, kind: "host", name: "free-port-53" },
+              ],
+            },
+            { onSuccess: () => toast.success(`Sent to ${node.name}.`) },
+          )
+        }
+      >
+        <KeyRound aria-hidden="true" />
+        {run.isPending ? <Waiting /> : "Free Port 53"}
+      </Button>
+    </div>
   );
 }

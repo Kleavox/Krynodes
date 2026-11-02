@@ -93,12 +93,12 @@ export function worst(
   return "ok";
 }
 
+export const dnsPortHeld = (report: SecurityReport) =>
+  has(report, "dns-stub") && !report.recipes.includes("free-port-53");
+
 export function recipeChoices(report: SecurityReport): RecipeChoice[] {
   return ORDER.filter(
-    (id) =>
-      id !== "free-port-53" ||
-      has(report, "dns-stub") ||
-      report.recipes.includes(id),
+    (id) => id !== "free-port-53" || report.recipes.includes(id),
   ).map((id) => {
     const applied = report.recipes.includes(id);
     const off = OFF_FINDING[id];

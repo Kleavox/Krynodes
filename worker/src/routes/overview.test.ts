@@ -33,6 +33,7 @@ const NODE_KEYS = [
   "addresses",
   "updates",
   "tailscale",
+  "setup",
   "network",
   "quarantine",
   "warnings",
@@ -79,6 +80,11 @@ describe("GET /api/overview contract", () => {
         "UPDATE checks SET since = '2026-10-24T09:24:39Z' WHERE id = 'c1'",
       )
       .run();
+    sqlite
+      .prepare(
+        `UPDATE nodes SET setup = '{"phase":"upgrade","step":2,"of":6}' WHERE id = 'n1'`,
+      )
+      .run();
     seedIncident(sqlite, {
       id: "i1",
       checkId: "c1",
@@ -116,6 +122,11 @@ describe("GET /api/overview contract", () => {
     expect(body.incidents![0]!.node_id).toBe("n1");
     expect(body.checks![0]!.since).toBe("2026-10-24T09:24:39Z");
     expect(body.nodes![0]!.addresses).toBeNull();
+    expect(body.nodes![0]!.setup).toEqual({
+      phase: "upgrade",
+      step: 2,
+      of: 6,
+    });
   });
 
   it("keeps an open incident that 50 newer ones would push out", async () => {
