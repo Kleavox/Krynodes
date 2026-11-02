@@ -1,5 +1,6 @@
 import { pokeSoon, unchangedList } from "../fleet/client";
 import {
+  BOOLEAN_AGENT,
   FEATURE_AGENT,
   FIREWALL_VERBS,
   KIND_VERBS,
@@ -9,6 +10,7 @@ import {
   UNSIGNED_VERBS,
   agentHasFeatures,
   agentHasSecurity,
+  agentSetsBooleans,
   agentSupported,
   hostVerbFits,
   isProtectedTarget,
@@ -22,6 +24,7 @@ import { z } from "zod";
 import { requestRefresh } from "../actions/inventory";
 import {
   adminArgsValid,
+  booleanArgsValid,
   bridgeArgsValid,
   firewallArgsValid,
   hasStackNameArgs,
@@ -113,6 +116,7 @@ const actionRequestSchema = z.object({
     "close",
     "putback",
     "containers",
+    "boolean",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -204,12 +208,14 @@ const signedArgsFit = (
     ? bridgeArgsValid(action, args)
     : target.kind === "host" && action === "admin"
       ? adminArgsValid(args)
-      : changesFirewall(target, action, args)
-        ? firewallArgsValid(action, args)
-        : onOff(target, action)
-          ? onOffArgsValid(args)
-          : target.kind !== "compose" ||
-            (stackNetworkArgsValid(args) && stackNameArgsValid(args));
+      : target.kind === "host" && action === "boolean"
+        ? booleanArgsValid(args)
+        : changesFirewall(target, action, args)
+          ? firewallArgsValid(action, args)
+          : onOff(target, action)
+            ? onOffArgsValid(args)
+            : target.kind !== "compose" ||
+              (stackNetworkArgsValid(args) && stackNameArgsValid(args));
 
 const askedFits = (
   kind: string,
@@ -625,6 +631,20 @@ export function registerServiceRoutes(
     const parsed = actionRequestSchema.safeParse(await readJson(context));
     if (!parsed.success) return invalidRequest(context);
     const { action, mode, targets, then } = parsed.data;
+    if (
+      action === "undo" &&
+      targets.some(
+        (target) => target.kind === "host" && target.name === "confinement",
+      )
+    ) {
+      return context.json(
+        {
+          code: "STAYS_ON",
+          message: "SELinux and AppArmor stay on once Krynodes manages them.",
+        },
+        400,
+      );
+    }
     const unsigned = (UNSIGNED_VERBS as readonly string[]).includes(action);
     const logs = action === "logs";
     if (
@@ -819,6 +839,21 @@ export function registerServiceRoutes(
         {
           code: "AGENT_TOO_OLD",
           message: `Update the agent on ${byId.get(unready.nodeId)!.name} to ${SECURITY_AGENT} or newer.`,
+        },
+        422,
+      );
+    }
+    const unset = targets.find(
+      (target) =>
+        target.kind === "host" &&
+        action === "boolean" &&
+        !agentSetsBooleans(byId.get(target.nodeId)!.agent_version),
+    );
+    if (unset) {
+      return context.json(
+        {
+          code: "AGENT_TOO_OLD",
+          message: `Update the agent on ${byId.get(unset.nodeId)!.name} to ${BOOLEAN_AGENT} or newer.`,
         },
         422,
       );

@@ -1,4 +1,7 @@
-import { agentHasSecurity } from "@krynodes/protocol/versions";
+import {
+  agentHasSecurity,
+  agentSetsBooleans,
+} from "@krynodes/protocol/versions";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -67,7 +70,11 @@ import {
 import { cn } from "@/lib/utils";
 import type { NodeRecord } from "@/types";
 
-import { ConfineDialog, DenialsDialog } from "./confinement-dialogs";
+import {
+  BooleanDialog,
+  ConfineDialog,
+  DenialsDialog,
+} from "./confinement-dialogs";
 
 const sectionTitle = "text-xs font-medium text-muted-foreground";
 
@@ -358,6 +365,7 @@ const CONFINE_LABELS: Record<
   on: { label: "Turn On" },
   containers: { label: "Confine Containers" },
   uncontain: { label: "Stop Confining Containers", destructive: true },
+  boolean: { label: "Change Boolean" },
 };
 
 export function SecurityPanel({
@@ -390,7 +398,7 @@ export function SecurityPanel({
   const unsupported = report.platform?.family === null;
   const findings = shownFindings(report);
   const found = report.confinement;
-  const confine = confinementRow(found);
+  const confine = confinementRow(found, agentSetsBooleans(node.agent_version));
   return (
     <section aria-labelledby="node-security">
       <div className="mb-2 flex min-h-8 items-center gap-2">
@@ -592,16 +600,22 @@ export function SecurityPanel({
           onClose={() => setConfining(null)}
         />
       )}
-      {found && confining && confining !== "denials" && (
-        <ConfineDialog
-          key={confining}
-          node={node}
-          found={found}
-          step={confining}
-          stacks={(entry?.stacks ?? []).map((stack) => stack.project)}
-          onClose={() => setConfining(null)}
-        />
+      {confining === "boolean" && (
+        <BooleanDialog node={node} onClose={() => setConfining(null)} />
       )}
+      {found &&
+        confining &&
+        confining !== "denials" &&
+        confining !== "boolean" && (
+          <ConfineDialog
+            key={confining}
+            node={node}
+            found={found}
+            step={confining}
+            stacks={(entry?.stacks ?? []).map((stack) => stack.project)}
+            onClose={() => setConfining(null)}
+          />
+        )}
       <RecipeDialog
         key={JSON.stringify(pending)}
         node={node}

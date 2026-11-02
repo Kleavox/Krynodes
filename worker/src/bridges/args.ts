@@ -5,6 +5,7 @@ import {
   OFFER_ENTRY,
   PEER_ENTRY,
   parseStackNames,
+  SELINUX_BOOLEAN,
   stackTitleValid,
 } from "@krynodes/protocol";
 
@@ -124,6 +125,14 @@ export function firewallArgsValid(
 
 export function onOffArgsValid(args: Record<string, string>): boolean {
   return keysAre(args, ["on"]) && (args.on === "1" || args.on === "0");
+}
+
+export function booleanArgsValid(args: Record<string, string>): boolean {
+  return (
+    keysAre(args, ["name", "on"]) &&
+    SELINUX_BOOLEAN.test(args.name!) &&
+    (args.on === "1" || args.on === "0")
+  );
 }
 
 export function adminArgsValid(args: Record<string, string>): boolean {

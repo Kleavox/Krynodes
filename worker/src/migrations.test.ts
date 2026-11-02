@@ -859,3 +859,44 @@ describe("migration 0042", () => {
     ]);
   });
 });
+
+describe("migration 0043", () => {
+  it("keeps every action and index, and takes the SELinux boolean verb", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0043");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
+    );
+    sqlite.exec(
+      action("a1", "host", "confinement", "containers", "done", "{}"),
+    );
+    expect(() =>
+      sqlite.exec(
+        action("a2", "host", "confinement", "boolean", "queued", "{}"),
+      ),
+    ).toThrow();
+    apply(sqlite, (name) => name.startsWith("0043"));
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+    sqlite.exec(action("a2", "host", "confinement", "boolean", "queued", "{}"));
+    expect(() =>
+      sqlite.exec(action("x", "host", "confinement", "nap", "queued", "{}")),
+    ).toThrow();
+    expect(
+      sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'actions' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .all()
+        .map((row) => (row as { name: string }).name),
+    ).toEqual([
+      "idx_actions_batch",
+      "idx_actions_node_requested",
+      "idx_actions_one_pending",
+      "idx_actions_status_node",
+      "idx_actions_target",
+    ]);
+  });
+});

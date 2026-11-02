@@ -894,6 +894,10 @@ clears it.
 - **No Undo.** Once Krynodes manages SELinux or AppArmor it stays on, on new
   and old servers alike; the Worker refuses an Undo. AppArmor is never turned
   off.
+- **Change Boolean** (the row's ⋯, agent 0.7.7, where Krynodes manages
+  SELinux) sets one SELinux boolean on or off for good (`setsebool -P`),
+  signed with your passkey. The agent checks that the boolean exists
+  (`getsebool`) and changes nothing when it already has that value.
 - **Docker under SELinux.** Docker installed while Krynodes manages SELinux
   starts with `selinux-enabled`. On a server that runs Docker already,
   **Confine Containers** (the row's ⋯) adds it to `daemon.json`, restarts
@@ -933,10 +937,11 @@ SELinux set to permissive or off, a policy loaded outside a package install, a
 new local policy module (even during an update: packages install theirs at a
 lower priority), auditd stopped, AppArmor turned off, or a profile moved to
 complain or unloaded, each outside Krynodes, quarantine the server at once.
-`setsebool -P` and `semanage` load the policy, so they count too: with no
-Undo, changing a boolean or a label for good on a managed server quarantines
-it, and Release Server brings it back. Krynodes' own Turn On and Confine
-Containers write a mark first, so they never count. One event per stack or program an hour. **Blind spots:**
+`setsebool -P` and `semanage` load the policy, so they count too: set a
+boolean with Change Boolean instead; a label changed for good by hand
+quarantines the server, and Release Server brings it back. Krynodes' own Turn
+On, Confine Containers and Change Boolean write a mark first, so they never
+count. One event per stack or program an hour. **Blind spots:**
 `dontaudit` rules hide some denials, unconfined processes raise none, and a
 boolean changed until the next restart (`setsebool` without `-P`) is not
 watched.

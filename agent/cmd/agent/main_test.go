@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -427,5 +428,22 @@ func TestTheExecutorIsStartedAgainForARequestThatCameWhileItRan(t *testing.T) {
 	}
 	if !slices.Contains(restartedUnits(), "krynodes-exec.path") {
 		t.Error("an updated server must watch the wake folder without a reboot")
+	}
+}
+
+func TestAFailingCommandPrintsOnlyItsError(t *testing.T) {
+	if os.Getenv("KRY_MAIN") == "1" {
+		os.Args = []string{"kry", "setup", "--check"}
+		main()
+		return
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestAFailingCommandPrintsOnlyItsError$")
+	command.Env = append(os.Environ(), "KRY_MAIN=1")
+	output, err := command.CombinedOutput()
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+		t.Fatalf("exit %v, output %q", err, output)
+	}
+	if string(output) != "--check goes with --confine alone\n" {
+		t.Fatalf("output %q", output)
 	}
 }

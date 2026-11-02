@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { Confinement } from "../types";
 
 import {
+  BOOLEAN_LINE,
+  booleanProblem,
   confinementActionText,
   confinementRow,
   confineText,
@@ -362,13 +364,14 @@ volumes:
 
 describe("what the history says", () => {
   it("names each confinement step", () => {
-    const step = (action: "apply" | "undo" | "containers") =>
+    const step = (action: "apply" | "undo" | "containers" | "boolean") =>
       confinementActionText({ kind: "host", name: "confinement", action });
     expect(step("apply")).toBe("Turn on SELinux or AppArmor");
     expect(step("undo")).toBe("Undo SELinux or AppArmor");
     expect(step("containers")).toBe(
       "Change whether SELinux confines containers",
     );
+    expect(step("boolean")).toBe("Change an SELinux boolean");
     expect(
       confinementActionText({
         kind: "host",
@@ -376,5 +379,40 @@ describe("what the history says", () => {
         action: "apply",
       }),
     ).toBeNull();
+  });
+});
+
+describe("Change Boolean", () => {
+  it("is offered where Krynodes manages SELinux on an agent that sets booleans", () => {
+    expect(
+      confinementRow(selinux({ managed: true, docker: true }), true).actions,
+    ).toEqual(["denials", "uncontain", "boolean"]);
+    expect(confinementRow(selinux({ managed: true }), true).actions).toEqual([
+      "denials",
+      "boolean",
+    ]);
+    expect(confinementRow(selinux({ managed: true })).actions).toEqual([
+      "denials",
+    ]);
+    expect(confinementRow(selinux(), true).actions).toEqual([
+      "denials",
+      "manage",
+    ]);
+    expect(confinementRow(apparmor({ managed: true }), true).actions).toEqual([
+      "denials",
+    ]);
+  });
+
+  it("takes a boolean's name and says it does not quarantine the server", () => {
+    expect(booleanProblem("httpd_can_network_connect")).toBeNull();
+    expect(booleanProblem("")).toBeNull();
+    for (const name of ["Httpd", "httpd-x", "a;b", "_httpd"]) {
+      expect(booleanProblem(name), name).toBe(
+        "A boolean is lowercase letters, digits and _, like httpd_can_network_connect.",
+      );
+    }
+    expect(BOOLEAN_LINE).toBe(
+      "Krynodes sets it for good and marks the change first, so it does not quarantine the server.",
+    );
   });
 });

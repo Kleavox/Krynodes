@@ -1283,6 +1283,57 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
       });
     }
   });
+
+  it("refuses an Undo by name: SELinux and AppArmor stay on", async () => {
+    const t = current();
+    const undo = await t.send("undo", A);
+    expect(undo.status).toBe(400);
+    expect(await reply(undo)).toMatchObject({
+      code: "STAYS_ON",
+      message: "SELinux and AppArmor stay on once Krynodes manages them.",
+    });
+  });
+
+  it("sets an SELinux boolean by name, on or off, on agent 0.7.7 only", async () => {
+    const t = current();
+    const version = (value: string) =>
+      t.sqlite
+        .prepare("UPDATE nodes SET agent_version = ? WHERE id = ?")
+        .run(value, A);
+    version("0.7.7");
+    for (const on of ["1", "0"]) {
+      const sent = await t.send("boolean", A, {
+        name: "httpd_can_network_connect",
+        on,
+      });
+      expect(sent.status, on).toBe(201);
+    }
+    for (const args of [
+      { name: "httpd_can_network_connect", on: "yes" },
+      { name: "Bad;name", on: "1" },
+      { name: "httpd_can_network_connect" },
+      { name: "httpd_can_network_connect", on: "1", more: "1" },
+      {},
+    ] as Record<string, string>[]) {
+      expect(
+        (await t.send("boolean", A, args)).status,
+        JSON.stringify(args),
+      ).toBe(400);
+    }
+    expect(
+      (await t.send("boolean", A, { name: "x", on: "1" }, "firewall")).status,
+    ).toBe(400);
+    version("0.7.6");
+    const behind = await t.send("boolean", A, {
+      name: "httpd_can_network_connect",
+      on: "1",
+    });
+    expect(behind.status).toBe(422);
+    expect(await reply(behind)).toMatchObject({
+      code: "AGENT_TOO_OLD",
+      message: expect.stringContaining("0.7.7"),
+    });
+  });
 });
 
 describe("the end of life on a security report", () => {

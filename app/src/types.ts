@@ -463,7 +463,8 @@ export type ActionVerb =
   | "putback"
   | "exitnode"
   | "dns"
-  | "containers";
+  | "containers"
+  | "boolean";
 export type DockerState = "ready" | "no-compose" | "missing";
 export type BatchMode = "rolling" | "parallel";
 export type ActionStatus =

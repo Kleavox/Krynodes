@@ -1,4 +1,5 @@
 import { KeyRound } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { Busy, Waiting } from "@/components/busy";
@@ -19,9 +20,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useDenials } from "@/lib/api";
 import {
+  BOOLEAN_LINE,
+  booleanProblem,
   confineText,
   denialLines,
   systemName,
@@ -42,7 +47,7 @@ export function ConfineDialog({
 }: {
   node: NodeRecord;
   found: Confinement;
-  step: Exclude<ConfineStep, "denials">;
+  step: Exclude<ConfineStep, "denials" | "boolean">;
   stacks: string[];
   onClose: () => void;
 }) {
@@ -159,5 +164,100 @@ export function DenialsDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+export function BooleanDialog({
+  node,
+  onClose,
+}: {
+  node: NodeRecord;
+  onClose: () => void;
+}) {
+  const run = useSignedAction(false);
+  const [name, setName] = useState("");
+  const [on, setOn] = useState(true);
+  const problem = booleanProblem(name);
+  const submit = () =>
+    run.mutate(
+      {
+        action: "boolean",
+        targets: [
+          {
+            nodeId: node.id,
+            kind: "host",
+            name: "confinement",
+            args: { name, on: on ? "1" : "0" },
+          },
+        ],
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Sent to ${node.name}.`);
+          onClose();
+        },
+      },
+    );
+  return (
+    <AlertDialog open onOpenChange={(open) => !open && onClose()}>
+      <AlertDialogContent className="max-sm:top-auto max-sm:bottom-0 max-sm:translate-y-0 max-sm:rounded-b-none">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Change Boolean on {node.name}</AlertDialogTitle>
+          <AlertDialogDescription>{BOOLEAN_LINE}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="selinux-boolean">Boolean</Label>
+            <Input
+              id="selinux-boolean"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              placeholder="httpd_can_network_connect"
+              className="font-mono"
+              value={name}
+              onChange={(event) => setName(event.target.value.trim())}
+            />
+          </div>
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm font-medium">Set To</legend>
+            {[true, false].map((value) => (
+              <label
+                key={String(value)}
+                className="flex cursor-pointer items-center gap-2 text-sm"
+              >
+                <input
+                  type="radio"
+                  name="selinux-boolean-on"
+                  checked={on === value}
+                  onChange={() => setOn(value)}
+                />
+                {value ? "On" : "Off"}
+              </label>
+            ))}
+          </fieldset>
+          {problem && (
+            <p role="alert" className="text-xs text-destructive">
+              {problem}
+            </p>
+          )}
+        </div>
+        {run.error && (
+          <p role="alert" className="text-sm text-destructive">
+            {errorMessage(run.error)}
+          </p>
+        )}
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button
+            disabled={run.isPending || name === "" || problem !== null}
+            onClick={submit}
+          >
+            <KeyRound aria-hidden="true" />
+            {run.isPending ? <Waiting /> : "Change Boolean"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

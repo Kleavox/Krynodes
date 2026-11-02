@@ -2,6 +2,7 @@ export const MIN_AGENT_VERSION = "0.7.0";
 export const FEATURE_AGENT = "0.7.1";
 export const SECURITY_AGENT = "0.7.4";
 export const PUSH_AGENT = "0.7.6";
+export const BOOLEAN_AGENT = "0.7.7";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 
@@ -30,3 +31,6 @@ export const agentHasSecurity = (version: string | null | undefined) =>
 
 export const agentTakesPush = (version: string | null | undefined) =>
   reaches(version, PUSH_AGENT);
+
+export const agentSetsBooleans = (version: string | null | undefined) =>
+  reaches(version, BOOLEAN_AGENT);

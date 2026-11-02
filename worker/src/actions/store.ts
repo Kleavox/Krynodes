@@ -88,7 +88,8 @@ export type ActionVerb =
   | "open"
   | "close"
   | "putback"
-  | "containers";
+  | "containers"
+  | "boolean";
 export type BatchMode = "rolling" | "parallel";
 type ActionStatus =
   "queued" | "sent" | "done" | "failed" | "expired" | "cancelled" | "skipped";

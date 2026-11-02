@@ -1,9 +1,10 @@
+import { SELINUX_BOOLEAN } from "@krynodes/protocol";
 import { SECURITY_AGENT } from "@krynodes/protocol/versions";
 
 import type { ActionRecord, Confinement, DenialsView } from "../types";
 
 export type ConfineStep =
-  "denials" | "manage" | "on" | "containers" | "uncontain";
+  "denials" | "manage" | "on" | "containers" | "uncontain" | "boolean";
 
 export const systemName = (system: Confinement["system"] | undefined) =>
   system === "selinux"
@@ -35,7 +36,10 @@ function modeText(found: Confinement): string {
   return found.mode === "off" ? "Off" : "--";
 }
 
-export function confinementRow(found: Confinement | undefined): {
+export function confinementRow(
+  found: Confinement | undefined,
+  booleans = false,
+): {
   title: string;
   text: string;
   actions: ConfineStep[];
@@ -63,6 +67,7 @@ export function confinementRow(found: Confinement | undefined): {
         "denials",
         ...(selinux && found.docker === false ? ["containers" as const] : []),
         ...(selinux && found.docker === true ? ["uncontain" as const] : []),
+        ...(selinux && booleans ? ["boolean" as const] : []),
       ]
     : [
         "denials",
@@ -104,7 +109,7 @@ function turnOnLine(found: Confinement): string {
 const STAYS = "It stays on: Krynodes needs it on every server.";
 
 export function confineText(
-  step: Exclude<ConfineStep, "denials">,
+  step: Exclude<ConfineStep, "denials" | "boolean">,
   found: Confinement,
   nodeName: string,
   denials: DenialsView,
@@ -166,6 +171,14 @@ export function confineText(
   }
 }
 
+export const BOOLEAN_LINE =
+  "Krynodes sets it for good and marks the change first, so it does not quarantine the server.";
+
+export const booleanProblem = (name: string) =>
+  name === "" || SELINUX_BOOLEAN.test(name)
+    ? null
+    : "A boolean is lowercase letters, digits and _, like httpd_can_network_connect.";
+
 export function denialLines(denials: DenialsView) {
   return {
     summary: `${denials.count === null ? "--" : denials.count === 0 ? "None" : denials.count} in the last 24 hours`,
@@ -177,6 +190,7 @@ const ACTION_TEXT: Partial<Record<ActionRecord["action"], string>> = {
   apply: "Turn on SELinux or AppArmor",
   undo: "Undo SELinux or AppArmor",
   containers: "Change whether SELinux confines containers",
+  boolean: "Change an SELinux boolean",
 };
 
 export const confinementActionText = (

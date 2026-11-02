@@ -22,6 +22,7 @@ export {
   isValidTarget,
   parseStackNames,
   RECIPES,
+  SELINUX_BOOLEAN,
   stackNamesValid,
   stackTitleValid,
 } from "./targets";
@@ -92,8 +93,10 @@ export { summarizeChange, type ChangeSummary } from "./summary";
 export {
   agentHasFeatures,
   agentHasSecurity,
+  agentSetsBooleans,
   agentSupported,
   agentTakesPush,
+  BOOLEAN_AGENT,
   compareVersions,
   FEATURE_AGENT,
   MIN_AGENT_VERSION,
@@ -315,6 +318,7 @@ export const KIND_VERBS = {
     "close",
     "putback",
     "containers",
+    "boolean",
   ],
   trust: ["trust"],
   vault: [
@@ -378,7 +382,9 @@ export function hostVerbFits(name: string, action: string): boolean {
     return name === "tailscale" && tailnet.includes(action);
   }
   if (FIREWALL_VERBS.includes(action)) return name === "firewall";
-  if (action === "containers") return name === "confinement";
+  if (action === "containers" || action === "boolean") {
+    return name === "confinement";
+  }
   if (name === "confinement") return action === "apply";
   if (action === "uninstall") return name === "server";
   if (name === "docker") return action === "install";
@@ -475,6 +481,7 @@ export const agentActionSchema = z
       "close",
       "putback",
       "containers",
+      "boolean",
     ]),
     expiresAt: z.string().datetime(),
     signed: z.union([signedCommandSchema, signedTrustSchema]).optional(),

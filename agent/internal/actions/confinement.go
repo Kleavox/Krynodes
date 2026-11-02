@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +23,8 @@ const (
 	dockerSELinuxFile = "docker-selinux.json"
 	markFor           = 2 * time.Minute
 )
+
+var booleanName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 type confinementMarkRecord struct {
 	What  string    `json:"what"`
@@ -197,4 +201,27 @@ func (e Executor) confineContainers(ctx context.Context, request Request, comman
 		text += "; restarted " + strings.Join(restarted, ", ")
 	}
 	return Result{ID: request.ID, OK: true, Output: text, FinishedAt: e.stamp()}
+}
+
+func (e Executor) setBoolean(ctx context.Context, request Request, command Command) Result {
+	if e.managedSystem() != confine.SELinux {
+		return e.refuse(request.ID, errors.New("Change Boolean needs SELinux managed by Krynodes; turn it on first"))
+	}
+	name, on := command.Args["name"], command.Args["on"]
+	want := map[string]string{"1": "on", "0": "off"}[on]
+	if len(command.Args) != 2 || !booleanName.MatchString(name) || want == "" {
+		return e.refuse(request.ID, errors.New("a boolean takes its name and on as 1 or 0"))
+	}
+	output, ok := e.output(ctx, "getsebool", name)
+	shown, was, found := strings.Cut(strings.TrimSpace(output), " --> ")
+	if !ok || !found || shown != name || (was != "on" && was != "off") {
+		return e.refuse(request.ID, fmt.Errorf("SELinux has no boolean %s", name))
+	}
+	if was == want {
+		return Result{ID: request.ID, OK: true, Output: name + " is already " + want, FinishedAt: e.stamp()}
+	}
+	if output, _, err := e.Run(ctx, "setsebool", "-P", name, want); err != nil {
+		return e.failed(request, errors.New("setsebool did not finish: "+strings.TrimSpace(string(output))), "")
+	}
+	return Result{ID: request.ID, OK: true, Output: name + " is " + want + " now (was " + was + ")", FinishedAt: e.stamp()}
 }
