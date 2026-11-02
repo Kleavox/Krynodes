@@ -58,49 +58,37 @@ export function ProtectionOptions<T extends SetupChoice>({
 }) {
   return (
     <div className="space-y-2">
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={value.recommended}
-          onChange={() =>
-            onChange({ ...value, recommended: !value.recommended })
-          }
-        />
-        <span>
-          <span className="block font-medium">
-            Apply Recommended Protections
-          </span>
-          <span className="block text-xs text-muted-foreground">
-            Automatic security updates, restart when needed, SSH keys only,
-            blocking repeated login failures, and a firewall that closes every
-            port except SSH.
-          </span>
+      <p className="text-sm">
+        <span className="block font-medium">
+          Protections are turned on on every new server.
         </span>
-      </label>
-      {value.recommended && (
-        <div className="flex items-center gap-2 pl-6">
-          <Label htmlFor="setup-hour" className="text-xs">
-            Restart Hour (Your Time)
-          </Label>
-          <Select
-            value={String(value.hour)}
-            onValueChange={(hour) => onChange({ ...value, hour: Number(hour) })}
-          >
-            <SelectTrigger id="setup-hour" className="h-8 w-24">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Array.from({ length: 24 }, (_, hour) => (
-                <SelectItem key={hour} value={String(hour)}>
-                  {String(hour).padStart(2, "0")}:00
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-      <p className="pl-6 text-sm">
+        <span className="block text-xs text-muted-foreground">
+          Automatic security updates, restart when needed, SSH keys only,
+          blocking repeated login failures, and a firewall that closes every
+          port except SSH. They stay on.
+        </span>
+      </p>
+      <div className="flex items-center gap-2">
+        <Label htmlFor="setup-hour" className="text-xs">
+          Restart Hour (Your Time)
+        </Label>
+        <Select
+          value={String(value.hour)}
+          onValueChange={(hour) => onChange({ ...value, hour: Number(hour) })}
+        >
+          <SelectTrigger id="setup-hour" className="h-8 w-24">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Array.from({ length: 24 }, (_, hour) => (
+              <SelectItem key={hour} value={String(hour)}>
+                {String(hour).padStart(2, "0")}:00
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <p className="text-sm">
         <span className="block font-medium">
           SELinux or AppArmor is turned on on every new server.
         </span>

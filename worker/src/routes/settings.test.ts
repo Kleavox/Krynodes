@@ -64,14 +64,12 @@ describe("enroll defaults", () => {
     expect(
       await (await call("GET", "/api/settings/enroll-defaults")).json(),
     ).toEqual({
-      recommended: true,
       docker: true,
       hour: 3,
       network: false,
       keys: [],
     });
     const saved = await call("PUT", "/api/settings/enroll-defaults", {
-      recommended: true,
       docker: false,
       hour: 22,
     });
@@ -79,7 +77,6 @@ describe("enroll defaults", () => {
     expect(
       await (await call("GET", "/api/settings/enroll-defaults")).json(),
     ).toEqual({
-      recommended: true,
       docker: false,
       hour: 22,
       network: false,
@@ -93,7 +90,6 @@ describe("enroll defaults", () => {
       expect(
         (
           await call("PUT", "/api/settings/enroll-defaults", {
-            recommended: true,
             docker: true,
             hour,
           })
@@ -104,7 +100,7 @@ describe("enroll defaults", () => {
 });
 
 describe("the SSH keys in enroll defaults", () => {
-  const defaults = { recommended: true, docker: true, hour: 3, network: false };
+  const defaults = { docker: true, hour: 3, network: false };
 
   it("keeps the keys without a user name and shows each key's fingerprint", async () => {
     const { call } = setup();

@@ -104,43 +104,35 @@ describe("Add Admin User on a server", () => {
 });
 
 describe("Enroll a Server", () => {
-  const setup = {
-    recommended: true,
-    docker: true,
-    hour: 3,
-    network: false,
-    adminUser: true,
-    adminName: "",
-  };
+  const setup = { docker: true, hour: 3, network: false, adminName: "" };
   const nameField = (html: string) =>
     html
       .split("<input")
       .find((part) => part.includes('id="enroll-admin-name"'));
 
-  it("offers Docker and Add Admin User, not the protections", () => {
+  it("offers Docker and always adds the admin user, with no protections to untick", () => {
     const html = withQueries(
       <SetupOptions value={setup} onChange={none} keys={keys} />,
     );
     expect(text(html)).toContain("Install Docker");
-    expect(text(html)).toContain("Add Admin User");
+    expect(text(html)).toContain("Admin User");
+    expect(text(html)).not.toContain("Add Admin User");
     expect(text(html)).not.toContain("Recommended Protections");
     expect(text(html)).not.toContain("Restart Hour");
+    expect(html.match(/type="checkbox"/g)).toHaveLength(1);
   });
 
-  it("is off without keys in Enroll Defaults", () => {
+  it("says to add keys first, with no name field, while Enroll Defaults holds none", () => {
     const html = withQueries(
       <SetupOptions value={setup} onChange={none} keys={[]} />,
     );
     expect(text(html)).toContain(
-      "Add Admin User Add your SSH public keys in Enroll Defaults first.",
+      "Admin User Add your SSH public keys in Enroll Defaults first.",
     );
-    const box = html.split("<label").at(-1)!;
-    expect(box).toContain('disabled=""');
-    expect(box).not.toContain('checked=""');
     expect(nameField(html)).toBeUndefined();
   });
 
-  it("asks for this server's user name once Add Admin User is ticked", () => {
+  it("always asks for this server's user name", () => {
     const html = withQueries(
       <SetupOptions
         value={{ ...setup, adminName: "user1" }}
@@ -154,14 +146,6 @@ describe("Enroll a Server", () => {
     expect(text(html)).toContain("User Name");
     expect(nameField(html)).toContain('value="user1"');
     expect(nameField(html)).not.toContain('disabled=""');
-    const unticked = withQueries(
-      <SetupOptions
-        value={{ ...setup, adminUser: false }}
-        onChange={none}
-        keys={keys}
-      />,
-    );
-    expect(nameField(unticked)).toBeUndefined();
   });
 
   it("says a name that will not work", () => {
@@ -190,21 +174,25 @@ describe("Enroll a Server", () => {
 });
 
 describe("Enroll Defaults", () => {
-  it("holds the protections with their restart hour", () => {
+  it("says the protections are always on and keeps their restart hour, with nothing to untick", () => {
     const html = withQueries(
       <ProtectionOptions
-        value={{ recommended: true, docker: true, hour: 3, network: false }}
+        value={{ docker: true, hour: 3, network: false }}
         onChange={none}
       />,
     );
-    expect(text(html)).toContain("Apply Recommended Protections");
+    expect(text(html)).toContain(
+      "Protections are turned on on every new server.",
+    );
+    expect(text(html)).not.toContain("Apply Recommended Protections");
     expect(text(html)).toContain("Restart Hour (Your Time)");
+    expect(html).not.toContain('type="checkbox"');
   });
 
   it("says SELinux or AppArmor is always turned on, with nothing to untick", () => {
     const html = withQueries(
       <ProtectionOptions
-        value={{ recommended: false, docker: false, hour: 3, network: false }}
+        value={{ docker: false, hour: 3, network: false }}
         onChange={none}
       />,
     );
@@ -212,17 +200,16 @@ describe("Enroll Defaults", () => {
       "SELinux or AppArmor is turned on on every new server.",
     );
     expect(text(html)).not.toContain("Turn On SELinux or AppArmor");
-    expect(html.match(/type="checkbox"/g)).toHaveLength(1);
   });
 
-  it("does not offer Add Admin User itself", () => {
+  it("does not offer the admin user itself", () => {
     const html = withQueries(
       <SetupOptions
-        value={{ recommended: true, docker: true, hour: 3, network: false }}
+        value={{ docker: true, hour: 3, network: false }}
         onChange={none}
       />,
     );
-    expect(text(html)).not.toContain("Add Admin User");
+    expect(text(html)).not.toContain("Admin User");
   });
 
   it("shows each key as its fingerprint with Remove", () => {

@@ -34,7 +34,6 @@ const enrollDefaultsSchema = z.preprocess(
         }
       : value,
   z.object({
-    recommended: z.boolean(),
     docker: z.boolean(),
     hour: z.number().int().min(0).max(23),
     network: z.boolean().default(false),
@@ -45,7 +44,6 @@ const enrollDefaultsSchema = z.preprocess(
 type EnrollDefaults = z.infer<typeof enrollDefaultsSchema>;
 
 const ENROLL_DEFAULTS: EnrollDefaults = {
-  recommended: true,
   docker: true,
   hour: 3,
   network: false,

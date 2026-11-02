@@ -31,7 +31,6 @@ import { EnrollmentCommand } from "./enrollment-command";
 import { SetupOptions } from "./setup-options";
 
 const FALLBACK: SetupChoice = {
-  recommended: true,
   docker: true,
   hour: 3,
   network: false,
@@ -51,14 +50,12 @@ export function EnrollDialog({
   const [chosen, setChosen] = useState<SetupChoice | null>(null);
   const keys = defaults.data?.keys ?? [];
   const setup =
-    chosen ??
-    (defaults.data
-      ? { ...defaults.data, adminUser: keys.length > 0, adminName: "" }
-      : FALLBACK);
+    chosen ?? (defaults.data ? { ...defaults.data, adminName: "" } : FALLBACK);
   const adminName = (setup.adminName ?? "").trim();
-  const adding = setup.adminUser === true && keys.length > 0;
   const unnamed =
-    adding && (adminName === "" || adminNameProblem(adminName) !== null);
+    keys.length === 0 ||
+    adminName === "" ||
+    adminNameProblem(adminName) !== null;
   const deviceCount = useDevices().data?.devices.length ?? 0;
   const status = useEnrollmentStatus(open ? create.data?.id : undefined);
   const step = enrollmentStep(Boolean(create.data), status.data);

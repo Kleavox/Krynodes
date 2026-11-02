@@ -692,7 +692,20 @@ func prepareActionDirectories(uid, gid int) error {
 			return fmt.Errorf("prepare %s: %w", directory, err)
 		}
 	}
+	for _, file := range agentReadFiles() {
+		if err := claimFile(file, 0, gid, 0o644); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("share %s with the agent: %w", file, err)
+		}
+	}
 	return nil
+}
+
+func agentReadFiles() []string {
+	return []string{
+		filepath.Join(actions.StateDir, "events.json"),
+		filepath.Join(actions.StateDir, "network.json"),
+		filepath.Join(actions.StateDir, "setup.json"),
+	}
 }
 
 func stateDirectoryModes() map[string]os.FileMode {

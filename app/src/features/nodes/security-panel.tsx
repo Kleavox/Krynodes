@@ -119,7 +119,6 @@ function RecipeDialog({
   const closedMode =
     firewall && (closing || agentHasSecurity(node.agent_version));
   const wall = report?.firewall;
-  const offClosed = !turnOn && ids.includes("firewall") && !!wall?.closed;
   const rows = !report
     ? []
     : closing
@@ -168,11 +167,9 @@ function RecipeDialog({
       ? null
       : id !== "firewall"
         ? protectionDetail(id, report)
-        : offClosed
-          ? closedText(firewallName(report), "off")
-          : closedMode
-            ? closedText(firewallName(report), closing ? "close" : "on")
-            : protectionDetail(id, report);
+        : closedMode
+          ? closedText(firewallName(report), closing ? "close" : "on")
+          : protectionDetail(id, report);
   const submit = () =>
     run.mutate(
       {
@@ -208,7 +205,7 @@ function RecipeDialog({
               {ids.map((id) => (
                 <p key={id}>{detail(id)}</p>
               ))}
-              {!turnOn && !offClosed && (
+              {!turnOn && (
                 <p>The file Krynodes added is removed; nothing else changes.</p>
               )}
             </div>
@@ -497,32 +494,30 @@ export function SecurityPanel({
                           label: "Turn On",
                           onSelect: () => setPending({ choice, turnOn: true }),
                         }
-                      : action === "close"
-                        ? {
-                            label: "Close Everything Else",
-                            onSelect: () =>
-                              setPending({
-                                choice,
-                                turnOn: true,
-                                closing: true,
-                              }),
-                          }
-                        : {
-                            label: "Turn Off",
-                            destructive: true,
-                            onSelect: () =>
-                              setPending({ choice, turnOn: false }),
-                          },
+                      : {
+                          label: "Close Everything Else",
+                          onSelect: () =>
+                            setPending({
+                              choice,
+                              turnOn: true,
+                              closing: true,
+                            }),
+                        },
                   )
                 : choice.blocked || choice.outside
                   ? []
                   : choice.applied
                     ? [
-                        {
-                          label: "Turn Off",
-                          destructive: true,
-                          onSelect: () => setPending({ choice, turnOn: false }),
-                        },
+                        ...(choice.undo
+                          ? [
+                              {
+                                label: "Turn Off",
+                                destructive: true,
+                                onSelect: () =>
+                                  setPending({ choice, turnOn: false }),
+                              },
+                            ]
+                          : []),
                         ...(choice.id === "reboot-window"
                           ? [
                               {

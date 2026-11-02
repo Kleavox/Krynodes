@@ -236,16 +236,13 @@ export function usePrivateRanges(enabled: boolean) {
 }
 
 export interface SetupChoice {
-  recommended: boolean;
   docker: boolean;
   hour: number;
   network: boolean;
-  adminUser?: boolean;
   adminName?: string;
 }
 
 export interface EnrollDefaults {
-  recommended: boolean;
   docker: boolean;
   hour: number;
   network: boolean;

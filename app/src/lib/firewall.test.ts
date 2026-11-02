@@ -40,7 +40,7 @@ const firewallOf = (choices: ReturnType<typeof recipeChoices>) =>
   choices.find((choice) => choice.id === "firewall")!;
 
 describe("the firewall row in Protections", () => {
-  it("says closed with its open ports and offers Turn Off", () => {
+  it("says closed with its open ports, with no Turn Off", () => {
     const closed = report({
       recipes: ["firewall"],
       firewall: {
@@ -51,7 +51,7 @@ describe("the firewall row in Protections", () => {
     });
     expect(firewallStatus(closed, firewallOf(recipeChoices(closed)))).toEqual({
       text: "Closed · 1 open port",
-      actions: ["off"],
+      actions: [],
     });
     const none = report({
       recipes: ["firewall"],
@@ -69,7 +69,7 @@ describe("the firewall row in Protections", () => {
     });
     expect(firewallStatus(old, firewallOf(recipeChoices(old)))).toEqual({
       text: "On · open ports are not managed by Krynodes",
-      actions: ["close", "off"],
+      actions: ["close"],
     });
     const theirs = report({ firewall: { closed: false, open: [], other: [] } });
     expect(firewallStatus(theirs, firewallOf(recipeChoices(theirs)))).toEqual({
@@ -95,7 +95,7 @@ describe("the firewall row in Protections", () => {
     const on = report({ recipes: ["firewall"] });
     expect(firewallStatus(on, firewallOf(recipeChoices(on)))).toEqual({
       text: "On",
-      actions: ["off"],
+      actions: [],
     });
     const outside = report();
     expect(firewallStatus(outside, firewallOf(recipeChoices(outside)))).toEqual(
@@ -105,15 +105,12 @@ describe("the firewall row in Protections", () => {
 });
 
 describe("what a closed firewall does, in its dialogs", () => {
-  it("says what turning on, closing and turning off do", () => {
+  it("says what turning on and closing do", () => {
     expect(closedText("ufw", "on")).toBe(
       "Turns on ufw and lets in only SSH, the private network and the ports you tick. Ports Docker publishes close too, unless you tick them.",
     );
     expect(closedText("firewalld", "close")).toBe(
       "Krynodes takes over firewalld. The open ports below stay open; untick one to close it. Everything else closes, ports Docker publishes too.",
-    );
-    expect(closedText("ufw", "off")).toBe(
-      "Puts ufw back as Krynodes found it, and opens the ports Docker publishes again.",
     );
   });
 });

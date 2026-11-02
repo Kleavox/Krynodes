@@ -34,8 +34,7 @@ export function EnrollmentCommand({
         {remaining > 0
           ? `Expires in ${countdown(remaining)}`
           : "Expired. Create a new command."}
-        {(setup.recommended || setup.docker) &&
-          " · Setup takes a few minutes on a fresh server."}
+        {" · Setup takes a few minutes on a fresh server."}
       </p>
     </div>
   );

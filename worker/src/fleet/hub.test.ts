@@ -603,7 +603,7 @@ describe("FleetHub", () => {
     ]);
   });
 
-  it("waits while the server restarts at the end of its setup, then mails if it stays away", async () => {
+  it("waits while a server set up by hand restarts at the end, then mails if it stays away", async () => {
     const t = setup();
     const ws = await t.connect();
     await t.send(ws, BASE + 5_000, {
@@ -618,6 +618,29 @@ describe("FleetHub", () => {
     expect(t.mail).toEqual([]);
 
     vi.setSystemTime(BASE + 660_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
+  it("never mails about a server that has not reported yet, and watches it from its first report", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    ws.close(1006, "restarting");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+
+    for (const at of [BASE + 200_000, BASE + 3_700_000]) {
+      vi.setSystemTime(at);
+      await t.hub.alarm();
+    }
+    expect(t.mail).toEqual([]);
+
+    const back = await t.connect();
+    await t.send(back, BASE + 3_705_000, heartbeat(10));
+    back.close(1006, "gone");
+    await t.hub.webSocketClose(back as unknown as WebSocket);
+    vi.setSystemTime(BASE + 3_900_000);
     await t.hub.alarm();
     expect(t.mail.map((message) => message.subject)).toEqual([
       `[Krynodes] ${NODE}: offline`,
