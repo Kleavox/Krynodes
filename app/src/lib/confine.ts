@@ -3,6 +3,8 @@ import { SECURITY_AGENT } from "@krynodes/protocol/versions";
 
 import type { ActionRecord, Confinement, DenialsView } from "../types";
 
+import type { CommandTarget } from "./passkeys";
+
 export type ConfineStep =
   "denials" | "manage" | "on" | "containers" | "uncontain" | "boolean";
 
@@ -178,6 +180,17 @@ export const booleanProblem = (name: string) =>
   name === "" || SELINUX_BOOLEAN.test(name)
     ? null
     : "A boolean is lowercase letters, digits and _, like httpd_can_network_connect.";
+
+export const booleanTarget = (
+  nodeId: string,
+  name: string,
+  on: boolean,
+): CommandTarget => ({
+  nodeId,
+  kind: "host",
+  name: "confinement",
+  args: { name, on: on ? "1" : "0" },
+});
 
 export function denialLines(denials: DenialsView) {
   return {

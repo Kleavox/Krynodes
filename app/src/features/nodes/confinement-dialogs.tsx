@@ -27,6 +27,7 @@ import { useDenials } from "@/lib/api";
 import {
   BOOLEAN_LINE,
   booleanProblem,
+  booleanTarget,
   confineText,
   denialLines,
   systemName,
@@ -167,6 +168,59 @@ export function DenialsDialog({
   );
 }
 
+export function BooleanFields({
+  name,
+  on,
+  onName,
+  onOn,
+}: {
+  name: string;
+  on: boolean;
+  onName: (name: string) => void;
+  onOn: (on: boolean) => void;
+}) {
+  const problem = booleanProblem(name);
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="selinux-boolean">Boolean</Label>
+        <Input
+          id="selinux-boolean"
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          placeholder="httpd_can_network_connect"
+          className="font-mono"
+          value={name}
+          onChange={(event) => onName(event.target.value.trim())}
+        />
+      </div>
+      <fieldset className="space-y-1.5">
+        <legend className="text-sm font-medium">Set To</legend>
+        {[true, false].map((value) => (
+          <label
+            key={String(value)}
+            className="flex cursor-pointer items-center gap-2 text-sm"
+          >
+            <input
+              type="radio"
+              name="selinux-boolean-on"
+              checked={on === value}
+              onChange={() => onOn(value)}
+            />
+            {value ? "On" : "Off"}
+          </label>
+        ))}
+      </fieldset>
+      {problem && (
+        <p role="alert" className="text-xs text-destructive">
+          {problem}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function BooleanDialog({
   node,
   onClose,
@@ -177,20 +231,9 @@ export function BooleanDialog({
   const run = useSignedAction(false);
   const [name, setName] = useState("");
   const [on, setOn] = useState(true);
-  const problem = booleanProblem(name);
   const submit = () =>
     run.mutate(
-      {
-        action: "boolean",
-        targets: [
-          {
-            nodeId: node.id,
-            kind: "host",
-            name: "confinement",
-            args: { name, on: on ? "1" : "0" },
-          },
-        ],
-      },
+      { action: "boolean", targets: [booleanTarget(node.id, name, on)] },
       {
         onSuccess: () => {
           toast.success(`Sent to ${node.name}.`);
@@ -205,43 +248,7 @@ export function BooleanDialog({
           <AlertDialogTitle>Change Boolean on {node.name}</AlertDialogTitle>
           <AlertDialogDescription>{BOOLEAN_LINE}</AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="selinux-boolean">Boolean</Label>
-            <Input
-              id="selinux-boolean"
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              placeholder="httpd_can_network_connect"
-              className="font-mono"
-              value={name}
-              onChange={(event) => setName(event.target.value.trim())}
-            />
-          </div>
-          <fieldset className="space-y-1.5">
-            <legend className="text-sm font-medium">Set To</legend>
-            {[true, false].map((value) => (
-              <label
-                key={String(value)}
-                className="flex cursor-pointer items-center gap-2 text-sm"
-              >
-                <input
-                  type="radio"
-                  name="selinux-boolean-on"
-                  checked={on === value}
-                  onChange={() => setOn(value)}
-                />
-                {value ? "On" : "Off"}
-              </label>
-            ))}
-          </fieldset>
-          {problem && (
-            <p role="alert" className="text-xs text-destructive">
-              {problem}
-            </p>
-          )}
-        </div>
+        <BooleanFields name={name} on={on} onName={setName} onOn={setOn} />
         {run.error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(run.error)}
@@ -250,7 +257,9 @@ export function BooleanDialog({
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <Button
-            disabled={run.isPending || name === "" || problem !== null}
+            disabled={
+              run.isPending || name === "" || booleanProblem(name) !== null
+            }
             onClick={submit}
           >
             <KeyRound aria-hidden="true" />

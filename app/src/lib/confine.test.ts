@@ -5,6 +5,7 @@ import type { Confinement } from "../types";
 import {
   BOOLEAN_LINE,
   booleanProblem,
+  booleanTarget,
   confinementActionText,
   confinementRow,
   confineText,
@@ -401,6 +402,18 @@ describe("Change Boolean", () => {
     expect(confinementRow(apparmor({ managed: true }), true).actions).toEqual([
       "denials",
     ]);
+  });
+
+  it("sends the boolean's name and On or Off to the confinement target", () => {
+    expect(booleanTarget("n1", "httpd_can_network_connect", true)).toEqual({
+      nodeId: "n1",
+      kind: "host",
+      name: "confinement",
+      args: { name: "httpd_can_network_connect", on: "1" },
+    });
+    expect(
+      booleanTarget("n1", "httpd_can_network_connect", false).args,
+    ).toEqual({ name: "httpd_can_network_connect", on: "0" });
   });
 
   it("takes a boolean's name and says it does not quarantine the server", () => {
