@@ -33,10 +33,16 @@ func confineOff(ctx context.Context, env Env, saved map[string]string) error {
 		if saved["mode"] == confine.Enforcing {
 			return nil
 		}
-		running := confine.Read(env.Root, string(RHEL)).Mode != confine.Disabled
+		now := confine.Read(env.Root, string(RHEL)).Mode
+		running := now == confine.Enforcing || now == confine.Permissive
 		if saved["restart"] == "1" && !running {
 			if err := env.remove(confine.Relabel); err != nil {
 				return err
+			}
+			if saved["kernel"] == "1" {
+				if err := env.run(ctx, "grubby", "--update-kernel", "ALL", "--args", "selinux=0"); err != nil {
+					return err
+				}
 			}
 			return setSELinux(env, saved["config"])
 		}
@@ -45,7 +51,7 @@ func confineOff(ctx context.Context, env Env, saved map[string]string) error {
 				return err
 			}
 		}
-		if saved["mode"] == confine.Disabled {
+		if saved["mode"] == confine.Disabled || saved["mode"] == confine.KernelOff {
 			return setSELinux(env, confine.Permissive)
 		}
 		return setSELinux(env, saved["config"])
@@ -148,10 +154,11 @@ func selinuxOn(ctx context.Context, env Env, state confine.State) (map[string]st
 		}
 	}
 	for _, home := range homes {
-		if err := either([]string{"semanage", "fcontext", "-a", "-e", "/home", home}, []string{"semanage", "fcontext", "-m", "-e", "/home", home}); err != nil {
+		keys := home + `/\.ssh(/.*)?`
+		if err := either([]string{"semanage", "fcontext", "-a", "-t", "ssh_home_t", keys}, []string{"semanage", "fcontext", "-m", "-t", "ssh_home_t", keys}); err != nil {
 			return nil, back(fmt.Errorf("SELinux would block key logins into %s: %w", home, err))
 		}
-		if err := env.run(ctx, "restorecon", "-R", home); err != nil {
+		if err := env.run(ctx, "restorecon", "-R", home+"/.ssh"); err != nil {
 			return nil, back(fmt.Errorf("SELinux would block key logins into %s: %w", home, err))
 		}
 	}
@@ -164,12 +171,24 @@ func selinuxOn(ctx context.Context, env Env, state confine.State) (map[string]st
 			return nil, back(err)
 		}
 	} else {
+		boot := func(err error) error {
+			if state.Mode == confine.KernelOff {
+				env.run(ctx, "grubby", "--update-kernel", "ALL", "--args", "selinux=0")
+			}
+			return back(err)
+		}
+		if state.Mode == confine.KernelOff {
+			if err := env.run(ctx, "grubby", "--update-kernel", "ALL", "--remove-args", "selinux"); err != nil {
+				return nil, back(fmt.Errorf("SELinux is off in the boot settings, and they could not be changed: %w", err))
+			}
+			saved["kernel"] = "1"
+		}
 		if err := setSELinux(env, confine.Enforcing); err != nil {
-			return nil, back(err)
+			return nil, boot(err)
 		}
 		if err := env.write(confine.Relabel, "", 0o644); err != nil {
 			setSELinux(env, state.Config)
-			return nil, back(err)
+			return nil, boot(err)
 		}
 		saved["restart"] = "1"
 	}

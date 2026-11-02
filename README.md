@@ -864,13 +864,16 @@ is a grey note on Security, not a finding.
 - **Let Krynodes Manage** (already enforcing) changes nothing on the server.
   **Turn On** goes straight to enforcing: SELinux from Permissive at once; from
   Disabled it is set to enforcing and finishes at the next restart (the first
-  boot labels every file and restarts once more). AppArmor enforces its
+  boot labels every file and restarts once more). When the kernel starts with
+  `selinux=0`, Krynodes also takes that out of the boot settings (`grubby`),
+  and Undo before the restart puts it back. AppArmor enforces its
   profiles in complain mode, is installed and started when it is missing, or
   is turned on in the boot settings when the kernel starts without it. The row
   says _restart to finish_; Krynodes never restarts the server.
 - Before SELinux enforces, Krynodes labels every SSH port other than 22 and
-  the home folders of users who log in with a key that really sit outside
-  `/home` (a home behind a link counts where the link leads), installing
+  the `.ssh` folder (`ssh_home_t`) of users who log in with a key whose home
+  really sits outside `/home` (a home behind a link counts where the link
+  leads), leaving the rest of that home as it is, installing
   `semanage` (`policycoreutils-python-utils`) when it needs it, so SSH keeps
   working. When it cannot, it refuses and says why. It edits only the
   `SELINUX=` line of `/etc/selinux/config`, keeping the old value, and never

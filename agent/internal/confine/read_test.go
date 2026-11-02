@@ -56,6 +56,20 @@ func TestARelabelWaitingNeedsARestart(t *testing.T) {
 	}
 }
 
+func TestSELinuxOffOnTheKernelCommandLineIsNotFixedByARestart(t *testing.T) {
+	root := t.TempDir()
+	file(t, root, "/proc/cmdline", "BOOT_IMAGE=(hd0,gpt2)/vmlinuz ro selinux=0 console=ttyS0\n")
+	file(t, root, "/etc/selinux/config", "SELINUX=enforcing\n")
+	file(t, root, "/.autorelabel", "")
+	if got, want := Read(root, "rhel"), (State{System: SELinux, Mode: KernelOff, Config: "enforcing"}); got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	file(t, root, "/proc/cmdline", "BOOT_IMAGE=(hd0,gpt2)/vmlinuz ro noselinux=0 console=ttyS0\n")
+	if got := Read(root, "rhel"); got.Mode != Disabled || !got.Restart {
+		t.Fatalf("only selinux=0 itself turns it off: %+v", got)
+	}
+}
+
 func TestReadAppArmor(t *testing.T) {
 	profiles := "/usr/sbin/cupsd (enforce)\ndocker-default (enforce)\n/usr/bin/man (complain)\nunprivileged_userns (unconfined)\n"
 	cases := []struct {

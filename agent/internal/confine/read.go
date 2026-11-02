@@ -3,6 +3,7 @@ package confine
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -20,6 +21,7 @@ const (
 	SELinuxConfig = "/etc/selinux/config"
 	Relabel       = "/.autorelabel"
 	enforceFile   = "/sys/fs/selinux/enforce"
+	cmdlineFile   = "/proc/cmdline"
 	enabledFile   = "/sys/module/apparmor/parameters/enabled"
 	profilesFile  = "/sys/kernel/security/apparmor/profiles"
 )
@@ -56,6 +58,10 @@ func readSELinux(root string) State {
 		state.Mode = Enforcing
 	case "0":
 		state.Mode = Permissive
+	}
+	if cmdline, _ := read(root, cmdlineFile); state.Mode == Disabled && slices.Contains(strings.Fields(cmdline), "selinux=0") {
+		state.Mode = KernelOff
+		return state
 	}
 	_, relabel := read(root, Relabel)
 	state.Restart = relabel || (state.Mode == Disabled && (state.Config == Enforcing || state.Config == Permissive))

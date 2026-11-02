@@ -15,6 +15,9 @@ export const systemName = (system: Confinement["system"] | undefined) =>
 const count = (value: number | null) => (value === null ? "--" : value);
 
 function modeText(found: Confinement): string {
+  if (found.mode === "kernel-off") {
+    return found.restart ? "Off" : "Off · needs a restart";
+  }
   if (found.system === "selinux") {
     return found.mode === "enforcing"
       ? "Enforcing"
@@ -29,10 +32,7 @@ function modeText(found: Confinement): string {
       ? `On · ${count(found.enforced)} enforced, ${found.complain} in complain`
       : `On · ${count(found.enforced)} ${found.enforced === 1 ? "profile" : "profiles"} enforced`;
   }
-  if (found.mode === "kernel-off" && !found.restart) {
-    return "Off · needs a restart";
-  }
-  return found.mode === "off" || found.mode === "kernel-off" ? "Off" : "--";
+  return found.mode === "off" ? "Off" : "--";
 }
 
 export function confinementRow(found: Confinement | undefined): {
@@ -79,7 +79,7 @@ export function confinementNote(found: Confinement | undefined): string | null {
   if (found?.system === "selinux") {
     return found.mode === "permissive"
       ? "SELinux is permissive"
-      : found.mode === "disabled"
+      : found.mode === "disabled" || found.mode === "kernel-off"
         ? "SELinux is off"
         : null;
   }
@@ -99,13 +99,16 @@ function denialsSoFar(denials: DenialsView, name: string): string {
 
 function turnOnLines(found: Confinement): { first: string; undo: string } {
   const labels =
-    "Krynodes first labels the SSH port and the home folders of users who log in with a key, so SSH keeps working.";
+    "Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.";
   if (found.system === "selinux") {
+    const relabel = `The first boot labels every file and restarts once more. ${labels}`;
     return {
       first:
-        found.mode === "disabled"
-          ? `SELinux is set to enforcing and finishes when you restart the server. The first boot labels every file and restarts once more. ${labels}`
-          : `SELinux starts enforcing now. ${labels}`,
+        found.mode === "kernel-off"
+          ? `SELinux is off when the server boots. Krynodes turns it on in the boot settings and sets it to enforcing, and it finishes when you restart the server. ${relabel}`
+          : found.mode === "disabled"
+            ? `SELinux is set to enforcing and finishes when you restart the server. ${relabel}`
+            : `SELinux starts enforcing now. ${labels}`,
       undo: "Undo is one click and stops SELinux enforcing.",
     };
   }

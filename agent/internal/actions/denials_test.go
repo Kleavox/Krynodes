@@ -237,6 +237,19 @@ func TestSELinuxSetPermissiveOutsideKrynodesQuarantinesUnlessARestartIsDue(t *te
 	}
 }
 
+func TestSELinuxTurnedOffAtBootOutsideKrynodesSaysSo(t *testing.T) {
+	executor, _ := selinuxWatch(t, true, "")
+	if err := os.Remove(executor.path("/sys/fs/selinux/enforce")); err != nil {
+		t.Fatal(err)
+	}
+	rootFile(t, executor, "/proc/cmdline", "ro selinux=0\n")
+	executor.watchDenials(context.Background())
+	strong := eventsOfKind(t, executor, "confinement")
+	if len(strong) != 1 || strong[0].Detail["what"] != "SELinux was turned off at boot outside Krynodes" {
+		t.Fatalf("events %+v", strong)
+	}
+}
+
 func TestDenialsFromBeforeKrynodesManagedAreOnlyShown(t *testing.T) {
 	executor, _ := selinuxWatch(t, true, "")
 	early := executorNow.Add(-time.Minute).Unix()

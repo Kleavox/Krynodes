@@ -45,12 +45,12 @@ func TestSELinuxPermissiveGoesEnforcingAfterTheSSHPortAndHomeLabels(t *testing.T
 	}
 	calledInOrder(t, run,
 		"semanage port -a -t ssh_port_t -p tcp 2222",
-		"semanage fcontext -a -e /home /srv/user",
-		"restorecon -R /srv/user",
+		`semanage fcontext -a -t ssh_home_t /srv/user/\.ssh(/.*)?`,
+		"restorecon -R /srv/user/.ssh",
 		"setenforce 1",
 	)
 	if slices.ContainsFunc(run.calls, func(call string) bool {
-		return strings.Contains(call, "/home/other") || strings.HasSuffix(call, "tcp 22")
+		return strings.Contains(call, "/home/other") || strings.HasSuffix(call, "tcp 22") || strings.Contains(call, " -e ") || call == "restorecon -R /srv/user"
 	}) {
 		t.Fatalf("labelled what needs none: %q", run.calls)
 	}
@@ -97,6 +97,54 @@ func TestSELinuxDisabledIsTurnedOnAtTheNextRestart(t *testing.T) {
 	}
 	if !slices.Contains(run.calls, "setenforce 0") || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=permissive\n") {
 		t.Fatalf("after the restart a disabled start comes back permissive: calls %q config %q", run.calls, read(env, "/etc/selinux/config"))
+	}
+}
+
+func TestSELinuxOffInTheKernelIsTurnedOnInTheBootSettings(t *testing.T) {
+	env, run := selinuxServer(t, "", "SELINUX=disabled\n")
+	write(t, env, "/proc/cmdline", "BOOT_IMAGE=/vmlinuz ro selinux=0 quiet\n")
+	saved, err := Apply(context.Background(), env, "confinement", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calledInOrder(t, run, `semanage fcontext -a -t ssh_home_t /srv/user/\.ssh(/.*)?`, "grubby --update-kernel ALL --remove-args selinux")
+	if !exists(env, "/.autorelabel") || saved["restart"] != "1" || saved["kernel"] != "1" || saved["mode"] != "kernel-off" || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=enforcing\n") {
+		t.Fatalf("calls %q saved %v", run.calls, saved)
+	}
+	run.calls = nil
+	if err := Undo(context.Background(), env, "confinement", saved); err != nil {
+		t.Fatal(err)
+	}
+	calledInOrder(t, run, "grubby --update-kernel ALL --args selinux=0")
+	if exists(env, "/.autorelabel") || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=disabled\n") || slices.Contains(run.calls, "setenforce 0") {
+		t.Fatalf("before the restart Undo puts back what was there: calls %q", run.calls)
+	}
+
+	saved, err = Apply(context.Background(), env, "confinement", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, env, "/proc/cmdline", "BOOT_IMAGE=/vmlinuz ro quiet\n")
+	write(t, env, "/sys/fs/selinux/enforce", "1")
+	env.remove("/.autorelabel")
+	run.calls = nil
+	if err := Undo(context.Background(), env, "confinement", saved); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(run.calls, "setenforce 0") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "grubby") }) || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=permissive\n") {
+		t.Fatalf("after the restart it comes back permissive and the boot stays as it is: calls %q config %q", run.calls, read(env, "/etc/selinux/config"))
+	}
+}
+
+func TestSELinuxOffInTheKernelRefusesWhenTheBootSettingsCannotChange(t *testing.T) {
+	env, run := selinuxServer(t, "", "SELINUX=disabled\n")
+	write(t, env, "/proc/cmdline", "ro selinux=0\n")
+	run.failing["grubby --update-kernel ALL --remove-args selinux"] = true
+	if _, err := Apply(context.Background(), env, "confinement", nil); err == nil {
+		t.Fatal("applied without the boot setting")
+	}
+	if exists(env, "/.autorelabel") || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=disabled\n") {
+		t.Fatalf("changed anyway: calls %q config %q", run.calls, read(env, "/etc/selinux/config"))
 	}
 }
 
@@ -221,7 +269,7 @@ func TestSELinuxLabelsTheHomeOfEveryKeyLoginNotOnlyAdmins(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "confinement", nil); err != nil {
 		t.Fatal(err)
 	}
-	calledInOrder(t, run, "semanage fcontext -a -e /home /srv/deploy", "restorecon -R /srv/deploy", "setenforce 1")
+	calledInOrder(t, run, `semanage fcontext -a -t ssh_home_t /srv/deploy/\.ssh(/.*)?`, "restorecon -R /srv/deploy/.ssh", "setenforce 1")
 }
 
 func TestSELinuxLabelsTheRealFolderOfAHomeBehindALink(t *testing.T) {
@@ -238,7 +286,7 @@ func TestSELinuxLabelsTheRealFolderOfAHomeBehindALink(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "confinement", nil); err != nil {
 		t.Fatal(err)
 	}
-	calledInOrder(t, run, "semanage fcontext -a -e /home /data/home/other", "restorecon -R /data/home/other", "setenforce 1")
+	calledInOrder(t, run, `semanage fcontext -a -t ssh_home_t /data/home/other/\.ssh(/.*)?`, "restorecon -R /data/home/other/.ssh", "setenforce 1")
 	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, filepath.Base(env.Root)) }) {
 		t.Fatalf("labelled a path outside the server: %q", run.calls)
 	}

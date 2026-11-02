@@ -58,6 +58,15 @@ describe("the SELinux or AppArmor row", () => {
         selinux({ mode: "disabled", managed: true, restart: true }),
       ),
     ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
+    expect(confinementRow(selinux({ mode: "kernel-off" }))).toMatchObject({
+      text: "Off · needs a restart",
+      actions: ["denials", "on"],
+    });
+    expect(
+      confinementRow(
+        selinux({ mode: "kernel-off", managed: true, restart: true }),
+      ),
+    ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
     expect(confinementRow(apparmor())).toEqual({
       title: "AppArmor",
       text: "On · 12 profiles enforced",
@@ -133,6 +142,9 @@ describe("the grey note on Security", () => {
     expect(confinementNote(selinux({ mode: "disabled" }))).toBe(
       "SELinux is off",
     );
+    expect(confinementNote(selinux({ mode: "kernel-off" }))).toBe(
+      "SELinux is off",
+    );
     expect(confinementNote(apparmor({ mode: "off" }))).toBe("AppArmor is off");
     expect(confinementNote(apparmor({ mode: "kernel-off" }))).toBe(
       "AppArmor is off",
@@ -167,7 +179,7 @@ describe("what each step says before it runs", () => {
     expect(text.title).toBe("Turn on SELinux on server-1?");
     expect(text.button).toBe("Turn On");
     expect(text.lines).toEqual([
-      "SELinux starts enforcing now. Krynodes first labels the SSH port and the home folders of users who log in with a key, so SSH keeps working.",
+      "SELinux starts enforcing now. Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.",
       "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
       "2 denials in the last 24 hours. What was denied stops working once SELinux enforces.",
       "Containers are not confined until you choose Confine Containers on this row.",
@@ -177,11 +189,17 @@ describe("what each step says before it runs", () => {
       confineText("on", selinux({ mode: "disabled" }), "server-1", none, [])
         .lines,
     ).toEqual([
-      "SELinux is set to enforcing and finishes when you restart the server. The first boot labels every file and restarts once more. Krynodes first labels the SSH port and the home folders of users who log in with a key, so SSH keeps working.",
+      "SELinux is set to enforcing and finishes when you restart the server. The first boot labels every file and restarts once more. Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.",
       "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
       "No denials in the last 24 hours.",
       "Undo is one click and stops SELinux enforcing.",
     ]);
+    expect(
+      confineText("on", selinux({ mode: "kernel-off" }), "server-1", none, [])
+        .lines[0],
+    ).toBe(
+      "SELinux is off when the server boots. Krynodes turns it on in the boot settings and sets it to enforcing, and it finishes when you restart the server. The first boot labels every file and restarts once more. Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.",
+    );
     expect(
       confineText(
         "on",
