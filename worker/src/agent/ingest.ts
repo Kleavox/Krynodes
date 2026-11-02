@@ -29,6 +29,7 @@ export interface AgentNode {
   boot?: string | null;
   reports?: number | null;
   release?: string | null;
+  setup?: string | null;
   quarantined?: number;
 }
 

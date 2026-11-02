@@ -75,7 +75,7 @@ import { judgeTailnet } from "../tailscale/hook";
 
 const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_requested_at,
          update_attempts, update_error, inventory_hash, refresh_requested_at, security,
-         boot, reports, release,
+         boot, reports, release, setup,
          EXISTS (SELECT 1 FROM quarantines q
                  WHERE q.node_id = nodes.id AND q.released_at IS NULL) AS quarantined
   FROM nodes
@@ -118,6 +118,19 @@ interface Tailnet {
 }
 
 const offlineAfterMs = (interval: number) => Math.max(90, 3 * interval) * 1000;
+
+function finishingSetup(setup: string | null, seen: number, now: number) {
+  if (!setup || now - seen >= REBOOT_MS) return false;
+  try {
+    const { phase, stopped } = JSON.parse(setup) as {
+      phase?: string;
+      stopped?: boolean;
+    };
+    return phase === "restart" && !stopped;
+  } catch {
+    return false;
+  }
+}
 
 function restarting(security: string | null, seen: number, now: number) {
   const restart = restartOf(security);
@@ -693,20 +706,25 @@ export class FleetHub {
         : (
             await db
               .prepare(
-                `SELECT id, security FROM nodes WHERE id IN (SELECT value FROM json_each(?))
+                `SELECT id, security, setup FROM nodes WHERE id IN (SELECT value FROM json_each(?))
                  AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
               )
               .bind(ids)
-              .all<{ id: string; security: string | null }>()
+              .all<{
+                id: string;
+                security: string | null;
+                setup: string | null;
+              }>()
           ).results;
-    const known = new Map(rows.map((row) => [row.id, row.security]));
+    const known = new Map(rows.map((row) => [row.id, row]));
     const planned = await plannedNodes(db, [...known.keys()], now);
     const quiet: { nodeId: string; seen: number }[] = [];
     for (const { nodeId, entry, seen } of silent) {
       if (!known.has(nodeId)) {
         delete roster[nodeId];
       } else if (
-        restarting(known.get(nodeId) ?? null, seen, now) ||
+        restarting(known.get(nodeId)?.security ?? null, seen, now) ||
+        finishingSetup(known.get(nodeId)?.setup ?? null, seen, now) ||
         planned.has(nodeId)
       ) {
         entry.checkedAt = now;
@@ -911,6 +929,15 @@ export class FleetHub {
           .bind(reported, node.id),
       );
     }
+    const setup = beat.setup ? JSON.stringify(beat.setup) : null;
+    const setupMoved = setup !== (known.setup ?? null);
+    if (setupMoved) {
+      leading.push(
+        db
+          .prepare("UPDATE nodes SET setup = ? WHERE id = ?")
+          .bind(setup, node.id),
+      );
+    }
     if (current.lastSeen === null || current.away) {
       await this.returned(node.id);
     }
@@ -1014,7 +1041,7 @@ export class FleetHub {
         this.announce(["all"]);
       }
       const topics = [
-        ...(current.lastSeen === null ? ["nodes"] : []),
+        ...(current.lastSeen === null || setupMoved ? ["nodes"] : []),
         ...(ingestion.statements.length > 0 || ingestion.transitions.length > 0
           ? ["checks"]
           : []),

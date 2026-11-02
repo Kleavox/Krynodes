@@ -24,6 +24,9 @@ func setupCommand(args []string) error {
 	confine := flags.Bool("confine", false, "turn on SELinux or AppArmor")
 	check := flags.Bool("check", false, "with --confine: only check that it can be turned on")
 	docker := flags.Bool("docker", false, "install Docker with Compose")
+	upgrade := flags.Bool("upgrade", false, "update every package first")
+	restart := flags.Bool("restart", false, "restart once at the end when an update or SELinux needs it")
+	finish := flags.Bool("finish", false, "restart now when setup said it would")
 	hour := flags.Int("reboot-hour", -1, "restart hour in UTC, 0 to 23")
 	join := flags.String("network", "", "get ready to join the private network in this range")
 	admin := flags.String("admin", "", "make this sudo user with the --admin-key keys")
@@ -39,9 +42,11 @@ func setupCommand(args []string) error {
 	switch {
 	case flags.NArg() > 0:
 		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
-	case *check && (!*confine || *recommended || *docker || *join != "" || *admin != "" || len(adminKeys) > 0 || *hour != -1):
+	case *check && (!*confine || *recommended || *docker || *upgrade || *restart || *finish || *join != "" || *admin != "" || len(adminKeys) > 0 || *hour != -1):
 		return errors.New("--check goes with --confine alone")
-	case !*recommended && !*confine && !*docker && *join == "" && *admin == "" && len(adminKeys) == 0:
+	case *finish && (*recommended || *confine || *docker || *upgrade || *restart || *join != "" || *admin != "" || len(adminKeys) > 0 || *hour != -1):
+		return errors.New("--finish goes alone")
+	case !*recommended && !*confine && !*docker && !*upgrade && !*restart && !*finish && *join == "" && *admin == "" && len(adminKeys) == 0:
 		return errors.New("choose --recommended, --confine, --docker, --network or more")
 	case *admin != "" && !recipes.ValidAdminName(*admin):
 		return errors.New("--admin takes your user name, not root")
@@ -60,7 +65,10 @@ func setupCommand(args []string) error {
 	if *check {
 		return executor.CheckConfine(context.Background())
 	}
-	options := actions.SetupOptions{Recommended: *recommended, Confine: *confine, Docker: *docker, Network: *join, Admin: *admin, AdminKeys: adminKeys, Terminal: terminal{}}
+	if *finish {
+		return executor.FinishSetup(context.Background(), os.Stdout)
+	}
+	options := actions.SetupOptions{Recommended: *recommended, Confine: *confine, Docker: *docker, Upgrade: *upgrade, Restart: *restart, Network: *join, Admin: *admin, AdminKeys: adminKeys, Terminal: terminal{}}
 	if *hour >= 0 {
 		options.RebootHour = hour
 	}

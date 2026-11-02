@@ -61,7 +61,7 @@ func (e Executor) watchNow(ctx context.Context) (watch.State, bool) {
 }
 
 func ephemeral(root string) (int, int) {
-	raw, err := os.ReadFile(filepath.Join(root, "proc", "sys", "net", "ipv4", "ip_local_port_range"))
+	raw, err := os.ReadFile(filepath.Join(root, "/proc/sys/net/ipv4/ip_local_port_range"))
 	if fields := strings.Fields(string(raw)); err == nil && len(fields) == 2 {
 		low, lowErr := strconv.Atoi(fields[0])
 		high, highErr := strconv.Atoi(fields[1])

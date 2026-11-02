@@ -255,7 +255,7 @@ func runDaemon(args []string, once bool) error {
 		Server:     client,
 		Now:        time.Now,
 		Dir:        stateDirectory,
-		Released:   make(chan struct{}, 1),
+		Beat:       make(chan struct{}, 1),
 		Boot: func() string {
 			id, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
 			return string(id)
@@ -316,7 +316,7 @@ func runDaemon(args []string, once bool) error {
 			timer.Stop()
 		case <-client.Ready():
 			timer.Stop()
-		case <-relay.Released:
+		case <-relay.Beat:
 			timer.Stop()
 		}
 	}

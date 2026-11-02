@@ -47,7 +47,7 @@ export function registerAdminRoutes(
               END AS deleting,
               ipv4, ipv4_at, ipv4_network, ipv4_owner,
               ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report,
-              updates, tailscale,
+              updates, tailscale, setup,
               (SELECT json_object('state', state, 'address', address, 'port', port)
                FROM network_members WHERE node_id = nodes.id) AS network,
               (SELECT json_object('at', at, 'why', why, 'tailnet',
@@ -68,6 +68,7 @@ export function registerAdminRoutes(
             trust_report: string | null;
             updates: string | null;
             tailscale: string | null;
+            setup: string | null;
             network: string | null;
             quarantine: string | null;
             warnings: string;
@@ -123,6 +124,7 @@ export function registerAdminRoutes(
         trust_report,
         updates,
         tailscale,
+        setup,
         network,
         quarantine,
         warnings,
@@ -136,6 +138,7 @@ export function registerAdminRoutes(
         updates: updates === null ? null : (JSON.parse(updates) as unknown),
         tailscale:
           tailscale === null ? null : (JSON.parse(tailscale) as unknown),
+        setup: setup === null ? null : (JSON.parse(setup) as unknown),
         addresses: trusts(readReport(trust_report), prints)
           ? listAddresses(
               {

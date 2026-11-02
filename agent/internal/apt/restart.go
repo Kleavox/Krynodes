@@ -83,6 +83,15 @@ func Restart(root string, kernels []string) *reporter.RestartReport {
 	return report
 }
 
+func KernelWaiting(root string) bool {
+	raw, err := os.ReadFile(at(root, "/var/lib/dpkg/status"))
+	if err != nil {
+		return false
+	}
+	report := Restart(root, Kernels(ParseStatus(string(raw))))
+	return report != nil && report.Running != nil && report.Newest != nil && compareParts(*report.Newest, *report.Running) > 0
+}
+
 func unitOf(cgroup string) string {
 	for line := range strings.SplitSeq(cgroup, "\n") {
 		parts := strings.SplitN(strings.TrimSpace(line), ":", 3)

@@ -92,7 +92,7 @@ func Read(root string) (State, error) {
 		}
 	}
 	files := []string{"/etc/sudoers"}
-	entries, _ := os.ReadDir(filepath.Join(root, "etc", "sudoers.d"))
+	entries, _ := os.ReadDir(filepath.Join(root, "/etc/sudoers.d"))
 	for _, entry := range entries {
 		if name := entry.Name(); !entry.IsDir() && !strings.Contains(name, ".") && !strings.HasSuffix(name, "~") {
 			files = append(files, "/etc/sudoers.d/"+name)

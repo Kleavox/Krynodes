@@ -1,7 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
-import { CircleCheck } from "lucide-react";
-import { dnsName } from "@krynodes/protocol";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Busy } from "@/components/busy";
@@ -21,19 +18,14 @@ import {
   useDevices,
   useEnrollDefaults,
   useEnrollmentStatus,
-  useNetwork,
-  useNetworkNext,
-  useOverview,
   useUpdateEnrollment,
   type SetupChoice,
 } from "@/lib/api";
-import { adminNameProblem, loginLine } from "@/lib/admin-user";
+import { adminNameProblem } from "@/lib/admin-user";
 import { enrollSetup } from "@/lib/enroll";
 import { enrollmentStep } from "@/lib/enrollment";
 import { errorMessage } from "@/lib/http";
 import { queryKeys } from "@/lib/query-client";
-
-import { CopyCommand } from "@/components/copy-command";
 
 import { EnrollmentCommand } from "./enrollment-command";
 import { SetupOptions } from "./setup-options";
@@ -70,28 +62,6 @@ export function EnrollDialog({
   const deviceCount = useDevices().data?.devices.length ?? 0;
   const status = useEnrollmentStatus(open ? create.data?.id : undefined);
   const step = enrollmentStep(Boolean(create.data), status.data);
-  const node = status.data?.status === "used" ? status.data.node : null;
-  const network = useNetwork().data;
-  const waiting = network?.waiting.find((entry) => entry.nodeId === node?.id);
-  const next = useNetworkNext(waiting ? [waiting.nodeId] : []);
-  const gets = next.data?.addresses[0]?.address ?? null;
-  const overview = useOverview();
-  const login = adding
-    ? loginLine(
-        adminName,
-        overview.data?.nodes
-          .find((entry) => entry.id === node?.id)
-          ?.addresses?.find(
-            (address) => address.family === 4 && !address.router,
-          )?.address ?? null,
-      )
-    : null;
-
-  useEffect(() => {
-    if (step === "connected") {
-      void client.invalidateQueries({ queryKey: queryKeys.overview });
-    }
-  }, [step, client]);
 
   const close = (next: boolean) => {
     if (!next) {
@@ -101,6 +71,13 @@ export function EnrollDialog({
     }
     onOpenChange(next);
   };
+
+  useEffect(() => {
+    if (step !== "connected") return;
+    void client.invalidateQueries({ queryKey: queryKeys.overview });
+    close(false);
+  });
+
   const offset = () => new Date().getTimezoneOffset();
   const start = () => create.mutate(enrollSetup(setup, offset()));
   const change = (next: SetupChoice) => {
@@ -185,71 +162,6 @@ export function EnrollDialog({
               <Button variant="ghost" onClick={() => close(false)}>
                 Close
               </Button>
-            </DialogFooter>
-          </>
-        )}
-
-        {step === "connected" && (
-          <>
-            <DialogHeader>
-              <CircleCheck aria-hidden="true" className="size-8 text-success" />
-              <DialogTitle>
-                {node ? `${node.name} is connected` : "Server Connected"}
-              </DialogTitle>
-              <DialogDescription role="status">
-                It reports every minute. Rename it from its Actions menu. The
-                install command no longer works.
-              </DialogDescription>
-            </DialogHeader>
-            {setup.network && node && network?.network && (
-              <div className="flex flex-wrap items-center gap-3 rounded-lg border px-3.5 py-2.5 text-sm">
-                <span className="min-w-0 flex-1">
-                  <span className="font-medium">Private Network</span>{" "}
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {waiting ? (
-                      `Ready · gets ${gets ?? "--"} · ${dnsName(node.name)}.kry`
-                    ) : (
-                      <Busy>Getting ready</Busy>
-                    )}
-                  </span>
-                </span>
-                {waiting && (
-                  <Button asChild size="sm" className="h-9 md:h-8">
-                    <Link
-                      to={`/network?join=${encodeURIComponent(node.id)}`}
-                      onClick={() => close(false)}
-                    >
-                      Join
-                    </Link>
-                  </Button>
-                )}
-              </div>
-            )}
-            {adding && node && (
-              <div className="space-y-2 rounded-lg border px-3.5 py-3 text-sm">
-                <p className="font-medium">Log In as {adminName} Now</p>
-                <p className="text-xs text-muted-foreground">
-                  Root can no longer log in over SSH. Check this works before
-                  you close the root session.
-                </p>
-                {login ? (
-                  <CopyCommand command={login} />
-                ) : (
-                  <p className="font-mono text-xs text-muted-foreground">--</p>
-                )}
-              </div>
-            )}
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => close(false)}>
-                Done
-              </Button>
-              {node && (
-                <Button asChild>
-                  <Link to={`/nodes/${node.id}`} onClick={() => close(false)}>
-                    Open Server
-                  </Link>
-                </Button>
-              )}
             </DialogFooter>
           </>
         )}

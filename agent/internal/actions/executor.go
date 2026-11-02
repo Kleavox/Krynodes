@@ -51,6 +51,7 @@ type Executor struct {
 	Collect    func(context.Context, []string) (Snapshot, error)
 	Exists     func(string) bool
 	Free       func(string) (uint64, error)
+	Sleep      func(time.Duration)
 	Root       string
 	Audit      bool
 	ConfigPath string

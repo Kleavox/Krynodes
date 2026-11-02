@@ -82,6 +82,8 @@ main() {
       recommended) setup_flags="$setup_flags --recommended" ;;
       confine) setup_flags="$setup_flags --confine" ;;
       docker) setup_flags="$setup_flags --docker" ;;
+      upgrade) setup_flags="$setup_flags --upgrade" ;;
+      restart) setup_flags="$setup_flags --restart" ;;
       *)
         echo "--setup takes recommended, confine, docker or more" >&2
         exit 1
@@ -216,6 +218,9 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
     echo "Krynodes agent $("$bin" version) is running."
   fi
   echo "Check it with: sudo systemctl status krynodes"
+  case ",$setup," in
+    *,restart,*) "$bin" setup --finish || true ;;
+  esac
 }
 
 main "$@"

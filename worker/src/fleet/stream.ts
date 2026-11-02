@@ -10,7 +10,7 @@ import {
 type Metrics = AgentHeartbeat["metrics"];
 type Beat = Omit<
   AgentHeartbeat,
-  "results" | "network" | "events" | "release" | "denials"
+  "results" | "network" | "events" | "release" | "denials" | "setup"
 >;
 
 const AVERAGED = [
@@ -196,6 +196,7 @@ export function fold(
     events: _events,
     release: _release,
     denials: _denials,
+    setup: _setup,
     ...beat
   } = heartbeat;
   return {

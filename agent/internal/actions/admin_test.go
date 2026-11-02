@@ -202,13 +202,13 @@ func TestSetupMakesTheAdminUserFirstAndTurnsRootLoginOffLast(t *testing.T) {
 		rootFile(t, executor, "/root/.ssh/authorized_keys", "ssh-ed25519 AAAA laptop\n"+intruderKey+"\n")
 		executor.watchServer(context.Background())
 	}
-	options := SetupOptions{Recommended: true, Docker: true, RebootHour: hour(20), Network: "10.88.0.0/24", Admin: "user1", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
+	options := SetupOptions{Upgrade: true, Recommended: true, Docker: true, RebootHour: hour(20), Network: "10.88.0.0/24", Admin: "user1", AdminKeys: []recipes.AdminKey{adminKey(t)}, Terminal: tty}
 	if err := executor.Setup(context.Background(), options, &out); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
 	last := -1
-	for _, line := range []string{"Admin user user1 gets these SSH keys:", "✓ Admin user user1 · sudo with its password", "✓ Automatic security updates", "✓ SSH keys only", "✓ Docker", "✓ Private network ready", "✓ No root login · log in as user1 from now on"} {
+	for _, line := range []string{"Admin user user1 gets these SSH keys:", "✓ Admin user user1 · sudo with its password", "✓ Packages updated", "✓ Automatic security updates", "✓ SSH keys only", "✓ Docker", "✓ Private network ready", "✓ No root login · log in as user1 from now on"} {
 		at := strings.Index(got, line)
 		if at <= last {
 			t.Fatalf("%q out of order in\n%s", line, got)

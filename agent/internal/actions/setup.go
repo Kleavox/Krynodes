@@ -7,16 +7,140 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/Kleavox/krynodes/agent/internal/apt"
 	"github.com/Kleavox/krynodes/agent/internal/confine"
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 )
+
+const (
+	setupFile  = "setup.json"
+	aliveEvery = 10 * time.Second
+	finishWait = 10 * time.Second
+)
+
+type setupProgress struct {
+	Phase string    `json:"phase"`
+	Step  int       `json:"step"`
+	Of    int       `json:"of"`
+	At    time.Time `json:"at"`
+	Boot  string    `json:"boot"`
+}
+
+type setupTrack struct {
+	executor Executor
+	phases   []string
+	mu       sync.Mutex
+	current  setupProgress
+	stop     chan struct{}
+	stopped  chan struct{}
+}
+
+func setupPhases(options SetupOptions, confined string) []string {
+	var phases []string
+	for _, phase := range []struct {
+		on   bool
+		name string
+	}{
+		{options.Admin != "", "admin"},
+		{options.Upgrade, "upgrade"},
+		{options.Recommended, "protections"},
+		{options.Confine && confined != "", confined},
+		{options.Docker, "docker"},
+		{options.Network != "", "network"},
+		{options.Restart, "restart"},
+	} {
+		if phase.on {
+			phases = append(phases, phase.name)
+		}
+	}
+	return phases
+}
+
+func (e Executor) track(phases []string) *setupTrack {
+	track := &setupTrack{executor: e, phases: phases, stop: make(chan struct{}), stopped: make(chan struct{})}
+	go func() {
+		defer close(track.stopped)
+		ticker := time.NewTicker(aliveEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-track.stop:
+				return
+			case <-ticker.C:
+				track.alive()
+			}
+		}
+	}()
+	return track
+}
+
+func (t *setupTrack) enter(phase string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	step := slices.Index(t.phases, phase) + 1
+	if step == 0 {
+		return
+	}
+	t.current = setupProgress{Phase: phase, Step: step, Of: len(t.phases), At: t.executor.Now(), Boot: t.executor.boot()}
+	writeJSON(t.executor.StateDir, setupFile, t.current, 0o640)
+}
+
+func (t *setupTrack) alive() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.current.Phase == "" {
+		return
+	}
+	t.current.At = t.executor.Now()
+	writeJSON(t.executor.StateDir, setupFile, t.current, 0o640)
+}
+
+func (t *setupTrack) end(restart bool) {
+	close(t.stop)
+	<-t.stopped
+	if restart {
+		t.enter("restart")
+		return
+	}
+	os.Remove(filepath.Join(t.executor.StateDir, setupFile))
+}
+
+func (e Executor) boot() string {
+	body, _ := os.ReadFile(e.path("/proc/sys/kernel/random/boot_id"))
+	return strings.TrimSpace(string(body))
+}
+
+func (e Executor) restartNeeded(ctx context.Context, env recipes.Env) bool {
+	needed, _ := recipes.RebootNeeded(ctx, env)
+	return needed || apt.KernelWaiting(e.Root)
+}
+
+func (e Executor) FinishSetup(ctx context.Context, out io.Writer) error {
+	progress, err := readState[setupProgress](e.StateDir, setupFile)
+	if err != nil || progress.Phase != "restart" || progress.Boot != e.boot() {
+		return nil
+	}
+	fmt.Fprintf(out, "Restarting the server in %d seconds to finish setup.\n", int(finishWait.Seconds()))
+	if e.Sleep != nil {
+		e.Sleep(finishWait)
+	} else {
+		time.Sleep(finishWait)
+	}
+	_, _, err = e.Run(ctx, "systemctl", "reboot", "--no-block")
+	return err
+}
 
 type SetupOptions struct {
 	Recommended bool
 	Confine     bool
 	Docker      bool
+	Upgrade     bool
+	Restart     bool
 	RebootHour  *int
 	Network     string
 	Admin       string
@@ -52,9 +176,15 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	mark := func(sign, title, rest string) {
 		fmt.Fprintf(out, "%s %s%s\n", sign, title, rest)
 	}
+	confined := ""
+	if options.Confine {
+		confined = confine.Read(e.Root, string(platform.Family)).System
+	}
+	track := e.track(setupPhases(options, confined))
 	e.startWatch(ctx)
 	admin := false
 	if options.Admin != "" {
+		track.enter("admin")
 		defer e.markAdmin(options.Admin, options.AdminKeys)()
 		var result recipes.AdminResult
 		result, admin = e.addAdmin(ctx, options.Admin, options.AdminKeys, options.Terminal, mark)
@@ -62,7 +192,17 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			e.acceptAdmin(options.Admin, result, options.AdminKeys)
 		}
 	}
+	if options.Upgrade {
+		track.enter("upgrade")
+		if err := recipes.Upgrade(ctx, env); err != nil {
+			mark("✗", "Packages", ": "+err.Error())
+		} else {
+			mark("✓", "Packages updated", "")
+		}
+		e.retake(ctx, false)
+	}
 	if options.Recommended {
+		track.enter("protections")
 		state := e.readRecipes()
 		for _, step := range setupSteps {
 			if step.id == "reboot-window" {
@@ -99,10 +239,13 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 		}
 		e.syncPublish(ctx)
 	}
+	restart := false
 	if options.Confine {
-		e.setupConfine(ctx, env, platform.Family, mark)
+		track.enter(confined)
+		restart = e.setupConfine(ctx, env, platform.Family, mark)
 	}
 	if options.Docker {
+		track.enter("docker")
 		result, err := recipes.InstallDocker(ctx, env, e.installArgs(args))
 		if err == nil && result.Installed {
 			err = writeJSON(e.StateDir, "docker.json", dockerState{InstalledAt: e.Now()}, 0o640)
@@ -117,6 +260,7 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 		}
 	}
 	if options.Network != "" {
+		track.enter("network")
 		if _, err := e.prepareNetwork(ctx, options.Network, 0); err != nil {
 			mark("✗", "Private network", ": "+err.Error())
 		} else {
@@ -127,6 +271,11 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 		e.noRootLogin(ctx, options.Admin, mark)
 	}
 	os.Remove(filepath.Join(e.StateDir, "security.json"))
+	restart = options.Restart && (restart || e.restartNeeded(ctx, env))
+	track.end(restart)
+	if restart {
+		mark("✓", "Restart", " · the server restarts when the install finishes")
+	}
 	return nil
 }
 
@@ -147,21 +296,21 @@ func (e Executor) closedSetup(ctx context.Context, env recipes.Env, family recip
 	return closed, " · closed · kept open: " + strings.Join(keys, ", ")
 }
 
-func (e Executor) setupConfine(ctx context.Context, env recipes.Env, family recipes.Family, mark func(sign, title, rest string)) {
+func (e Executor) setupConfine(ctx context.Context, env recipes.Env, family recipes.Family, mark func(sign, title, rest string)) bool {
 	found := confine.Read(e.Root, string(family))
 	title := map[string]string{confine.SELinux: "SELinux", confine.AppArmor: "AppArmor"}[found.System]
 	state := e.readRecipes()
 	switch _, on := state.Applied["confinement"]; {
 	case title == "":
 		mark("–", "SELinux or AppArmor", " skipped: neither is on this system")
-		return
+		return false
 	case on:
 		mark("–", title, " already on")
-		return
+		return false
 	}
 	if err := e.markConfinement("apply"); err != nil {
 		mark("✗", title, ": "+err.Error())
-		return
+		return false
 	}
 	saved, err := recipes.Apply(ctx, env, "confinement", nil)
 	if err == nil {
@@ -173,9 +322,11 @@ func (e Executor) setupConfine(ctx context.Context, env recipes.Env, family reci
 		mark("✗", title, ": "+err.Error())
 	case saved["restart"] == "1":
 		mark("–", title, ": restart to finish")
+		return true
 	default:
 		mark("✓", title, " · enforcing")
 	}
+	return false
 }
 
 func (e Executor) setupRebootWindow(ctx context.Context, env recipes.Env, hour *int, title string, mark func(sign, title, rest string)) {

@@ -20,6 +20,8 @@ import {
   isValidTarget,
   parseStackNames,
   SELINUX_BOOLEAN,
+  SETUP_PHASES,
+  setupSchema,
   stackEntrySchema,
   stackTitleValid,
 } from "./index";
@@ -1573,5 +1575,28 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
       }).success,
     ).toBe(false);
     expect("denials" in agentHeartbeatSchema.shape).toBe(true);
+  });
+
+  it("carries where setup is, its step of steps, and whether it stopped", () => {
+    const accepts = (value: unknown) => setupSchema.safeParse(value).success;
+    expect(accepts({ phase: "upgrade", step: 2, of: 6 })).toBe(true);
+    expect(accepts({ phase: "restart", step: 6, of: 6, stopped: true })).toBe(
+      true,
+    );
+    expect(accepts({ phase: "reinstall", step: 1, of: 6 })).toBe(false);
+    expect(accepts({ phase: "upgrade", step: 0, of: 6 })).toBe(false);
+    expect(accepts({ phase: "upgrade", step: 7, of: 6 })).toBe(false);
+    expect(accepts({ phase: "upgrade", step: 2, of: 6, extra: 1 })).toBe(false);
+    expect(SETUP_PHASES).toEqual([
+      "admin",
+      "upgrade",
+      "protections",
+      "selinux",
+      "apparmor",
+      "docker",
+      "network",
+      "restart",
+    ]);
+    expect("setup" in agentHeartbeatSchema.shape).toBe(true);
   });
 });

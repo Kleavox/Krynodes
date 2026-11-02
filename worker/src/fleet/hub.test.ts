@@ -603,6 +603,44 @@ describe("FleetHub", () => {
     ]);
   });
 
+  it("waits while the server restarts at the end of its setup, then mails if it stays away", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, {
+      ...heartbeat(10),
+      setup: { phase: "restart", step: 6, of: 6 },
+    });
+    ws.close(1006, "restarting");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail).toEqual([]);
+
+    vi.setSystemTime(BASE + 660_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
+  it("mails as usual when a setup stopped before its restart", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, {
+      ...heartbeat(10),
+      setup: { phase: "restart", step: 6, of: 6, stopped: true },
+    });
+    ws.close(1006, "gone");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
   it("mails one list when more than five servers go offline at once", async () => {
     const t = setup();
     const ids = Array.from(
@@ -1398,6 +1436,36 @@ describe("FleetHub", () => {
       expect(changes(viewer)).toHaveLength(1);
       await t.hub.webSocketClose(ws as unknown as WebSocket);
       expect(changes(viewer).at(-1)).toEqual(["nodes"]);
+    });
+
+    it("hears when setup moves on, writing it to D1 only when it changes", async () => {
+      const t = setup();
+      const viewer = new FakeSocket();
+      await t.hub.watch(viewer as unknown as WebSocket);
+      const ws = await t.connect();
+      const stored = () =>
+        (
+          t.sqlite
+            .prepare("SELECT setup FROM nodes WHERE id = ?")
+            .get(NODE) as {
+            setup: string | null;
+          }
+        ).setup;
+      const upgrade = { phase: "upgrade" as const, step: 2, of: 6 };
+      await t.send(ws, BASE + 5_000, { ...heartbeat(10), setup: upgrade });
+      expect(JSON.parse(stored() ?? "null")).toEqual(upgrade);
+      expect(changes(viewer)).toEqual([["nodes"]]);
+      const before = t.changes();
+      await t.send(ws, BASE + 65_000, { ...heartbeat(10), setup: upgrade });
+      expect(t.changes() - before).toBe(0);
+      expect(changes(viewer)).toHaveLength(1);
+      const stopped = { ...upgrade, stopped: true as const };
+      await t.send(ws, BASE + 70_000, { ...heartbeat(10), setup: stopped });
+      expect(JSON.parse(stored() ?? "null")).toEqual(stopped);
+      expect(changes(viewer).at(-1)).toEqual(["nodes"]);
+      await t.send(ws, BASE + 130_000, heartbeat(10));
+      expect(stored()).toBeNull();
+      expect(changes(viewer)).toHaveLength(3);
     });
 
     it("hears action results and inventories, and what the Worker announces", async () => {

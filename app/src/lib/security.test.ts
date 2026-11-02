@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { SecurityReport } from "../types";
 import {
+  dnsPortHeld,
   firewallName,
   findingTone,
   firewallPorts,
@@ -101,7 +102,21 @@ describe("the security check on screen", () => {
           findings: [{ id: "dns-stub", severity: "note", detail: "x" }],
         }),
       ).some((choice) => choice.id === "free-port-53"),
+    ).toBe(false);
+    expect(
+      recipeChoices(report({ recipes: ["free-port-53"] })).find(
+        (choice) => choice.id === "free-port-53",
+      )?.applied,
     ).toBe(true);
+  });
+
+  it("offers to free port 53 at deploy only while systemd-resolved holds it", () => {
+    const stub = { id: "dns-stub", severity: "note" as const, detail: "x" };
+    expect(dnsPortHeld(report({ findings: [stub] }))).toBe(true);
+    expect(
+      dnsPortHeld(report({ findings: [stub], recipes: ["free-port-53"] })),
+    ).toBe(false);
+    expect(dnsPortHeld(report())).toBe(false);
   });
 
   it("shows a protection set up by hand as on, without offering to change it", () => {
@@ -123,7 +138,6 @@ describe("the security check on screen", () => {
       ["no-root-login", false, false],
       ["fail2ban", false, true],
       ["firewall", false, true],
-      ["free-port-53", false, false],
     ]);
     expect(
       recommended(
@@ -172,6 +186,7 @@ describe("the security check on screen", () => {
 
   it("leaves the port 53 note out of the list, sorted worst first, and says what freeing it is for", () => {
     const found = report({
+      recipes: ["free-port-53"],
       findings: [
         { id: "dns-stub", severity: "note", detail: "port 53" },
         { id: "ssh-keys", severity: "note", detail: "keys" },

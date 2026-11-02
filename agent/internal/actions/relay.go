@@ -27,6 +27,8 @@ const (
 	maxProgress   = 10
 	progressGap   = 5 * time.Second
 	quickCheck    = 250 * time.Millisecond
+	setupStale    = time.Minute
+	setupKept     = 24 * time.Hour
 
 	ackedFile       = "acked.json"
 	reportsFile     = "reports"
@@ -51,9 +53,10 @@ type Relay struct {
 	Now        func() time.Time
 	Dir        string
 	Boot       func() string
-	Released   chan struct{}
+	Beat       chan struct{}
 
 	release   string
+	setup     string
 	mu        sync.Mutex
 	acked     string
 	sentList  string
@@ -337,6 +340,23 @@ func (r *Relay) Report(beat *reporter.Heartbeat) {
 			beat.Release = &release
 		}
 	}
+	beat.Setup = r.readSetup()
+}
+
+func (r *Relay) readSetup() *reporter.Setup {
+	progress, err := readState[setupProgress](r.StateDir, setupFile)
+	boot := ""
+	if r.Boot != nil {
+		boot = strings.TrimSpace(r.Boot())
+	}
+	if err != nil || progress.Phase == "" || progress.Boot != boot {
+		return nil
+	}
+	age := r.Now().Sub(progress.At)
+	if age > setupKept {
+		return nil
+	}
+	return &reporter.Setup{Phase: progress.Phase, Step: progress.Step, Of: progress.Of, Stopped: age > setupStale}
 }
 
 func (r *Relay) Answer(response reporter.HeartbeatResponse) error {
@@ -387,6 +407,7 @@ func (r *Relay) Watch(ctx context.Context, every time.Duration) {
 			}
 		case <-ticker.C:
 			r.noticeRelease()
+			r.noticeSetup()
 			if err := r.Poll(ctx); err != nil {
 				log.Printf("report service actions: %v", err)
 			}
@@ -400,8 +421,24 @@ func (r *Relay) noticeRelease() {
 		return
 	}
 	r.release = release.Token
+	r.beatSoon()
+}
+
+func (r *Relay) noticeSetup() {
+	seen := ""
+	if setup := r.readSetup(); setup != nil {
+		seen = fmt.Sprint(*setup)
+	}
+	if seen == r.setup {
+		return
+	}
+	r.setup = seen
+	r.beatSoon()
+}
+
+func (r *Relay) beatSoon() {
 	select {
-	case r.Released <- struct{}{}:
+	case r.Beat <- struct{}{}:
 	default:
 	}
 }

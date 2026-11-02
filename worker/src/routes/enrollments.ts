@@ -88,6 +88,8 @@ function installArgs(
     ...(setup.recommended ? ["recommended"] : []),
     ...(setup.docker ? ["docker"] : []),
     "confine",
+    "upgrade",
+    "restart",
   ];
   args.push("--setup", steps.join(","));
   if (setup.recommended && setup.rebootHour !== null) {

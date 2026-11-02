@@ -59,6 +59,30 @@ func TestDetectKnowsTheFamilies(t *testing.T) {
 	}
 }
 
+func TestUpgradeUpdatesEveryPackageKeepingConfigFiles(t *testing.T) {
+	env, run := onRelease(t, "debian 12")
+	if err := Upgrade(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 update -q",
+		"env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --with-new-pkgs upgrade -y -q",
+	}
+	if !slices.Equal(run.calls, want) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestUpgradeOnRHELUsesDnf(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	if err := Upgrade(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(run.calls, []string{"dnf upgrade -y -q"}) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
 func TestPackagesFollowTheFamily(t *testing.T) {
 	ctx := context.Background()
 	env, run := onRelease(t, "debian 13")

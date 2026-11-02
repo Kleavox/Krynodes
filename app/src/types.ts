@@ -4,6 +4,7 @@ import type {
   NetworkLink,
   PackagesReport,
   PendingRelease,
+  Setup,
   StackNetwork,
   TailnetRule,
   TailscaleReport,
@@ -64,6 +65,7 @@ export interface NodeRecord {
   grace_seconds?: number;
   updates?: UpdatesSummary | null;
   tailscale?: TailscaleReport | null;
+  setup?: Setup | null;
   network?: {
     state: "waiting" | "in" | "leaving";
     address: string | null;

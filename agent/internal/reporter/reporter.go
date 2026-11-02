@@ -39,6 +39,14 @@ type Heartbeat struct {
 	Events  []Event          `json:"events,omitempty"`
 	Release *Release         `json:"release,omitempty"`
 	Denials *Denials         `json:"denials,omitempty"`
+	Setup   *Setup           `json:"setup,omitempty"`
+}
+
+type Setup struct {
+	Phase   string `json:"phase"`
+	Step    int    `json:"step"`
+	Of      int    `json:"of"`
+	Stopped bool   `json:"stopped,omitempty"`
 }
 
 type Denials struct {
