@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -246,19 +247,6 @@ func runDaemon(args []string, once bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	client := stream.New(cfg.Endpoint, cfg.Token, version)
-	connection, closeConnection := context.WithCancel(ctx)
-	closed := make(chan struct{})
-	go func() {
-		client.Run(connection)
-		close(closed)
-	}()
-	defer func() {
-		closeConnection()
-		select {
-		case <-closed:
-		case <-time.After(3 * time.Second):
-		}
-	}()
 	relay := &actions.Relay{
 		RequestDir: actions.RequestDir,
 		StateDir:   actions.StateDir,
@@ -272,6 +260,20 @@ func runDaemon(args []string, once bool) error {
 			return string(id)
 		},
 	}
+	client.Deliver = relay.Enqueue
+	connection, closeConnection := context.WithCancel(ctx)
+	closed := make(chan struct{})
+	go func() {
+		client.Run(connection)
+		close(closed)
+	}()
+	defer func() {
+		closeConnection()
+		select {
+		case <-closed:
+		case <-time.After(3 * time.Second):
+		}
+	}()
 	monitoringCycle := cycle.New(client, host, requestFile{}, relay)
 
 	if once {
@@ -445,7 +447,7 @@ func enabledUnits() []string {
 }
 
 func restartedUnits() []string {
-	return []string{unitName + "-containers.service"}
+	return []string{unitName + "-containers.service", unitName + "-exec.path"}
 }
 
 func guardUnit(executable string) string {
@@ -514,10 +516,11 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 StateDirectory=%[1]s
+ReadWritePaths=-%[4]s/%[5]s
 
 [Install]
 WantedBy=multi-user.target
-`, accountName, executable, configPath)
+`, accountName, executable, configPath, actions.StateDir, actions.WakeDir)
 }
 
 func updaterUnit(executable string) string {
@@ -607,11 +610,12 @@ Description=Watch for Krynodes service action requests
 
 [Path]
 PathChanged=%s
+DirectoryNotEmpty=%s/%s
 Unit=%s-exec.service
 
 [Install]
 WantedBy=multi-user.target
-`, actions.RequestDir, unitName)
+`, actions.RequestDir, actions.StateDir, actions.WakeDir, unitName)
 }
 
 func execTimerUnit() string {
@@ -682,7 +686,7 @@ func prepareActionDirectories(uid, gid int) error {
 		return fmt.Errorf("prepare action request directory: %w", err)
 	}
 	modes := stateDirectoryModes()
-	for _, directory := range []string{actions.StateDir, filepath.Join(actions.StateDir, "results"), filepath.Join(actions.StateDir, "progress")} {
+	for _, directory := range slices.Sorted(maps.Keys(modes)) {
 		if err := claimDirectory(directory, 0, gid, modes[directory]); err != nil {
 			return fmt.Errorf("prepare %s: %w", directory, err)
 		}
@@ -693,8 +697,9 @@ func prepareActionDirectories(uid, gid int) error {
 func stateDirectoryModes() map[string]os.FileMode {
 	return map[string]os.FileMode{
 		actions.StateDir: 0o750,
-		filepath.Join(actions.StateDir, "results"):  0o750 | os.ModeSetgid,
-		filepath.Join(actions.StateDir, "progress"): 0o750 | os.ModeSetgid,
+		filepath.Join(actions.StateDir, "results"):       0o750 | os.ModeSetgid,
+		filepath.Join(actions.StateDir, "progress"):      0o750 | os.ModeSetgid,
+		filepath.Join(actions.StateDir, actions.WakeDir): 0o770 | os.ModeSticky,
 	}
 }
 

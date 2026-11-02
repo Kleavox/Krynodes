@@ -464,3 +464,36 @@ func TestTheStreamNeedsTLS13(t *testing.T) {
 		t.Fatal("the stream must need TLS 1.3")
 	}
 }
+
+func TestActionsInAPokeAreHandedOverAndTheCycleStillWakes(t *testing.T) {
+	srv, _ := server(t, func(p *peer) {
+		p.write(opText, []byte(`{"type":"poke","actions":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","kind":"docker","name":"resolver","action":"restart"}]}`), true)
+		for {
+			if _, _, err := p.read(); err != nil {
+				return
+			}
+		}
+	})
+	delivered := make(chan []reporter.ActionRequest, 1)
+	c := New(srv.URL, "token", "0.7.6")
+	c.Deliver = func(requests []reporter.ActionRequest) error {
+		delivered <- requests
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go c.Run(ctx)
+	select {
+	case requests := <-delivered:
+		if len(requests) != 1 || requests[0].ID != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || requests[0].Action != "restart" {
+			t.Fatalf("delivered %#v", requests)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the actions were not handed over")
+	}
+	select {
+	case <-c.Pokes():
+	case <-time.After(2 * time.Second):
+		t.Fatal("the cycle was not woken")
+	}
+}

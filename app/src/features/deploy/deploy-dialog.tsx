@@ -23,7 +23,7 @@ import type { BatchMode } from "@/types";
 import { useDeploySession } from "./use-deploy-session";
 import { useSignedAction } from "./use-signed-action";
 
-const MODES: { value: BatchMode; label: string; detail: string }[] = [
+export const MODES: { value: BatchMode; label: string; detail: string }[] = [
   {
     value: "rolling",
     label: "One at a time (recommended)",
@@ -33,7 +33,8 @@ const MODES: { value: BatchMode; label: string; detail: string }[] = [
   {
     value: "parallel",
     label: "All at Once",
-    detail: "Every server runs it at its next report.",
+    detail:
+      "Every server runs it at once; one before agent 0.7.6 at its next report.",
   },
 ];
 

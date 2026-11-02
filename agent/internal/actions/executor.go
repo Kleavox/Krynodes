@@ -78,6 +78,7 @@ type pending struct {
 }
 
 func (e Executor) Execute(ctx context.Context) error {
+	e.clearWake()
 	stopped, err := readState[[]string](e.StateDir, "stopped.json")
 	if err != nil {
 		return err
@@ -207,6 +208,19 @@ run:
 		}
 	}
 	return nil
+}
+
+func (e Executor) clearWake() {
+	wake := filepath.Join(e.StateDir, WakeDir)
+	entries, err := os.ReadDir(wake)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if err := os.Remove(filepath.Join(wake, entry.Name())); err != nil {
+			log.Printf("clear wake marker: %v", err)
+		}
+	}
 }
 
 func (e Executor) sealKey() (*ecdh.PrivateKey, error) {

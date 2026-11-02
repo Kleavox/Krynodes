@@ -49,6 +49,7 @@ export interface StreamState {
   left?: boolean;
   diskFull?: boolean;
   networkStamp?: string;
+  push?: boolean;
 }
 
 export interface Flush {

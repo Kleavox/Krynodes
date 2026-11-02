@@ -19,12 +19,14 @@ import (
 const (
 	RequestDir    = "/var/lib/kry/actions"
 	StateDir      = "/var/lib/kry-exec"
+	WakeDir       = "wake"
 	refreshMarker = "refresh"
 	maxReported   = 10
 	maxResultText = 65536
 	reportBudget  = 512 << 10
 	maxProgress   = 10
 	progressGap   = 5 * time.Second
+	quickCheck    = 250 * time.Millisecond
 
 	ackedFile       = "acked.json"
 	reportsFile     = "reports"
@@ -99,7 +101,28 @@ func (r *Relay) Enqueue(requests []Request) error {
 			return err
 		}
 	}
+	r.wake()
 	return nil
+}
+
+func (r *Relay) wake() {
+	r.note(os.WriteFile(filepath.Join(r.StateDir, WakeDir, "now"), nil, 0o640))
+}
+
+func (r *Relay) answered() bool {
+	entries, err := os.ReadDir(r.RequestDir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !requestName.MatchString(entry.Name()) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(r.StateDir, "results", entry.Name())); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Relay) Refresh() error {
@@ -113,7 +136,11 @@ func (r *Relay) Refresh() error {
 	if err := os.WriteFile(marker, nil, 0o640); err != nil {
 		return err
 	}
-	return os.Remove(marker)
+	if err := os.Remove(marker); err != nil {
+		return err
+	}
+	r.wake()
+	return nil
 }
 
 func (r *Relay) Poll(ctx context.Context) error {
@@ -345,10 +372,19 @@ func (r *Relay) Answer(response reporter.HeartbeatResponse) error {
 func (r *Relay) Watch(ctx context.Context, every time.Duration) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
+	quick := time.NewTicker(quickCheck)
+	defer quick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-quick.C:
+			if !r.answered() {
+				continue
+			}
+			if err := r.Poll(ctx); err != nil {
+				log.Printf("report service actions: %v", err)
+			}
 		case <-ticker.C:
 			r.noticeRelease()
 			if err := r.Poll(ctx); err != nil {
