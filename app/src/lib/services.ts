@@ -175,6 +175,11 @@ const WORDS: Record<ActionVerb, { verb: string; doing: string; done: string }> =
       doing: "Changing how containers are confined…",
       done: "Containers changed",
     },
+    boolean: {
+      verb: "Change Boolean",
+      doing: "Changing the SELinux boolean…",
+      done: "SELinux boolean changed",
+    },
   };
 
 export const STATE_LABEL: Record<ServiceState, string> = {

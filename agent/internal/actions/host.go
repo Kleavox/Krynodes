@@ -125,7 +125,7 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		(request.Name == "docker" && request.Action == "install") ||
 		(request.Name == "tailscale" && slices.Contains([]string{"signin", "join", "exitnode", "dns"}, request.Action)) ||
 		(request.Name == "firewall" && slices.Contains([]string{"open", "close", "putback"}, request.Action)) ||
-		(request.Name == "confinement" && request.Action == "containers") ||
+		(request.Name == "confinement" && (request.Action == "containers" || request.Action == "boolean")) ||
 		(!server && slices.Contains(Recipes, request.Name) && (request.Action == "apply" || request.Action == "undo")):
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
@@ -382,6 +382,8 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		return e.changeFirewall(ctx, request, command)
 	case "containers":
 		return e.confineContainers(ctx, request, command)
+	case "boolean":
+		return e.setBoolean(ctx, request, command)
 	}
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }

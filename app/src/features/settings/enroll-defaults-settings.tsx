@@ -100,22 +100,16 @@ export function ProtectionOptions<T extends SetupChoice>({
           </Select>
         </div>
       )}
-      <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={value.confine === true}
-          onChange={() => onChange({ ...value, confine: !value.confine })}
-        />
-        <span>
-          <span className="block font-medium">Turn On SELinux or AppArmor</span>
-          <span className="block text-xs text-muted-foreground">
-            SELinux on Rocky, Alma and RHEL, AppArmor on Debian and Ubuntu,
-            enforcing from the start. A server that has it switched off needs
-            one restart.
-          </span>
+      <p className="pl-6 text-sm">
+        <span className="block font-medium">
+          SELinux or AppArmor is turned on on every new server.
         </span>
-      </label>
+        <span className="block text-xs text-muted-foreground">
+          SELinux on Rocky, Alma and RHEL, AppArmor on Debian and Ubuntu,
+          enforcing from the start. A server that has it switched off needs one
+          restart.
+        </span>
+      </p>
     </div>
   );
 }

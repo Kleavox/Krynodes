@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { Confinement } from "../types";
 
 import {
+  BOOLEAN_LINE,
+  booleanProblem,
+  booleanTarget,
   confinementActionText,
-  confinementNote,
   confinementRow,
   confineText,
   denialLines,
@@ -51,11 +53,20 @@ describe("the SELinux or AppArmor row", () => {
     expect(confinementRow(selinux({ managed: true }))).toEqual({
       title: "SELinux",
       text: "Enforcing · managed by Krynodes",
-      actions: ["denials", "undo"],
+      actions: ["denials"],
     });
     expect(
       confinementRow(
         selinux({ mode: "disabled", managed: true, restart: true }),
+      ),
+    ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
+    expect(confinementRow(selinux({ mode: "kernel-off" }))).toMatchObject({
+      text: "Off · needs a restart",
+      actions: ["denials", "on"],
+    });
+    expect(
+      confinementRow(
+        selinux({ mode: "kernel-off", managed: true, restart: true }),
       ),
     ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
     expect(confinementRow(apparmor())).toEqual({
@@ -86,7 +97,7 @@ describe("the SELinux or AppArmor row", () => {
       ),
     ).toMatchObject({
       text: "Off · restart to finish · managed by Krynodes",
-      actions: ["denials", "undo"],
+      actions: ["denials"],
     });
     expect(
       confinementRow(
@@ -111,42 +122,24 @@ describe("the SELinux or AppArmor row", () => {
   it("confines containers only where Krynodes manages SELinux and Docker runs", () => {
     expect(
       confinementRow(selinux({ managed: true, docker: false })).actions,
-    ).toEqual(["denials", "containers", "undo"]);
+    ).toEqual(["denials", "containers"]);
     expect(
       confinementRow(selinux({ managed: true, docker: true })).actions,
-    ).toEqual(["denials", "uncontain", "undo"]);
+    ).toEqual(["denials", "uncontain"]);
     expect(confinementRow(selinux({ docker: false })).actions).toEqual([
       "denials",
       "manage",
     ]);
     expect(
       confinementRow(apparmor({ managed: true, docker: true })).actions,
-    ).toEqual(["denials", "undo"]);
-  });
-});
-
-describe("the grey note on Security", () => {
-  it("says only when it is permissive or off", () => {
-    expect(confinementNote(selinux({ mode: "permissive" }))).toBe(
-      "SELinux is permissive",
-    );
-    expect(confinementNote(selinux({ mode: "disabled" }))).toBe(
-      "SELinux is off",
-    );
-    expect(confinementNote(apparmor({ mode: "off" }))).toBe("AppArmor is off");
-    expect(confinementNote(apparmor({ mode: "kernel-off" }))).toBe(
-      "AppArmor is off",
-    );
-    expect(confinementNote(selinux())).toBeNull();
-    expect(confinementNote(apparmor({ complain: 2 }))).toBeNull();
-    expect(confinementNote(undefined)).toBeNull();
+    ).toEqual(["denials"]);
   });
 });
 
 describe("what each step says before it runs", () => {
   const none = { count: 0, lines: [] };
 
-  it("turns SELinux on, says what may stop, and that Undo is one click", () => {
+  it("turns SELinux on, says what may stop, and that it stays on", () => {
     const text = confineText(
       "on",
       selinux({ mode: "permissive", docker: false }),
@@ -167,21 +160,27 @@ describe("what each step says before it runs", () => {
     expect(text.title).toBe("Turn on SELinux on server-1?");
     expect(text.button).toBe("Turn On");
     expect(text.lines).toEqual([
-      "SELinux starts enforcing now. Krynodes first labels the SSH port and the home folders of users who log in with a key, so SSH keeps working.",
+      "SELinux starts enforcing now. Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.",
       "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
       "2 denials in the last 24 hours. What was denied stops working once SELinux enforces.",
       "Containers are not confined until you choose Confine Containers on this row.",
-      "Undo is one click and stops SELinux enforcing.",
+      "It stays on: Krynodes needs it on every server.",
     ]);
     expect(
       confineText("on", selinux({ mode: "disabled" }), "server-1", none, [])
         .lines,
     ).toEqual([
-      "SELinux is set to enforcing and finishes when you restart the server. The first boot labels every file and restarts once more. Krynodes first labels the SSH port and the home folders of users who log in with a key, so SSH keeps working.",
+      "SELinux is set to enforcing and finishes when you restart the server. The first boot labels every file and restarts once more. Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.",
       "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
       "No denials in the last 24 hours.",
-      "Undo is one click and stops SELinux enforcing.",
+      "It stays on: Krynodes needs it on every server.",
     ]);
+    expect(
+      confineText("on", selinux({ mode: "kernel-off" }), "server-1", none, [])
+        .lines[0],
+    ).toBe(
+      "SELinux is off when the server boots. Krynodes turns it on in the boot settings and sets it to enforcing, and it finishes when you restart the server. The first boot labels every file and restarts once more. Krynodes first labels the SSH port and the SSH keys of users who log in with a key, so SSH keeps working.",
+    );
     expect(
       confineText(
         "on",
@@ -206,7 +205,7 @@ describe("what each step says before it runs", () => {
         none,
         [],
       ).lines.at(-1),
-    ).toBe("Undo is one click and puts them back in complain mode.");
+    ).toBe("It stays on: Krynodes needs it on every server.");
     expect(
       confineText("on", apparmor({ mode: "off" }), "server-1", none, [])
         .lines[0],
@@ -225,9 +224,7 @@ describe("what each step says before it runs", () => {
         none,
         [],
       ).lines.at(-1),
-    ).toBe(
-      "Undo is one click and stops Krynodes managing it; AppArmor stays on.",
-    );
+    ).toBe("It stays on: Krynodes needs it on every server.");
   });
 
   it("lets Krynodes manage what is already enforcing", () => {
@@ -241,28 +238,12 @@ describe("what each step says before it runs", () => {
         "SELinux stays as it is.",
         "From then on a denied container stops its stack, and SELinux switched off outside Krynodes quarantines the server.",
         "Containers are not confined until you choose Confine Containers on this row.",
-        "Undo is one click and only stops Krynodes managing it.",
+        "It stays on: Krynodes needs it on every server.",
       ],
     });
   });
 
-  it("undoes, and confines containers naming every stack that restarts", () => {
-    expect(
-      confineText("undo", selinux({ managed: true }), "server-1", none, []),
-    ).toEqual({
-      title: "Undo SELinux on server-1?",
-      button: "Undo",
-      destructive: true,
-      lines: [
-        "SELinux goes back to how Krynodes found it: permissive if it was permissive or off, enforcing if it already was. Krynodes stops acting on its denials.",
-      ],
-    });
-    expect(
-      confineText("undo", apparmor({ managed: true }), "server-1", none, [])
-        .lines,
-    ).toEqual([
-      "Profiles Krynodes moved to enforce go back to complain mode; AppArmor stays on. Krynodes stops acting on its denials.",
-    ]);
+  it("confines containers naming every stack that restarts", () => {
     expect(
       confineText(
         "containers",
@@ -384,13 +365,14 @@ volumes:
 
 describe("what the history says", () => {
   it("names each confinement step", () => {
-    const step = (action: "apply" | "undo" | "containers") =>
+    const step = (action: "apply" | "undo" | "containers" | "boolean") =>
       confinementActionText({ kind: "host", name: "confinement", action });
     expect(step("apply")).toBe("Turn on SELinux or AppArmor");
     expect(step("undo")).toBe("Undo SELinux or AppArmor");
     expect(step("containers")).toBe(
       "Change whether SELinux confines containers",
     );
+    expect(step("boolean")).toBe("Change an SELinux boolean");
     expect(
       confinementActionText({
         kind: "host",
@@ -398,5 +380,52 @@ describe("what the history says", () => {
         action: "apply",
       }),
     ).toBeNull();
+  });
+});
+
+describe("Change Boolean", () => {
+  it("is offered where Krynodes manages SELinux on an agent that sets booleans", () => {
+    expect(
+      confinementRow(selinux({ managed: true, docker: true }), true).actions,
+    ).toEqual(["denials", "uncontain", "boolean"]);
+    expect(confinementRow(selinux({ managed: true }), true).actions).toEqual([
+      "denials",
+      "boolean",
+    ]);
+    expect(confinementRow(selinux({ managed: true })).actions).toEqual([
+      "denials",
+    ]);
+    expect(confinementRow(selinux(), true).actions).toEqual([
+      "denials",
+      "manage",
+    ]);
+    expect(confinementRow(apparmor({ managed: true }), true).actions).toEqual([
+      "denials",
+    ]);
+  });
+
+  it("sends the boolean's name and On or Off to the confinement target", () => {
+    expect(booleanTarget("n1", "httpd_can_network_connect", true)).toEqual({
+      nodeId: "n1",
+      kind: "host",
+      name: "confinement",
+      args: { name: "httpd_can_network_connect", on: "1" },
+    });
+    expect(
+      booleanTarget("n1", "httpd_can_network_connect", false).args,
+    ).toEqual({ name: "httpd_can_network_connect", on: "0" });
+  });
+
+  it("takes a boolean's name and says it does not quarantine the server", () => {
+    expect(booleanProblem("httpd_can_network_connect")).toBeNull();
+    expect(booleanProblem("")).toBeNull();
+    for (const name of ["Httpd", "httpd-x", "a;b", "_httpd"]) {
+      expect(booleanProblem(name), name).toBe(
+        "A boolean is lowercase letters, digits and _, like httpd_can_network_connect.",
+      );
+    }
+    expect(BOOLEAN_LINE).toBe(
+      "Krynodes sets it for good and marks the change first, so it does not quarantine the server.",
+    );
   });
 });

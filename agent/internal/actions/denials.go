@@ -262,6 +262,8 @@ func (e Executor) watchDenials(ctx context.Context) {
 	restart := found.Restart || (applied.Saved["restart"] == "1" && found.Mode == confine.KernelOff)
 	if managed && !marked && !restart {
 		switch {
+		case found.System == confine.SELinux && found.Mode == confine.KernelOff:
+			raise("mode", "SELinux was turned off at boot outside Krynodes")
 		case found.System == confine.SELinux && found.Mode != confine.Enforcing:
 			raise("mode", "SELinux was set to "+found.Mode+" outside Krynodes")
 		case found.System == confine.AppArmor && found.Mode != confine.On:

@@ -1,4 +1,7 @@
-import { agentHasSecurity } from "@krynodes/protocol/versions";
+import {
+  agentHasSecurity,
+  agentSetsBooleans,
+} from "@krynodes/protocol/versions";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -34,11 +37,7 @@ import {
 } from "@/components/ui/select";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import { useNetwork, useScan, useServices } from "@/lib/api";
-import {
-  confinementNote,
-  confinementRow,
-  type ConfineStep,
-} from "@/lib/confine";
+import { confinementRow, type ConfineStep } from "@/lib/confine";
 import { agentCurrent } from "@/lib/devices";
 import {
   closedText,
@@ -71,7 +70,11 @@ import {
 import { cn } from "@/lib/utils";
 import type { NodeRecord } from "@/types";
 
-import { ConfineDialog, DenialsDialog } from "./confinement-dialogs";
+import {
+  BooleanDialog,
+  ConfineDialog,
+  DenialsDialog,
+} from "./confinement-dialogs";
 
 const sectionTitle = "text-xs font-medium text-muted-foreground";
 
@@ -362,7 +365,7 @@ const CONFINE_LABELS: Record<
   on: { label: "Turn On" },
   containers: { label: "Confine Containers" },
   uncontain: { label: "Stop Confining Containers", destructive: true },
-  undo: { label: "Undo", destructive: true },
+  boolean: { label: "Change Boolean" },
 };
 
 export function SecurityPanel({
@@ -395,8 +398,7 @@ export function SecurityPanel({
   const unsupported = report.platform?.family === null;
   const findings = shownFindings(report);
   const found = report.confinement;
-  const note = confinementNote(found);
-  const confine = confinementRow(found);
+  const confine = confinementRow(found, agentSetsBooleans(node.agent_version));
   return (
     <section aria-labelledby="node-security">
       <div className="mb-2 flex min-h-8 items-center gap-2">
@@ -418,7 +420,7 @@ export function SecurityPanel({
         </Button>
       </div>
       <div className="divide-y rounded-lg border bg-card">
-        {(findings.length > 0 || note) && (
+        {findings.length > 0 && (
           <ul className="space-y-1.5 p-3 text-sm">
             {findings.map((finding) => (
               <li key={finding.id} className="flex gap-2">
@@ -447,14 +449,6 @@ export function SecurityPanel({
                 </span>
               </li>
             ))}
-            {note && (
-              <li className="flex gap-2 text-muted-foreground">
-                <span className="pt-1.5">
-                  <StatusDot tone="idle" />
-                </span>
-                <span className="min-w-0">{note}</span>
-              </li>
-            )}
           </ul>
         )}
         <div className="flex flex-wrap items-center gap-2 px-3 py-2">
@@ -606,16 +600,22 @@ export function SecurityPanel({
           onClose={() => setConfining(null)}
         />
       )}
-      {found && confining && confining !== "denials" && (
-        <ConfineDialog
-          key={confining}
-          node={node}
-          found={found}
-          step={confining}
-          stacks={(entry?.stacks ?? []).map((stack) => stack.project)}
-          onClose={() => setConfining(null)}
-        />
+      {confining === "boolean" && (
+        <BooleanDialog node={node} onClose={() => setConfining(null)} />
       )}
+      {found &&
+        confining &&
+        confining !== "denials" &&
+        confining !== "boolean" && (
+          <ConfineDialog
+            key={confining}
+            node={node}
+            found={found}
+            step={confining}
+            stacks={(entry?.stacks ?? []).map((stack) => stack.project)}
+            onClose={() => setConfining(null)}
+          />
+        )}
       <RecipeDialog
         key={JSON.stringify(pending)}
         node={node}

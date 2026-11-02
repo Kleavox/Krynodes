@@ -128,3 +128,86 @@ func TestDockerInstalledWhileSELinuxIsManagedConfinesFromTheStart(t *testing.T) 
 		t.Fatalf("args %v", args)
 	}
 }
+
+func TestChangeBooleanSetsItForGoodInsideTheMarkSoItsPolicyLoadNeverCounts(t *testing.T) {
+	executor, run := selinuxWatch(t, true, "")
+	clock := executorNow
+	executor.Now = func() time.Time { return clock }
+	run.respond["getsebool httpd_can_network_connect"] = "httpd_can_network_connect --> off\n"
+	marked := false
+	run.effects = map[string]func(){"setsebool -P httpd_can_network_connect on": func() {
+		_, err := os.Stat(filepath.Join(executor.StateDir, confinementMark))
+		marked = err == nil
+		clock = clock.Add(3 * time.Minute)
+	}}
+	result := hostRun(t, executor, hostRequest(t, idA, "confinement", "boolean", map[string]string{"name": "httpd_can_network_connect", "on": "1"}))
+	if !result.OK || result.Output != "httpd_can_network_connect is on now (was off)" {
+		t.Fatalf("result %#v calls %q", result, run.calls)
+	}
+	if !marked {
+		t.Fatal("the mark is written before setsebool")
+	}
+	appendAudit(t, executor, fmt.Sprintf(`type=MAC_POLICY_LOAD msg=audit(%d.000:2): lsm=selinux res=1`, clock.Unix()))
+	clock = clock.Add(30 * time.Second)
+	executor.watchDenials(context.Background())
+	if events := readEvents(t, executor); len(events) != 0 {
+		t.Fatalf("Krynodes' own boolean counts: %+v", events)
+	}
+
+	appendAudit(t, executor, fmt.Sprintf(`type=MAC_POLICY_LOAD msg=audit(%d.000:3): lsm=selinux res=1`, clock.Add(5*time.Minute).Unix()))
+	clock = clock.Add(5*time.Minute + 30*time.Second)
+	executor.watchDenials(context.Background())
+	if strong := eventsOfKind(t, executor, "confinement"); len(strong) != 1 {
+		t.Fatalf("a policy load after the mark still counts: %+v", strong)
+	}
+}
+
+func TestChangeBooleanRefusesWhatItCannotSetAndSkipsWhatIsSet(t *testing.T) {
+	executor, run := selinuxWatch(t, true, "")
+	run.respond["getsebool httpd_can_network_connect"] = "httpd_can_network_connect --> on\n"
+	run.failing = map[string]string{"getsebool nope": "getsebool:  Error getting active value for nope\n"}
+	ask := func(id string, args map[string]string) Result {
+		return hostRun(t, executor, hostRequest(t, id, "confinement", "boolean", args))
+	}
+	if result := ask(idA, map[string]string{"name": "httpd_can_network_connect", "on": "1"}); !result.OK || result.Output != "httpd_can_network_connect is already on" {
+		t.Fatalf("already on %#v", result)
+	}
+	if result := ask(idB, map[string]string{"name": "nope", "on": "1"}); result.OK || !strings.Contains(result.Output, "SELinux has no boolean nope") {
+		t.Fatalf("unknown %#v", result)
+	}
+	for index, args := range []map[string]string{
+		{"name": "Bad;name", "on": "1"},
+		{"name": "httpd_can_network_connect", "on": "yes"},
+		{"name": "httpd_can_network_connect"},
+	} {
+		if result := ask(fmt.Sprintf("00000000-0000-4000-8000-%012d", index+1), args); result.OK {
+			t.Fatalf("%v %#v", args, result)
+		}
+	}
+	for _, call := range run.calls {
+		if strings.HasPrefix(call, "setsebool") || strings.Contains(call, "Bad;name") {
+			t.Fatalf("calls %q", run.calls)
+		}
+	}
+
+	executor, run = apparmorWatch(t, "")
+	if result := hostRun(t, executor, hostRequest(t, idA, "confinement", "boolean", map[string]string{"name": "httpd_can_network_connect", "on": "1"})); result.OK || !strings.Contains(result.Output, "SELinux managed by Krynodes") {
+		t.Fatalf("apparmor %#v", result)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool {
+		return strings.HasPrefix(call, "getsebool") || strings.HasPrefix(call, "setsebool")
+	}) {
+		t.Fatalf("calls %q", run.calls)
+	}
+}
+
+func TestChangeBooleanGoesToTheHostUnitSigned(t *testing.T) {
+	executor, _ := selinuxWatch(t, true, "")
+	writeRequest(t, executor.RequestDir, idA+".json", hostRequest(t, idA, "confinement", "boolean", map[string]string{"name": "httpd_can_network_connect", "on": "1"}))
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "host", idA+".json")); err != nil {
+		t.Fatal(err)
+	}
+}

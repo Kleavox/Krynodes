@@ -19,6 +19,7 @@ import {
   TRUST_CHANGE_MS,
   isValidTarget,
   parseStackNames,
+  SELINUX_BOOLEAN,
   stackEntrySchema,
   stackTitleValid,
 } from "./index";
@@ -1500,13 +1501,31 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     stack: "panel",
   };
 
-  it("turns on, undoes and confines containers, signed", () => {
+  it("turns on and confines containers, signed, and is never undone", () => {
     expect(parses("confinement", "apply")).toBe(true);
-    expect(parses("confinement", "undo")).toBe(true);
+    expect(parses("confinement", "undo")).toBe(false);
     expect(parses("confinement", "containers")).toBe(true);
     expect(parses("confinement", "containers", false)).toBe(false);
     expect(parses("firewall", "containers")).toBe(false);
     expect(parses("server", "containers")).toBe(false);
+  });
+
+  it("sets an SELinux boolean, signed, only through confinement", () => {
+    expect(parses("confinement", "boolean")).toBe(true);
+    expect(parses("confinement", "boolean", false)).toBe(false);
+    expect(parses("firewall", "boolean")).toBe(false);
+    expect(parses("server", "boolean")).toBe(false);
+    expect(SELINUX_BOOLEAN.test("httpd_can_network_connect")).toBe(true);
+    for (const name of [
+      "Httpd",
+      "_httpd",
+      "httpd-x",
+      "a;b",
+      "a".repeat(65),
+      "",
+    ]) {
+      expect(SELINUX_BOOLEAN.test(name), name).toBe(false);
+    }
   });
 
   it("reports what the server has, managed or not", () => {

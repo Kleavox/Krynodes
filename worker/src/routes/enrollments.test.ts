@@ -111,7 +111,7 @@ describe("enrollment tokens", () => {
     expect(served.status).toBe(200);
     expect(served.text.startsWith("#!/bin/sh\n")).toBe(true);
     expect(tail(served.text)).toBe(
-      `{\n  kry_args='https://kry.example.workers.dev ${token}'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.workers.dev ${token} --setup confine'\n  main $kry_args\n}\n`,
     );
     expect(served.text).not.toContain('main "$@"');
   });
@@ -124,7 +124,7 @@ describe("enrollment tokens", () => {
       rebootHour: 20,
     });
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker --reboot-hour 20'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine --reboot-hour 20'\n  main $kry_args\n}\n`,
     );
     const changed = await request("PATCH", `/api/enrollments/${id}`, {
       recommended: false,
@@ -133,7 +133,7 @@ describe("enrollment tokens", () => {
     });
     expect(changed.status).toBe(200);
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine'\n  main $kry_args\n}\n`,
     );
     expect(
       (
@@ -176,7 +176,7 @@ describe("enrollment tokens", () => {
     });
     const flags = `--admin user1 --admin-key ${blob(LAPTOP)}:user1-laptop --admin-key ${blob(PHONE)}:phone`;
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker ${flags}'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine ${flags}'\n  main $kry_args\n}\n`,
     );
     await request("PUT", "/api/settings/enroll-defaults", {
       recommended: true,
@@ -204,39 +204,29 @@ describe("enrollment tokens", () => {
     expect(tail((await script(token)).text)).toContain(flags);
   });
 
-  it("turns on SELinux or AppArmor when it is ticked, and keeps it as a default", async () => {
+  it("turns on SELinux or AppArmor on every new server, whatever is sent or stored", async () => {
     const { create, script, request } = fleet();
-    const { token } = await create({ recommended: true, confine: true });
+    const { token } = await create({ recommended: true, confine: false });
     expect(tail((await script(token)).text)).toContain(
       "--setup recommended,confine",
     );
-    const alone = await create({ confine: true });
-    expect(tail((await script(alone.token)).text)).toContain(
-      "--setup confine'",
-    );
     const without = await create({ docker: true });
-    expect(tail((await script(without.token)).text)).not.toContain("confine");
+    expect(tail((await script(without.token)).text)).toContain(
+      "--setup docker,confine'",
+    );
     expect(
       (
         await request("PUT", "/api/settings/enroll-defaults", {
           recommended: true,
           docker: true,
           hour: 3,
-          confine: true,
+          confine: false,
         })
       ).status,
     ).toBe(200);
     expect(
       await (await request("GET", "/api/settings/enroll-defaults")).json(),
-    ).toMatchObject({ confine: true });
-    await request("PUT", "/api/settings/enroll-defaults", {
-      recommended: true,
-      docker: true,
-      hour: 3,
-    });
-    expect(
-      await (await request("GET", "/api/settings/enroll-defaults")).json(),
-    ).toMatchObject({ confine: false });
+    ).not.toHaveProperty("confine");
   });
 
   it("adds no admin user when Enroll Defaults has no keys", async () => {
@@ -272,14 +262,14 @@ describe("enrollment tokens", () => {
     const { create, script, sqlite } = fleet();
     const { token } = await create({ docker: true, network: true });
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine'\n  main $kry_args\n}\n`,
     );
     sqlite.exec(
       `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
        VALUES ('standalone', '10.88.4.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
     );
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker --network 10.88.4.0/24'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine --network 10.88.4.0/24'\n  main $kry_args\n}\n`,
     );
     sqlite.exec("UPDATE network SET deleted = 1");
     expect(tail((await script(token)).text)).not.toContain("--network");

@@ -240,7 +240,6 @@ export interface SetupChoice {
   docker: boolean;
   hour: number;
   network: boolean;
-  confine?: boolean;
   adminUser?: boolean;
   adminName?: string;
 }
@@ -250,7 +249,6 @@ export interface EnrollDefaults {
   docker: boolean;
   hour: number;
   network: boolean;
-  confine: boolean;
   keys: AdminKey[];
 }
 

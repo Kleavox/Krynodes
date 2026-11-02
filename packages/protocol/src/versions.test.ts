@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import * as versions from "./versions";
 import {
   agentHasFeatures,
+  agentSetsBooleans,
+  BOOLEAN_AGENT,
   agentHasSecurity,
   agentSupported,
   agentTakesPush,
@@ -60,14 +62,25 @@ describe("agent versions", () => {
     expect(agentTakesPush(null)).toBe(false);
   });
 
+  it("sets SELinux booleans from agent 0.7.7", () => {
+    expect(BOOLEAN_AGENT).toBe("0.7.7");
+    expect(agentSetsBooleans("0.7.7")).toBe(true);
+    expect(agentSetsBooleans("0.7.10")).toBe(true);
+    expect(agentSetsBooleans("0.7.6")).toBe(false);
+    expect(agentSetsBooleans("dev")).toBe(true);
+    expect(agentSetsBooleans(null)).toBe(false);
+  });
+
   it("keeps the feature gates above the minimum and none below it", () => {
     expect(Object.keys(versions).sort()).toEqual([
+      "BOOLEAN_AGENT",
       "FEATURE_AGENT",
       "MIN_AGENT_VERSION",
       "PUSH_AGENT",
       "SECURITY_AGENT",
       "agentHasFeatures",
       "agentHasSecurity",
+      "agentSetsBooleans",
       "agentSupported",
       "agentTakesPush",
       "compareVersions",

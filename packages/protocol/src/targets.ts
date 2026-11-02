@@ -2,6 +2,7 @@ const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$/u;
 const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
 export const BRIDGE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/u;
 const APT_NAME = /^[a-z0-9][a-z0-9+.-]{0,127}$/u;
+export const SELINUX_BOOLEAN = /^[a-z][a-z0-9_]{0,63}$/u;
 export const CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{1,127}$/u;
 export const SERVICE_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
 const MAX_STACK_NAMES = 64;

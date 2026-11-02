@@ -18,7 +18,7 @@ var fakeTools = map[string]string{
 	"openssl":   "exit 0\n",
 	"install":   "exit 0\n",
 	"systemctl": "echo \"systemctl $*\" >> \"$LOG\"\n",
-	"kry":       "echo \"kry $*\" >> \"$LOG\"\nif [ \"$1\" = version ]; then echo 0.6.0; fi\nif [ \"$1\" = setup ] && [ -n \"$FAIL_SETUP\" ]; then exit 1; fi\nexit 0\n",
+	"kry":       "echo \"kry $*\" >> \"$LOG\"\nif [ \"$1\" = version ]; then echo 0.6.0; fi\nif [ \"$1\" = setup ] && [ \"${3:-}\" = --check ] && [ -n \"${FAIL_CHECK:-}\" ]; then echo \"this server has neither SELinux nor AppArmor\" >&2; exit 1; fi\nif [ \"$1\" = setup ] && [ -n \"$FAIL_SETUP\" ]; then exit 1; fi\nexit 0\n",
 }
 
 func runInstaller(t *testing.T, failSetup bool, args ...string) (string, string, error) {
@@ -83,6 +83,21 @@ func TestTheInstallerTurnsOnSELinuxOrAppArmorWhenTheSetupAsks(t *testing.T) {
 	}
 	if _, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--setup", "everything"); err == nil || !strings.Contains(output, "--setup takes recommended, confine, docker or more") {
 		t.Fatalf("%v\n%s", err, output)
+	}
+}
+
+func TestTheInstallerChecksSELinuxOrAppArmorBeforeItEnrolls(t *testing.T) {
+	log, output, err := runInstaller(t, false, "https://kry.example", "token-1", "--setup", "recommended,confine")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	if !strings.HasPrefix(log, "kry setup --confine --check\nkry enroll --endpoint https://kry.example --token token-1\n") {
+		t.Fatalf("log\n%s", log)
+	}
+	t.Setenv("FAIL_CHECK", "1")
+	log, output, err = runInstaller(t, false, "https://kry.example", "token-1", "--setup", "confine")
+	if err == nil || strings.Contains(log, "kry enroll") || !strings.Contains(output, "neither SELinux nor AppArmor") || !strings.Contains(output, "The server was not added.") {
+		t.Fatalf("%v\nlog\n%s\noutput\n%s", err, log, output)
 	}
 }
 

@@ -187,6 +187,14 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
   fi
   install -m 0755 "$tmp/$artifact" "$bin"
 
+  case ",$setup," in
+    *,confine,*)
+      if ! "$bin" setup --confine --check; then
+        echo "The server was not added." >&2
+        exit 1
+      fi
+      ;;
+  esac
   if [ "$mode" = "enroll" ]; then
     "$bin" enroll --endpoint "$endpoint" --token "$token"
   fi

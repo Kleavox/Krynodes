@@ -1,5 +1,6 @@
 import { pokeSoon, unchangedList } from "../fleet/client";
 import {
+  BOOLEAN_AGENT,
   FEATURE_AGENT,
   FIREWALL_VERBS,
   KIND_VERBS,
@@ -9,6 +10,7 @@ import {
   UNSIGNED_VERBS,
   agentHasFeatures,
   agentHasSecurity,
+  agentSetsBooleans,
   agentSupported,
   hostVerbFits,
   isProtectedTarget,
@@ -22,6 +24,7 @@ import { z } from "zod";
 import { requestRefresh } from "../actions/inventory";
 import {
   adminArgsValid,
+  booleanArgsValid,
   bridgeArgsValid,
   firewallArgsValid,
   hasStackNameArgs,
@@ -113,6 +116,7 @@ const actionRequestSchema = z.object({
     "close",
     "putback",
     "containers",
+    "boolean",
   ]),
   mode: z.enum(["rolling", "parallel"]).default("rolling"),
   targets: z
@@ -204,12 +208,14 @@ const signedArgsFit = (
     ? bridgeArgsValid(action, args)
     : target.kind === "host" && action === "admin"
       ? adminArgsValid(args)
-      : changesFirewall(target, action, args)
-        ? firewallArgsValid(action, args)
-        : onOff(target, action)
-          ? onOffArgsValid(args)
-          : target.kind !== "compose" ||
-            (stackNetworkArgsValid(args) && stackNameArgsValid(args));
+      : target.kind === "host" && action === "boolean"
+        ? booleanArgsValid(args)
+        : changesFirewall(target, action, args)
+          ? firewallArgsValid(action, args)
+          : onOff(target, action)
+            ? onOffArgsValid(args)
+            : target.kind !== "compose" ||
+              (stackNetworkArgsValid(args) && stackNameArgsValid(args));
 
 const askedFits = (
   kind: string,
@@ -271,6 +277,33 @@ export function toActionRecord(row: ActionRow) {
   };
 }
 
+interface Confined {
+  system?: "selinux" | "apparmor" | null;
+  mode?: string | null;
+  complain?: number | null;
+  managed?: boolean;
+  restart?: boolean;
+}
+
+function confinementFinding(
+  found: Confined | undefined,
+): { id: "confinement"; severity: "warning"; detail: string } | null {
+  if (!found?.system) return null;
+  const name = found.system === "selinux" ? "SELinux" : "AppArmor";
+  const detail = found.managed
+    ? found.restart
+      ? `${name} finishes at the next restart`
+      : null
+    : found.mode === "permissive"
+      ? "SELinux is permissive"
+      : found.mode === "on" && found.complain
+        ? `AppArmor has ${found.complain} ${found.complain === 1 ? "profile" : "profiles"} in complain mode`
+        : found.mode === "enforcing" || found.mode === "on"
+          ? `${name} enforces, but Krynodes does not manage it`
+          : `${name} is off`;
+  return detail ? { id: "confinement", severity: "warning", detail } : null;
+}
+
 function securityReport(
   text: string | null,
   ranges: string[],
@@ -281,6 +314,7 @@ function securityReport(
   const report = parsed(text) as {
     findings?: unknown;
     listeners?: Listener[];
+    confinement?: Confined;
     platform?: {
       name: string;
       id?: unknown;
@@ -301,6 +335,9 @@ function securityReport(
     if (finding && Array.isArray(report.findings))
       report.findings.push(finding);
   }
+  const confined = confinementFinding(report.confinement);
+  if (confined && Array.isArray(report.findings))
+    report.findings.push(confined);
   const { listeners, ...shown } = Array.isArray(report.findings)
     ? filterListeners(
         report as { findings: Finding[]; listeners?: Listener[] },
@@ -594,6 +631,20 @@ export function registerServiceRoutes(
     const parsed = actionRequestSchema.safeParse(await readJson(context));
     if (!parsed.success) return invalidRequest(context);
     const { action, mode, targets, then } = parsed.data;
+    if (
+      action === "undo" &&
+      targets.some(
+        (target) => target.kind === "host" && target.name === "confinement",
+      )
+    ) {
+      return context.json(
+        {
+          code: "STAYS_ON",
+          message: "SELinux and AppArmor stay on once Krynodes manages them.",
+        },
+        400,
+      );
+    }
     const unsigned = (UNSIGNED_VERBS as readonly string[]).includes(action);
     const logs = action === "logs";
     if (
@@ -788,6 +839,21 @@ export function registerServiceRoutes(
         {
           code: "AGENT_TOO_OLD",
           message: `Update the agent on ${byId.get(unready.nodeId)!.name} to ${SECURITY_AGENT} or newer.`,
+        },
+        422,
+      );
+    }
+    const unset = targets.find(
+      (target) =>
+        target.kind === "host" &&
+        action === "boolean" &&
+        !agentSetsBooleans(byId.get(target.nodeId)!.agent_version),
+    );
+    if (unset) {
+      return context.json(
+        {
+          code: "AGENT_TOO_OLD",
+          message: `Update the agent on ${byId.get(unset.nodeId)!.name} to ${BOOLEAN_AGENT} or newer.`,
         },
         422,
       );

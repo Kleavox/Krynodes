@@ -1252,10 +1252,10 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     return { ...t, send };
   }
 
-  it("turns on, undoes and confines containers on agent 0.7.4 only", async () => {
+  it("turns on and confines containers on agent 0.7.4 only, and never undoes", async () => {
     const t = current();
     expect((await t.send("apply", A)).status).toBe(201);
-    expect((await t.send("undo", A)).status).toBe(201);
+    expect((await t.send("undo", A)).status).toBe(400);
     for (const on of ["1", "0"]) {
       expect((await t.send("containers", A, { on })).status, on).toBe(201);
     }
@@ -1282,6 +1282,57 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
         message: expect.stringContaining("0.7.4"),
       });
     }
+  });
+
+  it("refuses an Undo by name: SELinux and AppArmor stay on", async () => {
+    const t = current();
+    const undo = await t.send("undo", A);
+    expect(undo.status).toBe(400);
+    expect(await reply(undo)).toMatchObject({
+      code: "STAYS_ON",
+      message: "SELinux and AppArmor stay on once Krynodes manages them.",
+    });
+  });
+
+  it("sets an SELinux boolean by name, on or off, on agent 0.7.7 only", async () => {
+    const t = current();
+    const version = (value: string) =>
+      t.sqlite
+        .prepare("UPDATE nodes SET agent_version = ? WHERE id = ?")
+        .run(value, A);
+    version("0.7.7");
+    for (const on of ["1", "0"]) {
+      const sent = await t.send("boolean", A, {
+        name: "httpd_can_network_connect",
+        on,
+      });
+      expect(sent.status, on).toBe(201);
+    }
+    for (const args of [
+      { name: "httpd_can_network_connect", on: "yes" },
+      { name: "Bad;name", on: "1" },
+      { name: "httpd_can_network_connect" },
+      { name: "httpd_can_network_connect", on: "1", more: "1" },
+      {},
+    ] as Record<string, string>[]) {
+      expect(
+        (await t.send("boolean", A, args)).status,
+        JSON.stringify(args),
+      ).toBe(400);
+    }
+    expect(
+      (await t.send("boolean", A, { name: "x", on: "1" }, "firewall")).status,
+    ).toBe(400);
+    version("0.7.6");
+    const behind = await t.send("boolean", A, {
+      name: "httpd_can_network_connect",
+      on: "1",
+    });
+    expect(behind.status).toBe(422);
+    expect(await reply(behind)).toMatchObject({
+      code: "AGENT_TOO_OLD",
+      message: expect.stringContaining("0.7.7"),
+    });
   });
 });
 
@@ -1367,5 +1418,93 @@ describe("the end of life on a security report", () => {
       security.findings.filter((finding) => finding.id === "os-eol"),
     ).toHaveLength(1);
     expect(security.platform).not.toHaveProperty("endOfLife");
+  });
+});
+
+describe("SELinux or AppArmor on a security report", () => {
+  const report = (confinement?: Record<string, unknown>) =>
+    JSON.stringify({
+      checkedAt: "2026-10-05T10:00:00.000Z",
+      findings: [],
+      recipes: [],
+      lockdown: false,
+      rebootHour: null,
+      ...(confinement ? { confinement } : {}),
+    });
+  const found = (change: Record<string, unknown>) => ({
+    system: "selinux",
+    mode: "enforcing",
+    enforced: null,
+    complain: null,
+    managed: true,
+    restart: false,
+    docker: null,
+    ...change,
+  });
+  const markOf = async (confinement?: Record<string, unknown>) => {
+    const { sqlite, call } = setup();
+    sqlite
+      .prepare("UPDATE nodes SET security = ? WHERE id = ?")
+      .run(report(confinement), A);
+    const body = (await (await call("GET", "/api/services")).json()) as {
+      nodes: {
+        id: string;
+        security: {
+          findings: { id: string; severity: string; detail: string }[];
+        };
+      }[];
+    };
+    return body.nodes
+      .find((node) => node.id === A)!
+      .security.findings.filter((finding) => finding.id === "confinement");
+  };
+
+  it("marks a server where Krynodes does not manage it, or a restart is due", async () => {
+    for (const [change, detail] of [
+      [{ managed: false, mode: "disabled" }, "SELinux is off"],
+      [{ managed: false, mode: "kernel-off" }, "SELinux is off"],
+      [{ managed: false, mode: "permissive" }, "SELinux is permissive"],
+      [
+        { managed: false, mode: "enforcing" },
+        "SELinux enforces, but Krynodes does not manage it",
+      ],
+      [
+        { restart: true, mode: "disabled" },
+        "SELinux finishes at the next restart",
+      ],
+      [{ system: "apparmor", managed: false, mode: "off" }, "AppArmor is off"],
+      [
+        {
+          system: "apparmor",
+          managed: false,
+          mode: "on",
+          enforced: 8,
+          complain: 2,
+        },
+        "AppArmor has 2 profiles in complain mode",
+      ],
+      [
+        {
+          system: "apparmor",
+          managed: false,
+          mode: "on",
+          enforced: 8,
+          complain: 0,
+        },
+        "AppArmor enforces, but Krynodes does not manage it",
+      ],
+    ] as const) {
+      expect(await markOf(found(change)), detail).toEqual([
+        { id: "confinement", severity: "warning", detail },
+      ]);
+    }
+  });
+
+  it("leaves a managed server, an old agent and a server with neither unmarked", async () => {
+    expect(await markOf(found({}))).toEqual([]);
+    expect(await markOf()).toEqual([]);
+    expect(
+      await markOf(found({ system: null, mode: null, managed: false })),
+    ).toEqual([]);
   });
 });

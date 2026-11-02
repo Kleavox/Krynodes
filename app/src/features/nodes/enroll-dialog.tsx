@@ -43,7 +43,6 @@ const FALLBACK: SetupChoice = {
   docker: true,
   hour: 3,
   network: false,
-  confine: false,
 };
 
 export function EnrollDialog({

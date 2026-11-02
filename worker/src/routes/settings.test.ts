@@ -68,7 +68,6 @@ describe("enroll defaults", () => {
       docker: true,
       hour: 3,
       network: false,
-      confine: false,
       keys: [],
     });
     const saved = await call("PUT", "/api/settings/enroll-defaults", {
@@ -84,7 +83,6 @@ describe("enroll defaults", () => {
       docker: false,
       hour: 22,
       network: false,
-      confine: false,
       keys: [],
     });
   });
