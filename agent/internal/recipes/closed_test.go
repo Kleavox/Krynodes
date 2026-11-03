@@ -177,6 +177,24 @@ func TestFirewalldClosesInTheZoneOfTheDefaultRoute(t *testing.T) {
 	}
 }
 
+func TestStoppedFirewalldRemovesAServiceWithTheOfflineZoneFlag(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	write(t, env, "/proc/net/route", "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\nens3\t00000000\t0100000A\t0003\t0\t0\t0\t00000000\n")
+	run.respond["firewall-cmd --state"] = "not running\n"
+	run.respond["sshd -T"] = "port 22\n"
+	run.respond["firewall-offline-cmd --get-zone-of-interface=ens3"] = "public\n"
+	run.respond["firewall-offline-cmd --zone=public --list-services"] = "cockpit dhcpv6-client ssh\n"
+	run.respond["firewall-offline-cmd --info-service=cockpit"] = "cockpit\n  ports: 9090/tcp\n  protocols: \n"
+	write(t, env, "/etc/firewalld/zones/public.xml", "<zone/>\n")
+	if _, err := Apply(context.Background(), env, "firewall", map[string]string{"closed": "1", NetworkPort: "51821"}); err != nil {
+		t.Fatal(err)
+	}
+	mustCall(t, run, "firewall-offline-cmd --zone=public --remove-service-from-zone=cockpit", "systemctl enable --now firewalld")
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "--remove-service=") }) {
+		t.Fatalf("lokkit's --remove-service cannot take --zone: %q", run.calls)
+	}
+}
+
 func TestOneOpenPortChangesAlone(t *testing.T) {
 	env, run := closedUfw(t, true)
 	before, _ := network.ParseOpening("8443", "tcp", "everyone")

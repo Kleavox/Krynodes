@@ -26,14 +26,15 @@ type Env struct {
 }
 
 const (
-	autoUpgrades = "/etc/apt/apt.conf.d/52krynodes-auto-upgrades"
-	sshDropIn    = "/etc/ssh/sshd_config.d/10-krynodes.conf"
-	rootDropIn   = "/etc/ssh/sshd_config.d/10-krynodes-root.conf"
-	jail         = "/etc/fail2ban/jail.d/krynodes.local"
-	stubDropIn   = "/etc/systemd/resolved.conf.d/krynodes-no-stub.conf"
-	resolvConf   = "/etc/resolv.conf"
-	fullResolver = "/run/systemd/resolve/resolv.conf"
-	stepTimeout  = 15 * time.Minute
+	autoUpgrades  = "/etc/apt/apt.conf.d/52krynodes-auto-upgrades"
+	sshDropIn     = "/etc/ssh/sshd_config.d/10-krynodes.conf"
+	rootDropIn    = "/etc/ssh/sshd_config.d/00-krynodes-root.conf"
+	oldRootDropIn = "/etc/ssh/sshd_config.d/10-krynodes-root.conf"
+	jail          = "/etc/fail2ban/jail.d/krynodes.local"
+	stubDropIn    = "/etc/systemd/resolved.conf.d/krynodes-no-stub.conf"
+	resolvConf    = "/etc/resolv.conf"
+	fullResolver  = "/run/systemd/resolve/resolv.conf"
+	stepTimeout   = 15 * time.Minute
 )
 
 var (
@@ -653,12 +654,14 @@ func undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 		}
 		return env.remove(autoUpgrades)
 	case "ssh-keys-only", "no-root-login":
-		file := sshDropIn
+		files := []string{sshDropIn}
 		if id == "no-root-login" {
-			file = rootDropIn
+			files = []string{rootDropIn, oldRootDropIn}
 		}
-		if err := env.remove(file); err != nil {
-			return err
+		for _, file := range files {
+			if err := env.remove(file); err != nil {
+				return err
+			}
 		}
 		if err := env.run(ctx, "sshd", "-t"); err != nil {
 			return err
