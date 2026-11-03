@@ -72,8 +72,7 @@ export function EnrollDialog({
   useEffect(() => {
     if (step !== "connected") return;
     void client.invalidateQueries({ queryKey: queryKeys.overview });
-    close(false);
-  });
+  }, [step, client]);
 
   const offset = () => new Date().getTimezoneOffset();
   const start = () => create.mutate(enrollSetup(setup, offset()));
@@ -86,7 +85,7 @@ export function EnrollDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent>
+      <DialogContent onInteractOutside={(event) => event.preventDefault()}>
         {step === "start" && (
           <>
             <DialogHeader>
@@ -158,6 +157,24 @@ export function EnrollDialog({
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)}>
                 Close
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+
+        {step === "connected" && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Server Enrolled</DialogTitle>
+              <DialogDescription>
+                Setup goes on in the terminal: answer its questions there.
+                Closing this does not stop it. The server&apos;s card in Fleet
+                shows each step and opens when setup is done.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button onClick={() => close(false)} autoFocus>
+                Done
               </Button>
             </DialogFooter>
           </>

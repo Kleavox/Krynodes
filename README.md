@@ -86,7 +86,8 @@ anywhere runs nothing. A used or expired code prints why and stops.
 
 The script downloads the latest release for the server's architecture, checks
 its SHA-256 and its signature against the release key written into the script
-(`openssl`, 1.1.1 or newer), installs `/usr/local/bin/kry`, enrolls the node, and starts the
+(`openssl`, 1.1.1 or newer), installs `/usr/local/bin/kry` (linked as `/usr/bin/kry` when nothing is there,
+because `sudo` on the RHEL family does not look in `/usr/local/bin`), enrolls the node, and starts the
 `krynodes` systemd service (config in `/etc/kry/config.json`), then runs the
 security check once so the dashboard shows it at once. The node takes the
 server's hostname as its name (**Rename node** changes it) and reports every
@@ -139,7 +140,9 @@ _Restarting the server in 10 seconds to finish setup._ and restarts it once.
 This is the only restart Krynodes makes on its own, and only at enroll; the
 dashboard does not count the server offline while it comes back.
 
-The Enroll dialog closes by itself once the server enrolls. While the install
+Once the server enrolls the Enroll dialog says so and stays open until you
+close it; setup goes on in the terminal either way, and a click outside the
+dialog does not close it. While the install
 command's setup runs the agent sends only the step it is in (agent 0.7.12), so
 the first report comes after the restart (or right after setup when no restart
 is needed). Until then the server's card in Fleet is a loading card: its name,
@@ -525,7 +528,7 @@ sudo kry uninstall-service
 
 It first stops new work and waits (up to an hour) for a stack change, a
 protection, a Docker install or an agent update that is still running, so
-nothing is cut half way. It leaves nothing of Krynodes behind: its units, `/usr/local/bin/kry`,
+nothing is cut half way. It leaves nothing of Krynodes behind: its units, `/usr/local/bin/kry` and its `/usr/bin/kry` link,
 `/etc/kry`, `/var/lib/kry`, `/var/lib/kry-exec` (seal key and token piece
 included), the `kry` user, the tunnel container and its image, and the
 containment rules of Contained stacks. Every protection it turned on is turned

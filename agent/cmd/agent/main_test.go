@@ -467,3 +467,46 @@ func TestInstallServiceSharesTheRelayFiles(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestSudoFindsKryThroughItsOwnLink(t *testing.T) {
+	link := filepath.Join(t.TempDir(), "kry")
+	if err := linkForSudo(link, "/usr/local/bin/kry"); err != nil {
+		t.Skipf("symlinks need privileges here: %v", err)
+	}
+	if target, _ := os.Readlink(link); target != "/usr/local/bin/kry" {
+		t.Fatalf("link points at %q", target)
+	}
+	if err := linkForSudo(link, "/usr/local/bin/kry"); err != nil {
+		t.Fatalf("a second install: %v", err)
+	}
+	unlinkForSudo(link, "/usr/local/bin/kry")
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("uninstall left the link: %v", err)
+	}
+}
+
+func TestTheSudoLinkLeavesWhatKrynodesDidNotPutThere(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "kry")
+	if err := os.WriteFile(file, []byte("another kry"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := linkForSudo(file, "/usr/local/bin/kry"); err != nil {
+		t.Fatal(err)
+	}
+	unlinkForSudo(file, "/usr/local/bin/kry")
+	if body, _ := os.ReadFile(file); string(body) != "another kry" {
+		t.Fatalf("touched someone else's file: %q", body)
+	}
+	other := filepath.Join(dir, "other")
+	if err := os.Symlink("/opt/kry", other); err != nil {
+		t.Skipf("symlinks need privileges here: %v", err)
+	}
+	if err := linkForSudo(other, "/usr/local/bin/kry"); err != nil {
+		t.Fatal(err)
+	}
+	unlinkForSudo(other, "/usr/local/bin/kry")
+	if target, _ := os.Readlink(other); target != "/opt/kry" {
+		t.Fatalf("changed someone else's link to %q", target)
+	}
+}

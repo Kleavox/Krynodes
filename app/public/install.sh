@@ -145,7 +145,7 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
     exit 1
   fi
   if [ "$mode" = "enroll" ] && [ -f "$config" ]; then
-    echo "This server is already enrolled ($config exists). To enroll it again, remove Krynodes first: sudo kry uninstall-service" >&2
+    echo "This server is already enrolled ($config exists). To enroll it again, remove Krynodes first: sudo $bin uninstall-service" >&2
     exit 1
   fi
 
