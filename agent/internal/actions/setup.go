@@ -29,11 +29,13 @@ type setupProgress struct {
 	Of    int       `json:"of"`
 	At    time.Time `json:"at"`
 	Boot  string    `json:"boot"`
+	Quiet bool      `json:"quiet,omitempty"`
 }
 
 type setupTrack struct {
 	executor Executor
 	phases   []string
+	quiet    bool
 	mu       sync.Mutex
 	current  setupProgress
 	stop     chan struct{}
@@ -62,7 +64,8 @@ func setupPhases(options SetupOptions, confined string) []string {
 }
 
 func (e Executor) track(phases []string) *setupTrack {
-	track := &setupTrack{executor: e, phases: phases, stop: make(chan struct{}), stopped: make(chan struct{})}
+	begun, _ := readState[setupProgress](e.StateDir, setupFile)
+	track := &setupTrack{executor: e, phases: phases, quiet: begun.Quiet && begun.Boot == e.boot() && e.Now().Sub(begun.At) <= setupStale, stop: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(track.stopped)
 		ticker := time.NewTicker(aliveEvery)
@@ -86,8 +89,8 @@ func (t *setupTrack) enter(phase string) {
 	if step == 0 {
 		return
 	}
-	t.current = setupProgress{Phase: phase, Step: step, Of: len(t.phases), At: t.executor.Now(), Boot: t.executor.boot()}
-	writeJSON(t.executor.StateDir, setupFile, t.current, 0o640)
+	t.current = setupProgress{Phase: phase, Step: step, Of: len(t.phases), At: t.executor.Now(), Boot: t.executor.boot(), Quiet: t.quiet}
+	writeJSON(t.executor.StateDir, setupFile, t.current, 0o644)
 }
 
 func (t *setupTrack) alive() {
@@ -97,7 +100,7 @@ func (t *setupTrack) alive() {
 		return
 	}
 	t.current.At = t.executor.Now()
-	writeJSON(t.executor.StateDir, setupFile, t.current, 0o640)
+	writeJSON(t.executor.StateDir, setupFile, t.current, 0o644)
 }
 
 func (t *setupTrack) end(restart bool) {
@@ -118,6 +121,25 @@ func (e Executor) boot() string {
 func (e Executor) restartNeeded(ctx context.Context, env recipes.Env) bool {
 	needed, _ := recipes.RebootNeeded(ctx, env)
 	return needed || apt.KernelWaiting(e.Root)
+}
+
+func (e Executor) confined(options SetupOptions, family recipes.Family) string {
+	if !options.Confine {
+		return ""
+	}
+	return confine.Read(e.Root, string(family)).System
+}
+
+func (e Executor) BeginSetup(options SetupOptions) error {
+	platform := recipes.Detect(e.recipeEnv())
+	if platform.Family == "" {
+		return nil
+	}
+	phases := setupPhases(options, e.confined(options, platform.Family))
+	if len(phases) == 0 {
+		return nil
+	}
+	return writeJSON(e.StateDir, setupFile, setupProgress{Phase: phases[0], Step: 1, Of: len(phases), At: e.Now(), Boot: e.boot(), Quiet: true}, 0o644)
 }
 
 func (e Executor) FinishSetup(ctx context.Context, out io.Writer) error {
@@ -176,10 +198,7 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	mark := func(sign, title, rest string) {
 		fmt.Fprintf(out, "%s %s%s\n", sign, title, rest)
 	}
-	confined := ""
-	if options.Confine {
-		confined = confine.Read(e.Root, string(platform.Family)).System
-	}
+	confined := e.confined(options, platform.Family)
 	track := e.track(setupPhases(options, confined))
 	e.startWatch(ctx)
 	admin := false

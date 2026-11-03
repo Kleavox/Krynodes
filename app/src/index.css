@@ -78,6 +78,16 @@
   --animate-busy-1: busy-1 1.2s steps(1, end) infinite;
   --animate-busy-2: busy-2 1.2s steps(1, end) infinite;
   --animate-busy-3: busy-3 1.2s steps(1, end) infinite;
+  --animate-loading: loading 1.4s ease-in-out infinite;
+
+  @keyframes loading {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
 
   @keyframes busy-1 {
     0% {

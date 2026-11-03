@@ -88,7 +88,7 @@ func (e Executor) readNetwork() networkRecord {
 }
 
 func (e Executor) saveNetwork(record networkRecord) error {
-	return writeJSON(e.StateDir, "network.json", record, 0o640)
+	return writeJSON(e.StateDir, "network.json", record, 0o644)
 }
 
 func (e Executor) network(ctx context.Context, request Request) (Result, bool) {

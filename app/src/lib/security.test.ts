@@ -110,6 +110,31 @@ describe("the security check on screen", () => {
     ).toBe(true);
   });
 
+  it("never offers to turn a protection off, only Free Port 53", () => {
+    const all = recipeChoices(
+      report({
+        recipes: [
+          "security-updates",
+          "reboot-window",
+          "ssh-keys-only",
+          "no-root-login",
+          "fail2ban",
+          "firewall",
+          "free-port-53",
+        ],
+      }),
+    );
+    expect(all.map((choice) => [choice.id, choice.undo])).toEqual([
+      ["security-updates", false],
+      ["reboot-window", false],
+      ["ssh-keys-only", false],
+      ["no-root-login", false],
+      ["fail2ban", false],
+      ["firewall", false],
+      ["free-port-53", true],
+    ]);
+  });
+
   it("offers to free port 53 at deploy only while systemd-resolved holds it", () => {
     const stub = { id: "dns-stub", severity: "note" as const, detail: "x" };
     expect(dnsPortHeld(report({ findings: [stub] }))).toBe(true);

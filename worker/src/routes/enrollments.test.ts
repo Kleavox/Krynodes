@@ -11,8 +11,18 @@ const INSTALLER = readFileSync(
   "utf8",
 );
 
+const blob = (line: string) => line.split(" ")[1];
+const ADMIN = `--admin user1 --admin-key ${blob(LAPTOP)}:user1-laptop`;
+
 function fleet(extra: Partial<Env> = {}) {
   const { db, sqlite } = createTestDb();
+  sqlite
+    .prepare(
+      "INSERT INTO settings (key, value, updated_at) VALUES ('enroll_defaults', ?, 'now')",
+    )
+    .run(
+      JSON.stringify({ docker: true, hour: 3, network: false, keys: [LAPTOP] }),
+    );
   const env = {
     DB: db,
     PUBLIC_ORIGIN: "https://kry.example.test",
@@ -42,8 +52,12 @@ function fleet(extra: Partial<Env> = {}) {
       },
       env,
     );
-  const create = async (setup: unknown = {}) => {
-    const response = await request("POST", "/api/enrollments", setup);
+  const create = async (setup: object = {}) => {
+    const response = await request("POST", "/api/enrollments", {
+      rebootHour: 3,
+      adminName: "user1",
+      ...setup,
+    });
     expect(response.status).toBe(201);
     const body = (await response.json()) as {
       id: string;
@@ -113,6 +127,14 @@ describe("enrollment tokens", () => {
     expect(INSTALLER.slice(finish - 200, finish)).toContain("*,restart,*");
   });
 
+  it("has the installer mark setup as started before the agent starts, so it waits to report", () => {
+    const begin = INSTALLER.indexOf(
+      '"$bin" setup $setup_flags --begin || true',
+    );
+    expect(begin).toBeGreaterThan(-1);
+    expect(begin).toBeLessThan(INSTALLER.indexOf('"$bin" install-service'));
+  });
+
   it("points the command and the installer at AGENT_ORIGIN when it is set", async () => {
     const { create, script } = fleet({
       AGENT_ORIGIN: "https://kry.example.workers.dev",
@@ -125,44 +147,40 @@ describe("enrollment tokens", () => {
     expect(served.status).toBe(200);
     expect(served.text.startsWith("#!/bin/sh\n")).toBe(true);
     expect(tail(served.text)).toBe(
-      `{\n  kry_args='https://kry.example.workers.dev ${token} --setup confine,upgrade,restart'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.workers.dev ${token} --setup recommended,confine,upgrade,restart --reboot-hour 3 ${ADMIN}'\n  main $kry_args\n}\n`,
     );
     expect(served.text).not.toContain('main "$@"');
   });
 
   it("serves the chosen setup and lets it change until the server enrolls", async () => {
     const { create, script, request, enroll } = fleet();
-    const { id, token } = await create({
-      recommended: true,
-      docker: true,
-      rebootHour: 20,
-    });
+    const { id, token } = await create({ docker: true, rebootHour: 20 });
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 20'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 20 ${ADMIN}'\n  main $kry_args\n}\n`,
     );
     const changed = await request("PATCH", `/api/enrollments/${id}`, {
-      recommended: false,
-      docker: true,
-      rebootHour: null,
+      docker: false,
+      rebootHour: 5,
     });
     expect(changed.status).toBe(200);
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,confine,upgrade,restart --reboot-hour 5 ${ADMIN}'\n  main $kry_args\n}\n`,
     );
-    expect(
-      (
-        await request("PATCH", `/api/enrollments/${id}`, {
-          recommended: true,
-          docker: true,
-          rebootHour: 24,
-        })
-      ).status,
-    ).toBe(400);
+    for (const rebootHour of [24, null, undefined]) {
+      expect(
+        (
+          await request("PATCH", `/api/enrollments/${id}`, {
+            docker: true,
+            rebootHour,
+          })
+        ).status,
+        String(rebootHour),
+      ).toBe(400);
+    }
     await enroll(token, "web-01");
     expect(
       (
         await request("PATCH", `/api/enrollments/${id}`, {
-          recommended: true,
           docker: true,
           rebootHour: 3,
         })
@@ -170,30 +188,23 @@ describe("enrollment tokens", () => {
     ).toBe(409);
   });
 
-  it("snapshots the admin user when the command is made and never lets a change replace it", async () => {
+  it("snapshots the admin user when the command is made and never lets a change replace or drop it", async () => {
     const { create, script, request } = fleet();
-    const blob = (line: string) => line.split(" ")[1];
     expect(
       (
         await request("PUT", "/api/settings/enroll-defaults", {
-          recommended: true,
           docker: true,
           hour: 3,
           keys: [LAPTOP, PHONE],
         })
       ).status,
     ).toBe(200);
-    const { id, token } = await create({
-      docker: true,
-      adminUser: true,
-      adminName: "user1",
-    });
+    const { id, token } = await create({ docker: true });
     const flags = `--admin user1 --admin-key ${blob(LAPTOP)}:user1-laptop --admin-key ${blob(PHONE)}:phone`;
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart ${flags}'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 3 ${flags}'\n  main $kry_args\n}\n`,
     );
     await request("PUT", "/api/settings/enroll-defaults", {
-      recommended: true,
       docker: true,
       hour: 3,
       keys: [PHONE],
@@ -202,72 +213,84 @@ describe("enrollment tokens", () => {
       (
         await request("PATCH", `/api/enrollments/${id}`, {
           docker: true,
-          adminUser: true,
+          rebootHour: 3,
           adminName: "intruder",
           admin: { name: "intruder", keys: [PHONE] },
         })
       ).status,
     ).toBe(200);
-    expect(tail((await script(token)).text)).toContain(flags);
-    await request("PATCH", `/api/enrollments/${id}`, { docker: true });
-    expect(tail((await script(token)).text)).not.toContain("--admin");
+    expect(tail((await script(token)).text)).toContain(`3 ${flags}'`);
     await request("PATCH", `/api/enrollments/${id}`, {
       docker: true,
-      adminUser: true,
+      rebootHour: 3,
+      adminUser: false,
     });
-    expect(tail((await script(token)).text)).toContain(flags);
+    expect(tail((await script(token)).text)).toContain(`3 ${flags}'`);
   });
 
-  it("turns on SELinux or AppArmor on every new server, whatever is sent or stored", async () => {
+  it("turns on the protections and SELinux or AppArmor on every new server, whatever is sent or stored", async () => {
     const { create, script, request } = fleet();
-    const { token } = await create({ recommended: true, confine: false });
+    const { token } = await create({ recommended: false, confine: false });
     expect(tail((await script(token)).text)).toContain(
-      "--setup recommended,confine,upgrade,restart",
-    );
-    const without = await create({ docker: true });
-    expect(tail((await script(without.token)).text)).toContain(
-      "--setup docker,confine,upgrade,restart'",
+      "--setup recommended,confine,upgrade,restart --reboot-hour 3 ",
     );
     expect(
       (
         await request("PUT", "/api/settings/enroll-defaults", {
-          recommended: true,
+          recommended: false,
           docker: true,
           hour: 3,
           confine: false,
+          keys: [LAPTOP],
         })
       ).status,
     ).toBe(200);
-    expect(
-      await (await request("GET", "/api/settings/enroll-defaults")).json(),
-    ).not.toHaveProperty("confine");
+    const shown = await (
+      await request("GET", "/api/settings/enroll-defaults")
+    ).json();
+    expect(shown).not.toHaveProperty("confine");
+    expect(shown).not.toHaveProperty("recommended");
   });
 
-  it("adds no admin user when Enroll Defaults has no keys", async () => {
-    const { create, script } = fleet();
-    const { token } = await create({ adminUser: true, adminName: "user1" });
-    expect(tail((await script(token)).text)).not.toContain("--admin");
-    const unnamed = await create({ adminUser: true });
-    expect(tail((await script(unnamed.token)).text)).not.toContain("--admin");
-  });
-
-  it("refuses an admin user without a usable name while keys are set", async () => {
-    const { request } = fleet();
-    await request("PUT", "/api/settings/enroll-defaults", {
-      recommended: true,
-      docker: true,
-      hour: 3,
-      keys: [LAPTOP],
+  it("makes no command while Enroll Defaults holds no SSH key for the admin user", async () => {
+    const { request, sqlite } = fleet();
+    sqlite.exec("DELETE FROM settings");
+    const refused = await request("POST", "/api/enrollments", {
+      rebootHour: 3,
+      adminName: "user1",
     });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      code: "NO_ADMIN_KEYS",
+      message: "Add an SSH public key in Settings, Enroll Defaults first.",
+    });
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS n FROM enrollment_tokens").get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("refuses a command without a usable admin name or restart hour", async () => {
+    const { request } = fleet();
     for (const adminName of [undefined, "", "root", "User1", "bad name"]) {
       expect(
         (
           await request("POST", "/api/enrollments", {
-            adminUser: true,
+            rebootHour: 3,
             adminName,
           })
         ).status,
         String(adminName),
+      ).toBe(400);
+    }
+    for (const rebootHour of [undefined, null, 24, 1.5]) {
+      expect(
+        (
+          await request("POST", "/api/enrollments", {
+            rebootHour,
+            adminName: "user1",
+          })
+        ).status,
+        String(rebootHour),
       ).toBe(400);
     }
   });
@@ -276,14 +299,14 @@ describe("enrollment tokens", () => {
     const { create, script, sqlite } = fleet();
     const { token } = await create({ docker: true, network: true });
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 3 ${ADMIN}'\n  main $kry_args\n}\n`,
     );
     sqlite.exec(
       `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
        VALUES ('standalone', '10.88.4.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
     );
     expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup docker,confine,upgrade,restart --network 10.88.4.0/24'\n  main $kry_args\n}\n`,
+      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 3 --network 10.88.4.0/24 ${ADMIN}'\n  main $kry_args\n}\n`,
     );
     sqlite.exec("UPDATE network SET deleted = 1");
     expect(tail((await script(token)).text)).not.toContain("--network");

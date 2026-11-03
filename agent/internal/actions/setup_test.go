@@ -349,3 +349,49 @@ func TestSetupConfinesBeforeDockerSoDockerStartsConfined(t *testing.T) {
 		t.Fatalf("daemon.json %q", daemon)
 	}
 }
+
+func TestBeginWritesTheFirstPhaseSoTheAgentStartsSilent(t *testing.T) {
+	executor, _ := setupServer(t)
+	rootFile(t, executor, "/proc/sys/kernel/random/boot_id", "boot-1\n")
+	if err := executor.BeginSetup(SetupOptions{Recommended: true, Upgrade: true, Restart: true, Admin: "user1"}); err != nil {
+		t.Fatal(err)
+	}
+	progress, err := readState[setupProgress](executor.StateDir, setupFile)
+	if err != nil || progress.Phase != "admin" || progress.Step != 1 || progress.Of != 4 || progress.Boot != "boot-1" || !progress.At.Equal(executorNow) || !progress.Quiet {
+		t.Fatalf("progress %+v err %v", progress, err)
+	}
+	track := executor.track([]string{"admin", "upgrade", "restart"})
+	track.enter("upgrade")
+	track.end(true)
+	if progress, _ := readState[setupProgress](executor.StateDir, setupFile); progress.Phase != "restart" || !progress.Quiet {
+		t.Fatalf("the installer's setup stays quiet to its restart: %+v", progress)
+	}
+
+	executor, _ = setupServer(t)
+	track = executor.track([]string{"upgrade"})
+	track.enter("upgrade")
+	if progress, _ := readState[setupProgress](executor.StateDir, setupFile); progress.Quiet {
+		t.Fatalf("a setup run by hand on a reporting server keeps reporting: %+v", progress)
+	}
+	track.end(false)
+
+	executor, _ = setupServer(t)
+	if err := executor.BeginSetup(SetupOptions{Recommended: true}); err != nil {
+		t.Fatal(err)
+	}
+	executor.Now = func() time.Time { return executorNow.Add(61 * time.Second) }
+	track = executor.track([]string{"protections"})
+	track.enter("protections")
+	if progress, _ := readState[setupProgress](executor.StateDir, setupFile); progress.Quiet {
+		t.Fatalf("a rerun by hand after the terminal closed must not go quiet: %+v", progress)
+	}
+	track.end(false)
+
+	executor, _ = securityExecutor(t)
+	if err := executor.BeginSetup(SetupOptions{Recommended: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, setupFile)); !os.IsNotExist(err) {
+		t.Fatalf("an unsupported system sets nothing up, so it must not go silent: %v", err)
+	}
+}

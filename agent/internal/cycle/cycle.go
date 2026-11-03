@@ -33,6 +33,7 @@ type Actions interface {
 	NetworkReply(*reporter.NetworkReply) error
 	Report(*reporter.Heartbeat)
 	Answer(reporter.HeartbeatResponse) error
+	SettingUp() bool
 }
 
 type implementation struct {
@@ -49,6 +50,9 @@ func New(server Reporter, host reporter.Host, updates Updater, actions Actions) 
 }
 
 func (cycle *implementation) Execute(ctx context.Context, nodeID string) (int, error) {
+	if cycle.actions != nil && cycle.actions.SettingUp() {
+		return 0, nil
+	}
 	var configErr error
 	if cycle.config == nil {
 		agentConfig, err := cycle.reporter.FetchConfig(ctx)

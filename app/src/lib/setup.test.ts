@@ -16,18 +16,19 @@ const server = (extra: Partial<NodeRecord> = {}) =>
   }) as NodeRecord;
 
 describe("setupView", () => {
-  it("names each step and counts it", () => {
-    const labels = {
-      admin: "Adding Admin User",
-      upgrade: "Updating Packages",
-      protections: "Turning On Protections",
-      selinux: "Turning On SELinux",
-      apparmor: "Turning On AppArmor",
-      docker: "Installing Docker",
-      network: "Preparing Private Network",
-      restart: "Restarting",
-    } as const;
-    for (const [phase, label] of Object.entries(labels)) {
+  const labels = {
+    admin: "Adding Admin User",
+    upgrade: "Updating Packages",
+    protections: "Turning On Protections",
+    selinux: "Turning On SELinux",
+    apparmor: "Turning On AppArmor",
+    docker: "Installing Docker",
+    network: "Preparing Private Network",
+    restart: "Restarting",
+  } as const;
+
+  it("says only Setting Up while a setup runs, with no step count", () => {
+    for (const phase of Object.keys(labels)) {
       expect(
         setupView(
           server({
@@ -35,29 +36,39 @@ describe("setupView", () => {
           }),
           NOW,
         ),
-      ).toEqual({ label, step: 2, of: 6, stopped: false });
+      ).toEqual({ label: "Setting Up", stopped: false });
     }
   });
 
-  it("says where a setup stopped", () => {
-    expect(
-      setupView(
-        server({ setup: { phase: "upgrade", step: 2, of: 6, stopped: true } }),
-        NOW,
-      ),
-    ).toEqual({ label: "Updating Packages", step: 2, of: 6, stopped: true });
+  it("names the step a setup stopped at", () => {
+    for (const [phase, label] of Object.entries(labels)) {
+      expect(
+        setupView(
+          server({
+            setup: {
+              phase: phase as keyof typeof labels,
+              step: 2,
+              of: 6,
+              stopped: true,
+            },
+          }),
+          NOW,
+        ),
+      ).toEqual({ label, stopped: true });
+    }
   });
 
-  it("shows a server that enrolled but has not reported yet as starting, for ten minutes", () => {
-    const fresh = server({ enrolled_at: ago(2), last_seen_at: null });
-    expect(setupView(fresh, NOW)).toEqual({
-      label: "Starting",
-      step: null,
-      of: null,
-      stopped: false,
-    });
+  it("shows a server that enrolled but has not reported yet as setting up, for an hour", () => {
+    for (const minutes of [1, 59]) {
+      expect(
+        setupView(
+          server({ enrolled_at: ago(minutes), last_seen_at: null }),
+          NOW,
+        ),
+      ).toEqual({ label: "Setting Up", stopped: false });
+    }
     expect(
-      setupView(server({ enrolled_at: ago(11), last_seen_at: null }), NOW),
+      setupView(server({ enrolled_at: ago(61), last_seen_at: null }), NOW),
     ).toBeNull();
     expect(setupView(server(), NOW)).toBeNull();
   });

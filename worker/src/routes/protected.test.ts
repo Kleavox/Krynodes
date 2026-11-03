@@ -132,19 +132,33 @@ async function setup(core = true, requireUv = false, more: string[] = []) {
   }
   const code = async (response: Response) =>
     ((await response.clone().json()) as { code?: string }).code;
+  const enrollment = (confirm?: string) => {
+    sqlite
+      .prepare(
+        "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES ('enroll_defaults', ?, 'now')",
+      )
+      .run(JSON.stringify({ docker: false, hour: 3, keys: [LAPTOP] }));
+    return call(
+      "POST",
+      "/api/enrollments",
+      { rebootHour: 3, adminName: "user1" },
+      confirm,
+    );
+  };
   const installer = async (response: Response) => {
     const { enrollmentToken } = (await response.json()) as {
       enrollmentToken: string;
     };
     return (await call("GET", `/i/${enrollmentToken}`)).text();
   };
-  return { call, phone, others, code, installer, sqlite };
+  return { call, phone, others, code, enrollment, installer, sqlite };
 }
 
 describe("dashboard actions that destroy or hide", () => {
   it("need no fingerprint while the owner has no core devices", async () => {
     const t = await setup(false);
-    const enroll = await t.call("POST", "/api/enrollments");
+    const enroll = await t.enrollment();
+    expect(enroll.status).toBe(201);
     expect(await t.installer(enroll)).not.toContain("--trust");
     expect((await t.call("DELETE", `/api/nodes/${A}`)).status).toBe(204);
   });
@@ -218,16 +232,13 @@ describe("dashboard actions that destroy or hide", () => {
       ).status,
     ).toBe(200);
     expect((await t.call("DELETE", `/api/checks/${CHECK}`)).status).toBe(403);
-    expect((await t.call("POST", "/api/enrollments")).status).toBe(403);
-    const enroll = await t.call(
-      "POST",
-      "/api/enrollments",
-      undefined,
+    expect((await t.enrollment()).status).toBe(403);
+    const enroll = await t.enrollment(
       await proof(t.phone, "enrollment.create", "new"),
     );
     expect(enroll.status).toBe(201);
     expect(await t.installer(enroll)).toContain(
-      ` --trust ${ORIGIN} --grant -- phone.-7.${t.phone.publicKey} --setup confine,upgrade,restart'`,
+      ` --trust ${ORIGIN} --grant -- phone.-7.${t.phone.publicKey} --setup recommended,confine,upgrade,restart --reboot-hour 3 --admin user1 --admin-key `,
     );
   });
 
@@ -277,10 +288,7 @@ describe("dashboard actions that destroy or hide", () => {
 
   it("let the device that made the install command reach the new server", async () => {
     const t = await setup(true, false, ["laptop"]);
-    const enroll = await t.call(
-      "POST",
-      "/api/enrollments",
-      undefined,
+    const enroll = await t.enrollment(
       await proof(t.phone, "enrollment.create", "new"),
     );
     expect(enroll.status).toBe(201);
@@ -294,7 +302,7 @@ describe("dashboard actions that destroy or hide", () => {
 });
 
 describe("the SSH keys in enroll defaults", () => {
-  const defaults = { recommended: true, docker: true, hour: 3, network: false };
+  const defaults = { docker: true, hour: 3, network: false };
   const digest = async (keys: string[]) =>
     Array.from(
       await sha256(new Uint8Array(encoder.encode(keys.join("\n")))),

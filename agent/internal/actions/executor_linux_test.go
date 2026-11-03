@@ -50,3 +50,20 @@ func TestADirectorySwappedAfterItsCheckIsNotTrusted(t *testing.T) {
 		t.Fatal("the same directory must pass")
 	}
 }
+
+func TestFilesTheRelayReadsAreWorldReadable(t *testing.T) {
+	executor, _ := newExecutor(t)
+	if err := executor.saveNetwork(networkRecord{Port: 51820}); err != nil {
+		t.Fatal(err)
+	}
+	executor.event("port", "port:aa", map[string]string{"port": "80/tcp"})
+	track := executor.track([]string{"admin", "restart"})
+	track.enter("admin")
+	track.end(true)
+	for _, name := range []string{"network.json", eventsFile, setupFile} {
+		info, err := os.Stat(filepath.Join(executor.StateDir, name))
+		if err != nil || info.Mode().Perm() != 0o644 {
+			t.Errorf("%s: %v %v; the relay reads it whoever wrote it", name, info, err)
+		}
+	}
+}

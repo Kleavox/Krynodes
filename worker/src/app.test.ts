@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { app } from "./app";
 import type { Env } from "./env";
+import { LAPTOP } from "./test/keys";
 import { createTestDb } from "./test/sqlite-d1";
 
 describe("Krynodes without Kleavox", () => {
@@ -20,18 +21,29 @@ describe("Krynodes without Kleavox", () => {
 
 describe("changes from another site", () => {
   const ORIGIN = "https://kry.example.test";
-  const env = () =>
-    ({
-      DB: createTestDb().db,
+  const env = () => {
+    const { db, sqlite } = createTestDb();
+    sqlite
+      .prepare(
+        "INSERT INTO settings (key, value, updated_at) VALUES ('enroll_defaults', ?, 'now')",
+      )
+      .run(JSON.stringify({ docker: false, hour: 3, keys: [LAPTOP] }));
+    return {
+      DB: db,
       PUBLIC_ORIGIN: ORIGIN,
       ENVIRONMENT: "development",
-    }) as unknown as Env;
+    } as unknown as Env;
+  };
 
   it("are refused, while the dashboard and the agents still get through", async () => {
     const post = (headers: Record<string, string>, path = "/api/enrollments") =>
       app.request(
         `${ORIGIN}${path}`,
-        { method: "POST", headers, body: "{}" },
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ rebootHour: 3, adminName: "user1" }),
+        },
         env(),
       );
     for (const headers of [

@@ -101,13 +101,14 @@ sudo systemctl status krynodes
 sudo kry status
 ```
 
-The Enroll dialog can also set the server up in the same command: **Install
-Docker**, **Join Private Network** and **Add Admin User** (with this server's
-user name). They start from **Settings → Enroll defaults**, and Docker and the
-private network can change until the server enrolls. **Apply recommended
-protections** (with a restart hour in your time) is set only in Enroll defaults
-and applies to every new server. SELinux or AppArmor is turned on on every new
-server, with nothing to untick: before enrolling, the script runs `kry setup
+Every install command sets the server up the same way, with nothing to
+untick: the recommended protections (with the restart hour from **Settings →
+Enroll defaults**, in your time), SELinux or AppArmor, every package updated,
+and an admin user. The Enroll dialog asks for this server's user name for the
+admin user, which logs in with the SSH keys in Enroll defaults; with no key
+there it says so and makes no command. **Install Docker** and **Join Private
+Network** are the only choices, and they can change until the server enrolls.
+Before enrolling, the script runs `kry setup
 --confine --check` and stops with _The server was not added._ when the server
 has neither, when its boot settings cannot be changed (no `grubby` for
 SELinux, no grub or `cmdline.txt` for AppArmor), or when SELinux would block a
@@ -138,13 +139,17 @@ _Restarting the server in 10 seconds to finish setup._ and restarts it once.
 This is the only restart Krynodes makes on its own, and only at enroll; the
 dashboard does not count the server offline while it comes back.
 
-The Enroll dialog closes by itself once the server enrolls. Until setup ends,
-the server's card in Fleet says **Setting Up** with the step it is on
-(`Updating Packages`, `Step 2 of 6`) and does not open; a server with a warning
-to answer opens anyway. A setup that stops reporting for a minute (the
-terminal closed, the server cut off) shows **Setup stopped at** the step it
-reached, and the server opens. A server that joins the private network shows
-**Join** on its card when setup ends.
+The Enroll dialog closes by itself once the server enrolls. The agent sends
+nothing while the install command's setup runs, so the first report comes
+after the restart (or right after setup when no restart is needed). Until then
+the server's card in Fleet is only its name, **Setting Up** and a loading bar,
+with no data, and it does not open; nobody is mailed that it is offline,
+however long that takes. Changes the server watch sees meanwhile go with the
+first report. A setup whose terminal closes stops being quiet within a minute:
+the server reports, its card shows **Setup stopped at** the step it reached,
+and it opens. A server that joins the private network shows **Join** on its
+card when setup ends. `sudo kry setup` run by hand on a server that already
+reports keeps reporting, and its card says **Setting Up** until it ends.
 
 From agent 0.7.4 the firewall closes and asks nothing: only SSH, ICMP and the
 private network's port stay open, and ports Docker publishes close too. Open
@@ -827,7 +832,9 @@ range show among its addresses under the interface's name, such as
 what applies to every server: Cloudflare, Private addresses, Enroll defaults (what a new install command sets up) and Usage, each at its
 own address (`/settings/usage`).
 
-**Protections** on the server page, each with Turn off (Undo):
+**Protections** on the server page. They stay on once Krynodes turns them on:
+there is no Turn off, and the Worker refuses an Undo. A protection that is not
+on (an older server, or one that failed at enroll) offers Turn On:
 
 | Protection                    | What it does                                                                                                                                                                                  |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -838,8 +845,7 @@ own address (`/settings/usage`).
 | Firewall                      | ufw or firewalld, closed: every port SSH listens on (its config, `ssh.socket`, its open sockets), the private network's port, ICMP and the ports you open; Docker's published ports close too |
 | Free port 53                  | stops systemd-resolved holding port 53, for a DNS server on the server; refused when systemd-resolved knows no upstream DNS server                                                            |
 
-Each one writes its own drop-in file and never edits yours; Turn off removes
-it, and the packages Krynodes installed for it. A protection that fails half
+Each one writes its own drop-in file and never edits yours. A protection that fails half
 way, or whose record cannot be saved, is taken back (SSH keys only drops its
 file when SSH cannot reload, Free port 53 puts DNS back). SSH keys only counts
 only accounts SSH really lets in with a key (`PermitRootLogin`, `AllowUsers`,
@@ -851,7 +857,8 @@ the ports you tick. The agent connects outward, so none of them can cut
 Krynodes off. Free port 53 is not a finding and not offered here: New Stack
 offers it, on the compose field, when the file publishes port 53 on every
 address and systemd-resolved holds that port on the chosen server. Once it is
-on, it stays in this list with Turn off.
+on, it stays in this list with Turn off, which puts DNS back; it is the only
+row that turns off.
 
 **No root login** (agent 0.7.1) writes `PermitRootLogin no` in its own drop-in
 and is offered only once a sudo user other than root logs in with a key. It is
@@ -868,8 +875,8 @@ containers make themselves, are untouched. A firewall turned on before 0.7.4,
 or by someone else, shows **On · open ports are not managed by Krynodes** and
 offers **Close Everything Else**: its allow rules are listed ticked (untick one
 to close it) and become open ports, and the dialog names every port Docker
-publishes that will close, with its stack or container. Turn Off puts back the
-ufw or firewalld state Krynodes found and removes the chain. If SSH is not let
+publishes that will close, with its stack or container. The firewall has no
+Turn Off; its open ports are what you change. If SSH is not let
 in once the firewall is up, Krynodes turns it back off and says so. When SSH
 moves to another port while the firewall is closed, Krynodes opens the new
 port at its next check, within five minutes, so keep your SSH session open
@@ -1023,7 +1030,7 @@ port is in its Reach this server on. Check those stacks before you update.
 Enroll defaults hold up to 4 SSH public keys, pasted several at once or read
 from a `.pub` or `authorized_keys` file (changing them asks for your passkey).
 The user name is typed for each server: in the Enroll dialog, where it is set
-when the command is made, or in Add Admin User. **Add Admin User** at enroll, or Actions →
+when the command is made and is required, or in Add Admin User. The admin user at enroll, or Actions →
 Add Admin User on a server (agent 0.7.1), makes a sudo user (`sudo` or
 `wheel`) that logs in with exactly those keys, then turns on SSH keys only and
 No root login once key login works for it. On an enrolled server your

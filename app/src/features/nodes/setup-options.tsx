@@ -17,7 +17,7 @@ export function SetupOptions<T extends SetupChoice>({
 }) {
   const network = useNetwork().data?.network;
   const option = keys === undefined ? null : adminOption(keys);
-  const adding = option?.available === true && value.adminUser === true;
+  const adding = option?.available === true;
   const name = value.adminName ?? "";
   const wrong = name.trim() === "" ? null : adminNameProblem(name.trim());
   return (
@@ -55,29 +55,15 @@ export function SetupOptions<T extends SetupChoice>({
         </label>
       )}
       {option && (
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="mt-1"
-            disabled={!option.available || adminLocked}
-            checked={adding}
-            onChange={() => onChange({ ...value, adminUser: !value.adminUser })}
-          />
-          <span>
-            <span className="block font-medium">Add Admin User</span>
-            <span className="block text-xs text-muted-foreground">
-              {option.text}
-            </span>
-            {adminLocked && !adding && (
-              <span className="block text-xs text-muted-foreground">
-                Set when the command is made.
-              </span>
-            )}
+        <p className="text-sm">
+          <span className="block font-medium">Admin User</span>
+          <span className="block text-xs text-muted-foreground">
+            {option.text}
           </span>
-        </label>
+        </p>
       )}
       {adding && (
-        <div className="space-y-1.5 pl-6">
+        <div className="space-y-1.5">
           <label htmlFor="enroll-admin-name" className="text-xs font-medium">
             User Name
           </label>
