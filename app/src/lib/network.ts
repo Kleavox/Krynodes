@@ -514,7 +514,6 @@ function pairOf(
   presence: Presence,
   a: NetworkServer,
   b: NetworkServer,
-  now: number,
 ): { state: PairState; since: number | null } {
   if (a.nat && b.nat) return { state: "nat", since: null };
   if (!isOnline(presence, a.nodeId) || !isOnline(presence, b.nodeId)) {
@@ -531,7 +530,10 @@ function pairOf(
     .sort((first, second) => second.at - first.at)[0];
   if (seen) {
     const handshake = seen.link.handshake;
-    if (handshake !== null && now / 1000 - handshake < NETWORK.answerSeconds) {
+    if (
+      seen.link.ms !== null ||
+      (handshake !== null && seen.at / 1000 - handshake < NETWORK.answerSeconds)
+    ) {
       return { state: "up", since: null };
     }
     return {
@@ -554,7 +556,6 @@ const pairsWith = (
   view: NetworkView,
   presence: Presence,
   server: NetworkServer,
-  now: number,
 ) =>
   view.quarantined.includes(server.nodeId)
     ? []
@@ -562,20 +563,19 @@ const pairsWith = (
         .filter((peer) => peer.nodeId !== server.nodeId)
         .map((peer) => ({
           peer,
-          ...pairOf(view, presence, server, peer, now),
+          ...pairOf(view, presence, server, peer),
         }));
 
 export function linkProgress(
   view: NetworkView,
   presence: Presence,
   ids: string[],
-  now: number,
 ): string {
   const members = inside(view).filter((member) => ids.includes(member.nodeId));
   const pairs = members.flatMap((a, index) =>
     members
       .slice(index + 1)
-      .map((b) => ({ a, b, state: pairOf(view, presence, a, b, now).state })),
+      .map((b) => ({ a, b, state: pairOf(view, presence, a, b).state })),
   );
   const up = pairs
     .filter((pair) => pair.state === "up")
@@ -594,7 +594,7 @@ export function problemRows(
 ) {
   const members = trusted(view);
   const reaches = (server: NetworkServer, other: NetworkServer) => {
-    const counted = pairsWith(view, presence, server, now).filter(
+    const counted = pairsWith(view, presence, server).filter(
       (pair) =>
         pair.peer.nodeId !== other.nodeId &&
         (pair.state === "up" || pair.state === "down"),
@@ -603,7 +603,7 @@ export function problemRows(
   };
   return members.flatMap((a, index) =>
     members.slice(index + 1).flatMap((b) => {
-      const pair = pairOf(view, presence, a, b, now);
+      const pair = pairOf(view, presence, a, b);
       if (pair.state !== "down") return [];
       const alone = [a, b].find(
         (server) => !reaches(server, server === a ? b : a),
@@ -658,7 +658,7 @@ export function serverRow(
 ) {
   const online = isOnline(presence, server.nodeId);
   const seenAt = presence[server.nodeId]?.seenAt ?? null;
-  const counted = pairsWith(view, presence, server, now).filter(
+  const counted = pairsWith(view, presence, server).filter(
     (pair) => pair.state === "up" || pair.state === "down",
   );
   const up = counted.filter((pair) => pair.state === "up").length;
@@ -682,46 +682,44 @@ export function peerRows(
   now: number,
 ): { nodeId: string; text: string; test: boolean; state: PairState }[] {
   const online = isOnline(presence, server.nodeId);
-  return pairsWith(view, presence, server, now).map(
-    ({ peer, state, since }) => {
-      const row = (text: string, test = false) => ({
-        nodeId: peer.nodeId,
-        text: `${peer.name} · ${text}`,
-        test,
-        state,
-      });
-      if (state === "nat") {
-        return row("Both are behind NAT and cannot reach each other");
-      }
-      if (!online || state === "unknown") return row("--");
-      const mine = liveLink(view, server, peer)?.link;
-      const theirs = liveLink(view, peer, server)?.link;
-      if (state === "offline") {
-        const last = mine?.handshake ?? theirs?.handshake ?? null;
-        return row(
-          last === null
-            ? "offline · --"
-            : `offline, last answer ${formatDuration(now - last * 1000)} ago · --`,
-        );
-      }
-      if (state === "down") {
-        return row(
-          since === null ? "no answer" : `no answer for ${span(now - since)}`,
-          true,
-        );
-      }
-      const seen =
-        mine ?? (theirs ? { ...theirs, rx: theirs.tx, tx: theirs.rx } : null);
-      if (!seen || seen.handshake === null) return row("answers · --");
+  return pairsWith(view, presence, server).map(({ peer, state, since }) => {
+    const row = (text: string, test = false) => ({
+      nodeId: peer.nodeId,
+      text: `${peer.name} · ${text}`,
+      test,
+      state,
+    });
+    if (state === "nat") {
+      return row("Both are behind NAT and cannot reach each other");
+    }
+    if (!online || state === "unknown") return row("--");
+    const mine = liveLink(view, server, peer)?.link;
+    const theirs = liveLink(view, peer, server)?.link;
+    if (state === "offline") {
+      const last = mine?.handshake ?? theirs?.handshake ?? null;
       return row(
-        [
-          `answered ${formatDuration(now - seen.handshake * 1000)} ago`,
-          seen.ms === null ? "--" : `${seen.ms} ms`,
-          `↑ ${formatBytes(seen.tx)} ↓ ${formatBytes(seen.rx)}`,
-        ].join(" · "),
+        last === null
+          ? "offline · --"
+          : `offline, last answer ${formatDuration(now - last * 1000)} ago · --`,
       );
-    },
-  );
+    }
+    if (state === "down") {
+      return row(
+        since === null ? "no answer" : `no answer for ${span(now - since)}`,
+        true,
+      );
+    }
+    const seen =
+      mine ?? (theirs ? { ...theirs, rx: theirs.tx, tx: theirs.rx } : null);
+    if (!seen || seen.handshake === null) return row("answers · --");
+    return row(
+      [
+        `answered ${formatDuration(now - seen.handshake * 1000)} ago`,
+        seen.ms === null ? "--" : `${seen.ms} ms`,
+        `↑ ${formatBytes(seen.tx)} ↓ ${formatBytes(seen.rx)}`,
+      ].join(" · "),
+    );
+  });
 }
 
 export function networkFacts(

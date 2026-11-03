@@ -210,8 +210,9 @@ export class HubNetwork {
       if (!peer) continue;
       const [a, b] = nodeId < peer ? [nodeId, peer] : [peer, nodeId];
       const answering =
-        link.handshake !== null &&
-        now / 1000 - link.handshake < NETWORK.answerSeconds
+        link.ms !== null ||
+        (link.handshake !== null &&
+          now / 1000 - link.handshake < NETWORK.answerSeconds)
           ? 1
           : 0;
       if (pairs[`${a}|${b}`] === answering) continue;

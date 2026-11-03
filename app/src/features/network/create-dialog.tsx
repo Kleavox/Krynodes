@@ -606,15 +606,10 @@ function Progress({
         ))}
         {job.phase === "done" && (
           <li className="px-3.5 py-2.5 text-sm">
-            {linkProgress(
-              view,
-              presence,
-              [
-                ...job.seats.map((seat) => seat.nodeId),
-                ...view.members.map((member) => member.nodeId),
-              ],
-              now,
-            )}
+            {linkProgress(view, presence, [
+              ...job.seats.map((seat) => seat.nodeId),
+              ...view.members.map((member) => member.nodeId),
+            ])}
           </li>
         )}
       </ul>

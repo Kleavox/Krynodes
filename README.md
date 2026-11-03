@@ -1148,6 +1148,11 @@ only its own links. From agent 0.7.0.
   private address) is shown as such; its public address is not checked. On
   ufw the rule from Krynodes is read from `/etc/ufw/user.rules`, because the
   `ufw` command cannot run in the checks' read-only sandbox.
+- A link answers when, in the server's last report, its ping to the peer was
+  answered or its WireGuard handshake was under 3 minutes old at that report.
+  WireGuard renews a quiet session only every 2 minutes or so, and a report is
+  up to a minute old when the page reads it, so the page never ages a
+  handshake against its own clock.
 - The agent asks some network work itself (apply, announce, endpoints) from
   what its report brings back; those requests have ids shaped like a UUID
   without its version, and Krynodes takes them. A result that does not read is
