@@ -197,11 +197,11 @@ export const resting = (state: ServiceState) =>
 export const RECIPE_TITLES: Record<string, string> = {
   "security-updates": "Automatic Security Updates",
   "reboot-window": "Restart When Needed",
-  "ssh-keys-only": "SSH keys only",
-  "no-root-login": "No root login",
+  "ssh-keys-only": "SSH Keys Only",
+  "no-root-login": "No Root Login",
   fail2ban: "Block Repeated Login Failures",
   firewall: "Firewall",
-  "free-port-53": "Free port 53",
+  "free-port-53": "Free Port 53",
 };
 
 export const objectOf = (

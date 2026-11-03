@@ -28,29 +28,32 @@ export const firewallActionText = (
     ? (ACTION_TEXT[action.action] ?? null)
     : null;
 
-export function firewallStatus(
+export function firewallState(
   report: SecurityReport,
   choice: RecipeChoice,
-): { text: string; actions: ("on" | "close")[] } {
+): {
+  status: "Closed" | "On" | "Off";
+  line: string | null;
+  action: "open" | "on" | "close" | null;
+} {
   const wall = report.firewall;
-  if (wall?.closed) {
-    const count = wall.open.length;
-    return {
-      text: `Closed · ${count === 0 ? "no open ports" : `${count} open port${count === 1 ? "" : "s"}`}`,
-      actions: [],
-    };
-  }
+  if (wall?.closed) return { status: "Closed", line: null, action: "open" };
   if (wall) {
     return {
-      text: "On · open ports are not managed by Krynodes",
-      actions: ["close"],
+      status: "On",
+      line: "Open ports are not managed by Krynodes.",
+      action: "close",
     };
   }
-  if (choice.applied) return { text: "On", actions: [] };
+  if (choice.applied) return { status: "On", line: null, action: null };
   if (choice.outside) {
-    return { text: "On · Set up outside Krynodes", actions: [] };
+    return { status: "On", line: "Set up outside Krynodes.", action: null };
   }
-  return { text: "Off", actions: choice.blocked ? [] : ["on"] };
+  return {
+    status: "Off",
+    line: "No firewall is active.",
+    action: choice.blocked ? null : "on",
+  };
 }
 
 export function closedText(name: string, step: "on" | "close") {

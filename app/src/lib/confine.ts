@@ -58,8 +58,8 @@ export function confinementRow(
   }
   const text = [
     modeText(found),
-    found.restart && "restart to finish",
-    found.managed && "managed by Krynodes",
+    found.restart && "Restart to finish",
+    found.managed && "Managed by Krynodes",
   ]
     .filter(Boolean)
     .join(" · ");

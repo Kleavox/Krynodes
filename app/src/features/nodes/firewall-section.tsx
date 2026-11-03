@@ -24,10 +24,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useNetwork, useServices } from "@/lib/api";
-import { agentCurrent } from "@/lib/devices";
+import { useNetwork } from "@/lib/api";
 import {
   addressesOf,
+  firewallState,
   fromArg,
   fromText,
   listensText,
@@ -37,9 +37,14 @@ import {
 } from "@/lib/firewall";
 import { errorMessage } from "@/lib/http";
 import { firewallRow, inside } from "@/lib/network";
-import { firewallName } from "@/lib/security";
+import { firewallName, type RecipeChoice } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { FirewallOpening, NodeRecord } from "@/types";
+import type {
+  FirewallOpening,
+  NodeRecord,
+  SecurityReport,
+  StackEntry,
+} from "@/types";
 
 const sectionTitle = "text-xs font-medium text-muted-foreground";
 
@@ -357,18 +362,33 @@ function FirewallDialog({
   );
 }
 
-export function FirewallSection({ node }: { node: NodeRecord }) {
-  const services = useServices();
+const ACTION_LABEL = {
+  open: "Open Port",
+  on: "Turn On",
+  close: "Close Everything Else",
+};
+
+export function FirewallSection({
+  node,
+  report,
+  stacks,
+  choice,
+  onTurnOn,
+}: {
+  node: NodeRecord;
+  report: SecurityReport;
+  stacks: Pick<StackEntry, "project" | "access" | "public">[];
+  choice: RecipeChoice;
+  onTurnOn: (closing: boolean) => void;
+}) {
   const view = useNetwork().data;
   const [step, setStep] = useState<Step | null>(null);
-  const entry = services.data?.nodes.find((item) => item.id === node.id);
-  const report = entry?.security;
-  const wall = report?.firewall;
-  if (!agentCurrent(node) || !report || !wall?.closed) return null;
-  const stacks = entry?.stacks ?? [];
+  const wall = report.firewall;
   const member = view && inside(view).find((item) => item.nodeId === node.id);
   const locked = member ? firewallRow(member) : null;
   const tool = firewallName(report);
+  const state = firewallState(report, choice);
+  const act = state.action;
   return (
     <section aria-labelledby="node-firewall">
       <div className="mb-2 flex min-h-8 items-center gap-2">
@@ -376,106 +396,119 @@ export function FirewallSection({ node }: { node: NodeRecord }) {
           Firewall
         </h2>
         <span className="font-mono text-[11px] text-muted-foreground">
-          {tool} · Closed
+          {tool} · {state.status}
         </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="ml-auto h-8"
-          onClick={() => setStep({ step: "open" })}
-        >
-          Open Port
-        </Button>
-      </div>
-      <ul className="divide-y rounded-lg border bg-card text-sm">
-        <Row title="SSH" line="Always open" />
-        {locked && (
-          <Row
-            title={
-              <>
-                <span className="font-mono">{locked.port}</span> · Private
-                network
-              </>
+        {act && (
+          <Button
+            variant={act === "open" ? "ghost" : "outline"}
+            size="sm"
+            className="ml-auto h-9 md:h-8"
+            onClick={() =>
+              act === "open"
+                ? setStep({ step: "open" })
+                : onTurnOn(act === "close")
             }
-            line="Always open"
-          />
+          >
+            {ACTION_LABEL[act]}
+          </Button>
         )}
-        {wall.open.map((opening) => {
-          const key = openingKey(opening);
-          const listens = listensText(key, report, stacks);
-          return (
+      </div>
+      {!wall?.closed ? (
+        <p className="rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground">
+          {state.line ?? `${tool} is on.`}
+        </p>
+      ) : (
+        <ul className="divide-y rounded-lg border bg-card text-sm">
+          <Row title="SSH" line="Always open" />
+          {locked && (
             <Row
-              key={key}
               title={
                 <>
-                  <span className="font-mono">{key}</span> · {fromText(opening)}
+                  <span className="font-mono">{locked.port}</span> · Private
+                  network
                 </>
               }
-              line={listens.text}
-              tone={listens.idle ? "idle" : "plain"}
+              line="WireGuard, opened by Krynodes · Always open"
+            />
+          )}
+          {wall.open.map((opening) => {
+            const key = openingKey(opening);
+            const listens = listensText(key, report, stacks);
+            return (
+              <Row
+                key={key}
+                title={
+                  <>
+                    <span className="font-mono">{key}</span> ·{" "}
+                    {fromText(opening)}
+                  </>
+                }
+                line={listens.text}
+                tone={listens.idle ? "idle" : "plain"}
+                menu={
+                  <RowMenu
+                    label={`${key} actions`}
+                    items={[
+                      {
+                        label: "Change From",
+                        onSelect: () => setStep({ step: "from", opening }),
+                      },
+                      {
+                        label: "Close Port",
+                        destructive: true,
+                        onSelect: () =>
+                          setStep({ step: "close", opening, listens }),
+                      },
+                    ]}
+                  />
+                }
+              />
+            );
+          })}
+          {(wall.drift ?? []).map((rule) => (
+            <Row
+              key={`drift:${rule}`}
+              title={<span className="font-mono text-xs">{rule}</span>}
+              line="Added outside Krynodes"
+              tone="warn"
               menu={
                 <RowMenu
-                  label={`${key} actions`}
+                  label="Rule actions"
                   items={[
                     {
-                      label: "Change From",
-                      onSelect: () => setStep({ step: "from", opening }),
-                    },
-                    {
-                      label: "Close Port",
+                      label: "Put Back",
                       destructive: true,
                       onSelect: () =>
-                        setStep({ step: "close", opening, listens }),
+                        setStep({ step: "putback", rule, drift: true }),
                     },
                   ]}
                 />
               }
             />
-          );
-        })}
-        {(wall.drift ?? []).map((rule) => (
-          <Row
-            key={`drift:${rule}`}
-            title={<span className="font-mono text-xs">{rule}</span>}
-            line="Added outside Krynodes"
-            tone="warn"
-            menu={
-              <RowMenu
-                label="Rule actions"
-                items={[
-                  {
-                    label: "Put Back",
-                    destructive: true,
-                    onSelect: () =>
-                      setStep({ step: "putback", rule, drift: true }),
-                  },
-                ]}
-              />
-            }
-          />
-        ))}
-        {wall.other.map((rule) => (
-          <Row
-            key={`kept:${rule}`}
-            title={<span className="font-mono text-xs">{rule}</span>}
-            line="Kept as it was"
-            menu={
-              <RowMenu
-                label="Rule actions"
-                items={[
-                  {
-                    label: "Remove Rule",
-                    destructive: true,
-                    onSelect: () =>
-                      setStep({ step: "putback", rule, drift: false }),
-                  },
-                ]}
-              />
-            }
-          />
-        ))}
-      </ul>
-      {step && (
+          ))}
+          {wall.other.map((rule) => (
+            <Row
+              key={`kept:${rule}`}
+              title={<span className="font-mono text-xs">{rule}</span>}
+              line="Kept as it was"
+              menu={
+                <RowMenu
+                  label="Rule actions"
+                  items={[
+                    {
+                      label: "Remove Rule",
+                      destructive: true,
+                      onSelect: () =>
+                        setStep({ step: "putback", rule, drift: false }),
+                    },
+                  ]}
+                />
+              }
+            />
+          ))}
+        </ul>
+      )}
+      {step && wall && (
         <FirewallDialog
           key={JSON.stringify(step)}
           node={node}

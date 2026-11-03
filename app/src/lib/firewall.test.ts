@@ -6,7 +6,7 @@ import {
   closedText,
   closingPorts,
   firewallActionText,
-  firewallStatus,
+  firewallState,
   fromText,
   listensText,
   openPortProblem,
@@ -39,8 +39,8 @@ const stacks = [
 const firewallOf = (choices: ReturnType<typeof recipeChoices>) =>
   choices.find((choice) => choice.id === "firewall")!;
 
-describe("the firewall row in Protections", () => {
-  it("says closed with its open ports, with no Turn Off", () => {
+describe("the Firewall section's state", () => {
+  it("offers Open Port on a closed firewall", () => {
     const closed = report({
       recipes: ["firewall"],
       firewall: {
@@ -49,32 +49,19 @@ describe("the firewall row in Protections", () => {
         other: [],
       },
     });
-    expect(firewallStatus(closed, firewallOf(recipeChoices(closed)))).toEqual({
-      text: "Closed · 1 open port",
-      actions: [],
+    expect(firewallState(closed, firewallOf(recipeChoices(closed)))).toEqual({
+      status: "Closed",
+      line: null,
+      action: "open",
     });
-    const none = report({
-      recipes: ["firewall"],
-      firewall: { closed: true, open: [], other: [] },
-    });
-    expect(firewallStatus(none, firewallOf(recipeChoices(none))).text).toBe(
-      "Closed · no open ports",
-    );
   });
 
   it("offers Close Everything Else to a firewall Krynodes does not manage", () => {
-    const old = report({
-      recipes: ["firewall"],
-      firewall: { closed: false, open: [], other: [] },
-    });
-    expect(firewallStatus(old, firewallOf(recipeChoices(old)))).toEqual({
-      text: "On · open ports are not managed by Krynodes",
-      actions: ["close"],
-    });
     const theirs = report({ firewall: { closed: false, open: [], other: [] } });
-    expect(firewallStatus(theirs, firewallOf(recipeChoices(theirs)))).toEqual({
-      text: "On · open ports are not managed by Krynodes",
-      actions: ["close"],
+    expect(firewallState(theirs, firewallOf(recipeChoices(theirs)))).toEqual({
+      status: "On",
+      line: "Open ports are not managed by Krynodes.",
+      action: "close",
     });
   });
 
@@ -83,24 +70,28 @@ describe("the firewall row in Protections", () => {
       findings: [
         {
           id: "firewall-off",
-          severity: "warning",
+          severity: "note",
           detail: "No firewall is active",
         },
       ],
     });
-    expect(firewallStatus(off, firewallOf(recipeChoices(off)))).toEqual({
-      text: "Off",
-      actions: ["on"],
+    expect(firewallState(off, firewallOf(recipeChoices(off)))).toEqual({
+      status: "Off",
+      line: "No firewall is active.",
+      action: "on",
     });
     const on = report({ recipes: ["firewall"] });
-    expect(firewallStatus(on, firewallOf(recipeChoices(on)))).toEqual({
-      text: "On",
-      actions: [],
+    expect(firewallState(on, firewallOf(recipeChoices(on)))).toEqual({
+      status: "On",
+      line: null,
+      action: null,
     });
     const outside = report();
-    expect(firewallStatus(outside, firewallOf(recipeChoices(outside)))).toEqual(
-      { text: "On · Set up outside Krynodes", actions: [] },
-    );
+    expect(firewallState(outside, firewallOf(recipeChoices(outside)))).toEqual({
+      status: "On",
+      line: "Set up outside Krynodes.",
+      action: null,
+    });
   });
 });
 

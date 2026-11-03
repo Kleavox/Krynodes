@@ -7,13 +7,14 @@ import {
   findingTone,
   firewallPorts,
   fromUtcHour,
+  keysLine,
+  offTone,
   protectionDetail,
   protectionsNotice,
-  protectionsText,
   rangeLines,
   recipeChoices,
   recommended,
-  shownFindings,
+  securityFindings,
   toUtcHour,
   updatesUntil,
   worst,
@@ -28,14 +29,49 @@ const report = (over: Partial<SecurityReport> = {}): SecurityReport => ({
   ...over,
 });
 
-describe("the protections in one line", () => {
-  it("counts what is on, on outside Krynodes and off", () => {
-    expect(protectionsText(report())).toBe(
-      "Protections · 3 on outside Krynodes · 3 off",
-    );
-    expect(protectionsText(report({ recipes: ["fail2ban"] }))).toBe(
-      "Protections · 1 on · 2 on outside Krynodes · 3 off",
-    );
+describe("the Security tab lists each thing once", () => {
+  const found = report({
+    findings: [
+      { id: "root-login", severity: "note", detail: "Root can log in" },
+      {
+        id: "reboot-pending",
+        severity: "note",
+        detail: "A restart is waiting",
+      },
+      { id: "updates-off", severity: "warning", detail: "updates" },
+      { id: "ssh-keys", severity: "note", detail: "SSH keys for root, user1" },
+      { id: "firewall-off", severity: "note", detail: "No firewall" },
+      { id: "fail2ban-off", severity: "note", detail: "fail2ban" },
+      { id: "clock-unsynced", severity: "warning", detail: "clock" },
+      { id: "ssh-password", severity: "serious", detail: "passwords" },
+      { id: "dns-stub", severity: "note", detail: "port 53" },
+    ],
+  });
+
+  it("puts problems in Needs Attention and the rest in Notes, leaving out what a row shows", () => {
+    const { attention, notes } = securityFindings(found);
+    expect(attention.map((finding) => finding.id)).toEqual([
+      "ssh-password",
+      "clock-unsynced",
+    ]);
+    expect(notes.map((finding) => finding.id)).toEqual(["reboot-pending"]);
+  });
+
+  it("names the SSH keys on their own row", () => {
+    expect(keysLine(found)).toBe("Keys for root, user1");
+    expect(keysLine(report())).toBeNull();
+  });
+
+  it("colours an off protection only when its finding is a warning", () => {
+    const choice = (id: string, from = found) =>
+      recipeChoices(from).find((item) => item.id === id)!;
+    expect(offTone(choice("security-updates"), found)).toBe("warn");
+    expect(offTone(choice("fail2ban"), found)).toBeNull();
+    const on = report({
+      recipes: ["security-updates"],
+      findings: found.findings,
+    });
+    expect(offTone(choice("security-updates", on), on)).toBeNull();
   });
 });
 
@@ -180,10 +216,7 @@ describe("the security check on screen", () => {
     ).toBe(false);
   });
 
-  it("marks SSH keys as good news, not as a note", () => {
-    expect(findingTone({ id: "ssh-keys", severity: "note", detail: "x" })).toBe(
-      "ok",
-    );
+  it("colours a finding by how bad it is", () => {
     expect(findingTone({ id: "dns-stub", severity: "note", detail: "x" })).toBe(
       "idle",
     );
@@ -209,7 +242,7 @@ describe("the security check on screen", () => {
     ).toEqual(["fail2ban", "firewall"]);
   });
 
-  it("leaves the port 53 note out of the list, sorted worst first, and says what freeing it is for", () => {
+  it("leaves the port 53 note out of the list and says what freeing it is for", () => {
     const found = report({
       recipes: ["free-port-53"],
       findings: [
@@ -218,10 +251,7 @@ describe("the security check on screen", () => {
         { id: "updates-off", severity: "warning", detail: "updates" },
       ],
     });
-    expect(shownFindings(found).map((finding) => finding.id)).toEqual([
-      "updates-off",
-      "ssh-keys",
-    ]);
+    expect(securityFindings(found).notes).toEqual([]);
     expect(
       recipeChoices(found).find((choice) => choice.id === "free-port-53")?.hint,
     ).toBe("Only for a DNS server on this server.");
@@ -389,7 +419,7 @@ describe("no root login", () => {
     expect(ids.indexOf("no-root-login")).toBe(ids.indexOf("ssh-keys-only") + 1);
     const choice = choices.find((each) => each.id === "no-root-login")!;
     expect(choice).toMatchObject({
-      title: "No root login",
+      title: "No Root Login",
       applied: false,
       outside: false,
       blocked:

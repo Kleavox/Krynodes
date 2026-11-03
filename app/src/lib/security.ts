@@ -20,11 +20,6 @@ const HIDDEN = new Set(["dns-stub"]);
 
 const SEVERITY_ORDER = { serious: 0, warning: 1, note: 2 };
 
-export const shownFindings = (report: SecurityReport) =>
-  report.findings
-    .filter((finding) => !HIDDEN.has(finding.id))
-    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
-
 const OFF_FINDING: Record<string, string> = {
   "security-updates": "updates-off",
   fail2ban: "fail2ban-off",
@@ -32,14 +27,33 @@ const OFF_FINDING: Record<string, string> = {
   "no-root-login": "root-login",
 };
 
+const ELSEWHERE = new Set([...Object.values(OFF_FINDING), "ssh-keys"]);
+
+export function securityFindings(report: SecurityReport) {
+  const shown = report.findings
+    .filter((finding) => !HIDDEN.has(finding.id) && !ELSEWHERE.has(finding.id))
+    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+  return {
+    attention: shown.filter((finding) => finding.severity !== "note"),
+    notes: shown.filter((finding) => finding.severity === "note"),
+  };
+}
+
 export const findingTone = (finding: Finding) =>
-  finding.id === "ssh-keys"
-    ? "ok"
-    : finding.severity === "serious"
-      ? "bad"
-      : finding.severity === "warning"
-        ? "warn"
-        : "idle";
+  finding.severity === "serious"
+    ? "bad"
+    : finding.severity === "warning"
+      ? "warn"
+      : "idle";
+
+export const offTone = (choice: RecipeChoice, report: SecurityReport) =>
+  !choice.applied &&
+  report.findings.some(
+    (finding) =>
+      finding.id === OFF_FINDING[choice.id] && finding.severity !== "note",
+  )
+    ? ("warn" as const)
+    : null;
 
 const ORDER = [
   "security-updates",
@@ -67,6 +81,11 @@ const keyedUsers = (report: SecurityReport) =>
     .find((finding) => finding.id === "ssh-keys")
     ?.detail.replace(/^SSH keys for /u, "")
     .split(", ");
+
+export function keysLine(report: SecurityReport): string | null {
+  const users = keyedUsers(report);
+  return users ? `Keys for ${users.join(", ")}` : null;
+}
 
 function blockedText(id: string, report: SecurityReport): string | null {
   if (id === "ssh-keys-only" && has(report, "ssh-no-keys")) {
@@ -134,21 +153,6 @@ export function recommended(report: SecurityReport): string[] {
         !choice.blocked,
     )
     .map((choice) => choice.id);
-}
-
-export function protectionsText(report: SecurityReport): string {
-  const choices = recipeChoices(report);
-  const on = choices.filter((choice) => choice.applied).length;
-  const outside = choices.filter((choice) => choice.outside).length;
-  const off = choices.length - on - outside;
-  return [
-    "Protections",
-    on > 0 ? `${on} on` : null,
-    outside > 0 ? `${outside} on outside Krynodes` : null,
-    off > 0 ? `${off} off` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
 }
 
 export function firewallPorts(report: SecurityReport): string[] {

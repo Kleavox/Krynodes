@@ -149,7 +149,10 @@ export function filterListeners<
     (listener) =>
       !inRanges(listener.address, ranges) && !inRanges(listener.address, own),
   );
-  const inside = listed((listener) => inRanges(listener.address, own));
+  const inside = listed(
+    (listener) =>
+      listener.process !== "WireGuard" && inRanges(listener.address, own),
+  );
   const findings = report.findings.flatMap((finding) =>
     finding.id !== "public-ports"
       ? [finding]

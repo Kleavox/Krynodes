@@ -926,7 +926,7 @@ export function opensBox(
         : []),
       ...(shut.length > 0
         ? [
-            `${new Intl.ListFormat("en").format(shut)} ${shut.length === 1 ? "is" : "are"} closed by the firewall. Open ${shut.length === 1 ? "it" : "them"} in the server's Firewall section.`,
+            `${new Intl.ListFormat("en").format(shut)} ${shut.length === 1 ? "is" : "are"} closed by the firewall. Open ${shut.length === 1 ? "it" : "them"} under Firewall on the server's Security tab.`,
           ]
         : []),
       ...(summary.internet.some((port) => port.startsWith("53/"))

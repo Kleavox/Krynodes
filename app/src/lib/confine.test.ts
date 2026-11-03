@@ -52,14 +52,14 @@ describe("the SELinux or AppArmor row", () => {
     });
     expect(confinementRow(selinux({ managed: true }))).toEqual({
       title: "SELinux",
-      text: "Enforcing · managed by Krynodes",
+      text: "Enforcing · Managed by Krynodes",
       actions: ["denials"],
     });
     expect(
       confinementRow(
         selinux({ mode: "disabled", managed: true, restart: true }),
       ),
-    ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
+    ).toMatchObject({ text: "Off · Restart to finish · Managed by Krynodes" });
     expect(confinementRow(selinux({ mode: "kernel-off" }))).toMatchObject({
       text: "Off · needs a restart",
       actions: ["denials", "on"],
@@ -68,7 +68,7 @@ describe("the SELinux or AppArmor row", () => {
       confinementRow(
         selinux({ mode: "kernel-off", managed: true, restart: true }),
       ),
-    ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
+    ).toMatchObject({ text: "Off · Restart to finish · Managed by Krynodes" });
     expect(confinementRow(apparmor())).toEqual({
       title: "AppArmor",
       text: "On · 12 profiles enforced",
@@ -96,7 +96,7 @@ describe("the SELinux or AppArmor row", () => {
         apparmor({ mode: "kernel-off", managed: true, restart: true }),
       ),
     ).toMatchObject({
-      text: "Off · restart to finish · managed by Krynodes",
+      text: "Off · Restart to finish · Managed by Krynodes",
       actions: ["denials"],
     });
     expect(
