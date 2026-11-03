@@ -18,6 +18,7 @@ import {
   fingerprint,
   firstTrusts,
   formatPrint,
+  networkSigners,
   nextVersion,
   predictMissing,
   reachText,
@@ -164,6 +165,19 @@ describe("access", () => {
     expect(
       signersFor(devices, [trust(3, devices, [laptop, phone, tablet])]),
     ).toEqual(["laptop", "tablet"]);
+  });
+
+  it("lets any of my passkeys sign for a network no server is in", () => {
+    const devices = [
+      { ...laptop, owner: "me@example.test", mine: true },
+      { ...phone, owner: "friend@example.test", mine: false },
+      tablet,
+    ];
+    expect(networkSigners(devices, [])).toEqual(["laptop", "tablet"]);
+    expect(networkSigners(devices, [trust(3, devices, [tablet])])).toEqual([
+      "tablet",
+    ]);
+    expect(networkSigners(devices, [null])).toEqual([]);
   });
 
   it("offers a server restart to a current agent with access", () => {

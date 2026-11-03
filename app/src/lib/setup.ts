@@ -1,9 +1,7 @@
 import type { Setup } from "@krynodes/protocol";
 
 import type { NodeRecord } from "../types";
-import { parseTimestamp } from "./format";
-
-const SETTING_UP_MS = 60 * 60_000;
+import { parseTimestamp, SETTING_UP_MS } from "./format";
 
 const LABELS: Record<Setup["phase"], string> = {
   admin: "Adding Admin User",

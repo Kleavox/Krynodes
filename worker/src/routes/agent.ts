@@ -60,9 +60,9 @@ export function registerAgentRoutes(app: KrynodesApp): void {
           `INSERT INTO nodes (
            id, owner_user_id, name, agent_token_hash, interval_seconds,
            enrolled_at, hostname, operating_system, architecture,
-           agent_version, last_seen_at
+           agent_version
          )
-         SELECT ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, datetime('now')
+         SELECT ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?
          WHERE EXISTS (
            SELECT 1 FROM enrollment_tokens WHERE id = ? AND used_at IS NULL
          )`,

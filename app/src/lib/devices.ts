@@ -107,6 +107,14 @@ export function signersFor(
     .map((device) => device.id);
 }
 
+export const networkSigners = (
+  devices: DeviceRecord[],
+  members: (NodeTrust | null)[],
+) =>
+  members.length === 0
+    ? devices.filter(usable).map((device) => device.id)
+    : signersFor(devices, members);
+
 const coreOf = (view: FleetView) =>
   view.devices.filter((device) => device.core);
 
