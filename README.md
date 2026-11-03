@@ -139,15 +139,18 @@ _Restarting the server in 10 seconds to finish setup._ and restarts it once.
 This is the only restart Krynodes makes on its own, and only at enroll; the
 dashboard does not count the server offline while it comes back.
 
-The Enroll dialog closes by itself once the server enrolls. The agent sends
-nothing while the install command's setup runs, so the first report comes
-after the restart (or right after setup when no restart is needed). Until then
-the server's card in Fleet is a loading card: its name, **Setting Up**, grey
-placeholders where its data will be and a loading bar, and it does not open;
-its ⋯ menu has **Delete Node**, for a server that will never report (one that was
-reset or reinstalled during setup).
-It is not counted offline for the first hour, and nobody is mailed that it is
-offline, however long that takes. Changes the server watch sees meanwhile go with the
+The Enroll dialog closes by itself once the server enrolls. While the install
+command's setup runs the agent sends only the step it is in (agent 0.7.12), so
+the first report comes after the restart (or right after setup when no restart
+is needed). Until then the server's card in Fleet is a loading card: its name,
+**Setting Up**, the step (Installing Docker, Restarting, ...), grey placeholders
+where its data will be and a loading bar, and it does not open; its ⋯ menu has
+**Delete Node**. A server that goes silent for five minutes during a step, or
+does not come back within twenty minutes of its restart, is **Setup Failed**: the
+card says where it went silent, stops loading, and keeps Delete Node so you can
+delete it and enroll the server again. It comes back by itself if the server
+is heard again. A server that never reported is never counted offline and
+nobody is mailed about it. Changes the server watch sees meanwhile go with the
 first report. A setup whose terminal closes stops being quiet within a minute:
 the server reports, its card shows **Setup stopped at** the step it reached,
 and it opens. A server that joins the private network shows **Join** on its

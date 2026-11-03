@@ -343,10 +343,13 @@ func (r *Relay) Report(beat *reporter.Heartbeat) {
 	beat.Setup = r.readSetup()
 }
 
-func (r *Relay) SettingUp() bool {
+func (r *Relay) SettingUp() *reporter.Setup {
 	progress, _ := readState[setupProgress](r.StateDir, setupFile)
 	setup := r.readSetup()
-	return progress.Quiet && setup != nil && !setup.Stopped
+	if !progress.Quiet || setup == nil || setup.Stopped {
+		return nil
+	}
+	return setup
 }
 
 func (r *Relay) readSetup() *reporter.Setup {

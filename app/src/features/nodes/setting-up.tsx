@@ -10,6 +10,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { SetupView } from "@/lib/setup";
+import { cn } from "@/lib/utils";
 import type { NodeRecord } from "@/types";
 
 import { DeleteNodeDialog } from "./delete-node-dialog";
@@ -24,6 +26,12 @@ export function SetupProgress() {
       <div className="h-full w-1/3 rounded-full bg-primary motion-safe:animate-loading" />
     </div>
   );
+}
+
+export function failedLine(step: string | null) {
+  if (step === null) return "Never connected";
+  if (step === "Restarting") return "Did not come back after its restart";
+  return `Went silent at ${step}`;
 }
 
 export function SetupActions({ node }: { node: NodeRecord }) {
@@ -55,10 +63,17 @@ export function SetupActions({ node }: { node: NodeRecord }) {
   );
 }
 
-export function SettingUpCard({ node }: { node: NodeRecord }) {
+export function SettingUpCard({
+  node,
+  view,
+}: {
+  node: NodeRecord;
+  view: SetupView;
+}) {
+  const still = view.failed && "animate-none";
   return (
     <article
-      aria-busy="true"
+      aria-busy={view.failed ? undefined : true}
       className="flex flex-col gap-3 rounded-lg border bg-card p-3.5"
     >
       <div>
@@ -67,27 +82,44 @@ export function SettingUpCard({ node }: { node: NodeRecord }) {
             {node.name}
           </h2>
           <div className="flex shrink-0 items-center gap-1">
-            <StatusChip tone="work" label="Setting Up" pulse />
+            {view.failed ? (
+              <StatusChip tone="bad" label="Setup Failed" />
+            ) : (
+              <StatusChip tone="work" label="Setting Up" pulse />
+            )}
             <SetupActions node={node} />
           </div>
         </div>
-        <Skeleton className="mt-1.5 h-3 w-2/5" />
+        {view.failed || view.step ? (
+          <p
+            className={cn(
+              "mt-1 truncate font-mono text-[11px]",
+              view.failed ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {view.failed ? failedLine(view.step) : view.step}
+          </p>
+        ) : (
+          <Skeleton className="mt-1.5 h-3 w-2/5" />
+        )}
       </div>
       <div>
-        <Skeleton className="h-2.5 w-24" />
-        <Skeleton className="mt-1.5 h-8" />
+        <Skeleton className={cn("h-2.5 w-24", still)} />
+        <Skeleton className={cn("mt-1.5 h-8", still)} />
       </div>
       <div className="grid grid-cols-3 gap-3">
         {["cpu", "memory", "disk"].map((key) => (
           <div key={key}>
-            <Skeleton className="h-3 w-3/4" />
-            <Skeleton className="mt-1 h-1.5" />
+            <Skeleton className={cn("h-3 w-3/4", still)} />
+            <Skeleton className={cn("mt-1 h-1.5", still)} />
           </div>
         ))}
       </div>
-      <SetupProgress />
+      {!view.failed && <SetupProgress />}
       <p className="mt-auto border-t pt-2.5 font-mono text-[11px] text-muted-foreground">
-        Opens when setup is done
+        {view.failed
+          ? "Delete it and enroll the server again"
+          : "Opens when setup is done"}
       </p>
     </article>
   );

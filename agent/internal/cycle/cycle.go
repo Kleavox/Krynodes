@@ -14,6 +14,7 @@ import (
 type Reporter interface {
 	SendHeartbeat(context.Context, reporter.Heartbeat) (reporter.HeartbeatResponse, error)
 	FetchConfig(context.Context) (reporter.AgentConfig, error)
+	SendSetup(context.Context, reporter.Setup) error
 }
 
 type Cycle interface {
@@ -33,7 +34,7 @@ type Actions interface {
 	NetworkReply(*reporter.NetworkReply) error
 	Report(*reporter.Heartbeat)
 	Answer(reporter.HeartbeatResponse) error
-	SettingUp() bool
+	SettingUp() *reporter.Setup
 }
 
 type implementation struct {
@@ -50,8 +51,13 @@ func New(server Reporter, host reporter.Host, updates Updater, actions Actions) 
 }
 
 func (cycle *implementation) Execute(ctx context.Context, nodeID string) (int, error) {
-	if cycle.actions != nil && cycle.actions.SettingUp() {
-		return 0, nil
+	if cycle.actions != nil {
+		if setup := cycle.actions.SettingUp(); setup != nil {
+			if err := cycle.reporter.SendSetup(ctx, *setup); err != nil {
+				return 0, describeResponseError("setup", err)
+			}
+			return 0, nil
+		}
 	}
 	var configErr error
 	if cycle.config == nil {

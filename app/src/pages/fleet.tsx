@@ -29,6 +29,7 @@ import { LatestAgent, UpdateNotice } from "@/features/agent/update-notice";
 import { EnrollDialog } from "@/features/nodes/enroll-dialog";
 import { NodeActions } from "@/features/nodes/node-actions";
 import {
+  failedLine,
   SettingUpCard,
   SetupActions,
   SetupProgress,
@@ -751,7 +752,9 @@ function NodeCard({
   const live = state === "online" || state === "offline";
   const quarantined = fleetQuarantine(node, now);
   const running = setting !== null && !setting.stopped;
-  if (!opensServer(node, now)) return <SettingUpCard node={node} />;
+  if (setting && !opensServer(node, now)) {
+    return <SettingUpCard node={node} view={setting} />;
+  }
   return (
     <article
       className={cn(
@@ -951,11 +954,14 @@ function FleetTable({
         </thead>
         <tbody className="divide-y">
           {rows.map(({ node, state, severity, reasons, operation, setup }) =>
-            !opensServer(node, now) ? (
+            setup && !opensServer(node, now) ? (
               <tr key={node.id}>
                 <td className="px-3 py-2.5">
                   <div className="flex min-w-0 items-center gap-2">
-                    <StatusDot tone="work" pulse />
+                    <StatusDot
+                      tone={setup.failed ? "bad" : "work"}
+                      pulse={!setup.failed}
+                    />
                     <span
                       className="min-w-0 truncate font-medium"
                       title={node.name}
@@ -963,15 +969,33 @@ function FleetTable({
                       {node.name}
                     </span>
                   </div>
-                  <p className="mt-0.5 truncate pl-4 font-mono text-[11px] text-warning">
-                    Setting Up
+                  <p
+                    className={cn(
+                      "mt-0.5 truncate pl-4 font-mono text-[11px]",
+                      setup.failed ? "text-destructive" : "text-warning",
+                    )}
+                  >
+                    {setup.label}
                   </p>
                 </td>
                 <td colSpan={6} className="px-3 py-2.5">
                   <div className="flex items-center gap-2">
-                    <div className="min-w-0 flex-1">
-                      <SetupProgress />
-                    </div>
+                    {setup.failed ? (
+                      <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-destructive">
+                        {failedLine(setup.step)}
+                      </p>
+                    ) : (
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        {setup.step && (
+                          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                            {setup.step}
+                          </span>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <SetupProgress />
+                        </div>
+                      </div>
+                    )}
                     <SetupActions node={node} />
                   </div>
                 </td>

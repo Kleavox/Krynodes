@@ -45,7 +45,9 @@ import { actionsSchema, heartbeatSchema } from "../schemas";
 import {
   agentConfigResponseSchema,
   agentTakesPush,
+  setupSchema,
   type Denials,
+  type Setup,
 } from "@krynodes/protocol";
 import {
   drain,
@@ -98,6 +100,8 @@ const CHECKS_KEPT_MS = 10 * 60_000;
 const MAILS_AT_ONCE = 5;
 const WATCHDOG_RETRY_MS = 60_000;
 const RECHECK_MS = 60_000;
+const SETUP_SILENT_MS = 5 * 60_000;
+const SETUP_RESTART_MS = 20 * 60_000;
 
 interface RosterEntry {
   interval: number;
@@ -130,6 +134,21 @@ function finishingSetup(setup: string | null, seen: number, now: number) {
   } catch {
     return false;
   }
+}
+
+function failedSetup(setup: string | null, seen: number, now: number) {
+  let stored: Setup | null = null;
+  try {
+    stored = JSON.parse(setup ?? "null") as Setup | null;
+  } catch {
+    return null;
+  }
+  if (!stored?.phase || stored.failed || stored.stopped) return null;
+  const silent =
+    stored.phase === "restart" ? SETUP_RESTART_MS : SETUP_SILENT_MS;
+  return now - seen >= silent
+    ? JSON.stringify({ ...stored, failed: true })
+    : null;
 }
 
 function restarting(security: string | null, seen: number, now: number) {
@@ -381,6 +400,7 @@ export class FleetHub {
       type?: unknown;
       heartbeat?: unknown;
       report?: unknown;
+      setup?: unknown;
     };
     if (typeof envelope.id !== "number") {
       ws.send(JSON.stringify({ type: "error", code: "INVALID_MESSAGE" }));
@@ -404,6 +424,22 @@ export class FleetHub {
           return;
         }
         await this.heartbeat(ws, state, parsed.data, reply);
+      } else if (envelope.type === "setup") {
+        const parsed = setupSchema.safeParse(envelope.setup);
+        if (!parsed.success) {
+          invalid();
+          return;
+        }
+        const setup = JSON.stringify(parsed.data);
+        const written = await this.env.DB.prepare(
+          `UPDATE nodes SET setup = ?1 WHERE id = ?2
+           AND last_seen_at IS NULL AND setup IS NOT ?1`,
+        )
+          .bind(setup, state.nodeId)
+          .run();
+        await this.returned(state.nodeId);
+        reply({ type: "setup" });
+        if ((written.meta.changes ?? 0) > 0) this.announce(["nodes"]);
       } else if (envelope.type === "config") {
         const node = await this.node(ws, state);
         if (!node) return;
@@ -720,9 +756,24 @@ export class FleetHub {
     const known = new Map(rows.map((row) => [row.id, row]));
     const planned = await plannedNodes(db, [...known.keys()], now);
     const quiet: { nodeId: string; seen: number }[] = [];
+    const failed: D1PreparedStatement[] = [];
     for (const { nodeId, entry, seen } of silent) {
+      const setup =
+        known.get(nodeId)?.last_seen_at === null
+          ? failedSetup(known.get(nodeId)?.setup ?? null, seen, now)
+          : null;
       if (!known.has(nodeId)) {
         delete roster[nodeId];
+      } else if (setup) {
+        entry.offline = true;
+        delete entry.checkedAt;
+        failed.push(
+          db
+            .prepare(
+              "UPDATE nodes SET setup = ? WHERE id = ? AND last_seen_at IS NULL",
+            )
+            .bind(setup, nodeId),
+        );
       } else if (
         known.get(nodeId)?.last_seen_at === null ||
         restarting(known.get(nodeId)?.security ?? null, seen, now) ||
@@ -747,6 +798,10 @@ export class FleetHub {
           occurredAt: new Date(seen).toISOString(),
         });
       }
+    }
+    if (failed.length > 0) {
+      await db.batch(failed);
+      this.announce(["nodes"]);
     }
     if (changed) await this.ctx.storage.put(ROSTER, roster);
     await this.quiet(quiet, now);

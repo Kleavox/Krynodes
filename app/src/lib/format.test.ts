@@ -50,17 +50,16 @@ describe("nodeState", () => {
       nodeState({ ...base, disabled_at: "2026-09-02 00:00:00" }, NOW),
     ).toBe("disabled");
     expect(nodeState({ ...base, enrolled_at: null }, NOW)).toBe("pending");
-    expect(nodeState({ ...base, last_seen_at: null }, NOW)).toBe("offline");
+    expect(nodeState({ ...base, last_seen_at: null }, NOW)).toBe("pending");
   });
 
-  it("waits an hour for a new server's first report before calling it offline", () => {
+  it("never calls a server offline before its first report, however long it takes", () => {
     const fresh = { ...base, last_seen_at: null };
-    expect(
-      nodeState({ ...fresh, enrolled_at: "2026-09-27 11:01:00" }, NOW),
-    ).toBe("pending");
-    expect(
-      nodeState({ ...fresh, enrolled_at: "2026-09-27 10:59:00" }, NOW),
-    ).toBe("offline");
+    for (const enrolled of ["2026-09-27 11:59:00", "2026-09-20 10:59:00"]) {
+      expect(nodeState({ ...fresh, enrolled_at: enrolled }, NOW)).toBe(
+        "pending",
+      );
+    }
   });
 
   it("is online within max(90s, 3 x interval) and offline after", () => {

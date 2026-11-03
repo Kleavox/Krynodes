@@ -1,7 +1,7 @@
 import type { Setup } from "@krynodes/protocol";
 
 import type { NodeRecord } from "../types";
-import { parseTimestamp, SETTING_UP_MS } from "./format";
+import { parseTimestamp } from "./format";
 
 const LABELS: Record<Setup["phase"], string> = {
   admin: "Adding Admin User",
@@ -17,6 +17,8 @@ const LABELS: Record<Setup["phase"], string> = {
 export interface SetupView {
   label: string;
   stopped: boolean;
+  failed: boolean;
+  step: string | null;
 }
 
 type SetupNode = Pick<
@@ -24,17 +26,30 @@ type SetupNode = Pick<
   "setup" | "enrolled_at" | "last_seen_at" | "warnings"
 >;
 
+const SETTING_UP_MS = 60 * 60_000;
+
 export function setupView(node: SetupNode, now: number): SetupView | null {
+  const step = node.setup ? LABELS[node.setup.phase] : null;
   if (node.setup?.stopped) {
-    return { label: LABELS[node.setup.phase], stopped: true };
+    return {
+      label: LABELS[node.setup.phase],
+      stopped: true,
+      failed: false,
+      step,
+    };
   }
-  if (
-    node.setup ||
-    (node.enrolled_at &&
-      !node.last_seen_at &&
-      now - parseTimestamp(node.enrolled_at) < SETTING_UP_MS)
-  ) {
-    return { label: "Setting Up", stopped: false };
+  if (node.setup && !node.setup.failed) {
+    return { label: "Setting Up", stopped: false, failed: false, step };
+  }
+  if (node.setup || (node.enrolled_at && !node.last_seen_at)) {
+    const failed =
+      !!node.setup || now - parseTimestamp(node.enrolled_at!) >= SETTING_UP_MS;
+    return {
+      label: failed ? "Setup Failed" : "Setting Up",
+      stopped: false,
+      failed,
+      step,
+    };
   }
   return null;
 }

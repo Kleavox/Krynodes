@@ -647,6 +647,165 @@ describe("FleetHub", () => {
     ]);
   });
 
+  describe("a quiet setup", () => {
+    const stored = (t: ReturnType<typeof setup>) =>
+      t.sqlite
+        .prepare("SELECT setup, last_seen_at FROM nodes WHERE id = ?")
+        .get(NODE) as { setup: string | null; last_seen_at: string | null };
+    let message = 100;
+    const step = (
+      t: ReturnType<typeof setup>,
+      ws: FakeSocket,
+      at: number,
+      body: unknown,
+    ) => {
+      vi.setSystemTime(at);
+      message += 1;
+      return t.hub.webSocketMessage(
+        ws as unknown as WebSocket,
+        JSON.stringify({ id: message, type: "setup", setup: body }),
+      );
+    };
+    const leaves = async (t: ReturnType<typeof setup>, ws: FakeSocket) => {
+      ws.close(1006, "gone");
+      await t.hub.webSocketClose(ws as unknown as WebSocket);
+    };
+
+    it("takes its step over the stream without counting it as a report", async () => {
+      const t = setup();
+      const viewer = new FakeSocket();
+      await t.hub.watch(viewer as unknown as WebSocket);
+      const ws = await t.connect();
+      const docker = { phase: "docker", step: 4, of: 6 };
+      await step(t, ws, BASE + 5_000, docker);
+      expect(ws.replies().at(-1)).toEqual({ id: message, type: "setup" });
+      expect(JSON.parse(stored(t).setup ?? "null")).toEqual(docker);
+      expect(stored(t).last_seen_at).toBeNull();
+      expect(
+        viewer.replies().filter((reply) => reply.type === "changed"),
+      ).toHaveLength(1);
+      const before = t.changes();
+      await step(t, ws, BASE + 35_000, docker);
+      expect(t.changes() - before).toBe(0);
+      await step(t, ws, BASE + 40_000, { phase: "docker", step: 7, of: 6 });
+      expect(ws.replies().at(-1)).toMatchObject({ code: "INVALID_MESSAGE" });
+    });
+
+    it("is failed once its server stays silent five minutes in a step, and nobody is mailed", async () => {
+      const t = setup();
+      const ws = await t.connect();
+      await step(t, ws, BASE + 5_000, { phase: "docker", step: 4, of: 6 });
+      await leaves(t, ws);
+
+      vi.setSystemTime(BASE + 240_000);
+      await t.hub.alarm();
+      expect(JSON.parse(stored(t).setup ?? "null")).not.toHaveProperty(
+        "failed",
+      );
+
+      vi.setSystemTime(BASE + 310_000);
+      await t.hub.alarm();
+      expect(JSON.parse(stored(t).setup ?? "null")).toEqual({
+        phase: "docker",
+        step: 4,
+        of: 6,
+        failed: true,
+      });
+      const before = t.changes();
+      vi.setSystemTime(BASE + 400_000);
+      await t.hub.alarm();
+      expect(t.changes() - before).toBe(0);
+      expect(t.mail).toEqual([]);
+    });
+
+    it("waits twenty minutes for a server that restarts at the end before calling it failed", async () => {
+      const t = setup();
+      const ws = await t.connect();
+      await step(t, ws, BASE + 5_000, { phase: "restart", step: 6, of: 6 });
+      await leaves(t, ws);
+
+      vi.setSystemTime(BASE + 1_150_000);
+      await t.hub.alarm();
+      expect(JSON.parse(stored(t).setup ?? "null")).not.toHaveProperty(
+        "failed",
+      );
+
+      vi.setSystemTime(BASE + 1_210_000);
+      await t.hub.alarm();
+      expect(JSON.parse(stored(t).setup ?? "null")).toMatchObject({
+        phase: "restart",
+        failed: true,
+      });
+      expect(t.mail).toEqual([]);
+    });
+
+    it("is no longer failed when its server is heard again, and is watched from its first report", async () => {
+      const t = setup();
+      const ws = await t.connect();
+      await step(t, ws, BASE + 5_000, { phase: "upgrade", step: 2, of: 6 });
+      await leaves(t, ws);
+      vi.setSystemTime(BASE + 310_000);
+      await t.hub.alarm();
+      expect(JSON.parse(stored(t).setup ?? "null")).toHaveProperty(
+        "failed",
+        true,
+      );
+
+      const again = await t.connect();
+      await step(t, again, BASE + 320_000, {
+        phase: "upgrade",
+        step: 2,
+        of: 6,
+      });
+      expect(JSON.parse(stored(t).setup ?? "null")).toEqual({
+        phase: "upgrade",
+        step: 2,
+        of: 6,
+      });
+      await t.send(again, BASE + 900_000, heartbeat(10));
+      expect(stored(t).setup).toBeNull();
+      await leaves(t, again);
+      vi.setSystemTime(BASE + 1_100_000);
+      await t.hub.alarm();
+      expect(t.mail.map((mail) => mail.subject)).toEqual([
+        `[Krynodes] ${NODE}: offline`,
+      ]);
+    });
+
+    it("is failed again when its server is heard and then goes silent again", async () => {
+      const t = setup();
+      const ws = await t.connect();
+      await step(t, ws, BASE + 5_000, { phase: "upgrade", step: 2, of: 6 });
+      await leaves(t, ws);
+      vi.setSystemTime(BASE + 310_000);
+      await t.hub.alarm();
+
+      const again = await t.connect();
+      await step(t, again, BASE + 320_000, {
+        phase: "docker",
+        step: 4,
+        of: 6,
+      });
+      await leaves(t, again);
+      vi.setSystemTime(BASE + 640_000);
+      await t.hub.alarm();
+      expect(JSON.parse(stored(t).setup ?? "null")).toEqual({
+        phase: "docker",
+        step: 4,
+        of: 6,
+        failed: true,
+      });
+    });
+
+    it("is never failed once the server has reported", async () => {
+      const t = setup();
+      const ws = await t.connect();
+      await t.send(ws, BASE + 5_000, heartbeat(10));
+      await step(t, ws, BASE + 6_000, { phase: "docker", step: 4, of: 6 });
+      expect(stored(t).setup).toBeNull();
+    });
+  });
+
   it("mails as usual when a setup stopped before its restart", async () => {
     const t = setup();
     const ws = await t.connect();
