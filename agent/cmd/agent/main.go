@@ -408,6 +408,9 @@ func installService(args []string) error {
 			return fmt.Errorf("restart %s: %w", name, err)
 		}
 	}
+	if err := linkForSudo(sudoLink, executable); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not link %s (%v); run sudo %s instead of sudo kry.\n", sudoLink, err, executable)
+	}
 	fmt.Printf("Installed and started %s.service\n", unitName)
 	return nil
 }
@@ -840,6 +843,7 @@ func uninstallService(args []string) error {
 		removal.Problems = append(removal.Problems, "Krynodes was still working on this server after an hour and was stopped; check the package manager with: sudo dpkg --configure -a (Debian, Ubuntu) or sudo dnf check (RHEL family), and the stacks with docker compose ps")
 	}
 	binary, _ := os.Executable()
+	unlinkForSudo(sudoLink, binary)
 	for _, path := range leftovers(binary) {
 		if err := os.RemoveAll(path); err != nil {
 			removal.Problems = append(removal.Problems, fmt.Sprintf("remove %s: %v", path, err))
@@ -901,6 +905,21 @@ func waitFor(busy func() bool, sleep func(time.Duration), limit time.Duration, m
 			told = true
 		}
 		sleep(2 * time.Second)
+	}
+}
+
+const sudoLink = "/usr/bin/kry"
+
+func linkForSudo(link, executable string) error {
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		return nil
+	}
+	return os.Symlink(executable, link)
+}
+
+func unlinkForSudo(link, executable string) {
+	if target, err := os.Readlink(link); err == nil && target == executable {
+		os.Remove(link)
 	}
 }
 

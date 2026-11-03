@@ -72,11 +72,13 @@ export const removalReady = (
     | "enrolled_at"
     | "last_seen_at"
     | "interval_seconds"
+    | "connected_at"
   >,
   trust: NodeTrust | null,
   devices: DeviceRecord[],
   now: number,
 ) =>
+  node.connected_at !== undefined &&
   nodeState(node, now) === "online" &&
   agentCurrent(node) &&
   signersFor(devices, [trust]).length > 0;

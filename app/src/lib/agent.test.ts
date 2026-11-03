@@ -94,6 +94,7 @@ describe("removing Krynodes from a server with Delete node", () => {
     disabled_at: null,
     enrolled_at: ago(600),
     last_seen_at: ago(minutesAgo),
+    connected_at: ago(minutesAgo + 30),
     interval_seconds: 60,
   });
   const trust = { version: 1, core: [], access: [laptop.fingerprint] };
@@ -108,5 +109,10 @@ describe("removing Krynodes from a server with Delete node", () => {
     expect(
       removalReady(server("0.7.0"), { ...trust, access: [] }, [laptop], NOW),
     ).toBe(false);
+  });
+
+  it("needs the agent connected now, not just a recent report, since nothing else could take the removal", () => {
+    const { connected_at: _, ...left } = server("0.7.0");
+    expect(removalReady(left, trust, [laptop], NOW)).toBe(false);
   });
 });
