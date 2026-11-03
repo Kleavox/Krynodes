@@ -1572,7 +1572,26 @@ const silentDetail = (end: TestEnd) =>
   `Its agent is online, but no result came back within ${formatDuration(NETWORK.readSeconds * 1000)}. On ${end.name}, sudo journalctl -u krynodes -u krynodes-exec -n 30 shows why.`;
 
 const through = (a: Answered, b: Answered) =>
-  a.result.handshakes.answered > 0 || b.result.handshakes.answered > 0;
+  a.result.handshakes.answered > 0 ||
+  b.result.handshakes.answered > 0 ||
+  (a.result.handshakes.received > 0 && b.result.handshakes.received > 0);
+
+const privateAddress = (address: string) => {
+  const [a, b = -1] = address.split(".").map(Number);
+  return (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    /^f[cd]/iu.test(address)
+  );
+};
+
+const natted = (end: Answered) =>
+  end.address !== null &&
+  end.result.publicAddress !== null &&
+  privateAddress(end.result.publicAddress) &&
+  !privateAddress(end.address);
 
 const stale = (end: Answered, version: number) =>
   !end.result.up || !end.result.hasKey || end.result.version !== version;
@@ -1580,6 +1599,7 @@ const stale = (end: Answered, version: number) =>
 const moved = (end: Answered) =>
   end.address !== null &&
   end.result.publicAddress !== null &&
+  !natted(end) &&
   end.result.publicAddress !== end.address;
 
 const ruleGone = (end: Answered) =>
@@ -1658,17 +1678,24 @@ export function testRows(
     listening.length > 1 ? `${end.name}: ${text}` : capitalize(text);
   for (const end of listening) {
     rows.push(
-      moved(end)
+      natted(end)
         ? {
-            mark: "✕",
-            text: `${end.name} now has ${end.result.publicAddress}`,
-            detail: "Krynodes updates it on the others by itself.",
+            mark: "–",
+            text: `${end.name} is behind NAT (${end.result.publicAddress})`,
+            detail:
+              "The server sees only its private address, so the test cannot check the public one.",
           }
-        : {
-            mark: "✓",
-            text: `${end.name} still has ${end.address}`,
-            short: whose(end, "address unchanged"),
-          },
+        : moved(end)
+          ? {
+              mark: "✕",
+              text: `${end.name} now has ${end.result.publicAddress}`,
+              detail: "Krynodes updates it on the others by itself.",
+            }
+          : {
+              mark: "✓",
+              text: `${end.name} still has ${end.address}`,
+              short: whose(end, "address unchanged"),
+            },
     );
   }
   for (const end of listening) {

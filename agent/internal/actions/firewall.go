@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"encoding/hex"
 	"os"
 	"regexp"
 	"slices"
@@ -90,6 +91,21 @@ func (e Executor) ufwOpen() []openPort {
 		}
 	}
 	return open
+}
+
+func (e Executor) ufwRule(port int, protocol, comment string) bool {
+	mark := "comment=" + hex.EncodeToString([]byte(comment))
+	for _, file := range []string{"/etc/ufw/user.rules", "/etc/ufw/user6.rules"} {
+		body, _ := os.ReadFile(e.path(file))
+		for line := range strings.SplitSeq(string(body), "\n") {
+			rest, ok := strings.CutPrefix(strings.TrimSpace(line), "### tuple ### ")
+			fields := strings.Fields(rest)
+			if ok && len(fields) > 2 && fields[1] == protocol && fields[2] == strconv.Itoa(port) && slices.Contains(fields, mark) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func firewalldPorts(entries []string) []openPort {
