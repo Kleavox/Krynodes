@@ -399,7 +399,11 @@ func (r Rules) change(ctx context.Context, env Env, verb, line, comment string) 
 	if flag == "" {
 		return fmt.Errorf("%.60q is not a firewalld rule", line)
 	}
-	tool, args := r.zone("--" + verb + "-" + flag + "=" + value)
+	option := "--" + verb + "-" + flag
+	if option == "--remove-service" && !r.Active {
+		option = "--remove-service-from-zone"
+	}
+	tool, args := r.zone(option + "=" + value)
 	return env.run(ctx, tool, args...)
 }
 

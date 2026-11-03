@@ -28,6 +28,7 @@ import { AgentVersion } from "@/features/agent/agent-version";
 import { LatestAgent, UpdateNotice } from "@/features/agent/update-notice";
 import { EnrollDialog } from "@/features/nodes/enroll-dialog";
 import { NodeActions } from "@/features/nodes/node-actions";
+import { SettingUpCard, SetupProgress } from "@/features/nodes/setting-up";
 import {
   useDevices,
   useOverview,
@@ -746,19 +747,7 @@ function NodeCard({
   const live = state === "online" || state === "offline";
   const quarantined = fleetQuarantine(node, now);
   const running = setting !== null && !setting.stopped;
-  if (!opensServer(node, now)) {
-    return (
-      <article className="flex flex-col gap-3 rounded-lg border bg-card p-3.5">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="min-w-0 truncate font-medium" title={node.name}>
-            {node.name}
-          </h2>
-          <StatusChip tone="work" label="Setting Up" pulse />
-        </div>
-        <SetupProgress />
-      </article>
-    );
-  }
+  if (!opensServer(node, now)) return <SettingUpCard name={node.name} />;
   return (
     <article
       className={cn(
@@ -891,18 +880,6 @@ function NodeCard({
 
 function setupLine(view: SetupView): string {
   return view.stopped ? `Setup stopped at ${view.label}` : view.label;
-}
-
-function SetupProgress() {
-  return (
-    <div
-      role="status"
-      aria-label="Setting Up"
-      className="h-1.5 overflow-hidden rounded-full bg-muted"
-    >
-      <div className="h-full w-1/3 rounded-full bg-primary motion-safe:animate-loading" />
-    </div>
-  );
 }
 
 function ChecksCell({

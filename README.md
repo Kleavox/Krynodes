@@ -142,9 +142,10 @@ dashboard does not count the server offline while it comes back.
 The Enroll dialog closes by itself once the server enrolls. The agent sends
 nothing while the install command's setup runs, so the first report comes
 after the restart (or right after setup when no restart is needed). Until then
-the server's card in Fleet is only its name, **Setting Up** and a loading bar,
-with no data, and it does not open; nobody is mailed that it is offline,
-however long that takes. Changes the server watch sees meanwhile go with the
+the server's card in Fleet is a loading card: its name, **Setting Up**, grey
+placeholders where its data will be and a loading bar, and it does not open.
+It is not counted offline for the first hour, and nobody is mailed that it is
+offline, however long that takes. Changes the server watch sees meanwhile go with the
 first report. A setup whose terminal closes stops being quiet within a minute:
 the server reports, its card shows **Setup stopped at** the step it reached,
 and it opens. A server that joins the private network shows **Join** on its
@@ -861,7 +862,9 @@ on, it stays in this list with Turn off, which puts DNS back; it is the only
 row that turns off.
 
 **No root login** (agent 0.7.1) writes `PermitRootLogin no` in its own drop-in
-and is offered only once a sudo user other than root logs in with a key. It is
+and is offered only once a sudo user other than root logs in with a key. From
+agent 0.7.11 the drop-in is `00-krynodes-root.conf`, read before the
+`01-permitrootlogin.conf` that the Rocky, Alma and RHEL installer writes. It is
 not part of Apply recommended, since root may be a server's only key login.
 While it is off, Security shows "Root can log in over SSH." as a note.
 
@@ -909,9 +912,13 @@ clears it.
 
 - **Let Krynodes Manage** (already enforcing) changes nothing on the server.
   **Turn On** goes straight to enforcing: SELinux from Permissive at once; from
-  Disabled it is set to enforcing and finishes at the next restart (the first
-  boot labels every file and restarts once more). When the kernel starts with
-  `selinux=0`, Krynodes also takes that out of the boot settings (`grubby`).
+  Disabled it is set to permissive and finishes at the next restart: the first
+  boot labels every file in permissive and restarts once more, and on the boot
+  after that Krynodes turns enforcing on before Docker starts (agent 0.7.11;
+  going from Disabled straight to enforcing, as 0.7.10 did, can leave a server
+  that nobody can log in to, not even on its console). When the kernel starts
+  with `selinux=0`, Krynodes also takes that out of the boot settings
+  (`grubby`).
   AppArmor enforces its profiles in complain mode, is installed and started
   when it is missing, or is turned on in the boot settings when the kernel
   starts without it: a grub drop-in where `/etc/default/grub` exists, otherwise

@@ -131,6 +131,17 @@ func confineOff(ctx context.Context, env Env, saved map[string]string) error {
 	return nil
 }
 
+func EnforceSELinux(ctx context.Context, env Env) error {
+	if err := env.run(ctx, "setenforce", "1"); err != nil {
+		return err
+	}
+	if err := setSELinux(env, confine.Enforcing); err != nil {
+		env.run(ctx, "setenforce", "0")
+		return err
+	}
+	return nil
+}
+
 func setSELinux(env Env, value string) error {
 	full := env.path(confine.SELinuxConfig)
 	mode := os.FileMode(0o644)
@@ -221,11 +232,7 @@ func selinuxOn(ctx context.Context, env Env, state confine.State) (map[string]st
 		}
 	}
 	if state.Mode == confine.Permissive {
-		if err := env.run(ctx, "setenforce", "1"); err != nil {
-			return nil, back(err)
-		}
-		if err := setSELinux(env, confine.Enforcing); err != nil {
-			env.run(ctx, "setenforce", "0")
+		if err := EnforceSELinux(ctx, env); err != nil {
 			return nil, back(err)
 		}
 	} else {
@@ -241,7 +248,7 @@ func selinuxOn(ctx context.Context, env Env, state confine.State) (map[string]st
 			}
 			saved["kernel"] = "1"
 		}
-		if err := setSELinux(env, confine.Enforcing); err != nil {
+		if err := setSELinux(env, confine.Permissive); err != nil {
 			return nil, boot(err)
 		}
 		if err := env.write(confine.Relabel, "", 0o644); err != nil {
@@ -249,6 +256,7 @@ func selinuxOn(ctx context.Context, env Env, state confine.State) (map[string]st
 			return nil, boot(err)
 		}
 		saved["restart"] = "1"
+		saved["enforce"] = "1"
 	}
 	if fresh != "" {
 		saved["installed"] = fresh

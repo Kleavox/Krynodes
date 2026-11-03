@@ -90,7 +90,7 @@ func (e Executor) dockerConfined(ctx context.Context) *bool {
 func (e Executor) confinementReport(docker *bool) *reporter.Confinement {
 	state := confine.Read(e.Root, string(recipes.Detect(e.recipeEnv()).Family))
 	applied, managed := e.readRecipes().Applied["confinement"]
-	report := &reporter.Confinement{Managed: managed, Restart: state.Restart || (applied.Saved["restart"] == "1" && state.Mode == confine.KernelOff), Docker: docker}
+	report := &reporter.Confinement{Managed: managed, Restart: restartDue(state, applied.Saved), Docker: docker}
 	if state.System != "" {
 		report.System, report.Mode = &state.System, &state.Mode
 	}

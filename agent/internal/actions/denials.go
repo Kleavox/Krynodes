@@ -259,7 +259,7 @@ func (e Executor) watchDenials(ctx context.Context) {
 		state.Modules = e.localModules(ctx)
 	}
 	state.Managed = managed
-	restart := found.Restart || (applied.Saved["restart"] == "1" && found.Mode == confine.KernelOff)
+	restart := restartDue(found, applied.Saved)
 	if managed && !marked && !restart {
 		switch {
 		case found.System == confine.SELinux && found.Mode == confine.KernelOff:

@@ -227,6 +227,32 @@ func TestNoRootLoginStaysOffWhenAnEarlierSettingWins(t *testing.T) {
 	}
 }
 
+func TestNoRootLoginIsReadBeforeTheFileTheRHELInstallerWrites(t *testing.T) {
+	env, run := newEnv(t)
+	usersWithKeys(t, env, true)
+	write(t, env, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	write(t, env, "/etc/ssh/sshd_config.d/01-permitrootlogin.conf", "PermitRootLogin yes\n")
+	afterSSHCheck(run, map[string]string{rootProbe: "permitrootlogin no\n"})
+	if _, err := Apply(context.Background(), env, "no-root-login", nil); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(env.path("/etc/ssh/sshd_config.d"))
+	if err != nil || len(entries) != 2 || read(env, "/etc/ssh/sshd_config.d/"+entries[0].Name()) != "PermitRootLogin no\n" {
+		t.Fatalf("sshd reads %v first: %v", entries, err)
+	}
+	if read(env, "/etc/ssh/sshd_config.d/01-permitrootlogin.conf") != "PermitRootLogin yes\n" {
+		t.Fatal("the installer's file is not Krynodes' to change")
+	}
+}
+
+func TestNoRootLoginUndoAlsoTakesTheFileOlderAgentsWrote(t *testing.T) {
+	env, _ := newEnv(t)
+	write(t, env, "/etc/ssh/sshd_config.d/10-krynodes-root.conf", "PermitRootLogin no\n")
+	if err := Undo(context.Background(), env, "no-root-login", nil); err != nil || exists(env, "/etc/ssh/sshd_config.d/10-krynodes-root.conf") {
+		t.Fatalf("undo %v", err)
+	}
+}
+
 func TestNoRootLoginTurnsRootOffAndCanBeUndone(t *testing.T) {
 	env, run := newEnv(t)
 	usersWithKeys(t, env, true)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -45,6 +46,38 @@ func (e Executor) markConfinement(what string) error {
 	}
 	mark.What, mark.Until = what, now.Add(markFor)
 	return writeJSON(e.StateDir, confinementMark, mark, 0o640)
+}
+
+func restartDue(state confine.State, saved map[string]string) bool {
+	return state.Restart ||
+		(saved["restart"] == "1" && state.Mode == confine.KernelOff) ||
+		(saved["enforce"] == "1" && state.Mode == confine.Permissive)
+}
+
+func (e Executor) finishSELinux(ctx context.Context) {
+	state := e.readRecipes()
+	applied, on := state.Applied["confinement"]
+	if !on || applied.Saved["enforce"] != "1" {
+		return
+	}
+	env := e.recipeEnv()
+	found := confine.Read(e.Root, string(recipes.Detect(env).Family))
+	if found.System != confine.SELinux || found.Mode != confine.Permissive || found.Restart {
+		return
+	}
+	if err := e.markConfinement("apply"); err != nil {
+		log.Printf("SELinux enforcing: %v", err)
+		return
+	}
+	if err := recipes.EnforceSELinux(ctx, env); err != nil {
+		log.Printf("SELinux enforcing: %v", err)
+		return
+	}
+	delete(applied.Saved, "enforce")
+	state.Applied["confinement"] = applied
+	if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
+		log.Printf("SELinux enforcing: %v", err)
+	}
 }
 
 func (e Executor) managedSystem() string {

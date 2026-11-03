@@ -57,7 +57,7 @@ func TestSELinuxPermissiveGoesEnforcingAfterTheSSHPortAndHomeLabels(t *testing.T
 	if got := read(env, "/etc/selinux/config"); got != "# SELinux\nSELINUX=enforcing\nSELINUXTYPE=targeted\n" {
 		t.Fatalf("config %q", got)
 	}
-	if saved["system"] != "selinux" || saved["mode"] != "permissive" || saved["config"] != "permissive" || saved["restart"] != "" {
+	if saved["system"] != "selinux" || saved["mode"] != "permissive" || saved["config"] != "permissive" || saved["restart"] != "" || saved["enforce"] != "" {
 		t.Fatalf("saved %v", saved)
 	}
 	run.calls = nil
@@ -70,13 +70,13 @@ func TestSELinuxPermissiveGoesEnforcingAfterTheSSHPortAndHomeLabels(t *testing.T
 	}
 }
 
-func TestSELinuxDisabledIsTurnedOnAtTheNextRestart(t *testing.T) {
+func TestSELinuxDisabledRelabelsPermissiveAtTheNextRestartAndEnforcesAfter(t *testing.T) {
 	env, run := selinuxServer(t, "", "SELINUX=disabled\n")
 	saved, err := Apply(context.Background(), env, "confinement", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(run.calls, "setenforce 1") || !exists(env, "/.autorelabel") || saved["restart"] != "1" || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=enforcing\n") {
+	if slices.Contains(run.calls, "setenforce 1") || !exists(env, "/.autorelabel") || saved["restart"] != "1" || saved["enforce"] != "1" || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=permissive\n") {
 		t.Fatalf("calls %q saved %v", run.calls, saved)
 	}
 	if err := Undo(context.Background(), env, "confinement", saved); err != nil {
@@ -108,7 +108,7 @@ func TestSELinuxOffInTheKernelIsTurnedOnInTheBootSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	calledInOrder(t, run, `semanage fcontext -a -t ssh_home_t /srv/user/\.ssh(/.*)?`, "grubby --update-kernel ALL --remove-args selinux")
-	if !exists(env, "/.autorelabel") || saved["restart"] != "1" || saved["kernel"] != "1" || saved["mode"] != "kernel-off" || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=enforcing\n") {
+	if !exists(env, "/.autorelabel") || saved["restart"] != "1" || saved["kernel"] != "1" || saved["enforce"] != "1" || saved["mode"] != "kernel-off" || !strings.Contains(read(env, "/etc/selinux/config"), "SELINUX=permissive\n") {
 		t.Fatalf("calls %q saved %v", run.calls, saved)
 	}
 	run.calls = nil
