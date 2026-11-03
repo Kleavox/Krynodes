@@ -138,6 +138,7 @@ var (
 )
 
 func (e Executor) Contain(ctx context.Context) {
+	e.finishSELinux(ctx)
 	if err := e.syncRules(ctx); err != nil {
 		log.Printf("private network rules: %v", err)
 	}

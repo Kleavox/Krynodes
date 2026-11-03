@@ -912,9 +912,13 @@ clears it.
 
 - **Let Krynodes Manage** (already enforcing) changes nothing on the server.
   **Turn On** goes straight to enforcing: SELinux from Permissive at once; from
-  Disabled it is set to enforcing and finishes at the next restart (the first
-  boot labels every file and restarts once more). When the kernel starts with
-  `selinux=0`, Krynodes also takes that out of the boot settings (`grubby`).
+  Disabled it is set to permissive and finishes at the next restart: the first
+  boot labels every file in permissive and restarts once more, and on the boot
+  after that Krynodes turns enforcing on before Docker starts (agent 0.7.11;
+  going from Disabled straight to enforcing, as 0.7.10 did, can leave a server
+  that nobody can log in to, not even on its console). When the kernel starts
+  with `selinux=0`, Krynodes also takes that out of the boot settings
+  (`grubby`).
   AppArmor enforces its profiles in complain mode, is installed and started
   when it is missing, or is turned on in the boot settings when the kernel
   starts without it: a grub drop-in where `/etc/default/grub` exists, otherwise

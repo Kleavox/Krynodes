@@ -237,6 +237,65 @@ func TestSELinuxSetPermissiveOutsideKrynodesQuarantinesUnlessARestartIsDue(t *te
 	}
 }
 
+func waitToEnforce(t *testing.T, executor Executor) {
+	t.Helper()
+	state := recipeState{Applied: map[string]appliedRecipe{"confinement": {At: executorNow, Saved: map[string]string{"system": "selinux", "mode": "kernel-off", "config": "disabled", "kernel": "1", "restart": "1", "enforce": "1"}}}}
+	if err := writeJSON(executor.StateDir, "recipes.json", state, 0o640); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheBootAfterTheRelabelTurnsSELinuxEnforcing(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rootFile(t, executor, "/etc/os-release", rockyRelease)
+	rootFile(t, executor, "/etc/selinux/config", "SELINUX=permissive\nSELINUXTYPE=targeted\n")
+	rootFile(t, executor, "/sys/fs/selinux/enforce", "0")
+	rootFile(t, executor, confine.Relabel, "")
+	waitToEnforce(t, executor)
+	executor.Contain(context.Background())
+	if strings.Contains(strings.Join(run.calls, "\n"), "setenforce") {
+		t.Fatalf("the relabelling boot stays permissive: %q", run.calls)
+	}
+	if err := os.Remove(executor.path(confine.Relabel)); err != nil {
+		t.Fatal(err)
+	}
+	executor.Contain(context.Background())
+	if !strings.Contains(strings.Join(run.calls, "\n"), "setenforce 1") {
+		t.Fatalf("calls %q", run.calls)
+	}
+	if body, _ := os.ReadFile(executor.path("/etc/selinux/config")); string(body) != "SELINUX=enforcing\nSELINUXTYPE=targeted\n" {
+		t.Fatalf("config %q", body)
+	}
+	if saved := executor.readRecipes().Applied["confinement"].Saved; saved["enforce"] != "" || saved["mode"] != "kernel-off" || saved["kernel"] != "1" {
+		t.Fatalf("saved %v", saved)
+	}
+	if mark, _ := readState[confinementMarkRecord](executor.StateDir, confinementMark); mark.What != "apply" {
+		t.Fatalf("mark %+v", mark)
+	}
+}
+
+func TestSELinuxWaitingToEnforceIsReportedAsWaitingForARestart(t *testing.T) {
+	executor, _ := securityExecutor(t)
+	rootFile(t, executor, "/etc/os-release", rockyRelease)
+	rootFile(t, executor, "/etc/selinux/config", "SELINUX=permissive\n")
+	rootFile(t, executor, "/sys/fs/selinux/enforce", "0")
+	waitToEnforce(t, executor)
+	if report := executor.confinementReport(nil); !report.Restart || report.Mode == nil || *report.Mode != confine.Permissive {
+		t.Fatalf("report %+v", report)
+	}
+}
+
+func TestSELinuxWaitingToEnforceAfterItsRelabelIsNotQuarantined(t *testing.T) {
+	executor, _ := selinuxWatch(t, true, "")
+	waitToEnforce(t, executor)
+	rootFile(t, executor, "/etc/selinux/config", "SELINUX=permissive\n")
+	rootFile(t, executor, "/sys/fs/selinux/enforce", "0")
+	executor.watchDenials(context.Background())
+	if events := readEvents(t, executor); len(events) != 0 {
+		t.Fatalf("events %+v", events)
+	}
+}
+
 func TestSELinuxTurnedOffAtBootOutsideKrynodesSaysSo(t *testing.T) {
 	executor, _ := selinuxWatch(t, true, "")
 	if err := os.Remove(executor.path("/sys/fs/selinux/enforce")); err != nil {
