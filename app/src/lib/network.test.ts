@@ -46,6 +46,7 @@ import {
   navNetworkCount,
   networkChecks,
   networkFacts,
+  leavingText,
   networkText,
   peerRows,
   pickMtu,
@@ -979,6 +980,13 @@ describe("changing and ending", () => {
         short: "Turn off 1 check through the network",
       },
     ]);
+  });
+
+  it("says who leaves a deleted network, or that no server is in it", () => {
+    expect(leavingText(["vps-1", "vps-2"])).toBe(
+      "vps-1 and vps-2 leave it. They stay in Krynodes with their stacks and checks.",
+    );
+    expect(leavingText([])).toBe("No server is in it.");
   });
 
   it("words every change the way History lists it", () => {

@@ -16,7 +16,7 @@ import { errorMessage } from "@/lib/http";
 import {
   deleteLines,
   hostingOf,
-  listOf,
+  leavingText,
   networkChecks,
   networkText,
   type Presence,
@@ -90,8 +90,7 @@ export function DeleteDialog({
         <DialogHeader>
           <DialogTitle>Delete the Private Network?</DialogTitle>
           <DialogDescription>
-            {listOf(members.map((member) => member.name))} leave it. They stay
-            in Krynodes with their stacks and checks.
+            {leavingText(members.map((member) => member.name))}
           </DialogDescription>
         </DialogHeader>
         <MarkRows rows={rows.filter((row) => row !== turnOff)} />

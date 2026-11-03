@@ -11,7 +11,7 @@ import {
   useServices,
 } from "@/lib/api";
 import { activeSession, openSession } from "@/lib/deploy-session";
-import { signersFor } from "@/lib/devices";
+import { networkSigners } from "@/lib/devices";
 import { apiFetch, errorMessage } from "@/lib/http";
 import {
   baseOf,
@@ -461,7 +461,7 @@ export function useNetworkKeys(
   const reports = useServices().data?.nodes ?? [];
   const trust = new Map(reports.map((entry) => [entry.id, entry.trust]));
   return {
-    signers: signersFor(
+    signers: networkSigners(
       devices,
       members
         .filter((member) => member.state === "in")

@@ -79,6 +79,11 @@ export const listOf = (names: string[]) =>
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
+export const leavingText = (names: string[]) =>
+  names.length > 0
+    ? `${listOf(names)} leave it. They stay in Krynodes with their stacks and checks.`
+    : "No server is in it.";
+
 const kryName = (name: string) => `${dnsName(name)}.kry`;
 
 const span = (milliseconds: number) =>
