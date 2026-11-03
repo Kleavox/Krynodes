@@ -530,6 +530,50 @@ describe("action batches", () => {
     ).toEqual({ output: "No result from the server" });
   });
 
+  it("gives up on a network read after two minutes and lets a network change run an hour", async () => {
+    const { db, sweep, status } = setup();
+    const read = createBatch(db, {
+      action: "test",
+      mode: "parallel",
+      targets: [
+        {
+          id: "88888888-8888-4888-8888-888888888888",
+          nodeId: A,
+          kind: "network",
+          name: "kry0",
+        },
+      ],
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(read.statements);
+    const change = createBatch(db, {
+      action: "prepare",
+      mode: "parallel",
+      targets: [
+        {
+          id: "99999999-9999-4999-8999-999999999999",
+          nodeId: B,
+          kind: "network",
+          name: "kry0",
+          signed: { grant: { grant: "Zw" }, command: "Yw", signature: "cw" },
+        },
+      ],
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(change.statements);
+    await deliverActions(db, A, NOW);
+    await deliverActions(db, B, NOW);
+    await sweep(NOW + 119_000);
+    expect(status("88888888-8888-4888-8888-888888888888")).toBe("sent");
+    await sweep(NOW + 121_000);
+    expect(status("88888888-8888-4888-8888-888888888888")).toBe("failed");
+    expect(status("99999999-9999-4999-8999-999999999999")).toBe("sent");
+    await sweep(NOW + 50 * MINUTE);
+    expect(status("99999999-9999-4999-8999-999999999999")).toBe("sent");
+  });
+
   it("does not count a server still waiting its turn in a rolling batch as planned work", async () => {
     const { db, queue } = setup();
     await queue("rolling", [A, B]);

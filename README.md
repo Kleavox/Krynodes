@@ -502,6 +502,10 @@ The agent never runs anything itself:
   start, stop, restart or health change, refreshes the file's time every
   minute and reconnects when Docker restarts. It only reads Docker; the
   agent itself still has no Docker access.
+- These two root units do not set `NoNewPrivileges`: under SELinux it refuses
+  the domain change of every `docker` and `ping` they run (`nnp_transition`),
+  and each refusal reads like an intruder. They keep the rest of the sandbox;
+  the agent's own unit (user `kry`) keeps `NoNewPrivileges`.
 - `kry exec` refuses anything that is not signed by a trusted passkey and
   aimed at something present on the server. The only unsigned requests it
   takes are turning auto-restart off, restarting a listed unit that is down
@@ -1133,7 +1137,12 @@ only its own links. From agent 0.7.0.
   `kry0` and keys, clocks, public addresses, firewall rules, handshakes, small
   and large packets, then the most likely cause. Its fixes take your passkey:
   **Send again**, **Put rule back** and **Use 1380** (a smaller MTU for that
-  server). Every test is kept in History.
+  server). Every test is kept in History. A test waits at most 2 minutes for
+  both servers (the dialog counts it down to that); a server whose agent is
+  online but never ran it is named, with `sudo systemctl status krynodes-exec`
+  to see what that server is busy with. Network checks (the test, the port
+  probe and the join check) end as failed after those 2 minutes instead of an
+  hour.
 - **Remove from network**, **Make new keys** and **Delete network** say before
   you sign what stops working; an address a stack still points to is held, and
   freed addresses are given out last. Delete network offers to turn off the

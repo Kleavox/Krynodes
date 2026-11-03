@@ -142,7 +142,6 @@ func TestTheExecutorUnitRunsAsRootInASandbox(t *testing.T) {
 		"Type=oneshot\n",
 		"Group=kry\n",
 		"ExecStart=/usr/local/bin/kry exec\n",
-		"NoNewPrivileges=true\n",
 		"ProtectSystem=strict\n",
 		"ReadWritePaths=/var/lib/kry-exec\n",
 		"Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n",
@@ -154,6 +153,9 @@ func TestTheExecutorUnitRunsAsRootInASandbox(t *testing.T) {
 	}
 	if strings.Contains(unit, "User=") {
 		t.Error("the executor must run as root")
+	}
+	if strings.Contains(unit, "NoNewPrivileges") {
+		t.Error("NoNewPrivileges makes SELinux refuse the domain change of every docker and ping the executor runs")
 	}
 }
 
@@ -241,7 +243,6 @@ func TestTheContainerWatcherRunsAsRootInTheExecutorSandbox(t *testing.T) {
 		"Group=kry\n",
 		"ExecStart=/usr/local/bin/kry watch-containers\n",
 		"Restart=always\n",
-		"NoNewPrivileges=true\n",
 		"ProtectHome=read-only\n",
 		"ProtectSystem=strict\n",
 		"ReadWritePaths=/var/lib/kry-exec\n",
@@ -254,6 +255,9 @@ func TestTheContainerWatcherRunsAsRootInTheExecutorSandbox(t *testing.T) {
 	}
 	if strings.Contains(unit, "User=") {
 		t.Error("the watcher needs Docker, so it runs as root")
+	}
+	if strings.Contains(unit, "NoNewPrivileges") {
+		t.Error("NoNewPrivileges makes SELinux refuse the domain change of every docker and ping the watcher runs")
 	}
 	if !slices.Contains(enabledUnits(), "krynodes-containers.service") || !slices.Contains(leftovers("/usr/local/bin/kry"), containersPath) {
 		t.Fatalf("enabled %v leftovers %v", enabledUnits(), leftovers("/usr/local/bin/kry"))
