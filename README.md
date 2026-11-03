@@ -143,7 +143,9 @@ The Enroll dialog closes by itself once the server enrolls. The agent sends
 nothing while the install command's setup runs, so the first report comes
 after the restart (or right after setup when no restart is needed). Until then
 the server's card in Fleet is a loading card: its name, **Setting Up**, grey
-placeholders where its data will be and a loading bar, and it does not open.
+placeholders where its data will be and a loading bar, and it does not open;
+its ⋯ menu has **Delete Node**, for a server that will never report (one that was
+reset or reinstalled during setup).
 It is not counted offline for the first hour, and nobody is mailed that it is
 offline, however long that takes. Changes the server watch sees meanwhile go with the
 first report. A setup whose terminal closes stops being quiet within a minute:

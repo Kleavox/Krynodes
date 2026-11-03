@@ -1,5 +1,18 @@
+import { Ellipsis } from "lucide-react";
+import { useState } from "react";
+
 import { StatusChip } from "@/components/status";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import type { NodeRecord } from "@/types";
+
+import { DeleteNodeDialog } from "./delete-node-dialog";
 
 export function SetupProgress() {
   return (
@@ -13,7 +26,36 @@ export function SetupProgress() {
   );
 }
 
-export function SettingUpCard({ name }: { name: string }) {
+export function SetupActions({ node }: { node: NodeRecord }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-9 shrink-0 text-muted-foreground md:size-8"
+            aria-label={`Actions for ${node.name}`}
+          >
+            <Ellipsis aria-hidden="true" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={() => setOpen(true)}
+          >
+            Delete Node
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <DeleteNodeDialog node={node} open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
+export function SettingUpCard({ node }: { node: NodeRecord }) {
   return (
     <article
       aria-busy="true"
@@ -21,10 +63,13 @@ export function SettingUpCard({ name }: { name: string }) {
     >
       <div>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="min-w-0 truncate font-medium" title={name}>
-            {name}
+          <h2 className="min-w-0 truncate font-medium" title={node.name}>
+            {node.name}
           </h2>
-          <StatusChip tone="work" label="Setting Up" pulse />
+          <div className="flex shrink-0 items-center gap-1">
+            <StatusChip tone="work" label="Setting Up" pulse />
+            <SetupActions node={node} />
+          </div>
         </div>
         <Skeleton className="mt-1.5 h-3 w-2/5" />
       </div>
