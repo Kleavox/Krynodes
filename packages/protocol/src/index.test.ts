@@ -10,6 +10,7 @@ import {
   agentActionsResponseSchema,
   agentConfigResponseSchema,
   agentHeartbeatSchema,
+  progressSchema,
   checkResultSchema,
   denialsSchema,
   heartbeatResponseSchema,
@@ -359,6 +360,37 @@ describe("service action messages", () => {
     expect(
       actionResultSchema.safeParse({ ...result, output: "x".repeat(65537) })
         .success,
+    ).toBe(false);
+  });
+
+  it("takes the id of a request the agent made itself, which has no UUID version", () => {
+    const own = "f63d813d-3f39-6f5d-4000-6f19ada72522";
+    expect(
+      actionResultSchema.safeParse({
+        id: own,
+        ok: true,
+        exitCode: 0,
+        output: "",
+        finishedAt: "2026-09-29T10:10:00.000Z",
+      }).success,
+    ).toBe(true);
+    expect(
+      progressSchema.safeParse({
+        id: own,
+        at: "2026-09-29T10:10:00.000Z",
+        done: 1,
+        total: 2,
+        line: "",
+      }).success,
+    ).toBe(true);
+    expect(
+      actionResultSchema.safeParse({
+        id: "not-an-id",
+        ok: true,
+        exitCode: 0,
+        output: "",
+        finishedAt: "2026-09-29T10:10:00.000Z",
+      }).success,
     ).toBe(false);
   });
 

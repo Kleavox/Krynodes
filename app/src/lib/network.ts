@@ -1566,10 +1566,10 @@ export function testEnd(
 
 type Answered = TestEnd & { result: NetworkTest };
 
-const silentText = (end: TestEnd) => `${end.name} did not run the test`;
+const silentText = (end: TestEnd) => `${end.name} did not answer the test`;
 
 const silentDetail = (end: TestEnd) =>
-  `Its agent is online, but the test did not run there. On ${end.name}, sudo systemctl status krynodes-exec shows what it is busy with.`;
+  `Its agent is online, but no result came back within ${formatDuration(NETWORK.readSeconds * 1000)}. On ${end.name}, sudo journalctl -u krynodes -u krynodes-exec -n 30 shows why.`;
 
 const through = (a: Answered, b: Answered) =>
   a.result.handshakes.answered > 0 || b.result.handshakes.answered > 0;

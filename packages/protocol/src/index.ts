@@ -803,7 +803,7 @@ export const tailscaleReportSchema = z.strictObject({
 });
 
 export const progressSchema = z.strictObject({
-  id: z.string().uuid(),
+  id: z.guid(),
   at: stamp,
   done: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
@@ -811,7 +811,7 @@ export const progressSchema = z.strictObject({
 });
 
 export const actionResultSchema = z.strictObject({
-  id: z.string().uuid(),
+  id: z.guid(),
   ok: z.boolean(),
   exitCode: z.number().int().nullable(),
   output: z.string().max(65536),

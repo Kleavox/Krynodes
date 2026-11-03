@@ -1253,6 +1253,52 @@ describe("FleetHub", () => {
     });
   });
 
+  it("records a result sent beside one the agent asked itself and one that is broken", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    const batch = createBatch(t.db, {
+      action: "test",
+      mode: "parallel",
+      targets: [{ nodeId: NODE, kind: "network" as const, name: "kry0" }],
+      requestedBy: "owner@example.test",
+      now: BASE,
+    });
+    await t.db.batch(batch.statements);
+    await deliverActions(t.db, NODE, BASE);
+    const result = (id: string) => ({
+      id,
+      ok: true,
+      exitCode: 0,
+      output: "{}",
+      finishedAt: new Date(BASE).toISOString(),
+    });
+    await t.hub.webSocketMessage(
+      ws as unknown as WebSocket,
+      JSON.stringify({
+        id: 1,
+        type: "actions",
+        report: {
+          nodeId: NODE,
+          results: [
+            result(batch.actions[0]!.id),
+            result("f63d813d-3f39-6f5d-4000-6f19ada72522"),
+            { ...result("2bba833b-e617-4faa-99b3-37758745a8ed"), ok: "yes" },
+          ],
+        },
+      }),
+    );
+    expect(ws.replies()[0]).toEqual({
+      id: 1,
+      type: "actions",
+      response: { ok: true, inventoryHash: null },
+    });
+    expect(
+      t.sqlite
+        .prepare("SELECT status FROM actions WHERE id = ?")
+        .get(batch.actions[0]!.id),
+    ).toEqual({ status: "done" });
+  });
+
   it("pokes the server whose step comes next as soon as a result arrives", async () => {
     const t = setup();
     const OTHER = "33333333-3333-4333-8333-333333333333";

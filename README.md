@@ -1139,10 +1139,14 @@ only its own links. From agent 0.7.0.
   **Send again**, **Put rule back** and **Use 1380** (a smaller MTU for that
   server). Every test is kept in History. A test waits at most 2 minutes for
   both servers (the dialog counts it down to that); a server whose agent is
-  online but never ran it is named, with `sudo systemctl status krynodes-exec`
-  to see what that server is busy with. Network checks (the test, the port
-  probe and the join check) end as failed after those 2 minutes instead of an
-  hour.
+  online but sent no result is named, with
+  `sudo journalctl -u krynodes -u krynodes-exec -n 30` to see why. Network
+  checks (the test, the port probe and the join check) end as failed after
+  those 2 minutes instead of an hour.
+- The agent asks some network work itself (apply, announce, endpoints) from
+  what its report brings back; those requests have ids shaped like a UUID
+  without its version, and Krynodes takes them. A result that does not read is
+  dropped alone, so it can never hold back the others.
 - **Remove from network**, **Make new keys** and **Delete network** say before
   you sign what stops working; an address a stack still points to is held, and
   freed addresses are given out last. Delete network offers to turn off the

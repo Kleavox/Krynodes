@@ -1189,16 +1189,16 @@ describe("Test Link", () => {
     expect(mostLikely(a, b, network, []).fix).toBeNull();
   });
 
-  it("names a server that is online but never ran the test", () => {
+  it("names a server that is online but sent no answer", () => {
     const a = end(vps2, 12);
     const b = { ...end(vps3, 20), result: null };
     const detail =
-      "Its agent is online, but the test did not run there. On vps-3, sudo systemctl status krynodes-exec shows what it is busy with.";
+      "Its agent is online, but no result came back within 2m. On vps-3, sudo journalctl -u krynodes -u krynodes-exec -n 30 shows why.";
     expect(testRows(a, b, network)).toEqual([
-      { mark: "✕", text: "vps-3 did not run the test", detail },
+      { mark: "✕", text: "vps-3 did not answer the test", detail },
     ]);
     expect(mostLikely(a, b, network, [])).toEqual({
-      text: "vps-3 did not run the test.",
+      text: "vps-3 did not answer the test.",
       detail,
       fix: null,
     });
