@@ -499,6 +499,37 @@ func TestATestCountsBeforeAndAfterAndWalksLargeSizesDown(t *testing.T) {
 	}
 }
 
+func TestATestReadsTheUfwRuleFromItsFileWhereTheUfwCommandCannotRun(t *testing.T) {
+	executor, run, _, _, _ := joinedServer(t)
+	run.failing = map[string]string{"ufw status": "ERROR: Read-only file system\n"}
+	rootFile(t, executor, "/etc/default/ufw", "DEFAULT_INPUT_POLICY=\"DROP\"\n")
+	ours := "### tuple ### allow udp 51821 0.0.0.0/0 any 0.0.0.0/0 in comment=6b72796e6f6465732d6e6574776f726b\n"
+	theirs := "### tuple ### allow udp 51821 0.0.0.0/0 any 0.0.0.0/0 in\n"
+	for _, check := range []struct {
+		id, rules string
+		rule      bool
+	}{{idC, ours, true}, {idD, theirs, false}} {
+		rootFile(t, executor, "/etc/ufw/user.rules", check.rules)
+		writeRequest(t, executor.RequestDir, check.id+".json", askNetwork(t, check.id, "test", map[string]string{"peer": peerNode, "address": "10.88.0.1", "mtu": "1420"}))
+		if err := executor.Execute(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		result := readResult(t, executor, check.id)
+		var found struct {
+			Firewall struct {
+				Lets bool
+				Rule *bool
+			}
+		}
+		if err := json.Unmarshal([]byte(result.Output), &found); !result.OK || err != nil {
+			t.Fatalf("%+v (%v)", result, err)
+		}
+		if !found.Firewall.Lets || found.Firewall.Rule == nil || *found.Firewall.Rule != check.rule {
+			t.Fatalf("%q: firewall %+v", check.rules, found.Firewall)
+		}
+	}
+}
+
 func TestTheLinksRideTheHeartbeat(t *testing.T) {
 	executor, run, keys, peer, _ := joinedServer(t)
 	recent := executorNow.Add(-20 * time.Second).Unix()

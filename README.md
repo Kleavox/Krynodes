@@ -1142,7 +1142,12 @@ only its own links. From agent 0.7.0.
   online but sent no result is named, with
   `sudo journalctl -u krynodes -u krynodes-exec -n 30` to see why. Network
   checks (the test, the port probe and the join check) end as failed after
-  those 2 minutes instead of an hour.
+  those 2 minutes instead of an hour. A link gets through when both ends got
+  traffic back during the test; WireGuard does not need a new handshake while
+  its session is fresh. A server behind NAT (a cloud VM that sees only a
+  private address) is shown as such; its public address is not checked. On
+  ufw the rule from Krynodes is read from `/etc/ufw/user.rules`, because the
+  `ufw` command cannot run in the checks' read-only sandbox.
 - The agent asks some network work itself (apply, announce, endpoints) from
   what its report brings back; those requests have ids shaped like a UUID
   without its version, and Krynodes takes them. A result that does not read is

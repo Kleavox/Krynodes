@@ -726,10 +726,7 @@ func (e Executor) firewallLets(ctx context.Context, port int, found *linkTest) {
 		open = e.firewalldOpen(ctx)
 		_, rule = e.output(ctx, "firewall-cmd", "--query-port="+strconv.Itoa(port)+"/udp")
 	} else {
-		listed, _ := e.output(ctx, "ufw", "status")
-		rule = slices.ContainsFunc(strings.Split(listed, "\n"), func(line string) bool {
-			return strings.HasPrefix(strings.TrimSpace(line), strconv.Itoa(port)+"/udp") && strings.Contains(line, "# "+network.Comment)
-		})
+		rule = e.ufwRule(port, "udp", network.Comment)
 	}
 	found.Firewall.Lets = slices.ContainsFunc(open, func(entry openPort) bool { return entry.lets(port, "udp") })
 	found.Firewall.Rule = &rule

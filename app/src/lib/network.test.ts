@@ -1242,6 +1242,43 @@ describe("Test Link", () => {
       detail: "Krynodes updates it on the others by itself.",
     });
   });
+
+  it("counts a link as through when both ends got traffic back without a new handshake", () => {
+    const fresh = (bytes: number) => ({
+      handshakes: { sent: bytes, received: bytes, answered: 0, third: null },
+    });
+    const rows = testRows(
+      end(vps2, 12, fresh(3790)),
+      end(vps3, 20, fresh(5020)),
+      network,
+    );
+    expect(rows).toContainEqual({ mark: "✓", text: "Handshakes get through" });
+    expect(
+      testRows(
+        end(vps2, 12, fresh(3790)),
+        end(vps3, 20, {
+          handshakes: { sent: 5020, received: 0, answered: 0, third: null },
+        }),
+        network,
+      ),
+    ).toContainEqual(
+      expect.objectContaining({ text: "Handshakes do not get through" }),
+    );
+  });
+
+  it("does not call a server behind NAT moved", () => {
+    const a = end(vps2, 12);
+    const nat = end(vps3, 20, { publicAddress: "172.19.17.156" });
+    expect(testRows(a, nat, network)).toContainEqual({
+      mark: "–",
+      text: "vps-3 is behind NAT (172.19.17.156)",
+      detail:
+        "The server sees only its private address, so the test cannot check the public one.",
+    });
+    expect(mostLikely(a, nat, network, []).text).toBe(
+      "The link answers. Nothing to fix.",
+    );
+  });
 });
 
 describe("the network document", () => {
