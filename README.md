@@ -514,7 +514,8 @@ The agent never runs anything itself:
 
 To take Krynodes off a server, delete the node in the dashboard while the
 server is online: with **Remove Krynodes from the server** ticked (on by
-default for servers your passkey can sign for) one
+default for servers your passkey can sign for, and offered only while the agent
+is connected, so a server you already removed Krynodes from is simply deleted) one
 passkey confirmation queues the whole job and the dialog closes. Krynodes spreads the
 token, asks the server to remove Krynodes, and deletes the node once every step
 is done; the removal runs 30 seconds later, after the answer reached Krynodes.
