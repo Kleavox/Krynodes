@@ -10,6 +10,7 @@ export const NETWORK = {
   tailscale: "100.64.0.0/10",
   keepalive: 25,
   answerSeconds: 180,
+  readSeconds: 120,
   mtuMargin: 80,
   variable: "KRY_PRIVATE_IP",
   places: 32,

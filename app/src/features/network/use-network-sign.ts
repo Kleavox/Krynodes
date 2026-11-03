@@ -1,6 +1,10 @@
 import { useState, useSyncExternalStore } from "react";
 import { useQueries } from "@tanstack/react-query";
-import type { NetworkDocument, NetworkTest } from "@krynodes/protocol";
+import {
+  NETWORK,
+  type NetworkDocument,
+  type NetworkTest,
+} from "@krynodes/protocol";
 
 import {
   ACTION_QUERIES,
@@ -228,11 +232,11 @@ export async function finishJoin() {
   }
 }
 
-async function settle(ids: Record<string, string>) {
+async function settle(ids: Record<string, string>, until = Infinity) {
   const ended: Record<string, ActionRecord> = {};
   for (;;) {
     const open = Object.entries(ids).filter(([nodeId]) => !ended[nodeId]);
-    if (open.length === 0) return ended;
+    if (open.length === 0 || Date.now() >= until) return ended;
     await wait(POLL_MS);
     try {
       for (const [nodeId, id] of open) {
@@ -340,6 +344,7 @@ export async function testPair(
   mtu: number,
 ) {
   if (ends.length === 0) return {};
+  const until = Date.now() + NETWORK.readSeconds * 1000;
   const sent = await postActions({
     action: "test",
     mode: "parallel",
@@ -354,11 +359,14 @@ export async function testPair(
     Object.fromEntries(
       ends.map((end, index) => [end.nodeId, sent.actions[index]!.id]),
     ),
+    until,
   );
   return Object.fromEntries(
-    Object.entries(ended).map(([nodeId, action]) => [
+    ends.map(({ nodeId }) => [
       nodeId,
-      action.status === "done" ? answerOf<NetworkTest>(action.output) : null,
+      ended[nodeId]?.status === "done"
+        ? answerOf<NetworkTest>(ended[nodeId].output)
+        : null,
     ]),
   );
 }

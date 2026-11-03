@@ -1006,7 +1006,7 @@ describe("changing and ending", () => {
     );
     expect(networkText.mtu("server-1", 1380)).toBe("Use MTU 1380 on server-1");
     expect(testingText("vps-2", "vps-3", 12_400)).toBe(
-      "Testing vps-2 ↔ vps-3 · 12s",
+      "Testing vps-2 ↔ vps-3 · 12s of at most 2m",
     );
     const action = (verb: "prepare" | "unprepare" | "rekey") =>
       ({ kind: "network", name: "kry0", action: verb, output: null }) as Pick<
@@ -1044,6 +1044,7 @@ const end = (
 ): TestEnd => ({
   nodeId: member.nodeId,
   name: member.name,
+  online: age !== null,
   age,
   address: member.endpoint?.split(":")[0] ?? null,
   port: member.port,
@@ -1186,6 +1187,21 @@ describe("Test Link", () => {
       },
     ]);
     expect(mostLikely(a, b, network, []).fix).toBeNull();
+  });
+
+  it("names a server that is online but sent no answer", () => {
+    const a = end(vps2, 12);
+    const b = { ...end(vps3, 20), result: null };
+    const detail =
+      "Its agent is online, but no result came back within 2m. On vps-3, sudo journalctl -u krynodes -u krynodes-exec -n 30 shows why.";
+    expect(testRows(a, b, network)).toEqual([
+      { mark: "✕", text: "vps-3 did not answer the test", detail },
+    ]);
+    expect(mostLikely(a, b, network, [])).toEqual({
+      text: "vps-3 did not answer the test.",
+      detail,
+      fix: null,
+    });
   });
 
   it("sends the network again, puts the rule back, or names the clock", () => {
@@ -1507,6 +1523,7 @@ describe("the ends of a member", () => {
     expect(testEnd(vps3, presence, NOW, { firewall: "ufw" }, null)).toEqual({
       nodeId: C,
       name: "vps-3",
+      online: true,
       age: 10,
       address: "203.0.113.7",
       port: 51820,
@@ -1515,7 +1532,7 @@ describe("the ends of a member", () => {
     });
     expect(
       testEnd(serverOne, presence, NOW, { firewall: null }, null),
-    ).toMatchObject({ address: null, age: 7200 });
+    ).toMatchObject({ online: false, address: null, age: 7200 });
   });
 
   it("says who waits to join and what it gets", () => {

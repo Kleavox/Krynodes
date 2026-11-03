@@ -1,5 +1,6 @@
 import {
   agentSupported,
+  NETWORK,
   NOT_WORK,
   workTouches,
   type AgentActionResult,
@@ -171,7 +172,8 @@ const ABANDON_SQL = `UPDATE actions
     attachment = NULL
   WHERE status = 'sent'
     AND COALESCE(json_extract(progress, '$.at'), sent_at)
-      < CASE WHEN kind IN ('compose', 'host', 'apt', 'network') THEN ?3 ELSE ?2 END`;
+      < CASE WHEN kind = 'network' AND action IN ('inspect', 'probe', 'test') THEN ?4
+        WHEN kind IN ('compose', 'host', 'apt', 'network') THEN ?3 ELSE ?2 END`;
 
 const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
     attachment = NULL
@@ -213,7 +215,12 @@ export function sweepStatements(
     db.prepare(EXPIRE_SQL).bind(at, cutoff),
     db
       .prepare(ABANDON_SQL)
-      .bind(at, iso(now - ABANDON_MS), iso(now - LONG_ABANDON_MS)),
+      .bind(
+        at,
+        iso(now - ABANDON_MS),
+        iso(now - LONG_ABANDON_MS),
+        iso(now - NETWORK.readSeconds * 1000),
+      ),
     db.prepare(SKIP_SQL).bind(at),
     db.prepare(PROMOTE_SQL).bind(at),
   ];

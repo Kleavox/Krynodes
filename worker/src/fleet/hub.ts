@@ -43,6 +43,7 @@ import {
 } from "../lib/mail";
 import { actionsSchema, heartbeatSchema } from "../schemas";
 import {
+  actionResultSchema,
   agentConfigResponseSchema,
   agentTakesPush,
   setupSchema,
@@ -461,7 +462,11 @@ export class FleetHub {
           };
           parsed = actionsSchema.safeParse({
             nodeId: report.nodeId,
-            results: report.results,
+            results: Array.isArray(report.results)
+              ? report.results.filter(
+                  (result) => actionResultSchema.safeParse(result).success,
+                )
+              : report.results,
           });
         }
         if (!parsed.success || parsed.data.nodeId !== state.nodeId) {

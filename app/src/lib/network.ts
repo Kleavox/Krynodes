@@ -1509,7 +1509,7 @@ export const networkText = {
 };
 
 export const testingText = (a: string, b: string, milliseconds: number) =>
-  `Testing ${a} ↔ ${b} · ${formatDuration(milliseconds)}`;
+  `Testing ${a} ↔ ${b} · ${formatDuration(milliseconds)} of at most ${formatDuration(NETWORK.readSeconds * 1000)}`;
 
 const ACTION_TEXT: Partial<Record<ActionRecord["action"], string>> = {
   inspect: "Check the server for the private network",
@@ -1536,6 +1536,7 @@ export function networkActionText(
 export interface TestEnd {
   nodeId: string;
   name: string;
+  online: boolean;
   age: number | null;
   address: string | null;
   port: number;
@@ -1554,6 +1555,7 @@ export function testEnd(
   return {
     nodeId: member.nodeId,
     name: member.name,
+    online: presence[member.nodeId]?.online === true,
     age: seenAt === null ? null : Math.round((now - seenAt) / 1000),
     address: member.endpoint?.split(":")[0] ?? null,
     port: member.port,
@@ -1563,6 +1565,11 @@ export function testEnd(
 }
 
 type Answered = TestEnd & { result: NetworkTest };
+
+const silentText = (end: TestEnd) => `${end.name} did not answer the test`;
+
+const silentDetail = (end: TestEnd) =>
+  `Its agent is online, but no result came back within ${formatDuration(NETWORK.readSeconds * 1000)}. On ${end.name}, sudo journalctl -u krynodes -u krynodes-exec -n 30 shows why.`;
 
 const through = (a: Answered, b: Answered) =>
   a.result.handshakes.answered > 0 || b.result.handshakes.answered > 0;
@@ -1594,11 +1601,13 @@ export function testRows(
   if (!a.result || !b.result) {
     const gone = a.result ? b : a;
     return [
-      {
-        mark: "✕",
-        text: `${gone.name} does not answer`,
-        detail: `${gone.name} is offline, so there is nothing to test.`,
-      },
+      gone.online
+        ? { mark: "✕", text: silentText(gone), detail: silentDetail(gone) }
+        : {
+            mark: "✕",
+            text: `${gone.name} does not answer`,
+            detail: `${gone.name} is offline, so there is nothing to test.`,
+          },
     ];
   }
   const ends = [a, b] as Answered[];
@@ -1806,6 +1815,13 @@ export function mostLikely(
   others: string[],
 ): { text: string; detail: string | null; fix: TestFix | null } {
   const gone = [a, b].find((end) => !end.result);
+  if (gone?.online) {
+    return {
+      text: `${silentText(gone)}.`,
+      detail: silentDetail(gone),
+      fix: null,
+    };
+  }
   if (gone) {
     return {
       text: `${gone.name} is offline. Test again when it is back.`,
