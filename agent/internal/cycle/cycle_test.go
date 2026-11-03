@@ -179,6 +179,12 @@ type fakeReporter struct {
 	received       reporter.Heartbeat
 	heartbeats     int
 	fetches        int
+	setups         []reporter.Setup
+}
+
+func (server *fakeReporter) SendSetup(_ context.Context, setup reporter.Setup) error {
+	server.setups = append(server.setups, setup)
+	return nil
 }
 
 func (server *fakeReporter) SendHeartbeat(
@@ -257,7 +263,7 @@ func TestNoInstructionMeansNoUpdateRequest(t *testing.T) {
 }
 
 type fakeActions struct {
-	settingUp bool
+	settingUp *reporter.Setup
 	queued    []reporter.ActionRequest
 	refreshes int
 	beat      *reporter.NetworkBeat
@@ -270,23 +276,27 @@ func (f *fakeActions) NetworkBeat() *reporter.NetworkBeat {
 	return f.beat
 }
 
-func (f *fakeActions) SettingUp() bool {
+func (f *fakeActions) SettingUp() *reporter.Setup {
 	return f.settingUp
 }
 
-func TestNothingIsSentWhileTheServerSetsUp(t *testing.T) {
+func TestOnlyTheStepIsSentWhileTheServerSetsUp(t *testing.T) {
 	server := &fakeReporter{
 		config:    configWith(targetURL(t), "v1"),
 		heartbeat: reporter.HeartbeatResponse{OK: true, IntervalSeconds: 60, ConfigVersion: "v1"},
 	}
-	relay := &fakeActions{settingUp: true}
+	step := reporter.Setup{Phase: "docker", Step: 4, Of: 6}
+	relay := &fakeActions{settingUp: &step}
 	if _, err := New(server, reporter.Host{}, nil, relay).Execute(context.Background(), "node-1"); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if server.fetches != 0 || server.heartbeats != 0 {
 		t.Fatalf("fetches %d heartbeats %d; the first report waits until setup ends", server.fetches, server.heartbeats)
 	}
-	relay.settingUp = false
+	if len(server.setups) != 1 || server.setups[0] != step {
+		t.Fatalf("setups %+v", server.setups)
+	}
+	relay.settingUp = nil
 	if _, err := New(server, reporter.Host{}, nil, relay).Execute(context.Background(), "node-1"); err != nil {
 		t.Fatalf("execute: %v", err)
 	}

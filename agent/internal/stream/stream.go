@@ -332,6 +332,11 @@ func (c *Client) SendHeartbeat(ctx context.Context, beat reporter.Heartbeat) (re
 	return response, json.Unmarshal(answer.Response, &response)
 }
 
+func (c *Client) SendSetup(ctx context.Context, setup reporter.Setup) error {
+	_, err := c.call(ctx, "setup", map[string]any{"setup": setup})
+	return err
+}
+
 func (c *Client) FetchConfig(ctx context.Context) (reporter.AgentConfig, error) {
 	var config reporter.AgentConfig
 	answer, err := c.call(ctx, "config", nil)

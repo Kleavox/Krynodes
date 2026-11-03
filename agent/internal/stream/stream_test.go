@@ -210,6 +210,26 @@ func TestEveryCallSharesTheConnectionAndFindsItsAnswer(t *testing.T) {
 	}
 }
 
+func TestASetupStepTravelsAsItsOwnMessage(t *testing.T) {
+	sent := make(chan map[string]json.RawMessage, 1)
+	srv, _ := server(t, func(p *peer) {
+		message, err := p.request()
+		if err != nil {
+			return
+		}
+		sent <- message
+		p.answer(message["id"], `"type":"setup"`)
+	})
+	c, _ := client(t, srv.URL)
+	if err := c.SendSetup(context.Background(), reporter.Setup{Phase: "docker", Step: 4, Of: 6}); err != nil {
+		t.Fatal(err)
+	}
+	message := <-sent
+	if string(message["type"]) != `"setup"` || string(message["setup"]) != `{"phase":"docker","step":4,"of":6}` {
+		t.Fatalf("sent %s %s", message["type"], message["setup"])
+	}
+}
+
 func TestAnErrorAnswerIsAnError(t *testing.T) {
 	srv, _ := server(t, func(p *peer) {
 		message, err := p.request()

@@ -422,26 +422,27 @@ func TestTheHeartbeatCarriesSetupWhileItRunsAndSaysWhereItStopped(t *testing.T) 
 	}
 }
 
-func TestSettingUpIsTrueOnlyForAFreshSetupOfThisBoot(t *testing.T) {
+func TestSettingUpGivesTheStepOnlyForAFreshSetupOfThisBoot(t *testing.T) {
 	relay := watchingRelay(t)
 	boot := strings.TrimSpace(relay.Boot())
-	if relay.SettingUp() {
+	if relay.SettingUp() != nil {
 		t.Fatal("no setup file means the server is not setting up")
 	}
+	upgrade := &reporter.Setup{Phase: "upgrade", Step: 2, Of: 6}
 	for _, step := range []struct {
 		progress setupProgress
-		want     bool
+		want     *reporter.Setup
 	}{
-		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: boot, Quiet: true}, true},
-		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: boot}, false},
-		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-61 * time.Second), Boot: boot, Quiet: true}, false},
-		{setupProgress{Phase: "restart", Step: 6, Of: 6, At: executorNow.Add(-5 * time.Second), Boot: "an-earlier-boot", Quiet: true}, false},
+		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: boot, Quiet: true}, upgrade},
+		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: boot}, nil},
+		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-61 * time.Second), Boot: boot, Quiet: true}, nil},
+		{setupProgress{Phase: "restart", Step: 6, Of: 6, At: executorNow.Add(-5 * time.Second), Boot: "an-earlier-boot", Quiet: true}, nil},
 	} {
 		if err := writeJSON(relay.StateDir, setupFile, step.progress, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if got := relay.SettingUp(); got != step.want {
-			t.Fatalf("%+v: got %v", step.progress, got)
+		if got := relay.SettingUp(); !reflect.DeepEqual(got, step.want) {
+			t.Fatalf("%+v: got %+v", step.progress, got)
 		}
 	}
 }

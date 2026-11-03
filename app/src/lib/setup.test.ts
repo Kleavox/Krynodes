@@ -27,8 +27,8 @@ describe("setupView", () => {
     restart: "Restarting",
   } as const;
 
-  it("says only Setting Up while a setup runs, with no step count", () => {
-    for (const phase of Object.keys(labels)) {
+  it("says Setting Up while a setup runs and names its step, with no step count", () => {
+    for (const [phase, step] of Object.entries(labels)) {
       expect(
         setupView(
           server({
@@ -36,7 +36,7 @@ describe("setupView", () => {
           }),
           NOW,
         ),
-      ).toEqual({ label: "Setting Up", stopped: false });
+      ).toEqual({ label: "Setting Up", stopped: false, failed: false, step });
     }
   });
 
@@ -54,33 +54,72 @@ describe("setupView", () => {
           }),
           NOW,
         ),
-      ).toEqual({ label, stopped: true });
+      ).toEqual({ label, stopped: true, failed: false, step: label });
     }
   });
 
-  it("shows a server that enrolled but has not reported yet as setting up, for an hour", () => {
+  it("says Setup Failed, with the step its server went silent in, once Krynodes calls it failed", () => {
+    expect(
+      setupView(
+        server({
+          last_seen_at: null,
+          setup: { phase: "docker", step: 4, of: 6, failed: true },
+        }),
+        NOW,
+      ),
+    ).toEqual({
+      label: "Setup Failed",
+      stopped: false,
+      failed: true,
+      step: "Installing Docker",
+    });
+  });
+
+  it("gives a server that never said a step an hour, then calls its setup failed", () => {
     for (const minutes of [1, 59]) {
       expect(
         setupView(
           server({ enrolled_at: ago(minutes), last_seen_at: null }),
           NOW,
         ),
-      ).toEqual({ label: "Setting Up", stopped: false });
+      ).toEqual({
+        label: "Setting Up",
+        stopped: false,
+        failed: false,
+        step: null,
+      });
     }
     expect(
       setupView(server({ enrolled_at: ago(61), last_seen_at: null }), NOW),
-    ).toBeNull();
+    ).toEqual({
+      label: "Setup Failed",
+      stopped: false,
+      failed: true,
+      step: null,
+    });
     expect(setupView(server(), NOW)).toBeNull();
   });
 });
 
 describe("opensServer", () => {
-  it("keeps a server that is setting up closed, unless a warning waits on it", () => {
+  it("keeps a server that is setting up or failed its setup closed, unless a warning waits on it", () => {
     const running = { phase: "upgrade" as const, step: 2, of: 6 };
     expect(opensServer(server(), NOW)).toBe(true);
     expect(opensServer(server({ setup: running }), NOW)).toBe(false);
     expect(
       opensServer(server({ enrolled_at: ago(1), last_seen_at: null }), NOW),
+    ).toBe(false);
+    expect(
+      opensServer(
+        server({
+          last_seen_at: null,
+          setup: { ...running, failed: true },
+        }),
+        NOW,
+      ),
+    ).toBe(false);
+    expect(
+      opensServer(server({ enrolled_at: ago(90), last_seen_at: null }), NOW),
     ).toBe(false);
     expect(
       opensServer(server({ setup: { ...running, stopped: true } }), NOW),

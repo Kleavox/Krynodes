@@ -178,7 +178,7 @@ export const setupSchema = z
   })
   .refine((setup) => setup.step <= setup.of);
 
-export type Setup = z.infer<typeof setupSchema>;
+export type Setup = z.infer<typeof setupSchema> & { failed?: true };
 
 export const agentHeartbeatSchema = agentHostSchema.extend({
   nodeId: z.string().uuid(),
