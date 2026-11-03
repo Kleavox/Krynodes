@@ -2,6 +2,8 @@ import type { CheckRecord, CheckStatus, NodeRecord } from "../types";
 
 export type NodeState = "disabled" | "pending" | "online" | "offline";
 
+export const SETTING_UP_MS = 60 * 60_000;
+
 export function parseTimestamp(value: string): number {
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u.test(value)
     ? `${value.replace(" ", "T")}Z`
@@ -22,7 +24,11 @@ export function nodeState(
 ): NodeState {
   if (node.disabled_at) return "disabled";
   if (!node.enrolled_at) return "pending";
-  if (!node.last_seen_at) return "offline";
+  if (!node.last_seen_at) {
+    return now - parseTimestamp(node.enrolled_at) < SETTING_UP_MS
+      ? "pending"
+      : "offline";
+  }
   return now - parseTimestamp(node.last_seen_at) <=
     (node.grace_seconds ?? graceSeconds(node.interval_seconds)) * 1000
     ? "online"

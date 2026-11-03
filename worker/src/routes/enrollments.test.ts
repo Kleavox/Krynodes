@@ -87,7 +87,7 @@ function fleet(extra: Partial<Env> = {}) {
   const nodes = () =>
     sqlite
       .prepare(
-        "SELECT id, name, interval_seconds, owner_user_id, enrolled_at FROM nodes",
+        "SELECT id, name, interval_seconds, owner_user_id, enrolled_at, last_seen_at FROM nodes",
       )
       .all() as {
       id: string;
@@ -95,6 +95,7 @@ function fleet(extra: Partial<Env> = {}) {
       interval_seconds: number;
       owner_user_id: string;
       enrolled_at: string | null;
+      last_seen_at: string | null;
     }[];
   return { sqlite, request, create, script, enroll, status, nodes };
 }
@@ -341,6 +342,7 @@ describe("enrollment tokens", () => {
       owner_user_id: "standalone",
     });
     expect(node!.enrolled_at).not.toBeNull();
+    expect(node!.last_seen_at).toBeNull();
     expect(await status(id)).toEqual({
       status: "used",
       node: { id: body.nodeId, name: "web-01" },
