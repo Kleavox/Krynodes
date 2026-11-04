@@ -270,7 +270,10 @@ export async function sendSecurityEmail(
     ],
     action: {
       label: `Open ${nodeName}`,
-      href: new URL(`/nodes/${nodeId}`, env.PUBLIC_ORIGIN).toString(),
+      href: new URL(
+        `/security?server=${encodeURIComponent(nodeId)}`,
+        env.PUBLIC_ORIGIN,
+      ).toString(),
     },
   });
 }

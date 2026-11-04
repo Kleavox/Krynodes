@@ -162,7 +162,7 @@ reports keeps reporting, and its card says **Setting Up** until it ends.
 
 From agent 0.7.4 the firewall closes and asks nothing: only SSH, ICMP and the
 private network's port stay open, and ports Docker publishes close too. Open
-what a server needs afterwards in its Firewall section. A firewall that is
+what a server needs afterwards under Firewall on the **Security** page. A firewall that is
 already on is adopted: its allow rules stay open as open ports
 (`✓ Firewall · closed · kept open: 80/tcp`). A server whose SELinux is switched
 off prints `– SELinux: restart to finish`, and the restart at the end finishes
@@ -818,10 +818,15 @@ change below, each server checks SSH password and root login, SSH keys, ports
 open to the internet (also ones Krynodes did not open), automatic updates,
 pending updates and restarts, privileged containers and `docker.sock` mounts,
 and a clock that is not synchronized (signed actions depend on it). Fleet
-shows a shield (green, amber, red); the server page lists the findings with
-**Check now**. A new serious finding is mailed under the quiet rules. The
-system's end of life comes from endoflife.date, fetched by the Worker once a
-day: the Security section shows `Updates until 30 Jun 2028`, or
+shows a shield (green, amber, red) that opens the **Security** page, a section
+of its own beside Checks: on top, **Needs Attention** lists every server's
+warnings and serious findings, each naming its server; below, one row per
+server sums it up (`All 5 On`, `ufw · Closed · 2 ports`, `SELinux Enforcing`,
+`1 to check` or `All clear`) and opens to its protections, firewall and notes,
+with **Check Now**; **Check All** checks every server at once. A serious-finding
+mail opens that server's row. A new serious finding is mailed under the quiet
+rules. The system's end of life comes from endoflife.date, fetched by the
+Worker once a day: the server's row shows `Updates until 30 Jun 2028`, or
 `Updates until --` for a system it does not list, with a warning 90 days ahead
 and a serious finding after, never mailed.
 
@@ -1148,6 +1153,11 @@ only its own links. From agent 0.7.0.
   private address) is shown as such; its public address is not checked. On
   ufw the rule from Krynodes is read from `/etc/ufw/user.rules`, because the
   `ufw` command cannot run in the checks' read-only sandbox.
+- A link answers when, in the server's last report, its ping to the peer was
+  answered or its WireGuard handshake was under 3 minutes old at that report.
+  WireGuard renews a quiet session only every 2 minutes or so, and a report is
+  up to a minute old when the page reads it, so the page never ages a
+  handshake against its own clock.
 - The agent asks some network work itself (apply, announce, endpoints) from
   what its report brings back; those requests have ids shaped like a UUID
   without its version, and Krynodes takes them. A result that does not read is

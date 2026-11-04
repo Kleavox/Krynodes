@@ -36,59 +36,74 @@ const apparmor = (change: Partial<Confinement> = {}): Confinement => ({
 });
 
 describe("the SELinux or AppArmor row", () => {
-  it("names what the server has and offers what fits it", () => {
+  it("names what the server has, its mode first and the rest below, and offers what fits it", () => {
     expect(confinementRow(selinux())).toEqual({
       title: "SELinux",
-      text: "Enforcing",
+      status: "Enforcing",
+      line: null,
       actions: ["denials", "manage"],
     });
     expect(confinementRow(selinux({ mode: "permissive" }))).toMatchObject({
-      text: "Permissive",
+      status: "Permissive",
+      line: null,
       actions: ["denials", "on"],
     });
     expect(confinementRow(selinux({ mode: "disabled" }))).toMatchObject({
-      text: "Off",
+      status: "Off",
+      line: null,
       actions: ["denials", "on"],
     });
     expect(confinementRow(selinux({ managed: true }))).toEqual({
       title: "SELinux",
-      text: "Enforcing · managed by Krynodes",
+      status: "Enforcing",
+      line: "Managed by Krynodes",
       actions: ["denials"],
     });
     expect(
       confinementRow(
         selinux({ mode: "disabled", managed: true, restart: true }),
       ),
-    ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
+    ).toMatchObject({
+      status: "Off",
+      line: "Restart to finish · Managed by Krynodes",
+    });
     expect(confinementRow(selinux({ mode: "kernel-off" }))).toMatchObject({
-      text: "Off · needs a restart",
+      status: "Off",
+      line: "Needs a restart",
       actions: ["denials", "on"],
     });
     expect(
       confinementRow(
         selinux({ mode: "kernel-off", managed: true, restart: true }),
       ),
-    ).toMatchObject({ text: "Off · restart to finish · managed by Krynodes" });
+    ).toMatchObject({
+      status: "Off",
+      line: "Restart to finish · Managed by Krynodes",
+    });
     expect(confinementRow(apparmor())).toEqual({
       title: "AppArmor",
-      text: "On · 12 profiles enforced",
+      status: "On",
+      line: "12 profiles enforced",
       actions: ["denials", "manage"],
     });
     expect(confinementRow(apparmor({ enforced: 1 }))).toMatchObject({
-      text: "On · 1 profile enforced",
+      status: "On",
+      line: "1 profile enforced",
     });
     expect(confinementRow(apparmor({ complain: 3 }))).toMatchObject({
-      text: "On · 12 enforced, 3 in complain",
+      status: "On",
+      line: "12 enforced, 3 in complain",
       actions: ["denials", "on"],
     });
     expect(
       confinementRow(apparmor({ enforced: null, complain: null })),
-    ).toMatchObject({ text: "On · -- profiles enforced" });
+    ).toMatchObject({ status: "On", line: "-- profiles enforced" });
     expect(
       confinementRow(apparmor({ mode: "off", enforced: 0 })),
-    ).toMatchObject({ text: "Off", actions: ["denials", "on"] });
+    ).toMatchObject({ status: "Off", line: null, actions: ["denials", "on"] });
     expect(confinementRow(apparmor({ mode: "kernel-off" }))).toMatchObject({
-      text: "Off · needs a restart",
+      status: "Off",
+      line: "Needs a restart",
       actions: ["denials", "on"],
     });
     expect(
@@ -96,7 +111,8 @@ describe("the SELinux or AppArmor row", () => {
         apparmor({ mode: "kernel-off", managed: true, restart: true }),
       ),
     ).toMatchObject({
-      text: "Off · restart to finish · managed by Krynodes",
+      status: "Off",
+      line: "Restart to finish · Managed by Krynodes",
       actions: ["denials"],
     });
     expect(
@@ -109,12 +125,14 @@ describe("the SELinux or AppArmor row", () => {
       ),
     ).toEqual({
       title: "SELinux or AppArmor",
-      text: "Not available",
+      status: "Not available",
+      line: null,
       actions: [],
     });
     expect(confinementRow(undefined)).toEqual({
       title: "SELinux or AppArmor",
-      text: "Needs agent 0.7.4 or newer",
+      status: "Needs agent 0.7.4 or newer",
+      line: null,
       actions: [],
     });
   });

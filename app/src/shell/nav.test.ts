@@ -16,18 +16,20 @@ const servicesWith = (actions: ActionRecord[]) =>
   ({ actions }) as unknown as ServicesResponse;
 
 describe("the menu", () => {
-  it("is Fleet, Services, Network, Checks, with History only among the pages", () => {
+  it("is Fleet, Services, Network, Checks, Security, with History only among the pages", () => {
     expect(SECTIONS.map((section) => section.label)).toEqual([
       "Fleet",
       "Services",
       "Network",
       "Checks",
+      "Security",
     ]);
     expect(PAGES.map((section) => section.to)).toEqual([
       "/",
       "/services",
       "/network",
       "/checks",
+      "/security",
       "/history",
     ]);
   });

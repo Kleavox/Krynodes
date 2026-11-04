@@ -73,13 +73,17 @@ const beat = (nodeId: string, network: NetworkBeat): AgentHeartbeat => ({
   network,
 });
 
-const link = (peer: number, ago: number | null) => ({
+const link = (
+  peer: number,
+  ago: number | null,
+  ms: number | null = ago === null || ago >= 180 ? null : 4,
+) => ({
   key: key(peer),
   handshake: ago === null ? null : Math.floor(Date.now() / 1000) - ago,
   rx: 1000,
   tx: 2000,
   endpoint: null,
-  ms: ago === null ? null : 4,
+  ms,
 });
 
 function keep(
@@ -190,6 +194,18 @@ describe("the network on the heartbeat", () => {
       [{ answering: 0 }],
     );
     expect(writes()).toBe(before + 1);
+  });
+
+  it("keeps a pair answering while its ping answers, though its handshake was read late", async () => {
+    const { connect, send, sqlite, writes } = setup();
+    const ws = await connect(A);
+    await send(ws, A, { version: 2, key: key(1), links: [link(2, 10)] });
+    const before = writes();
+    await send(ws, A, { version: 2, key: key(1), links: [link(2, 190, 4)] });
+    expect(sqlite.prepare("SELECT answering FROM network_links").all()).toEqual(
+      [{ answering: 1 }],
+    );
+    expect(writes()).toBe(before);
   });
 
   it("keeps links out of the stored beat and serves the latest", async () => {

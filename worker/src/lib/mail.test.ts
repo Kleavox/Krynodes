@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../env";
 import {
   sendQuarantineEmail,
+  sendSecurityEmail,
   sendServerEmail,
   sendStoppedEmail,
   sendTokenEmail,
@@ -74,6 +75,18 @@ describe("incident email", () => {
     expect(sent().subject).toBe("[Krynodes] server-1: offline");
     expect(sent().text).toContain("Last report: 2026-09-28 08:05 UTC");
     expect(sent().text).toContain("https://kry.example.test/nodes/n1");
+  });
+
+  it("opens a serious finding at its server on the Security page", async () => {
+    const { env, sent } = mailEnv();
+    await sendSecurityEmail(env, {
+      nodeId: "n1",
+      nodeName: "server-1",
+      findings: [{ detail: "SSH accepts passwords" }],
+    });
+    expect(sent().text).toContain(
+      "https://kry.example.test/security?server=n1",
+    );
   });
 
   it("writes row labels as they are, without uppercase", async () => {

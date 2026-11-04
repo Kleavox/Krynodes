@@ -187,6 +187,18 @@ describe("the Network page", () => {
     expect(navNetworkCount(view(), presence, NOW)).toBe(1);
   });
 
+  it("judges a link by its last report, where an answered ping counts", () => {
+    const late = view({
+      live: {
+        [B]: {
+          at: NOW - 90_000,
+          links: [link(vps1, 90 + 190, 4), link(vps3, 90 + 140, null)],
+        },
+      },
+    });
+    expect(problemRows(late, presence, NOW)).toEqual([]);
+  });
+
   it("counts no offline server in anyone's Links and shows -- for it", () => {
     expect(serverRow(vps2, view(), presence, NOW)).toEqual({
       name: "vps-2",
@@ -569,10 +581,10 @@ describe("while servers join", () => {
   });
 
   it("counts the joined servers' links and names the fastest", () => {
-    expect(linkProgress(view(), presence, [A, B, C], NOW)).toBe(
+    expect(linkProgress(view(), presence, [A, B, C])).toBe(
       "Links 2 of 3 up · vps-2 ↔ vps-1 answered in 4 ms",
     );
-    expect(linkProgress(view(), presence, [A, D], NOW)).toBe("Links 0 of 1 up");
+    expect(linkProgress(view(), presence, [A, D])).toBe("Links 0 of 1 up");
   });
 });
 
@@ -1828,13 +1840,13 @@ describe("stacks on the private network", () => {
       - "8080:80"
 `;
     expect(opensBox(two, null, [])!.notes).toEqual([
-      "3000/tcp and 8080/tcp are closed by the firewall. Open them in the server's Firewall section.",
+      "3000/tcp and 8080/tcp are closed by the firewall. Open them under Firewall on the Security page.",
     ]);
     expect(
       opensBox(two, null, [{ port: 3000, protocol: "tcp", from: "everyone" }])!
         .notes,
     ).toEqual([
-      "8080/tcp is closed by the firewall. Open it in the server's Firewall section.",
+      "8080/tcp is closed by the firewall. Open it under Firewall on the Security page.",
     ]);
     expect(
       opensBox(two, null, [

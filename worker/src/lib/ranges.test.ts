@@ -138,8 +138,7 @@ describe("the public-address finding", () => {
       {
         id: "private-ports",
         severity: "note",
-        detail:
-          "On the private network only: 5432/tcp (db-db-1), 51821/udp (WireGuard)",
+        detail: "On the private network only: 5432/tcp (db-db-1)",
       },
     ]);
     expect(

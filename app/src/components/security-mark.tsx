@@ -1,8 +1,10 @@
 import { ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
+import { Link } from "react-router";
 
 import { useServices } from "@/lib/api";
 import { worst } from "@/lib/security";
 import { cn } from "@/lib/utils";
+import type { SecurityReport } from "@/types";
 
 const LOOK = {
   serious: {
@@ -22,6 +24,26 @@ const LOOK = {
   },
 };
 
+export function SecurityShield({
+  report,
+}: {
+  report: SecurityReport | null | undefined;
+}) {
+  const level = worst(report);
+  if (level === null) return null;
+  const { Icon, label, tone } = LOOK[level];
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={cn("inline-flex shrink-0", tone)}
+    >
+      <Icon aria-hidden="true" className="size-3.5" />
+    </span>
+  );
+}
+
 export function SecurityMark({ nodeId }: { nodeId: string }) {
   const services = useServices();
   const report = services.data?.nodes.find(
@@ -31,13 +53,13 @@ export function SecurityMark({ nodeId }: { nodeId: string }) {
   if (level === null) return null;
   const { Icon, label, tone } = LOOK[level];
   return (
-    <span
-      role="img"
+    <Link
+      to={`/security?server=${encodeURIComponent(nodeId)}`}
       aria-label={label}
       title={label}
       className={cn("relative z-10 inline-flex shrink-0", tone)}
     >
       <Icon aria-hidden="true" className="size-3.5" />
-    </span>
+    </Link>
   );
 }

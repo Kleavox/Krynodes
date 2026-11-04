@@ -9,7 +9,6 @@ import { SecurityMark } from "@/components/security-mark";
 import { StatusChip } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FirewallSection } from "@/features/nodes/firewall-section";
 import { MachineTiles, readRange } from "@/features/nodes/machine-tiles";
 import { NodeActions } from "@/features/nodes/node-actions";
 import {
@@ -19,7 +18,6 @@ import {
   WhatHappened,
 } from "@/features/nodes/quarantine-panels";
 import { ReleaseDialog } from "@/features/nodes/release-dialog";
-import { SecurityPanel } from "@/features/nodes/security-panel";
 import { ThisServer } from "@/features/nodes/this-server";
 import { DockerNetworks } from "@/features/nodes/docker-networks";
 import { WhatRuns } from "@/features/nodes/what-runs";
@@ -175,8 +173,6 @@ export function NodeDetailPage() {
             onRange={(value) => setParam("range", value)}
             reported={quarantined}
           />
-          <SecurityPanel node={node} seen={seen} />
-          <FirewallSection node={node} />
           <ThisServer
             node={node}
             release={overview.data.agentRelease}

@@ -20,13 +20,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -36,45 +29,48 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useNetwork, useScan, useServices } from "@/lib/api";
+import { useNetwork, useServices } from "@/lib/api";
 import { confinementRow, type ConfineStep } from "@/lib/confine";
-import { agentCurrent } from "@/lib/devices";
 import {
   closedText,
   closingPorts,
-  firewallStatus,
   fromText,
   listensText,
   openingKey,
   portsArg,
   turnOnRows,
 } from "@/lib/firewall";
-import { timeAgo } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
-import { firewallRow, inside, networkHint } from "@/lib/network";
+import { firewallRow, inside } from "@/lib/network";
 import {
   findingTone,
   firewallName,
   firewallPorts,
+  keysLine,
+  offTone,
   protectionDetail,
   protectionsNotice,
-  updatesUntil,
-  protectionsText,
   fromUtcHour,
   recipeChoices,
   recommended,
-  shownFindings,
+  notesOf,
   toUtcHour,
   type RecipeChoice,
 } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { NodeRecord } from "@/types";
+import type {
+  Finding,
+  NodeRecord,
+  SecurityReport,
+  ServicesResponse,
+} from "@/types";
 
 import {
   BooleanDialog,
   ConfineDialog,
   DenialsDialog,
 } from "./confinement-dialogs";
+import { FirewallSection } from "./firewall-section";
 
 const sectionTitle = "text-xs font-medium text-muted-foreground";
 
@@ -365,228 +361,242 @@ const CONFINE_LABELS: Record<
   boolean: { label: "Change Boolean" },
 };
 
-export function SecurityPanel({
+const ROW = "flex items-center gap-2 px-3 py-2";
+
+export function FindingRow({
   node,
+  finding,
+  hint,
+  server = false,
+}: {
+  node: Pick<NodeRecord, "id" | "name">;
+  finding: Finding;
+  hint: string | null;
+  server?: boolean;
+}) {
+  return (
+    <li className="flex items-start gap-2 px-3 py-2">
+      <span className="flex h-5 items-center">
+        <StatusDot tone={findingTone(finding)} />
+      </span>
+      <span className="min-w-0 flex-1 break-words">
+        {finding.detail}
+        {server && (
+          <Link
+            to={`/security?server=${encodeURIComponent(node.id)}`}
+            replace
+            className="ml-2 font-mono text-xs text-muted-foreground underline-offset-4 hover:underline"
+          >
+            On {node.name}
+          </Link>
+        )}
+        {finding.id === "public-ports" && hint && (
+          <span className="block text-xs text-muted-foreground">{hint}</span>
+        )}
+        {finding.id === "public-ports" && !hint && (
+          <span className="block text-xs text-muted-foreground">
+            Some of these on a private network? Add its range under{" "}
+            <Link
+              to="/settings/private-addresses"
+              className="underline underline-offset-4"
+            >
+              Settings, Private Addresses
+            </Link>
+            .
+          </span>
+        )}
+      </span>
+      {finding.id === "updates-pending" && (
+        <Link
+          to={`/nodes/${node.id}/packages`}
+          className="-my-2 inline-flex min-h-9 shrink-0 items-center self-center px-1 text-xs whitespace-nowrap text-primary underline-offset-4 hover:underline md:min-h-8"
+        >
+          Packages ›
+        </Link>
+      )}
+    </li>
+  );
+}
+
+export function ServerSecurity({
+  node,
+  entry,
+  report,
   seen,
 }: {
   node: NodeRecord;
+  entry: ServicesResponse["nodes"][number];
+  report: SecurityReport;
   seen: number;
 }) {
-  const services = useServices();
-  const view = useNetwork().data;
-  const scan = useScan();
   const [pending, setPending] = useState<Pending | null>(null);
-  const [listing, setListing] = useState(false);
   const [confining, setConfining] = useState<ConfineStep | null>(null);
-  const entry = services.data?.nodes.find((item) => item.id === node.id);
-  const report = entry?.security;
-  if (!agentCurrent(node) || !report) return null;
-  const hint = networkHint(
-    entry?.stacks ?? [],
-    !!view && inside(view).some((member) => member.nodeId === node.id),
-  );
   const choices = recipeChoices(report);
   const steps = recommended(report);
-  const internet = (entry?.stacks ?? []).flatMap((stack) =>
+  const internet = entry.stacks.flatMap((stack) =>
     stack.access === "full" ? (stack.public ?? []) : [],
   );
   const notice = protectionsNotice(report);
-  const until = updatesUntil(report);
-  const unsupported = report.platform?.family === null;
-  const findings = shownFindings(report);
+  const notes = notesOf(report);
   const found = report.confinement;
   const confine = confinementRow(found, agentSetsBooleans(node.agent_version));
+  const firewall = choices.find((choice) => choice.id === "firewall")!;
+  const status = (choice: RecipeChoice) =>
+    choice.applied
+      ? choice.id === "reboot-window" && report.rebootHour !== null
+        ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
+        : "On"
+      : choice.outside
+        ? "On · Set up outside Krynodes"
+        : "Off";
+  const actions = (choice: RecipeChoice) =>
+    choice.blocked || choice.outside
+      ? []
+      : !choice.applied
+        ? [
+            {
+              label: "Turn On",
+              onSelect: () => setPending({ choice, turnOn: true }),
+            },
+          ]
+        : [
+            ...(choice.undo
+              ? [
+                  {
+                    label: "Turn Off",
+                    destructive: true,
+                    onSelect: () => setPending({ choice, turnOn: false }),
+                  },
+                ]
+              : []),
+            ...(choice.id === "reboot-window"
+              ? [
+                  {
+                    label: "Change",
+                    onSelect: () => setPending({ choice, turnOn: true }),
+                  },
+                ]
+              : []),
+          ];
   return (
-    <section aria-labelledby="node-security">
-      <div className="mb-2 flex min-h-8 items-center gap-2">
-        <h2 id="node-security" className={sectionTitle}>
-          Security
-        </h2>
-        <span className="font-mono text-[11px] text-muted-foreground">
-          Checked {timeAgo(report.checkedAt, seen)}
-          {until && ` · ${until}`}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="ml-auto h-8"
-          disabled={scan.isPending}
-          onClick={() => scan.mutate(node.id)}
-        >
-          Check Now
-        </Button>
-      </div>
-      <div className="divide-y rounded-lg border bg-card">
-        {findings.length > 0 && (
-          <ul className="space-y-1.5 p-3 text-sm">
-            {findings.map((finding) => (
-              <li key={finding.id} className="flex gap-2">
-                <span className="pt-1.5">
-                  <StatusDot tone={findingTone(finding)} />
-                </span>
-                <span className="min-w-0">
-                  {finding.detail}
-                  {finding.id === "public-ports" && hint && (
-                    <span className="block text-xs text-muted-foreground">
-                      {hint}
-                    </span>
-                  )}
-                  {finding.id === "public-ports" && !hint && (
-                    <span className="block text-xs text-muted-foreground">
-                      Some of these on a private network? Add its range under{" "}
-                      <Link
-                        to="/settings/private-addresses"
-                        className="underline underline-offset-4"
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+        <section aria-labelledby="node-protections">
+          <div className="mb-2 flex min-h-8 items-center gap-2">
+            <h2 id="node-protections" className={sectionTitle}>
+              Protections
+            </h2>
+            {steps.length > 0 && !notice && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-9 md:h-8"
+                onClick={() => setPending({ recommend: steps })}
+              >
+                Apply {steps.length}
+              </Button>
+            )}
+          </div>
+          {notice ? (
+            <p className="rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground">
+              {notice}
+            </p>
+          ) : (
+            <ul className="divide-y rounded-lg border bg-card text-sm">
+              {choices
+                .filter((choice) => choice.id !== "firewall")
+                .map((choice) => {
+                  const items = actions(choice);
+                  const line =
+                    choice.blocked ??
+                    choice.hint ??
+                    (choice.id === "ssh-keys-only" ? keysLine(report) : null);
+                  return (
+                    <li key={choice.id} className={ROW}>
+                      <span className="min-w-0 flex-1">
+                        <span className="block">{choice.title}</span>
+                        {line && (
+                          <span className="block text-xs text-muted-foreground">
+                            {line}
+                          </span>
+                        )}
+                      </span>
+                      <span
+                        className={cn(
+                          "text-right font-mono text-xs text-muted-foreground",
+                          offTone(choice, report) && "text-warning",
+                        )}
                       >
-                        Settings, Private Addresses
-                      </Link>
-                      .
+                        {status(choice)}
+                      </span>
+                      {items.length === 0 ? (
+                        <span className="size-9 shrink-0 md:size-8" />
+                      ) : (
+                        <RowMenu
+                          label={`${choice.title} actions`}
+                          items={items}
+                        />
+                      )}
+                    </li>
+                  );
+                })}
+              <li className={ROW}>
+                <span className="min-w-0 flex-1">
+                  <span className="block">{confine.title}</span>
+                  {confine.line && (
+                    <span className="block text-xs text-muted-foreground">
+                      {confine.line}
                     </span>
                   )}
                 </span>
+                <span className="text-right font-mono text-xs text-muted-foreground">
+                  {confine.status}
+                </span>
+                {confine.actions.length === 0 ? (
+                  <span className="size-9 shrink-0 md:size-8" />
+                ) : (
+                  <RowMenu
+                    label={`${confine.title} actions`}
+                    items={confine.actions.map((step) => ({
+                      ...CONFINE_LABELS[step],
+                      onSelect: () => setConfining(step),
+                    }))}
+                  />
+                )}
               </li>
+            </ul>
+          )}
+        </section>
+        <FirewallSection
+          node={node}
+          report={report}
+          stacks={entry.stacks}
+          choice={firewall}
+          onTurnOn={(closing) =>
+            setPending({ choice: firewall, turnOn: true, closing })
+          }
+        />
+      </div>
+      {notes.length > 0 && (
+        <section aria-labelledby="security-notes">
+          <h2
+            id="security-notes"
+            className={cn(sectionTitle, "mb-2 flex min-h-8 items-center")}
+          >
+            Notes
+          </h2>
+          <ul className="divide-y rounded-lg border bg-card text-sm">
+            {notes.map((finding) => (
+              <FindingRow
+                key={finding.id}
+                node={node}
+                finding={finding}
+                hint={null}
+              />
             ))}
           </ul>
-        )}
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-          <button
-            type="button"
-            onClick={() => setListing(true)}
-            className="min-w-0 flex-1 text-left text-sm underline-offset-4 hover:underline"
-          >
-            {protectionsText(report)}
-          </button>
-          {steps.length > 0 && !unsupported && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 md:h-8"
-              onClick={() => setPending({ recommend: steps })}
-            >
-              Apply {steps.length}
-            </Button>
-          )}
-        </div>
-      </div>
-      <Dialog open={listing} onOpenChange={setListing}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Protections on {node.name}</DialogTitle>
-            <DialogDescription>
-              {notice ?? protectionsText(report)}
-            </DialogDescription>
-          </DialogHeader>
-          <ul
-            className={cn(
-              "divide-y rounded-md border text-sm",
-              unsupported && "hidden",
-            )}
-          >
-            {choices.map((choice) => {
-              const status =
-                choice.id === "firewall"
-                  ? firewallStatus(report, choice)
-                  : null;
-              const items = status
-                ? status.actions.map((action) =>
-                    action === "on"
-                      ? {
-                          label: "Turn On",
-                          onSelect: () => setPending({ choice, turnOn: true }),
-                        }
-                      : {
-                          label: "Close Everything Else",
-                          onSelect: () =>
-                            setPending({
-                              choice,
-                              turnOn: true,
-                              closing: true,
-                            }),
-                        },
-                  )
-                : choice.blocked || choice.outside
-                  ? []
-                  : choice.applied
-                    ? [
-                        ...(choice.undo
-                          ? [
-                              {
-                                label: "Turn Off",
-                                destructive: true,
-                                onSelect: () =>
-                                  setPending({ choice, turnOn: false }),
-                              },
-                            ]
-                          : []),
-                        ...(choice.id === "reboot-window"
-                          ? [
-                              {
-                                label: "Change",
-                                onSelect: () =>
-                                  setPending({ choice, turnOn: true }),
-                              },
-                            ]
-                          : []),
-                      ]
-                    : [
-                        {
-                          label: "Turn On",
-                          onSelect: () => setPending({ choice, turnOn: true }),
-                        },
-                      ];
-              return (
-                <li
-                  key={choice.id}
-                  className="flex items-center gap-2 px-3 py-2"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block">{choice.title}</span>
-                    {(choice.blocked ?? choice.hint) && (
-                      <span className="block text-xs text-muted-foreground">
-                        {choice.blocked ?? choice.hint}
-                      </span>
-                    )}
-                  </span>
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {status
-                      ? status.text
-                      : choice.applied
-                        ? choice.id === "reboot-window" &&
-                          report.rebootHour !== null
-                          ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
-                          : "On"
-                        : choice.outside
-                          ? "On · Set up outside Krynodes"
-                          : "Off"}
-                  </span>
-                  {items.length === 0 ? (
-                    <span className="size-9 md:size-8" />
-                  ) : (
-                    <RowMenu label={`${choice.title} actions`} items={items} />
-                  )}
-                </li>
-              );
-            })}
-            <li className="flex items-center gap-2 px-3 py-2">
-              <span className="min-w-0 flex-1">{confine.title}</span>
-              <span className="font-mono text-xs text-muted-foreground">
-                {confine.text}
-              </span>
-              {confine.actions.length === 0 ? (
-                <span className="size-9 md:size-8" />
-              ) : (
-                <RowMenu
-                  label={`${confine.title} actions`}
-                  items={confine.actions.map((step) => ({
-                    ...CONFINE_LABELS[step],
-                    onSelect: () => setConfining(step),
-                  }))}
-                />
-              )}
-            </li>
-          </ul>
-        </DialogContent>
-      </Dialog>
+        </section>
+      )}
       {found && confining === "denials" && (
         <DenialsDialog
           node={node}
@@ -607,7 +617,7 @@ export function SecurityPanel({
             node={node}
             found={found}
             step={confining}
-            stacks={(entry?.stacks ?? []).map((stack) => stack.project)}
+            stacks={entry.stacks.map((stack) => stack.project)}
             onClose={() => setConfining(null)}
           />
         )}
@@ -618,6 +628,6 @@ export function SecurityPanel({
         internet={internet}
         onClose={() => setPending(null)}
       />
-    </section>
+    </div>
   );
 }
