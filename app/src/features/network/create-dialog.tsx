@@ -150,11 +150,18 @@ export function Picker({
   const single = preset
     ? (candidates.find((node) => node.id === preset) ?? null)
     : null;
+  const presetName = nodes.find((node) => node.id === preset)?.name;
+  const gone =
+    preset && !single
+      ? presetName
+        ? `${presetName} is already in the network.`
+        : "That server is not enrolled."
+      : null;
   const eligible = (node: NodeRecord) =>
     presence[node.id]?.online === true && agentSupported(node.agent_version);
   const [picked, setPicked] = useState<string[]>(() =>
-    preset
-      ? [preset]
+    single
+      ? [single.id]
       : kind === "create"
         ? candidates.filter(eligible).map((node) => node.id)
         : [],
@@ -346,13 +353,16 @@ export function Picker({
             ? "Pick the servers that join. Others can join later."
             : single
               ? `${single.name} joins. The others learn its key in the same step.`
-              : "Pick the servers that join. The others learn their keys in the same step."}
+              : (gone ??
+                "Pick the servers that join. The others learn their keys in the same step.")}
         </DialogDescription>
       </DialogHeader>
       {candidates.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Every server is already in the network.
-        </p>
+        !gone && (
+          <p className="text-sm text-muted-foreground">
+            Every server is already in the network.
+          </p>
+        )
       ) : (
         <ul className="divide-y rounded-lg border bg-card">
           {candidates.map((node) => {

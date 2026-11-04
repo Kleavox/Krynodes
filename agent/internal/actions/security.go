@@ -350,6 +350,10 @@ func (e Executor) publicListeners(ctx context.Context, settings map[string]strin
 	if !ok {
 		return nil, false
 	}
+	return e.listenersIn(output, settings)
+}
+
+func (e Executor) listenersIn(output string, settings map[string]string) ([]reporter.Listener, bool) {
 	ssh := strings.Split(settings["ports"], ",")
 	if settings["ports"] == "" {
 		ssh = []string{"22"}

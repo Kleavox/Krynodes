@@ -413,3 +413,12 @@ func TestAStartingPointFromAnOlderAgentTakesTheProgramsWithoutWarning(t *testing
 		t.Fatalf("start %q", start.Ports)
 	}
 }
+
+func TestAWatchPassReadsTheListenersOnce(t *testing.T) {
+	executor, run := watchedServer(t)
+	run.calls = nil
+	executor.watchServer(context.Background())
+	if asked := slices.DeleteFunc(slices.Clone(run.calls), func(call string) bool { return call != "ss -H -tulnp" }); len(asked) != 1 {
+		t.Fatalf("ss asked %d times: %v", len(asked), run.calls)
+	}
+}

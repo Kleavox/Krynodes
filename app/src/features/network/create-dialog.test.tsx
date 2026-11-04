@@ -41,7 +41,7 @@ const view = {
   changes: [],
 } as NetworkView;
 
-const picker = (preset?: string) =>
+const picker = (preset?: string, members: NetworkView["members"] = []) =>
   renderToStaticMarkup(
     <QueryClientProvider client={new QueryClient()}>
       <Dialog open>
@@ -49,7 +49,7 @@ const picker = (preset?: string) =>
           kind="add"
           nodes={[node("n1", "server-1"), node("n2", "server-2")]}
           services={undefined}
-          view={view}
+          view={{ ...view, members }}
           ranges={[]}
           release="0.7.15"
           preset={preset}
@@ -70,6 +70,21 @@ describe("joining the private network", () => {
     expect(text(html)).toContain(
       "server-1 joins. The others learn its key in the same step.",
     );
+  });
+
+  it("says the server whose Join was pressed is already in the network", () => {
+    const html = picker("n1", [
+      { nodeId: "n1", name: "server-1" } as NetworkView["members"][number],
+    ]);
+    expect(text(html)).toContain("server-1 is already in the network.");
+    expect(text(html)).not.toContain("Every server");
+    expect(text(html)).not.toContain("Pick the servers");
+  });
+
+  it("says a server that is gone is not enrolled", () => {
+    const html = picker("n9");
+    expect(text(html)).toContain("That server is not enrolled.");
+    expect(text(html)).not.toContain("Every server");
   });
 
   it("lets Add Server pick among every server that is not in yet", () => {

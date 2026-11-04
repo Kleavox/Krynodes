@@ -50,11 +50,12 @@ func (e Executor) watchNow(ctx context.Context) (watch.State, bool) {
 		return watch.State{}, false
 	}
 	settings, _ := e.sshSettings(ctx)
-	listeners, _ := e.publicListeners(ctx, settings)
-	if listeners == nil {
+	output, ok := e.output(ctx, "ss", "-H", "-tulnp")
+	if !ok {
 		return watch.State{}, false
 	}
-	programs := e.programs(ctx)
+	listeners, _ := e.listenersIn(output, settings)
+	programs := e.programs(ctx, output)
 	for _, listener := range listeners {
 		program := programs[fmt.Sprintf("%d/%s", listener.Port, listener.Protocol)]
 		if program == "" {
@@ -70,12 +71,8 @@ func (e Executor) watchNow(ctx context.Context) (watch.State, bool) {
 	return state, true
 }
 
-func (e Executor) programs(ctx context.Context) map[string]string {
+func (e Executor) programs(ctx context.Context, output string) map[string]string {
 	programs := map[string]string{}
-	output, ok := e.output(ctx, "ss", "-H", "-tulnp")
-	if !ok {
-		return programs
-	}
 	holders := map[string][]string{}
 	for line := range strings.SplitSeq(output, "\n") {
 		fields := strings.Fields(line)
