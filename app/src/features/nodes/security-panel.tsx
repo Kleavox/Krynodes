@@ -442,13 +442,15 @@ export function ServerSecurity({
   const confine = confinementRow(found, agentSetsBooleans(node.agent_version));
   const firewall = choices.find((choice) => choice.id === "firewall")!;
   const status = (choice: RecipeChoice) =>
-    choice.applied
-      ? choice.id === "reboot-window" && report.rebootHour !== null
-        ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
-        : "On"
-      : choice.outside
-        ? "On · Set up outside Krynodes"
-        : "Off";
+    choice.unavailable
+      ? "Not available"
+      : choice.applied
+        ? choice.id === "reboot-window" && report.rebootHour !== null
+          ? `On · ${String(Math.floor(fromUtcHour(report.rebootHour, offset()))).padStart(2, "0")}:00`
+          : "On"
+        : choice.outside
+          ? "On · Set up outside Krynodes"
+          : "Off";
   const actions = (choice: RecipeChoice) =>
     choice.blocked || choice.outside
       ? []

@@ -231,6 +231,17 @@ describe("quarantine mail", () => {
       ],
       [
         "port",
+        { port: "443/tcp", process: "python3.11", was: "nginx" },
+        "vps-1: a port was taken over outside Krynodes",
+        [
+          "443/tcp is now answered by python3.11 instead of nginx, and not through Krynodes. If you did not start it",
+          "Port: 443/tcp",
+          "Process: python3.11",
+          "Before: nginx",
+        ],
+      ],
+      [
+        "port",
         { port: "32768-60999/udp", process: "tailscaled" },
         "vps-1: temporary UDP ports were opened outside Krynodes",
         [

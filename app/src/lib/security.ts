@@ -8,6 +8,7 @@ export interface RecipeChoice {
   applied: boolean;
   outside: boolean;
   blocked: string | null;
+  unavailable: boolean;
   hint: string | null;
   undo: boolean;
 }
@@ -125,16 +126,24 @@ export function recipeChoices(report: SecurityReport): RecipeChoice[] {
   ).map((id) => {
     const applied = report.recipes.includes(id);
     const off = OFF_FINDING[id];
+    const unavailable =
+      id === "security-updates" && has(report, "updates-unmarked");
     return {
       id,
       title: RECIPE_TITLES[id] ?? id,
       applied,
       outside:
         !applied &&
+        !unavailable &&
         off !== undefined &&
         !has(report, off) &&
         (id !== "no-root-login" || has(report, "ssh-keys")),
-      blocked: applied ? null : blockedText(id, report),
+      blocked: applied
+        ? null
+        : unavailable
+          ? `${report.platform?.name ?? "This system"} marks no security updates.`
+          : blockedText(id, report),
+      unavailable,
       hint:
         id === "no-root-login"
           ? applied

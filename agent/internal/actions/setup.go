@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -249,6 +250,10 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			if err == nil {
 				state.Applied[step.id] = appliedRecipe{At: e.Now(), Saved: saved}
 				err = writeJSON(e.StateDir, "recipes.json", state, 0o640)
+			}
+			if errors.Is(err, recipes.ErrNoNotices) {
+				mark("–", step.title, " not available: "+platform.Name+" marks no security updates")
+				continue
 			}
 			if err != nil {
 				mark("✗", step.title, ": "+err.Error())

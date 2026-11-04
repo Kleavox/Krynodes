@@ -25,7 +25,9 @@ export function securityAttention<T>(
 
 export function securitySummary(report: SecurityReport) {
   const choices = recipeChoices(report);
-  const kept = choices.filter((choice) => choice.id !== "firewall");
+  const kept = choices.filter(
+    (choice) => choice.id !== "firewall" && !choice.unavailable,
+  );
   const on = kept.filter((choice) => choice.applied || choice.outside).length;
   const wall = firewallState(
     report,

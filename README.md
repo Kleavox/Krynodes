@@ -186,11 +186,15 @@ Supported systems:
 Each protection checks what it needs before it changes anything, and checks
 that it took effect after. When either says no, it puts back what it wrote and
 says why; there is no way around it. apt must really run unattended upgrades,
-with its daily timer on. dnf must find security notices; CentOS Stream
-publishes none, so Security updates stay off there. Restart when needed wants
+with its daily timer on. dnf must find security notices; where the
+repositories publish none (CentOS Stream), Automatic security updates is Not
+available, enroll marks it "–", and the server keeps a warning to install every
+update regularly, so its shield stays yellow. Restart when needed wants
 something that marks a needed restart: unattended-upgrades' kernel hook,
-update-notifier, or `dnf needs-restarting`. `sshd -T` must show passwords or
-root login off for every user with a key. fail2ban's SSH jail must answer
+update-notifier, or `dnf needs-restarting`. `sshd -T`, asked of the binary the
+SSH service runs, must show passwords or root login off for every user with a
+key. The agent runs the system's tools before any copy in `/usr/local`, the way
+`sudo` does (agent 0.7.16). fail2ban's SSH jail must answer
 within 30 seconds of its restart. The firewall must list SSH as allowed after
 Krynodes turns it on. Docker must have published packages for the system's
 codename and architecture. A package Krynodes installs waits up to 10 minutes
@@ -1132,7 +1136,8 @@ only its own links. From agent 0.7.0.
   in Enroll a server (and Enroll defaults) gets a new server ready while it
   enrolls; the others learn its key only when you press **Join** on its Fleet
   card or here (or **Not now** undoes it), so a leaked install command cannot
-  bring anyone in.
+  bring anyone in. **Join** opens that one server's checks and address, with no
+  other server to tick.
 - The page lists links with no answer first (a link to an offline server is
   not a problem), waiting servers, every server with **Links n of m**, Recent
   changes and This network. The menu item counts the links with no answer.
@@ -1266,15 +1271,19 @@ takes access away; giving access back always asks for your passkey. From
 agent 0.7.0.
 
 - **A warning first.** A new SSH key, a sign-in with a key not from Krynodes, a
-  new user or sudo rule, a port opened on a public address outside Krynodes, a
-  firewall rule added outside Krynodes, Krynodes' firewall rule removed, SELinux
+  new user or sudo rule, a port opened on a public address outside Krynodes or
+  an open port now answered by another program, a firewall rule added outside
+  Krynodes, Krynodes' firewall rule removed, SELinux
   or AppArmor denying a host service, or an agent that goes quiet while its
   peers still see the server: the server page shows an amber strip and a mail goes
   out. **Cut Off Now** quarantines it at once; **It Was Me** (passkey)
   takes the change as yours. Unanswered, the server is cut off after the time
   in Settings, Quarantine (15 minutes by default, or Warn Only). Joining or
   changing the private network takes nothing it finds as normal; anything new
-  still warns (agent 0.7.3).
+  still warns (agent 0.7.3). A port is known by the program file that answers
+  it and its systemd service; a socket systemd holds counts as the service it
+  hands the socket to, so a restart, a boot or a package upgrade never warns
+  (agent 0.7.16).
 - **A scan.** A member that knocks on more closed ports or servers in one
   minute than **Counts as a Scan** is dropped at once by every server it
   knocked on, and quarantined when enough servers agree. One wrong port knocked

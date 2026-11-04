@@ -54,10 +54,23 @@ const (
 )
 
 func main() {
+	os.Setenv("PATH", systemFirst(os.Getenv("PATH")))
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func systemFirst(path string) string {
+	var system, local []string
+	for _, dir := range strings.Split(path, ":") {
+		if strings.HasPrefix(dir, "/usr/local/") {
+			local = append(local, dir)
+		} else {
+			system = append(system, dir)
+		}
+	}
+	return strings.Join(append(system, local...), ":")
 }
 
 func run(args []string) error {

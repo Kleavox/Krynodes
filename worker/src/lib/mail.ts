@@ -449,6 +449,18 @@ function warningParts(mail: WarningMail): {
         ],
       };
     case "port":
+      if (mail.detail.was) {
+        return {
+          heading: "a port was taken over outside Krynodes",
+          what: `${value("port")} is now answered by ${value("process")} instead of ${value("was")}, and not through Krynodes. If you did not start it`,
+          rows: [
+            ["Port", value("port")],
+            ["Process", value("process")],
+            ["Before", value("was")],
+            ["Seen", added],
+          ],
+        };
+      }
       return {
         ...(value("port").includes("-")
           ? {

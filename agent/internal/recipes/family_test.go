@@ -2,6 +2,7 @@ package recipes
 
 import (
 	"context"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -62,7 +63,7 @@ const securityNotices = "dnf -q updateinfo list --security --all"
 func TestSecurityUpdatesNeedSecurityNoticesOnRHEL(t *testing.T) {
 	env, run := onRelease(t, "centos")
 	_, err := Apply(context.Background(), env, "security-updates", nil)
-	if err == nil || err.Error() != "CentOS Stream 9's repositories publish no security notices, so dnf cannot pick out security updates." {
+	if !errors.Is(err, ErrNoNotices) || err.Error() != "CentOS Stream 9's repositories publish no security notices, so dnf cannot pick out security updates." {
 		t.Fatalf("err %v", err)
 	}
 	if exists(env, "/etc/systemd/system/krynodes-security-updates.timer") {

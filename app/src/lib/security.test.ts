@@ -143,6 +143,38 @@ describe("the security check on screen", () => {
     ).toBe(true);
   });
 
+  it("says security updates are not available where the distro marks none", () => {
+    const unmarked = report({
+      platform: {
+        family: "rhel",
+        name: "CentOS Stream 9",
+        id: "centos",
+        version: "9",
+        endOfLife: null,
+      },
+      findings: [
+        {
+          id: "updates-unmarked",
+          severity: "warning",
+          detail:
+            "CentOS Stream 9 marks no security updates. Install all updates regularly.",
+        },
+      ],
+    });
+    expect(
+      recipeChoices(unmarked).find(
+        (choice) => choice.id === "security-updates",
+      ),
+    ).toMatchObject({
+      applied: false,
+      outside: false,
+      unavailable: true,
+      blocked: "CentOS Stream 9 marks no security updates.",
+    });
+    expect(recommended(unmarked)).not.toContain("security-updates");
+    expect(worst(unmarked)).toBe("warning");
+  });
+
   it("never offers to turn a protection off, only Free Port 53", () => {
     const all = recipeChoices(
       report({

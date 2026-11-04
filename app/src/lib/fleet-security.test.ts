@@ -89,6 +89,28 @@ describe("the Security page", () => {
     });
   });
 
+  it("leaves a protection the distro cannot have out of the count", () => {
+    expect(
+      securitySummary(
+        report({
+          recipes: [
+            "reboot-window",
+            "ssh-keys-only",
+            "no-root-login",
+            "fail2ban",
+          ],
+          findings: [
+            {
+              id: "updates-unmarked",
+              severity: "warning",
+              detail: "CentOS Stream 9 marks no security updates.",
+            },
+          ],
+        }),
+      ).protections,
+    ).toBe("All 4 On");
+  });
+
   it("counts the protections that are off and leaves out what it was not told", () => {
     expect(
       securitySummary(

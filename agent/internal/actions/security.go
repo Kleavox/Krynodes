@@ -127,7 +127,10 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		add("ssh-keys", "note", "SSH keys for "+strings.Join(users, ", "))
 	}
 	platform := recipes.Detect(e.recipeEnv())
-	if !e.automaticUpdates(ctx, platform.Family) {
+	switch {
+	case platform.Family == recipes.RHEL && e.unmarked(ctx):
+		add("updates-unmarked", "warning", platform.Name+" marks no security updates. Install all updates regularly.")
+	case !e.automaticUpdates(ctx, platform.Family):
 		add("updates-off", "warning", "Security updates are not installed automatically")
 	}
 	if waiting := e.securityUpdates(ctx, platform.Family); waiting == 1 {
@@ -178,7 +181,7 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 }
 
 func (e Executor) sshSettings(ctx context.Context) (map[string]string, bool) {
-	output, ok := e.output(ctx, "sshd", "-T")
+	output, ok := e.output(ctx, recipes.SSHD(ctx, e.recipeEnv()), "-T")
 	if !ok {
 		return nil, false
 	}
@@ -221,6 +224,11 @@ func (e Executor) automaticUpdates(ctx context.Context, family recipes.Family) b
 	}
 	status, ok := e.output(ctx, "dpkg-query", "-W", "-f", "${Status}", "unattended-upgrades")
 	return ok && strings.Contains(status, "install ok installed") && recipes.UnattendedOn(ctx, e.recipeEnv()) == nil
+}
+
+func (e Executor) unmarked(ctx context.Context) bool {
+	output, ok := e.output(ctx, "dnf", "-q", "updateinfo", "list", "--security", "--all", "--cacheonly")
+	return ok && strings.TrimSpace(output) == ""
 }
 
 func (e Executor) securityUpdates(ctx context.Context, family recipes.Family) int {

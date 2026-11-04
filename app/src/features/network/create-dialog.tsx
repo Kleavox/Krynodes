@@ -113,7 +113,7 @@ export function JoinDialog({
   );
 }
 
-function Picker({
+export function Picker({
   kind,
   nodes,
   services,
@@ -144,7 +144,12 @@ function Picker({
   );
   const taken = new Set(view.members.map((member) => member.nodeId));
   const waiting = new Map(view.waiting.map((entry) => [entry.nodeId, entry]));
-  const candidates = nodes.filter((node) => !taken.has(node.id));
+  const candidates = nodes.filter(
+    (node) => !taken.has(node.id) && (!preset || node.id === preset),
+  );
+  const single = preset
+    ? (candidates.find((node) => node.id === preset) ?? null)
+    : null;
   const eligible = (node: NodeRecord) =>
     presence[node.id]?.online === true && agentSupported(node.agent_version);
   const [picked, setPicked] = useState<string[]>(() =>
@@ -339,7 +344,9 @@ function Picker({
         <DialogDescription>
           {kind === "create"
             ? "Pick the servers that join. Others can join later."
-            : "Pick the servers that join. The others learn their keys in the same step."}
+            : single
+              ? `${single.name} joins. The others learn its key in the same step.`
+              : "Pick the servers that join. The others learn their keys in the same step."}
         </DialogDescription>
       </DialogHeader>
       {candidates.length === 0 ? (
@@ -384,20 +391,22 @@ function Picker({
                 key={node.id}
                 className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-2.5 text-sm"
               >
-                <input
-                  type="checkbox"
-                  aria-label={`${node.name} joins`}
-                  className="size-4 accent-primary"
-                  checked={on}
-                  disabled={!state.joinable && !on}
-                  onChange={(event) =>
-                    setPicked((current) =>
-                      event.target.checked
-                        ? [...current, node.id]
-                        : current.filter((id) => id !== node.id),
-                    )
-                  }
-                />
+                {!single && (
+                  <input
+                    type="checkbox"
+                    aria-label={`${node.name} joins`}
+                    className="size-4 accent-primary"
+                    checked={on}
+                    disabled={!state.joinable && !on}
+                    onChange={(event) =>
+                      setPicked((current) =>
+                        event.target.checked
+                          ? [...current, node.id]
+                          : current.filter((id) => id !== node.id),
+                      )
+                    }
+                  />
+                )}
                 <span className="min-w-0 flex-1">
                   <span className="font-medium">{node.name}</span>{" "}
                   <span className="font-mono text-xs text-muted-foreground">

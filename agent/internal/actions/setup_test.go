@@ -395,3 +395,12 @@ func TestBeginWritesTheFirstPhaseSoTheAgentStartsSilent(t *testing.T) {
 		t.Fatalf("an unsupported system sets nothing up, so it must not go silent: %v", err)
 	}
 }
+
+func TestSetupSaysSecurityUpdatesAreNotAvailableWithoutNotices(t *testing.T) {
+	executor, _ := setupServer(t)
+	rootFile(t, executor, "/etc/os-release", centosRelease)
+	got := runSetup(t, executor, SetupOptions{Recommended: true})
+	if !strings.Contains(got, "– Automatic security updates not available: CentOS Stream 9 marks no security updates\n") || strings.Contains(got, "✗ Automatic security updates") {
+		t.Fatalf("got\n%s", got)
+	}
+}

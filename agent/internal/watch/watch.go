@@ -169,14 +169,89 @@ func Compare(start, now State) []Change {
 	}
 	for _, item := range now.Ports {
 		if !slices.Contains(start.Ports, item) {
-			port, process, _ := strings.Cut(item, " ")
-			changes = append(changes, Change{Kind: "port", Item: item, Detail: map[string]string{"port": port, "process": process}})
+			port, program, _ := strings.Cut(item, " ")
+			changes = append(changes, Change{Kind: "port", Item: item, Detail: portDetail(start, port, program)})
 		}
 	}
 	for index := range changes {
 		changes[index].Detail["item"] = changes[index].Item
 	}
 	return changes
+}
+
+func portDetail(start State, port, program string) map[string]string {
+	detail := map[string]string{"port": port, "process": shown(program, false)}
+	if strings.Contains(port, "-") {
+		return detail
+	}
+	var before []string
+	for _, known := range start.Ports {
+		if open, was, _ := strings.Cut(known, " "); open == port {
+			before = append(before, was)
+		}
+	}
+	if len(before) == 0 {
+		return detail
+	}
+	was := strings.Join(before, ",")
+	detail["was"] = shown(was, false)
+	if detail["was"] == detail["process"] {
+		detail["process"], detail["was"] = shown(program, true), shown(was, true)
+	}
+	return detail
+}
+
+func shown(program string, long bool) string {
+	var names []string
+	for part := range strings.SplitSeq(program, ",") {
+		exe, service, _ := strings.Cut(part, "@")
+		name := path.Base(exe)
+		if long {
+			name = exe
+			if service != "" {
+				name += " (" + service + ")"
+			}
+		}
+		if exe != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+func legacy(program string) bool {
+	return !strings.Contains(program, "/")
+}
+
+func Upgrade(start, now State) (State, bool) {
+	ports, changed := []string{}, false
+	for _, item := range start.Ports {
+		port, program, _ := strings.Cut(item, " ")
+		var took []string
+		for _, fresh := range now.Ports {
+			open, current, _ := strings.Cut(fresh, " ")
+			if !legacy(program) || open != port || legacy(current) {
+				continue
+			}
+			if strings.Contains(port, "-") && !slices.Contains(strings.Split(shown(current, false), ", "), program) {
+				continue
+			}
+			took = append(took, fresh)
+		}
+		if len(took) == 0 {
+			took = []string{item}
+		} else {
+			changed = true
+		}
+		for _, kept := range took {
+			if !slices.Contains(ports, kept) {
+				ports = append(ports, kept)
+			}
+		}
+	}
+	slices.Sort(ports)
+	start.Ports = ports
+	return start, changed
 }
 
 func sudoRule(item string) string {
