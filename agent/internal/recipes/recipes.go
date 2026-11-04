@@ -209,9 +209,30 @@ func keyFiles(patterns []string, user, uid, home string) []string {
 	return files
 }
 
+var unitExec = regexp.MustCompile(`path=(\S+)`)
+
+func ServiceProgram(ctx context.Context, env Env, unit string) string {
+	output, err := env.output(ctx, "systemctl", "show", "-p", "ExecStart", "--value", unit)
+	if match := unitExec.FindStringSubmatch(output); err == nil && match != nil {
+		if _, err := os.Stat(env.path(match[1])); err == nil {
+			return match[1]
+		}
+	}
+	return ""
+}
+
+func SSHD(ctx context.Context, env Env) string {
+	for _, unit := range []string{"ssh.service", "sshd.service"} {
+		if program := ServiceProgram(ctx, env, unit); program != "" {
+			return program
+		}
+	}
+	return "sshd"
+}
+
 func sshSettings(ctx context.Context, env Env, connection ...string) map[string][]string {
 	settings := map[string][]string{}
-	if output, err := env.output(ctx, "sshd", append([]string{"-T"}, connection...)...); err == nil {
+	if output, err := env.output(ctx, SSHD(ctx, env), append([]string{"-T"}, connection...)...); err == nil {
 		for line := range strings.SplitSeq(output, "\n") {
 			if fields := strings.Fields(line); len(fields) > 1 {
 				settings[fields[0]] = append(settings[fields[0]], fields[1:]...)
@@ -303,7 +324,7 @@ func sshPorts(ctx context.Context, env Env) []string {
 			ports = append(ports, port+"/tcp")
 		}
 	}
-	if output, err := env.output(ctx, "sshd", "-T"); err == nil {
+	if output, err := env.output(ctx, SSHD(ctx, env), "-T"); err == nil {
 		for line := range strings.SplitSeq(output, "\n") {
 			if fields := strings.Fields(line); len(fields) == 2 && fields[0] == "port" {
 				add(fields[1])
@@ -450,7 +471,7 @@ func sshChange(ctx context.Context, env Env, file, body string, took func(contex
 	if err := env.write(file, body, 0o644); err != nil {
 		return err
 	}
-	if err := env.run(ctx, "sshd", "-t"); err != nil {
+	if err := env.run(ctx, SSHD(ctx, env), "-t"); err != nil {
 		env.remove(file)
 		return err
 	}
@@ -558,7 +579,7 @@ func sshAnswer(ctx context.Context, env Env, user string) map[string]string {
 	if user != "" {
 		args = append(args, "-C", "user="+user+probeAs)
 	}
-	output, _ := env.output(ctx, "sshd", args...)
+	output, _ := env.output(ctx, SSHD(ctx, env), args...)
 	answer := map[string]string{}
 	for line := range strings.SplitSeq(output, "\n") {
 		if fields := strings.Fields(line); len(fields) == 2 {
@@ -663,7 +684,7 @@ func undo(ctx context.Context, env Env, id string, saved map[string]string) erro
 				return err
 			}
 		}
-		if err := env.run(ctx, "sshd", "-t"); err != nil {
+		if err := env.run(ctx, SSHD(ctx, env), "-t"); err != nil {
 			return err
 		}
 		return reloadSSH(ctx, env)

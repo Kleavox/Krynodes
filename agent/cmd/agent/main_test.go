@@ -514,3 +514,16 @@ func TestTheSudoLinkLeavesWhatKrynodesDidNotPutThere(t *testing.T) {
 		t.Fatalf("changed someone else's link to %q", target)
 	}
 }
+
+func TestSystemToolsComeBeforeLocalCopies(t *testing.T) {
+	for _, test := range []struct{ path, want string }{
+		{"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin", "/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"},
+		{"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin", "/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/usr/local/sbin:/usr/local/bin"},
+		{"/usr/sbin:/usr/bin:/sbin:/bin", "/usr/sbin:/usr/bin:/sbin:/bin"},
+		{"", ""},
+	} {
+		if got := systemFirst(test.path); got != test.want {
+			t.Errorf("systemFirst(%q) = %q, want %q", test.path, got, test.want)
+		}
+	}
+}

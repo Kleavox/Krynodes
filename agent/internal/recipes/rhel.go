@@ -19,13 +19,25 @@ const (
 
 var errNoMarker = errors.New("Nothing on this server marks when a restart is needed. Turn on Security updates first.")
 
+var ErrNoNotices = errors.New("no security notices")
+
+type unmarked string
+
+func (name unmarked) Error() string {
+	return string(name) + "'s repositories publish no security notices, so dnf cannot pick out security updates."
+}
+
+func (unmarked) Is(target error) bool {
+	return target == ErrNoNotices
+}
+
 func rhelUpdates(ctx context.Context, env Env) (map[string]string, error) {
 	notices, err := env.output(ctx, "dnf", "-q", "updateinfo", "list", "--security", "--all")
 	if err != nil {
 		return nil, fmt.Errorf("dnf could not read the security notices: %w", err)
 	}
 	if strings.TrimSpace(notices) == "" {
-		return nil, fmt.Errorf("%s's repositories publish no security notices, so dnf cannot pick out security updates.", Detect(env).Name)
+		return nil, unmarked(Detect(env).Name)
 	}
 	if !env.has(ctx, "dnf-plugins-core") {
 		if _, err := env.install(ctx, "dnf-plugins-core"); err != nil {

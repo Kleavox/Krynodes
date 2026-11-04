@@ -110,6 +110,22 @@ func TestASecurityCheckNamesWhatIsWrong(t *testing.T) {
 	}
 }
 
+func TestASecurityCheckAsksTheSSHTheServiceRuns(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rootFile(t, executor, "/etc/os-release", "ID=centos\nVERSION_ID=\"9\"\nID_LIKE=\"rhel fedora\"\n")
+	rootFile(t, executor, "/etc/passwd", "root:x:0:0:root:/root:/bin/bash\n")
+	rootFile(t, executor, "/usr/sbin/sshd", "")
+	run.respond["systemctl show -p ExecStart --value sshd.service"] = "{ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D $OPTIONS ; ignore_errors=no }\n"
+	run.respond["/usr/sbin/sshd -T"] = "passwordauthentication no\nkbdinteractiveauthentication no\nport 22\n"
+	run.respond["sshd -T"] = "passwordauthentication yes\nkbdinteractiveauthentication yes\nport 22\n"
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if finding, found := findingsOf(t, executor)["ssh-password"]; found {
+		t.Fatalf("the copy on PATH spoke for SSH: %#v", finding)
+	}
+}
+
 const rootProbe = "sshd -T -C user=root,host=krynodes.invalid,addr=192.0.2.1"
 
 func sshTakesEffect(run *fakeRun, users ...string) {
@@ -738,7 +754,42 @@ func rhelServer(t *testing.T, executor Executor, run *fakeRun) {
 	run.respond["sshd -T"] = "passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin without-password\nport 22\n"
 	run.respond[listening] = "tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:((\"sshd\",pid=1,fd=3))\n"
 	run.respond["firewall-cmd --state"] = "running\n"
+	run.respond[allNotices] = "RLSA-2024:3501 Important/Sec. openssl-1:3.0.7-27.el9.x86_64\n"
 	run.respond["dnf needs-restarting -r"] = "No core libraries or services have been updated since boot-up.\nReboot should not be necessary.\n"
+}
+
+const (
+	allNotices    = "dnf -q updateinfo list --security --all --cacheonly"
+	centosRelease = "NAME=\"CentOS Stream\"\nVERSION_ID=\"9\"\nID=\"centos\"\nID_LIKE=\"rhel fedora\"\nPRETTY_NAME=\"CentOS Stream 9\"\n"
+)
+
+func TestADistroWithoutSecurityNoticesAsksForEveryUpdate(t *testing.T) {
+	executor, run := securityExecutor(t)
+	rhelServer(t, executor, run)
+	rootFile(t, executor, "/etc/os-release", centosRelease)
+	run.respond[allNotices] = ""
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found := findingsOf(t, executor)
+	if _, off := found["updates-off"]; off || found["updates-unmarked"] != (reporter.Finding{ID: "updates-unmarked", Severity: "warning", Detail: "CentOS Stream 9 marks no security updates. Install all updates regularly."}) {
+		t.Fatalf("findings %#v", found)
+	}
+	executor, run = securityExecutor(t)
+	rhelServer(t, executor, run)
+	rootFile(t, executor, "/etc/os-release", centosRelease)
+	delete(run.respond, allNotices)
+	run.failing[allNotices] = "Error: Cache-only enabled but no cache for 'baseos'"
+	for _, timer := range []string{"krynodes-security-updates.timer", "dnf-automatic-install.timer", "dnf-automatic.timer", "dnf5-automatic.timer"} {
+		run.failing["systemctl is-enabled --quiet "+timer] = ""
+	}
+	if err := executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found = findingsOf(t, executor)
+	if _, unmarked := found["updates-unmarked"]; unmarked || found["updates-off"].Severity != "warning" {
+		t.Fatalf("without a cache nothing is decided: %#v", found)
+	}
 }
 
 func TestARHELServerIsCheckedWithItsOwnTools(t *testing.T) {

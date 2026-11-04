@@ -149,3 +149,42 @@ func TestItWasMeAcceptsThatOneItem(t *testing.T) {
 		t.Fatal("accepted what has no starting point")
 	}
 }
+
+func TestAnotherProgramOnAnOpenPortSaysWhatAnsweredBefore(t *testing.T) {
+	start := State{Ports: []string{"32768-60999/udp /usr/sbin/chronyd@chronyd.service", "443/tcp /usr/sbin/nginx@nginx.service"}}
+	now := State{Ports: []string{"32768-60999/udp /usr/bin/python3.11", "443/tcp /usr/bin/python3.11"}}
+	changes := Compare(start, now)
+	if len(changes) != 2 {
+		t.Fatalf("changes %+v", changes)
+	}
+	if detail := changes[0].Detail; detail["port"] != "32768-60999/udp" || detail["process"] != "python3.11" || detail["was"] != "" {
+		t.Fatalf("temporary ports %+v", detail)
+	}
+	if detail := changes[1].Detail; detail["port"] != "443/tcp" || detail["process"] != "python3.11" || detail["was"] != "nginx" {
+		t.Fatalf("taken over %+v", detail)
+	}
+}
+
+func TestATakeOverByTheSameNameShowsWhereEachRuns(t *testing.T) {
+	start := State{Ports: []string{"443/tcp /usr/sbin/nginx@nginx.service"}}
+	now := State{Ports: []string{"443/tcp /tmp/nginx"}}
+	if detail := Compare(start, now)[0].Detail; detail["process"] != "/tmp/nginx" || detail["was"] != "/usr/sbin/nginx (nginx.service)" {
+		t.Fatalf("detail %+v", detail)
+	}
+}
+
+func TestAStartingPointWrittenBeforeTakesTheProgramsOnce(t *testing.T) {
+	start := State{Ports: []string{"111/tcp agetty", "32768-60999/udp chronyd", "32768-60999/udp ntpd", "51820/udp WireGuard", "8080/tcp nginx"}}
+	now := State{Ports: []string{"111/tcp /usr/bin/rpcbind@rpcbind.service", "32768-60999/udp /usr/sbin/chronyd@chronyd.service", "4444/tcp /usr/bin/nc", "51820/udp WireGuard", "8080/tcp /usr/sbin/nginx@nginx.service"}}
+	upgraded, changed := Upgrade(start, now)
+	want := []string{"111/tcp /usr/bin/rpcbind@rpcbind.service", "32768-60999/udp /usr/sbin/chronyd@chronyd.service", "32768-60999/udp ntpd", "51820/udp WireGuard", "8080/tcp /usr/sbin/nginx@nginx.service"}
+	if !changed || !slices.Equal(upgraded.Ports, want) {
+		t.Fatalf("upgraded %v %q", changed, upgraded.Ports)
+	}
+	if changes := Compare(upgraded, now); len(changes) != 1 || changes[0].Detail["port"] != "4444/tcp" {
+		t.Fatalf("changes %+v", changes)
+	}
+	if _, again := Upgrade(upgraded, now); again {
+		t.Fatal("an upgraded starting point changed again")
+	}
+}

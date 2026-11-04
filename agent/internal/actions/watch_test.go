@@ -323,3 +323,102 @@ func TestTheRangeComesFromTheKernel(t *testing.T) {
 		t.Fatalf("collapse %q", ports)
 	}
 }
+
+const listSockets = "systemctl list-sockets --all --full --no-legend --no-pager --show-types"
+
+func runsAs(t *testing.T, executor Executor, pid int, exe, cgroup string) {
+	t.Helper()
+	links := map[string]string{}
+	previous := readLink
+	readLink = func(name string) (string, error) {
+		if target, found := links[name]; found {
+			return target, nil
+		}
+		return previous(name)
+	}
+	t.Cleanup(func() { readLink = previous })
+	links[executor.path(fmt.Sprintf("/proc/%d/exe", pid))] = exe
+	rootFile(t, executor, fmt.Sprintf("/proc/%d/cgroup", pid), cgroup)
+}
+
+func rpcbindSocket(t *testing.T, executor Executor, run *fakeRun) {
+	t.Helper()
+	rootFile(t, executor, "/usr/bin/rpcbind", "")
+	run.respond[listSockets] = "0.0.0.0:111 Stream rpcbind.socket rpcbind.service\n[::]:111 Stream rpcbind.socket rpcbind.service\n0.0.0.0:111 Datagram rpcbind.socket rpcbind.service\n/run/rpcbind.sock Stream rpcbind.socket rpcbind.service\n"
+	run.respond["systemctl show -p ExecStart --value rpcbind.service"] = "{ path=/usr/bin/rpcbind ; argv[]=/usr/bin/rpcbind -w -f ; ignore_errors=no }\n"
+}
+
+func held(port int, holders string) string {
+	return fmt.Sprintf("tcp LISTEN 0 128 0.0.0.0:%d 0.0.0.0:* users:(%s)\n", port, holders)
+}
+
+func TestASocketSystemdHandsOnKeepsItsProgramAcrossBoots(t *testing.T) {
+	executor, run := watchedServer(t)
+	rpcbindSocket(t, executor, run)
+	run.respond["ss -H -tulnp"] = nginxListener + held(111, `("systemd",pid=1,fd=50)`)
+	executor.watchServer(context.Background())
+	start, _ := readState[watch.State](executor.StateDir, watchFile)
+	if !slices.Contains(start.Ports, "111/tcp /usr/bin/rpcbind@rpcbind.service") {
+		t.Fatalf("start %q", start.Ports)
+	}
+	runsAs(t, executor, 543, "/usr/bin/rpcbind", "0::/system.slice/rpcbind.service\n")
+	runsAs(t, executor, 702, "/usr/sbin/agetty", "0::/system.slice/system-serial\ngetty.slice/serial-getty@ttyS0.service\n")
+	for _, holders := range []string{
+		`("agetty",pid=702,fd=3),("systemd",pid=1,fd=50)`,
+		`("rpcbind",pid=543,fd=4),("systemd",pid=1,fd=50)`,
+		`("rpcbind",pid=543,fd=4)`,
+	} {
+		run.respond["ss -H -tulnp"] = nginxListener + held(111, holders)
+		executor.watchServer(context.Background())
+	}
+	if events := readEvents(t, executor); len(events) != 0 {
+		t.Fatalf("the same port warned: %+v", events)
+	}
+}
+
+func TestAnotherProgramTakingAnOpenPortWarns(t *testing.T) {
+	executor, run := watchedServer(t)
+	runsAs(t, executor, 812, "/usr/sbin/nginx", "0::/system.slice/nginx.service\n")
+	executor.watchServer(context.Background())
+	runsAs(t, executor, 813, "/usr/sbin/nginx (deleted)", "0::/system.slice/nginx.service\n")
+	run.respond["ss -H -tulnp"] = held(8080, `("nginx",pid=813,fd=6)`)
+	executor.watchServer(context.Background())
+	if events := readEvents(t, executor); len(events) != 0 {
+		t.Fatalf("an upgraded nginx warned: %+v", events)
+	}
+	runsAs(t, executor, 900, "/usr/bin/python3.11", "0::/user.slice/user-1000.slice/session-3.scope\n")
+	run.respond["ss -H -tulnp"] = held(8080, `("python3",pid=900,fd=3)`)
+	executor.watchServer(context.Background())
+	events := readEvents(t, executor)
+	if len(events) != 1 || events[0].Kind != "port" || events[0].Detail["process"] != "python3.11" || events[0].Detail["was"] != "nginx" {
+		t.Fatalf("events %+v", events)
+	}
+}
+
+func TestAStartingPointFromAnOlderAgentTakesTheProgramsWithoutWarning(t *testing.T) {
+	executor, run := watchedServer(t)
+	executor.watchServer(context.Background())
+	start, _ := readState[watch.State](executor.StateDir, watchFile)
+	start.Ports = []string{"111/tcp agetty", "8080/tcp nginx"}
+	writeJSON(executor.StateDir, watchFile, start, 0o640)
+	rpcbindSocket(t, executor, run)
+	runsAs(t, executor, 812, "/usr/sbin/nginx", "0::/system.slice/nginx.service\n")
+	run.respond["ss -H -tulnp"] = nginxListener + held(111, `("rpcbind",pid=543,fd=4),("systemd",pid=1,fd=50)`)
+	executor.watchServer(context.Background())
+	if events := readEvents(t, executor); len(events) != 0 {
+		t.Fatalf("an older starting point warned: %+v", events)
+	}
+	start, _ = readState[watch.State](executor.StateDir, watchFile)
+	if !slices.Equal(start.Ports, []string{"111/tcp /usr/bin/rpcbind@rpcbind.service", "8080/tcp /usr/sbin/nginx@nginx.service"}) {
+		t.Fatalf("start %q", start.Ports)
+	}
+}
+
+func TestAWatchPassReadsTheListenersOnce(t *testing.T) {
+	executor, run := watchedServer(t)
+	run.calls = nil
+	executor.watchServer(context.Background())
+	if asked := slices.DeleteFunc(slices.Clone(run.calls), func(call string) bool { return call != "ss -H -tulnp" }); len(asked) != 1 {
+		t.Fatalf("ss asked %d times: %v", len(asked), run.calls)
+	}
+}

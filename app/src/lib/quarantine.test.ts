@@ -99,6 +99,12 @@ describe("the warning strip", () => {
       "4444/tcp opened on a public address, not through Krynodes · 21:04",
       "Process --",
     ]);
+    expect(
+      strip("port", { port: "443/tcp", process: "python3.11", was: "nginx" }),
+    ).toEqual([
+      "443/tcp now answered by python3.11 instead of nginx, not through Krynodes · 21:04",
+      "Process python3.11",
+    ]);
     expect(strip("rule", { chain: "KRY-REACH", rule: "-j DROP" })).toEqual([
       "Krynodes' firewall rule was removed, and put back · 21:04",
       "KRY-REACH · -j DROP",

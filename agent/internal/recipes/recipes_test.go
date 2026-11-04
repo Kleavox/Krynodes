@@ -213,7 +213,9 @@ func TestKeysOnlyNeedsAKeyForRootOrASudoUser(t *testing.T) {
 	if _, err := Apply(context.Background(), env, "ssh-keys-only", nil); err == nil || !strings.Contains(err.Error(), "SSH key") {
 		t.Fatalf("err %v", err)
 	}
-	if slices.ContainsFunc(run.calls, func(call string) bool { return !strings.HasPrefix(call, "sshd -T") }) || exists(env, "/etc/ssh/sshd_config.d/10-krynodes.conf") {
+	if slices.ContainsFunc(run.calls, func(call string) bool {
+		return !strings.HasPrefix(call, "sshd -T") && !strings.HasPrefix(call, "systemctl show ")
+	}) || exists(env, "/etc/ssh/sshd_config.d/10-krynodes.conf") {
 		t.Fatalf("calls %q", run.calls)
 	}
 	if users := SSHLogins(context.Background(), env); len(users) != 0 {
@@ -640,5 +642,54 @@ func TestUndoRemovesOnlyThePackagesItInstalled(t *testing.T) {
 	}
 	if slices.ContainsFunc(run.calls[before:], func(call string) bool { return strings.Contains(call, "purge") }) {
 		t.Fatalf("a package that was there before stays: %q", run.calls[before:])
+	}
+}
+
+const (
+	sshUnit  = "systemctl show -p ExecStart --value ssh.service"
+	sshdUnit = "systemctl show -p ExecStart --value sshd.service"
+)
+
+func TestSSHQuestionsGoToTheBinaryTheSSHServiceRuns(t *testing.T) {
+	env, run := newEnv(t)
+	write(t, env, "/usr/sbin/sshd", "")
+	run.respond[sshdUnit] = "{ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D $OPTIONS ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n"
+	if got := SSHD(context.Background(), env); got != "/usr/sbin/sshd" {
+		t.Fatalf("SSHD = %q", got)
+	}
+	run.respond[sshUnit] = "{ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D ; ignore_errors=no }\n"
+	delete(run.respond, sshdUnit)
+	if got := SSHD(context.Background(), env); got != "/usr/sbin/sshd" {
+		t.Fatalf("SSHD on Debian = %q", got)
+	}
+}
+
+func TestSSHQuestionsFallBackToThePathWithoutAService(t *testing.T) {
+	env, run := newEnv(t)
+	if got := SSHD(context.Background(), env); got != "sshd" {
+		t.Fatalf("no unit: SSHD = %q", got)
+	}
+	run.respond[sshdUnit] = "{ path=/opt/gone/sshd ; argv[]=/opt/gone/sshd -D ; ignore_errors=no }\n"
+	if got := SSHD(context.Background(), env); got != "sshd" {
+		t.Fatalf("missing file: SSHD = %q", got)
+	}
+}
+
+func TestKeysOnlyAsksTheServicesSSHNotALocalCopy(t *testing.T) {
+	env, run := newEnv(t)
+	usersWithKeys(t, env, true)
+	write(t, env, "/usr/sbin/sshd", "")
+	write(t, env, "/etc/ssh/sshd_config", "Include /etc/ssh/sshd_config.d/*.conf\n")
+	run.respond[sshdUnit] = "{ path=/usr/sbin/sshd ; argv[]=/usr/sbin/sshd -D $OPTIONS ; ignore_errors=no }\n"
+	run.respond["sshd -T"] = "passwordauthentication yes\nkbdinteractiveauthentication yes\n"
+	run.effects["/usr/sbin/sshd -t"] = func() {
+		run.respond["/usr/sbin/sshd -T"] = "passwordauthentication no\nkbdinteractiveauthentication no\n"
+		run.respond["/usr/sbin/sshd -T -C user=budi,host=krynodes.invalid,addr=192.0.2.1"] = "passwordauthentication no\nkbdinteractiveauthentication no\n"
+	}
+	if _, err := Apply(context.Background(), env, "ssh-keys-only", nil); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(run.calls, "sshd -t") || slices.Contains(run.calls, "sshd -T") {
+		t.Fatalf("asked the copy on PATH: %q", run.calls)
 	}
 }
