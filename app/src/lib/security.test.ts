@@ -14,7 +14,7 @@ import {
   rangeLines,
   recipeChoices,
   recommended,
-  securityFindings,
+  notesOf,
   toUtcHour,
   updatesUntil,
   worst,
@@ -29,7 +29,7 @@ const report = (over: Partial<SecurityReport> = {}): SecurityReport => ({
   ...over,
 });
 
-describe("the Security tab lists each thing once", () => {
+describe("a server's security lists each thing once", () => {
   const found = report({
     findings: [
       { id: "root-login", severity: "note", detail: "Root can log in" },
@@ -48,13 +48,10 @@ describe("the Security tab lists each thing once", () => {
     ],
   });
 
-  it("puts problems in Needs Attention and the rest in Notes, leaving out what a row shows", () => {
-    const { attention, notes } = securityFindings(found);
-    expect(attention.map((finding) => finding.id)).toEqual([
-      "ssh-password",
-      "clock-unsynced",
+  it("keeps in Notes only the notes a row does not already show", () => {
+    expect(notesOf(found).map((finding) => finding.id)).toEqual([
+      "reboot-pending",
     ]);
-    expect(notes.map((finding) => finding.id)).toEqual(["reboot-pending"]);
   });
 
   it("names the SSH keys on their own row", () => {
@@ -251,7 +248,7 @@ describe("the security check on screen", () => {
         { id: "updates-off", severity: "warning", detail: "updates" },
       ],
     });
-    expect(securityFindings(found).notes).toEqual([]);
+    expect(notesOf(found)).toEqual([]);
     expect(
       recipeChoices(found).find((choice) => choice.id === "free-port-53")?.hint,
     ).toBe("Only for a DNS server on this server.");

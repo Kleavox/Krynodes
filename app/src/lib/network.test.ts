@@ -1840,13 +1840,13 @@ describe("stacks on the private network", () => {
       - "8080:80"
 `;
     expect(opensBox(two, null, [])!.notes).toEqual([
-      "3000/tcp and 8080/tcp are closed by the firewall. Open them under Firewall on the server's Security tab.",
+      "3000/tcp and 8080/tcp are closed by the firewall. Open them under Firewall on the Security page.",
     ]);
     expect(
       opensBox(two, null, [{ port: 3000, protocol: "tcp", from: "everyone" }])!
         .notes,
     ).toEqual([
-      "8080/tcp is closed by the firewall. Open it under Firewall on the server's Security tab.",
+      "8080/tcp is closed by the firewall. Open it under Firewall on the Security page.",
     ]);
     expect(
       opensBox(two, null, [

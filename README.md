@@ -162,7 +162,7 @@ reports keeps reporting, and its card says **Setting Up** until it ends.
 
 From agent 0.7.4 the firewall closes and asks nothing: only SSH, ICMP and the
 private network's port stay open, and ports Docker publishes close too. Open
-what a server needs afterwards under Firewall on its Security tab. A firewall that is
+what a server needs afterwards under Firewall on the **Security** page. A firewall that is
 already on is adopted: its allow rules stay open as open ports
 (`✓ Firewall · closed · kept open: 80/tcp`). A server whose SELinux is switched
 off prints `– SELinux: restart to finish`, and the restart at the end finishes
@@ -818,12 +818,15 @@ change below, each server checks SSH password and root login, SSH keys, ports
 open to the internet (also ones Krynodes did not open), automatic updates,
 pending updates and restarts, privileged containers and `docker.sock` mounts,
 and a clock that is not synchronized (signed actions depend on it). Fleet
-shows a shield (green, amber, red); the server page's **Security** tab lists
-what needs attention, the protections (SELinux or AppArmor among them), the
-firewall and notes, each fact once, with **Check Now**; a serious-finding mail
-opens that tab. A new serious finding is mailed under the quiet rules. The
-system's end of life comes from endoflife.date, fetched by the Worker once a
-day: the Security tab shows `Updates until 30 Jun 2028`, or
+shows a shield (green, amber, red) that opens the **Security** page, a section
+of its own beside Checks: on top, **Needs Attention** lists every server's
+warnings and serious findings, each naming its server; below, one row per
+server sums it up (`All 5 On`, `ufw · Closed · 2 ports`, `SELinux Enforcing`,
+`1 to check` or `All clear`) and opens to its protections, firewall and notes,
+with **Check Now**; **Check All** checks every server at once. A serious-finding
+mail opens that server's row. A new serious finding is mailed under the quiet
+rules. The system's end of life comes from endoflife.date, fetched by the
+Worker once a day: the server's row shows `Updates until 30 Jun 2028`, or
 `Updates until --` for a system it does not list, with a warning 90 days ahead
 and a serious finding after, never mailed.
 

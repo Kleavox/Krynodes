@@ -22,6 +22,7 @@ import { NodeDetailPage } from "@/pages/node-detail";
 import { NotFoundPage } from "@/pages/not-found";
 import { PackagesPage } from "@/pages/packages";
 import { ServicesPage } from "@/pages/services";
+import { SecurityPage } from "@/pages/security";
 import { SettingsPage } from "@/pages/settings";
 import { DevicesPage } from "./pages/devices";
 import { AppShell } from "@/shell/app-shell";
@@ -45,6 +46,7 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="network" element={<NetworkPage />} />
                   <Route path="devices" element={<DevicesPage />} />
                   <Route path="checks" element={<ChecksPage />} />
+                  <Route path="security" element={<SecurityPage />} />
                   <Route path="incidents" element={<IncidentsRedirect />} />
                   <Route path="history" element={<HistoryPage />} />
                   <Route path="settings" element={<SettingsPage />}>

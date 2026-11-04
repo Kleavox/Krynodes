@@ -553,11 +553,15 @@ export function useCloudflare() {
 
 export const useScan = () =>
   useApiMutation(
-    (nodeId: string) =>
+    (nodeIds: string[]) =>
       postActions({
         action: "scan",
         mode: "parallel",
-        targets: [{ nodeId, kind: "host", name: "server" }],
+        targets: nodeIds.map((nodeId) => ({
+          nodeId,
+          kind: "host" as const,
+          name: "server",
+        })),
       }),
     [...ACTION_QUERIES, queryKeys.overview],
     true,

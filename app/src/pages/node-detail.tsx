@@ -18,8 +18,6 @@ import {
   WhatHappened,
 } from "@/features/nodes/quarantine-panels";
 import { ReleaseDialog } from "@/features/nodes/release-dialog";
-import { SecurityTab } from "@/features/nodes/security-panel";
-import { ServerTabs, serverTab, tabPanel } from "@/features/nodes/server-tabs";
 import { ThisServer } from "@/features/nodes/this-server";
 import { DockerNetworks } from "@/features/nodes/docker-networks";
 import { WhatRuns } from "@/features/nodes/what-runs";
@@ -37,7 +35,6 @@ export function NodeDetailPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const range = readRange(params.get("range"));
-  const tab = serverTab(params.get("tab"));
   const overview = useOverview();
   const services = useServices();
   const devices = useDevices();
@@ -154,47 +151,37 @@ export function NodeDetailPage() {
         />
       )}
 
-      <ServerTabs
-        tab={tab}
-        onTab={(next) => setParam("tab", next === "overview" ? null : next)}
-      />
-      <div role="tabpanel" id={tabPanel} aria-labelledby={`server-tab-${tab}`}>
-        {tab === "security" ? (
-          <SecurityTab node={node} seen={seen} />
-        ) : (
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-[auto_1fr] lg:items-start">
-            <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
-              {quarantined && (
-                <>
-                  <WhatHappened
-                    view={quarantine.data}
-                    nodeName={node.name}
-                    now={now}
-                  />
-                  <ChangeThese node={node} view={quarantine.data} />
-                </>
-              )}
-              <WhatRuns node={node} seen={seen} />
-              <DockerNetworks node={node} />
-            </div>
-            <aside className="min-w-0 space-y-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
-              <MachineTiles
-                node={node}
-                range={range}
-                onRange={(value) => setParam("range", value)}
-                reported={quarantined}
-              />
-              <ThisServer
-                node={node}
-                release={overview.data.agentRelease}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-[auto_1fr] lg:items-start">
+        <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
+          {quarantined && (
+            <>
+              <WhatHappened
+                view={quarantine.data}
+                nodeName={node.name}
                 now={now}
               />
-            </aside>
-            <div className="min-w-0 lg:col-start-1 lg:row-start-2">
-              <RecentActions node={node} />
-            </div>
-          </div>
-        )}
+              <ChangeThese node={node} view={quarantine.data} />
+            </>
+          )}
+          <WhatRuns node={node} seen={seen} />
+          <DockerNetworks node={node} />
+        </div>
+        <aside className="min-w-0 space-y-6 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+          <MachineTiles
+            node={node}
+            range={range}
+            onRange={(value) => setParam("range", value)}
+            reported={quarantined}
+          />
+          <ThisServer
+            node={node}
+            release={overview.data.agentRelease}
+            now={now}
+          />
+        </aside>
+        <div className="min-w-0 lg:col-start-1 lg:row-start-2">
+          <RecentActions node={node} />
+        </div>
       </div>
     </>
   );

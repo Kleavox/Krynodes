@@ -29,15 +29,18 @@ const OFF_FINDING: Record<string, string> = {
 
 const ELSEWHERE = new Set([...Object.values(OFF_FINDING), "ssh-keys"]);
 
-export function securityFindings(report: SecurityReport) {
-  const shown = report.findings
-    .filter((finding) => !HIDDEN.has(finding.id) && !ELSEWHERE.has(finding.id))
+export const notesOf = (report: SecurityReport) =>
+  report.findings.filter(
+    (finding) =>
+      finding.severity === "note" &&
+      !HIDDEN.has(finding.id) &&
+      !ELSEWHERE.has(finding.id),
+  );
+
+export const attentionOf = (report: SecurityReport) =>
+  report.findings
+    .filter((finding) => finding.severity !== "note" && !HIDDEN.has(finding.id))
     .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
-  return {
-    attention: shown.filter((finding) => finding.severity !== "note"),
-    notes: shown.filter((finding) => finding.severity === "note"),
-  };
-}
 
 export const findingTone = (finding: Finding) =>
   finding.severity === "serious"

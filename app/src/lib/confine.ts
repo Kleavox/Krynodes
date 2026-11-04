@@ -17,25 +17,30 @@ export const systemName = (system: Confinement["system"] | undefined) =>
 
 const count = (value: number | null) => (value === null ? "--" : value);
 
-function modeText(found: Confinement): string {
+function modeText(found: Confinement): [string, string?] {
   if (found.mode === "kernel-off") {
-    return found.restart ? "Off" : "Off · needs a restart";
+    return found.restart ? ["Off"] : ["Off", "Needs a restart"];
   }
   if (found.system === "selinux") {
-    return found.mode === "enforcing"
-      ? "Enforcing"
-      : found.mode === "permissive"
-        ? "Permissive"
-        : found.mode === "disabled"
-          ? "Off"
-          : "--";
+    return [
+      found.mode === "enforcing"
+        ? "Enforcing"
+        : found.mode === "permissive"
+          ? "Permissive"
+          : found.mode === "disabled"
+            ? "Off"
+            : "--",
+    ];
   }
   if (found.mode === "on") {
-    return found.complain
-      ? `On · ${count(found.enforced)} enforced, ${found.complain} in complain`
-      : `On · ${count(found.enforced)} ${found.enforced === 1 ? "profile" : "profiles"} enforced`;
+    return [
+      "On",
+      found.complain
+        ? `${count(found.enforced)} enforced, ${found.complain} in complain`
+        : `${count(found.enforced)} ${found.enforced === 1 ? "profile" : "profiles"} enforced`,
+    ];
   }
-  return found.mode === "off" ? "Off" : "--";
+  return [found.mode === "off" ? "Off" : "--"];
 }
 
 export function confinementRow(
@@ -43,26 +48,35 @@ export function confinementRow(
   booleans = false,
 ): {
   title: string;
-  text: string;
+  status: string;
+  line: string | null;
   actions: ConfineStep[];
 } {
   if (!found) {
     return {
       title: systemName(null),
-      text: `Needs agent ${SECURITY_AGENT} or newer`,
+      status: `Needs agent ${SECURITY_AGENT} or newer`,
+      line: null,
       actions: [],
     };
   }
   if (!found.system) {
-    return { title: systemName(null), text: "Not available", actions: [] };
+    return {
+      title: systemName(null),
+      status: "Not available",
+      line: null,
+      actions: [],
+    };
   }
-  const text = [
-    modeText(found),
-    found.restart && "Restart to finish",
-    found.managed && "Managed by Krynodes",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const [status, detail] = modeText(found);
+  const line =
+    [
+      detail,
+      found.restart && "Restart to finish",
+      found.managed && "Managed by Krynodes",
+    ]
+      .filter(Boolean)
+      .join(" · ") || null;
   const selinux = found.system === "selinux";
   const actions: ConfineStep[] = found.managed
     ? [
@@ -78,7 +92,7 @@ export function confinementRow(
           ? "manage"
           : "on",
       ];
-  return { title: systemName(found.system), text, actions };
+  return { title: systemName(found.system), status, line, actions };
 }
 
 const listed = (names: string[]) => new Intl.ListFormat("en").format(names);

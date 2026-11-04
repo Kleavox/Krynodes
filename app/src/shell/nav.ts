@@ -4,6 +4,7 @@ import {
   History,
   Network,
   Server,
+  Shield,
   type LucideIcon,
 } from "lucide-react";
 
@@ -22,6 +23,7 @@ export const SECTIONS: readonly Section[] = [
   { to: "/services", label: "Services", icon: Boxes },
   { to: "/network", label: "Network", icon: Network },
   { to: "/checks", label: "Checks", icon: Activity },
+  { to: "/security", label: "Security", icon: Shield },
 ];
 
 export const PAGES: readonly Section[] = [

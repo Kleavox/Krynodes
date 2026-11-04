@@ -29,9 +29,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useNetwork, useScan, useServices } from "@/lib/api";
+import { useNetwork, useServices } from "@/lib/api";
 import { confinementRow, type ConfineStep } from "@/lib/confine";
-import { agentCurrent } from "@/lib/devices";
 import {
   closedText,
   closingPorts,
@@ -41,9 +40,8 @@ import {
   portsArg,
   turnOnRows,
 } from "@/lib/firewall";
-import { timeAgo } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
-import { firewallRow, inside, networkHint } from "@/lib/network";
+import { firewallRow, inside } from "@/lib/network";
 import {
   findingTone,
   firewallName,
@@ -52,16 +50,20 @@ import {
   offTone,
   protectionDetail,
   protectionsNotice,
-  updatesUntil,
   fromUtcHour,
   recipeChoices,
   recommended,
-  securityFindings,
+  notesOf,
   toUtcHour,
   type RecipeChoice,
 } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { Finding, NodeRecord } from "@/types";
+import type {
+  Finding,
+  NodeRecord,
+  SecurityReport,
+  ServicesResponse,
+} from "@/types";
 
 import {
   BooleanDialog,
@@ -361,71 +363,33 @@ const CONFINE_LABELS: Record<
 
 const ROW = "flex items-center gap-2 px-3 py-2";
 
-export function SecurityTab({
+export function FindingRow({
   node,
-  seen,
+  finding,
+  hint,
+  server = false,
 }: {
-  node: NodeRecord;
-  seen: number;
+  node: Pick<NodeRecord, "id" | "name">;
+  finding: Finding;
+  hint: string | null;
+  server?: boolean;
 }) {
-  const services = useServices();
-  const view = useNetwork().data;
-  const scan = useScan();
-  const [pending, setPending] = useState<Pending | null>(null);
-  const [confining, setConfining] = useState<ConfineStep | null>(null);
-  const entry = services.data?.nodes.find((item) => item.id === node.id);
-  const report = entry?.security;
-  const checkNow = (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="ml-auto h-9 md:h-8"
-      disabled={scan.isPending}
-      onClick={() => scan.mutate(node.id)}
-    >
-      Check Now
-    </Button>
-  );
-  if (!agentCurrent(node)) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        This server&apos;s agent is too old to report security. Update it under
-        This Server, Agent.
-      </p>
-    );
-  }
-  if (!report) {
-    return (
-      <div className="flex min-h-8 items-center gap-2">
-        <p className="text-sm text-muted-foreground">
-          No security report from this server yet.
-        </p>
-        {checkNow}
-      </div>
-    );
-  }
-  const hint = networkHint(
-    entry?.stacks ?? [],
-    !!view && inside(view).some((member) => member.nodeId === node.id),
-  );
-  const choices = recipeChoices(report);
-  const steps = recommended(report);
-  const internet = (entry?.stacks ?? []).flatMap((stack) =>
-    stack.access === "full" ? (stack.public ?? []) : [],
-  );
-  const notice = protectionsNotice(report);
-  const until = updatesUntil(report);
-  const { attention, notes } = securityFindings(report);
-  const found = report.confinement;
-  const confine = confinementRow(found, agentSetsBooleans(node.agent_version));
-  const firewall = choices.find((choice) => choice.id === "firewall")!;
-  const findingRow = (finding: Finding) => (
-    <li key={finding.id} className="flex items-start gap-2 px-3 py-2">
+  return (
+    <li className="flex items-start gap-2 px-3 py-2">
       <span className="flex h-5 items-center">
         <StatusDot tone={findingTone(finding)} />
       </span>
       <span className="min-w-0 flex-1 break-words">
         {finding.detail}
+        {server && (
+          <Link
+            to={`/security?server=${encodeURIComponent(node.id)}`}
+            replace
+            className="ml-2 font-mono text-xs text-muted-foreground underline-offset-4 hover:underline"
+          >
+            On {node.name}
+          </Link>
+        )}
         {finding.id === "public-ports" && hint && (
           <span className="block text-xs text-muted-foreground">{hint}</span>
         )}
@@ -452,6 +416,31 @@ export function SecurityTab({
       )}
     </li>
   );
+}
+
+export function ServerSecurity({
+  node,
+  entry,
+  report,
+  seen,
+}: {
+  node: NodeRecord;
+  entry: ServicesResponse["nodes"][number];
+  report: SecurityReport;
+  seen: number;
+}) {
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [confining, setConfining] = useState<ConfineStep | null>(null);
+  const choices = recipeChoices(report);
+  const steps = recommended(report);
+  const internet = entry.stacks.flatMap((stack) =>
+    stack.access === "full" ? (stack.public ?? []) : [],
+  );
+  const notice = protectionsNotice(report);
+  const notes = notesOf(report);
+  const found = report.confinement;
+  const confine = confinementRow(found, agentSetsBooleans(node.agent_version));
+  const firewall = choices.find((choice) => choice.id === "firewall")!;
   const status = (choice: RecipeChoice) =>
     choice.applied
       ? choice.id === "reboot-window" && report.rebootHour !== null
@@ -491,26 +480,6 @@ export function SecurityTab({
           ];
   return (
     <div className="space-y-6">
-      <div className="flex min-h-8 items-center gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">
-          Checked {timeAgo(report.checkedAt, seen)}
-          {until && ` · ${until}`}
-        </span>
-        {checkNow}
-      </div>
-      {attention.length > 0 && (
-        <section aria-labelledby="security-attention">
-          <h2
-            id="security-attention"
-            className={cn(sectionTitle, "mb-2 flex min-h-8 items-center")}
-          >
-            Needs Attention
-          </h2>
-          <ul className="divide-y rounded-lg border bg-card text-sm">
-            {attention.map(findingRow)}
-          </ul>
-        </section>
-      )}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
         <section aria-labelledby="node-protections">
           <div className="mb-2 flex min-h-8 items-center gap-2">
@@ -572,9 +541,16 @@ export function SecurityTab({
                   );
                 })}
               <li className={ROW}>
-                <span className="min-w-0 flex-1">{confine.title}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block">{confine.title}</span>
+                  {confine.line && (
+                    <span className="block text-xs text-muted-foreground">
+                      {confine.line}
+                    </span>
+                  )}
+                </span>
                 <span className="text-right font-mono text-xs text-muted-foreground">
-                  {confine.text}
+                  {confine.status}
                 </span>
                 {confine.actions.length === 0 ? (
                   <span className="size-9 shrink-0 md:size-8" />
@@ -594,7 +570,7 @@ export function SecurityTab({
         <FirewallSection
           node={node}
           report={report}
-          stacks={entry?.stacks ?? []}
+          stacks={entry.stacks}
           choice={firewall}
           onTurnOn={(closing) =>
             setPending({ choice: firewall, turnOn: true, closing })
@@ -610,7 +586,14 @@ export function SecurityTab({
             Notes
           </h2>
           <ul className="divide-y rounded-lg border bg-card text-sm">
-            {notes.map(findingRow)}
+            {notes.map((finding) => (
+              <FindingRow
+                key={finding.id}
+                node={node}
+                finding={finding}
+                hint={null}
+              />
+            ))}
           </ul>
         </section>
       )}
@@ -634,7 +617,7 @@ export function SecurityTab({
             node={node}
             found={found}
             step={confining}
-            stacks={(entry?.stacks ?? []).map((stack) => stack.project)}
+            stacks={entry.stacks.map((stack) => stack.project)}
             onClose={() => setConfining(null)}
           />
         )}

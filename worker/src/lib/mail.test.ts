@@ -77,7 +77,7 @@ describe("incident email", () => {
     expect(sent().text).toContain("https://kry.example.test/nodes/n1");
   });
 
-  it("opens a serious finding on the server's Security tab", async () => {
+  it("opens a serious finding at its server on the Security page", async () => {
     const { env, sent } = mailEnv();
     await sendSecurityEmail(env, {
       nodeId: "n1",
@@ -85,7 +85,7 @@ describe("incident email", () => {
       findings: [{ detail: "SSH accepts passwords" }],
     });
     expect(sent().text).toContain(
-      "https://kry.example.test/nodes/n1?tab=security",
+      "https://kry.example.test/security?server=n1",
     );
   });
 
