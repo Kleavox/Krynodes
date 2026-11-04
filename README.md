@@ -999,8 +999,10 @@ Where Krynodes manages SELinux or AppArmor, a denial acts:
 | Anything while a package manager runs, or snapd       | shown only                                                                              |
 
 SELinux set to permissive or off, a policy loaded outside a package install, a
-new local policy module (even during an update: packages install theirs at a
-lower priority), auditd stopped, AppArmor turned off, or a profile moved to
+new local policy module (even during an update; since agent 0.7.17 a module
+that is byte for byte a file an installed package ships, checked against the
+package's own digest, is the package's, as docker-ce loads its own at the local
+priority), auditd stopped, AppArmor turned off, or a profile moved to
 complain or unloaded, each outside Krynodes, quarantine the server at once.
 `setsebool -P` and `semanage` load the policy, so they count too: set a
 boolean with Change Boolean instead; a label changed for good by hand

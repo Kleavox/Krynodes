@@ -2,6 +2,8 @@ package actions
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -360,6 +362,61 @@ func TestAPolicyLoadOutsideAnUpdateOrANewLocalModuleQuarantines(t *testing.T) {
 	appendAudit(t, executor, auditLine("MAC_POLICY_LOAD", "lsm=selinux res=1"))
 	executor.watchDenials(context.Background())
 	if strong := eventsOfKind(t, executor, "confinement"); len(strong) != 1 || !strings.Contains(strong[0].Detail["what"], "permissive_httpd_t") {
+		t.Fatalf("events %+v", strong)
+	}
+}
+
+const (
+	algDeny       = "(deny container_domain self (alg_socket (create)))\n"
+	algDenyBz2    = "425a6839314159265359aa9be6ee000003d380001040600000afaf9c202000545034d0c8c988354d3d4da9bd534f498f4a3153a70ee3d58d9bd516115b4ea148d851cc48a312ed4c435cd3e2ee48a70a1215537cddc0"
+	vsockDeny     = "(deny container_domain self (vsock_socket (create)))\n"
+	zabbixBz2     = "425a68393141592653599eb32f730000065380001040000000b2a1445020003100d0010261369a01a6afe1dc5e12785dc914e142427accbdcc"
+	apacheBz2     = "425a6839314159265359254a5861000004d180001040002a4040002000310c01036a7a8350523e2ee48a70a1204a94b0c2"
+	apacheOpenBz2 = "425a683931415926535960a4ee320000085180001040002a6259002000310340d0204f53693ca0daae0641f360ea58e3e2ee48a70a120c149dc640"
+	modulesAt     = "/var/lib/selinux/targeted/active/modules/400/"
+)
+
+func unhex(t *testing.T, text string) string {
+	t.Helper()
+	raw, err := hex.DecodeString(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func shippedFile(t *testing.T, executor Executor, file, body string) string {
+	t.Helper()
+	rootFile(t, executor, file, body)
+	sum := sha256.Sum256([]byte(body))
+	return file + " " + hex.EncodeToString(sum[:]) + "\n"
+}
+
+func TestAModuleAPackageShipsIsNotALocalModule(t *testing.T) {
+	executor, run := selinuxWatch(t, true, "")
+	rootFile(t, executor, "/proc/77/comm", "dnf\n")
+	rootFile(t, executor, confine.SELinuxConfig, "SELINUX=enforcing\nSELINUXTYPE=targeted\n")
+	run.respond["rpm -qa --qf [%{FILENAMES} %{FILEDIGESTS}\n]"] = "/usr/bin/dockerd 0f\n" +
+		shippedFile(t, executor, "/usr/share/docker-ce/selinux/docker-af-alg-deny.cil", algDeny) +
+		shippedFile(t, executor, "/usr/share/selinux/packages/zabbix/zabbix_agent.pp.bz2", unhex(t, zabbixBz2)) +
+		shippedFile(t, executor, "/usr/share/selinux/packages/targeted/apache.pp.bz2", unhex(t, apacheBz2)) +
+		shippedFile(t, executor, "/usr/share/docker-ce/selinux/docker-af-vsock-deny.cil", vsockDeny)
+	rootFile(t, executor, modulesAt+"docker-af-alg-deny/cil", unhex(t, algDenyBz2))
+	rootFile(t, executor, modulesAt+"zabbix_agent/hll", unhex(t, zabbixBz2))
+	run.respond[modulesCall] = "100 apache pp\n100 base pp\n400 docker-af-alg-deny cil\n400 zabbix_agent pp\n"
+	appendAudit(t, executor, auditLine("MAC_POLICY_LOAD", "lsm=selinux res=1"))
+	executor.watchDenials(context.Background())
+	if events := readEvents(t, executor); len(events) != 0 {
+		t.Fatalf("a package's own modules warned: %+v", events)
+	}
+
+	rootFile(t, executor, modulesAt+"apache/hll", unhex(t, apacheOpenBz2))
+	rootFile(t, executor, "/usr/share/docker-ce/selinux/docker-af-vsock-deny.cil", vsockDeny+"(allow container_domain self (vsock_socket (create)))\n")
+	rootFile(t, executor, modulesAt+"docker-af-vsock-deny/cil", vsockDeny+"(allow container_domain self (vsock_socket (create)))\n")
+	run.respond[modulesCall] += "400 apache pp\n400 docker-af-alg-allow cil\n400 docker-af-vsock-deny cil\n"
+	appendAudit(t, executor, auditLine("MAC_POLICY_LOAD", "lsm=selinux res=1"))
+	executor.watchDenials(context.Background())
+	if strong := eventsOfKind(t, executor, "confinement"); len(strong) != 1 || !strings.HasSuffix(strong[0].Detail["what"], ": apache, docker-af-alg-allow, docker-af-vsock-deny") {
 		t.Fatalf("events %+v", strong)
 	}
 }

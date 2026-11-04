@@ -1,8 +1,13 @@
 package actions
 
 import (
+	"bytes"
+	"compress/bzip2"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -136,6 +141,62 @@ func (e Executor) localModules(ctx context.Context) []string {
 	}
 	slices.Sort(modules)
 	return modules
+}
+
+func (e Executor) unshipped(ctx context.Context, modules []string) []string {
+	output, _ := e.output(ctx, "rpm", "-qa", "--qf", "[%{FILENAMES} %{FILEDIGESTS}\n]")
+	shipped := map[string]bool{}
+	for line := range strings.SplitSeq(output, "\n") {
+		space := strings.LastIndex(line, " ")
+		if space < 0 {
+			continue
+		}
+		file, digest := line[:space], line[space+1:]
+		name := strings.TrimSuffix(filepath.Base(file), ".bz2")
+		kind := "hll"
+		module, found := strings.CutSuffix(name, ".pp")
+		if !found {
+			module, found = strings.CutSuffix(name, ".cil")
+			kind = "cil"
+		}
+		if found && !shipped[module] && slices.Contains(modules, module) {
+			shipped[module] = e.sameModule(file, digest, module, kind)
+		}
+	}
+	return slices.DeleteFunc(modules, func(name string) bool { return shipped[name] })
+}
+
+func (e Executor) sameModule(file, digest, module, kind string) bool {
+	body, err := os.ReadFile(e.path(file))
+	sum := sha256.Sum256(body)
+	if err != nil || hex.EncodeToString(sum[:]) != digest {
+		return false
+	}
+	stored, err := os.ReadFile(e.path("/var/lib/selinux/" + e.policyStore() + "/active/modules/400/" + module + "/" + kind))
+	if err != nil {
+		return false
+	}
+	shipped, ok := unbzip(body, strings.HasSuffix(file, ".bz2"))
+	loaded, loadedOK := unbzip(stored, bytes.HasPrefix(stored, []byte("BZh")))
+	return ok && loadedOK && bytes.Equal(shipped, loaded)
+}
+
+func unbzip(body []byte, compressed bool) ([]byte, bool) {
+	if !compressed {
+		return body, true
+	}
+	plain, err := io.ReadAll(io.LimitReader(bzip2.NewReader(bytes.NewReader(body)), 64<<20))
+	return plain, err == nil
+}
+
+func (e Executor) policyStore() string {
+	config, _ := os.ReadFile(e.path(confine.SELinuxConfig))
+	for line := range strings.SplitSeq(string(config), "\n") {
+		if store, found := strings.CutPrefix(strings.TrimSpace(line), "SELINUXTYPE="); found && store != "" {
+			return store
+		}
+	}
+	return "targeted"
 }
 
 func enforcedPaths(profiles map[string]string) []string {
@@ -336,7 +397,9 @@ func (e Executor) watchDenials(ctx context.Context) {
 	if policy {
 		modules := e.localModules(ctx)
 		if added := slices.DeleteFunc(slices.Clone(modules), func(name string) bool { return slices.Contains(state.Modules, name) }); len(added) > 0 && !marked {
-			raise("module "+strings.Join(added, " "), "A local SELinux module or permissive type was added: "+strings.Join(added, ", "))
+			if added = e.unshipped(ctx, added); len(added) > 0 {
+				raise("module "+strings.Join(added, " "), "A local SELinux module or permissive type was added: "+strings.Join(added, ", "))
+			}
 		}
 		state.Modules = modules
 	}
