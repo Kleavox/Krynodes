@@ -923,6 +923,41 @@ describe("FleetHub", () => {
     expect(t.storage.alarm).toBe(BASE + 260_000);
   });
 
+  it("mails about the next outage within the hour when the first mail failed", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    ws.close(1006, "gone");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+    t.failMail(true);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    logged.mockRestore();
+    t.failMail(false);
+    const back = await t.connect();
+    await t.send(back, BASE + 300_000, heartbeat(10));
+    back.close(1006, "gone");
+    await t.hub.webSocketClose(back as unknown as WebSocket);
+    vi.setSystemTime(BASE + 500_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
+  it("watches a server again when it returns on the connection it went silent on", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail).toHaveLength(1);
+    expect(t.storage.alarm).toBeNull();
+    await t.send(ws, BASE + 300_000, heartbeat(10));
+    expect(t.storage.alarm).toBe(BASE + 480_000);
+  });
+
   it("still calls a silent server offline when its stored security report is unreadable", async () => {
     const t = setup();
     t.sqlite
@@ -965,6 +1000,35 @@ describe("FleetHub", () => {
     expect(t.storage.alarm).toBe(BASE + 260_000);
 
     vi.setSystemTime(BASE + 660_000);
+    await t.hub.alarm();
+    expect(t.mail.map((message) => message.subject)).toEqual([
+      `[Krynodes] ${NODE}: offline`,
+    ]);
+  });
+
+  it("mails about a silent server though an action queued for it was never swept", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    t.sqlite
+      .prepare(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+           status, requested_by, requested_at, deliverable_at)
+         VALUES ('q1', 'b1', 0, 'rolling', ?, 'docker', 'resolver', 'restart', 'queued', 'owner@example.test', ?, ?)`,
+      )
+      .run(
+        NODE,
+        new Date(BASE + 10_000).toISOString(),
+        new Date(BASE + 10_000).toISOString(),
+      );
+    ws.close(1006, "gone");
+    await t.hub.webSocketClose(ws as unknown as WebSocket);
+
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    expect(t.mail).toEqual([]);
+
+    vi.setSystemTime(BASE + 700_000);
     await t.hub.alarm();
     expect(t.mail.map((message) => message.subject)).toEqual([
       `[Krynodes] ${NODE}: offline`,
@@ -1429,6 +1493,16 @@ describe("FleetHub", () => {
       const ws = await t.connect("0.7.5");
       const id = await queue(t);
       vi.setSystemTime(BASE + 1_000);
+      expect(await poke(t)).toEqual({ poked: 1 });
+      expect(ws.replies()).toEqual([{ type: "poke" }]);
+      expect(status(t, id)).toEqual({ status: "queued" });
+    });
+
+    it("leaves actions queued when the connection has not answered for a minute", async () => {
+      const t = setup();
+      const ws = await t.connect("0.7.6");
+      const id = await queue(t);
+      vi.setSystemTime(BASE + 61_000);
       expect(await poke(t)).toEqual({ poked: 1 });
       expect(ws.replies()).toEqual([{ type: "poke" }]);
       expect(status(t, id)).toEqual({ status: "queued" });

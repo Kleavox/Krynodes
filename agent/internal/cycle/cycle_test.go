@@ -374,3 +374,17 @@ func TestActionsAndRefreshesAreHandedToTheRelay(t *testing.T) {
 		t.Fatalf("queued %#v refreshes %d", relay.queued, relay.refreshes)
 	}
 }
+
+func TestAConfigFailureStillQueuesTheActionsOfTheReply(t *testing.T) {
+	server := &fakeReporter{
+		configError: &reporter.ResponseError{Status: 503, Body: "busy"},
+		heartbeat:   reporter.HeartbeatResponse{OK: true, IntervalSeconds: 60, Actions: []reporter.ActionRequest{{ID: "a1"}}},
+	}
+	actions := &fakeActions{}
+	if _, err := New(server, reporter.Host{}, nil, actions).Execute(context.Background(), "node-1"); err == nil {
+		t.Fatal("expected the config failure to be reported")
+	}
+	if len(actions.queued) != 1 || len(actions.answers) != 1 {
+		t.Fatalf("queued %d, answered %d", len(actions.queued), len(actions.answers))
+	}
+}

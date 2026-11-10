@@ -11,6 +11,7 @@ import { tailscaleResults } from "../tailscale/results";
 import { loadEstate } from "./attention";
 
 const ACTION_TTL_MS = 10 * 60_000;
+const RUN_BUDGET_MS = 20 * 60_000;
 const ABANDON_MS = 15 * 60_000;
 const LONG_ABANDON_MS = 60 * 60_000;
 const PLANNED_MS = 30 * 60_000;
@@ -181,7 +182,12 @@ const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
     SELECT 1 FROM actions earlier
     WHERE earlier.batch_id = actions.batch_id
       AND earlier.position < actions.position
-      AND earlier.status IN ('failed', 'expired', 'cancelled', 'skipped'))`;
+      AND earlier.status IN ('failed', 'expired', 'cancelled', 'skipped'))
+    OR status = 'queued' AND deliverable_at IS NULL
+      AND attach_from IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM actions source
+    WHERE source.batch_id = actions.batch_id
+      AND source.position = actions.attach_from)`;
 
 const PROMOTE_SQL = `UPDATE actions SET deliverable_at = ?1
   WHERE status = 'queued' AND deliverable_at IS NULL AND CASE
@@ -232,7 +238,7 @@ export const REBOOT_MS = 10 * 60_000;
 const WORK_SQL = `FROM actions
   WHERE node_id IN (SELECT value FROM json_each(?1))
     AND action NOT IN (SELECT value FROM json_each(?5)) AND (
-    (status = 'queued' AND deliverable_at IS NOT NULL)
+    (status = 'queued' AND deliverable_at >= ?6)
     OR (status = 'sent' AND sent_at >= ?4)
     OR (status IN ('done', 'failed') AND finished_at >=
       CASE WHEN action = 'reboot' THEN ?3 ELSE ?2 END))`;
@@ -243,6 +249,7 @@ const workBinds = (nodeIds: string[], now: number, rebootSince: number) => [
   iso(now - rebootSince),
   iso(now - PLANNED_MS),
   JSON.stringify(NOT_WORK),
+  iso(now - ACTION_TTL_MS),
 ];
 
 export async function plannedNodes(
@@ -409,7 +416,11 @@ export async function deliverActions(
     kind: row.kind,
     name: row.name,
     action: row.action,
-    expiresAt: iso(Date.parse(row.deliverable_at) + ACTION_TTL_MS),
+    expiresAt: iso(
+      Date.parse(row.deliverable_at) +
+        ACTION_TTL_MS +
+        (rows.results.length > 1 ? RUN_BUDGET_MS : 0),
+    ),
     ...(row.signed === null
       ? {}
       : { signed: JSON.parse(row.signed) as unknown }),

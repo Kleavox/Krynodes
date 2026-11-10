@@ -27,7 +27,7 @@ export const loadBox = (stored: Partial<MailBox> | undefined): MailBox =>
     ? { failures: stored.failures }
     : emptyBox();
 
-const keyOf = (notice: IncidentNotice) =>
+export const keyOf = (notice: IncidentNotice) =>
   notice.disk
     ? `disk:${notice.nodeId}`
     : (notice.checkId ?? `server:${notice.nodeId}`);

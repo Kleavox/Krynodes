@@ -1,7 +1,7 @@
 export interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
-  ENVIRONMENT: "development" | "preview" | "production";
+  ENVIRONMENT: "development" | "production";
   PUBLIC_ORIGIN: string;
   AGENT_ORIGIN?: string;
   FROM_EMAIL: string;

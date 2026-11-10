@@ -157,7 +157,7 @@ func TestFullAccessContainersAreNamedAndWireGuardIsOnThePrivateAddress(t *testin
 	if err := readJSON(filepath.Join(executor.StateDir, "inventory.json"), &inventory); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(inventory.Security.Listeners, reporter.Listener{Address: "10.88.0.2", Port: 51821, Protocol: "udp", Process: "WireGuard"}) {
+	if !slices.Contains(*inventory.Security.Listeners, reporter.Listener{Address: "10.88.0.2", Port: 51821, Protocol: "udp", Process: "WireGuard"}) {
 		t.Fatalf("listeners %+v", inventory.Security.Listeners)
 	}
 }

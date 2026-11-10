@@ -33,6 +33,7 @@ type Facts struct {
 const (
 	maxPackages = 5000
 	maxUpdates  = 500
+	maxBack     = 50
 )
 
 var noCache = []string{"-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache="}
@@ -220,6 +221,7 @@ func waiting(ctx context.Context, run Runner, names []string, installed map[stri
 			} else if _, removing := dist.Upgrades[name]; removing {
 				back.Removes = append(back.Removes, dist.Removes...)
 			}
+			back.Adds, back.Removes = back.Adds[:min(len(back.Adds), maxBack)], back.Removes[:min(len(back.Removes), maxBack)]
 			update.Back = &back
 		}
 		updates = append(updates, update)

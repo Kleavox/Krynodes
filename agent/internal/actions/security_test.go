@@ -331,7 +331,7 @@ func TestThePublicListenersAreReportedWithTheirAddresses(t *testing.T) {
 		{Address: "192.168.1.5", Port: 8080, Protocol: "tcp", Process: "web-1"},
 		{Address: "::", Port: 8080, Protocol: "tcp", Process: "web-1"},
 	}
-	if !slices.Equal(inventory.Security.Listeners, want) {
+	if !slices.Equal(*inventory.Security.Listeners, want) {
 		t.Fatalf("listeners %#v", inventory.Security.Listeners)
 	}
 	if detail := findingsOf(t, executor)["public-ports"].Detail; detail != "Listening on public addresses outside Krynodes: 57969/tcp (tailscaled), 41641/udp (tailscaled), 63014/tcp (tailscaled), 8080/tcp (web-1)" {
@@ -1071,7 +1071,7 @@ func TestAPortAContainerOutsideAStackPublishesIsMarked(t *testing.T) {
 		{Address: "0.0.0.0", Port: 8080, Protocol: "tcp", Process: "web-1"},
 		{Address: "0.0.0.0", Port: 8081, Protocol: "tcp", Process: "wiki", Standalone: true},
 	}
-	if !slices.Equal(inventory.Security.Listeners, want) {
+	if !slices.Equal(*inventory.Security.Listeners, want) {
 		t.Fatalf("listeners %#v", inventory.Security.Listeners)
 	}
 }
