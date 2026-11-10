@@ -87,6 +87,9 @@ jobs:
       - run: go test ./...
         working-directory: agent
 
+      - run: go vet ./...
+        working-directory: agent
+
       - run: go build -o bin/kry ./cmd/agent
         working-directory: agent
 
