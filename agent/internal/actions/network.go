@@ -395,7 +395,9 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 	}
 	record.Applied = record.Applied.After(document, hash)
 	record.Document, record.Key, record.Signer, record.Prepared = &document, keys.Public, keys.Signer, nil
-	record.Tightened = nil
+	if document.Knocks != nil {
+		record.Tightened = nil
+	}
 	record.Dropped = slices.DeleteFunc(record.Dropped, func(address string) bool {
 		return slices.ContainsFunc(document.Members, func(entry network.Member) bool {
 			return entry.Address == address && !entry.Cut && !slices.Contains(record.Applied.Blocked, entry.Key)

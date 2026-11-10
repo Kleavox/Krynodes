@@ -71,6 +71,7 @@ import {
 } from "../quarantine/events";
 import {
   holdStatement,
+  QUARANTINE_ACTOR,
   quarantine,
   quarantineReport,
 } from "../quarantine/quarantine";
@@ -1250,6 +1251,12 @@ export class FleetHub {
     if (!entry?.offline) return;
     roster[nodeId] = { interval: entry.interval, disk: entry.disk };
     await this.ctx.storage.put(ROSTER, roster);
+    await this.env.DB.prepare(
+      `UPDATE warnings SET answer = 'back', answered_at = ?, answered_by = ?
+       WHERE node_id = ? AND kind = 'quiet' AND answer IS NULL`,
+    )
+      .bind(new Date(Date.now()).toISOString(), QUARANTINE_ACTOR, nodeId)
+      .run();
   }
 
   private flushStatement(nodeId: string, flush: Flush) {

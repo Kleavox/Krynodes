@@ -167,3 +167,28 @@ func TestAGoodReleaseSwapsTheKeysAndTheSignInToKrynodes(t *testing.T) {
 		t.Fatalf("the agent was not restarted: %q", r.run.calls)
 	}
 }
+
+func TestAReleaseThatFailsHalfwayPutsTheOldKeysBackAndKeepsTheOldSignIn(t *testing.T) {
+	r := quarantinedServer(t)
+	os.WriteFile(r.mark, nil, 0o640)
+	sealBefore, _ := os.ReadFile(filepath.Join(r.executor.StateDir, "keys", "seal.key"))
+	keysBefore, _ := network.Load(r.executor.networkDir(), false)
+	pending, code := r.code(t)
+	if err := os.Remove(filepath.Join(r.executor.StateDir, "release", "signer")); err != nil {
+		t.Fatal(err)
+	}
+	if result := throughBoth(t, r.executor, releaseRequest(t, fresh(1), pending, code)); result.OK {
+		t.Fatalf("release %+v", result)
+	}
+	sealAfter, _ := os.ReadFile(filepath.Join(r.executor.StateDir, "keys", "seal.key"))
+	keysAfter, err := network.Load(r.executor.networkDir(), false)
+	if string(sealAfter) != string(sealBefore) || err != nil || keysAfter.Public != keysBefore.Public {
+		t.Fatalf("keys changed by a failed release: %v", err)
+	}
+	if cfg, _ := config.Load(r.executor.ConfigPath); cfg.Token != "old-token" {
+		t.Fatalf("token %s", cfg.Token)
+	}
+	if record := r.executor.readNetwork(); record.Key != keysBefore.Public {
+		t.Fatalf("record %+v", record)
+	}
+}

@@ -176,3 +176,18 @@ func TestATailnetBlockWritesBothFamiliesAndOnlyASignedUnblockLiftsIt(t *testing.
 		t.Fatalf("the block file is kept: %v", err)
 	}
 }
+
+func TestADocumentWithoutKnockSettingsKeepsTheTightenedOnes(t *testing.T) {
+	executor, _, keys, peer, _ := joinedServer(t)
+	if result := throughBoth(t, executor, askNetwork(t, fresh(1), "tighten", map[string]string{"scan": "5", "stop": "true"})); !result.OK {
+		t.Fatalf("tighten %+v", result)
+	}
+	next := twoMembers(t, executor, 2, keys, peer)
+	if result := hostRun(t, executor, applyDocument(t, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a03", next)); !result.OK {
+		t.Fatalf("apply %+v", result)
+	}
+	record := executor.readNetwork()
+	if knocks := network.Effective(*record.Document, record.Tightened); knocks.Scan != 5 || !knocks.Stop {
+		t.Fatalf("a document that says nothing about knocks loosened them: %+v", knocks)
+	}
+}

@@ -68,6 +68,31 @@ describe("intake", () => {
     ]);
   });
 
+  it("keeps one open warning for the same item when the agent sends it again under a new id", async () => {
+    const { db, sqlite } = setup();
+    const firewall = (hour: number) =>
+      event(`firewall:x:${hour}`, "firewall", { item: "allow 8080/tcp" });
+    await intake(db, { nodeId: V1, events: [firewall(1)], now: NOW });
+    const again = await intake(db, {
+      nodeId: V1,
+      events: [firewall(2)],
+      now: NOW + 3_600_000,
+    });
+    expect(again.acked).toEqual(["firewall:x:2"]);
+    expect(again.cutoffs).toEqual([]);
+    expect(again.warned).toEqual([]);
+    expect(
+      sqlite.prepare("SELECT id FROM warnings WHERE node_id = ?").all(V1),
+    ).toEqual([{ id: "firewall:x:1" }]);
+    sqlite.prepare("UPDATE warnings SET answer = 'me'").run();
+    const later = await intake(db, {
+      nodeId: V1,
+      events: [firewall(3)],
+      now: NOW + 7_200_000,
+    });
+    expect(later.warned).toHaveLength(1);
+  });
+
   it("never cuts off with Warn Only", async () => {
     const { db, sqlite } = setup();
     await writeSettings(

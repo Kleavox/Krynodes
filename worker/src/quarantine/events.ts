@@ -70,7 +70,9 @@ export function warningStatement(
   return db
     .prepare(
       `INSERT OR IGNORE INTO warnings (node_id, id, kind, detail, at, cut_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE ?7 IS NULL OR NOT EXISTS (
+         SELECT 1 FROM warnings WHERE node_id = ?1 AND kind = ?3 AND answer IS NULL
+           AND json_extract(detail, '$.item') = ?7)`,
     )
     .bind(
       warning.nodeId,
@@ -79,6 +81,7 @@ export function warningStatement(
       JSON.stringify(warning.detail),
       warning.at,
       warning.cutAt === null ? null : iso(warning.cutAt),
+      warning.detail.item || null,
     );
 }
 
