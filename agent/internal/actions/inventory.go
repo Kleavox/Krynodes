@@ -25,8 +25,9 @@ type Service = reporter.ServiceEntry
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, int, error)
 
 const (
-	maxServices = 500
-	maxStacks   = 50
+	maxServices   = 500
+	maxStacks     = 50
+	maxStackPorts = 64
 )
 
 var collectTimeout = 30 * time.Second
@@ -311,6 +312,13 @@ func parseContainers(output string) ([]Service, []Stack) {
 	return services, stacks
 }
 
+func first(list []string, most int) []string {
+	if len(list) > most {
+		return list[:most]
+	}
+	return list
+}
+
 func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 	services, stacks, trust, docker, removed := parts.Services, parts.Stacks, parts.Trust, parts.Docker, parts.Removed
 	removed = slices.Clone(removed)
@@ -326,6 +334,10 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 	leftovers := slices.Clone(parts.Leftovers)
 	if leftovers == nil {
 		leftovers = []string{}
+	}
+	slices.Sort(leftovers)
+	if len(leftovers) > maxStacks {
+		leftovers = leftovers[:maxStacks]
 	}
 	sorted := slices.Clone(services)
 	if sorted == nil {
@@ -344,6 +356,11 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 	slices.SortFunc(listed, func(a, b reporter.StackEntry) int { return cmp.Compare(a.Project, b.Project) })
 	if len(listed) > maxStacks {
 		listed = listed[:maxStacks]
+	}
+	for at := range listed {
+		listed[at].Public = first(listed[at].Public, maxStackPorts)
+		listed[at].Containers = first(listed[at].Containers, maxServices)
+		listed[at].Services = first(listed[at].Services, maxStackPorts)
 	}
 	if trust.Core == nil {
 		trust.Core = []string{}

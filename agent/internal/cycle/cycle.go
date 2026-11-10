@@ -95,31 +95,32 @@ func (cycle *implementation) Execute(ctx context.Context, nodeID string) (int, e
 		cycle.changed = response.ConfigVersion != ""
 		cycle.config = nil
 	}
-	if configErr != nil {
-		return 0, configErr
-	}
+	failed := configErr
 	if response.Update != nil && cycle.updates != nil {
 		if err := cycle.updates.Request(response.Update.Version, response.Update.RequestedAt); err != nil {
-			return 0, fmt.Errorf("request update to %s: %w", response.Update.Version, err)
+			failed = errors.Join(failed, fmt.Errorf("request update to %s: %w", response.Update.Version, err))
 		}
 	}
 	if cycle.actions != nil {
 		if len(response.Actions) > 0 {
 			if err := cycle.actions.Enqueue(response.Actions); err != nil {
-				return 0, fmt.Errorf("queue service actions: %w", err)
+				failed = errors.Join(failed, fmt.Errorf("queue service actions: %w", err))
 			}
 		}
 		if response.Refresh {
 			if err := cycle.actions.Refresh(); err != nil {
-				return 0, fmt.Errorf("refresh services: %w", err)
+				failed = errors.Join(failed, fmt.Errorf("refresh services: %w", err))
 			}
 		}
 		if err := cycle.actions.NetworkReply(response.Network); err != nil {
-			return 0, fmt.Errorf("queue private network changes: %w", err)
+			failed = errors.Join(failed, fmt.Errorf("queue private network changes: %w", err))
 		}
 		if err := cycle.actions.Answer(response); err != nil {
-			return 0, fmt.Errorf("keep what the dashboard heard: %w", err)
+			failed = errors.Join(failed, fmt.Errorf("keep what the dashboard heard: %w", err))
 		}
+	}
+	if failed != nil {
+		return 0, failed
 	}
 	if response.IntervalSeconds > 0 {
 		return response.IntervalSeconds, nil

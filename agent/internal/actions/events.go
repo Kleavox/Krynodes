@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"regexp"
 	"slices"
 	"time"
 	"unicode/utf16"
@@ -15,6 +16,8 @@ const (
 	eventIDMax   = 64
 	eventTextMax = 500
 )
+
+var eventID = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 
 type eventLog struct {
 	Events []reporter.Event `json:"events"`
@@ -31,7 +34,7 @@ func clipText(text string, most int) string {
 }
 
 func (e Executor) event(kind, id string, detail map[string]string) {
-	if len(id) > eventIDMax {
+	if len(id) > eventIDMax || !eventID.MatchString(id) {
 		id = kind + ":" + shortHash(id)
 	}
 	for key, value := range detail {

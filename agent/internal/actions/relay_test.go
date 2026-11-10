@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/internal/stream"
 )
 
 type fakePoster struct {
@@ -586,5 +588,48 @@ func TestAResultGoesOutWithoutWaitingForTheTick(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the result waited for the slow tick")
+	}
+}
+
+func TestPollSendsTheLeftovers(t *testing.T) {
+	relay, poster := newRelay(t)
+	inventory, err := NewInventory(Parts{Leftovers: []string{"panel"}}, executorNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(relay.StateDir, "inventory.json", inventory, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if sent := poster.reports[0].Inventory; sent.Leftovers == nil || !slices.Equal(*sent.Leftovers, []string{"panel"}) {
+		t.Fatalf("leftovers %+v", sent.Leftovers)
+	}
+}
+
+func TestAReportThatNeverLeftDoesNotBackOff(t *testing.T) {
+	relay, poster := newRelay(t)
+	now := executorNow
+	relay.Now = func() time.Time { return now }
+	poster.err = stream.ErrNotConnected
+	writeInventory(t, relay, []Service{{Kind: "docker", Name: "resolver", State: "running"}}, executorNow)
+	for range 8 {
+		_ = relay.Poll(context.Background())
+		now = now.Add(6 * time.Second)
+	}
+	if len(poster.reports) != 8 {
+		t.Fatalf("expected a try every 5 seconds, got %d tries", len(poster.reports))
+	}
+}
+
+func TestEnqueueKeepsTheActionsAfterAMalformedOne(t *testing.T) {
+	relay, _ := newRelay(t)
+	err := relay.Enqueue([]Request{{ID: "../bad", Kind: "docker", Name: "web"}, {ID: "01234567-89ab-cdef-0123-456789abcdef", Kind: "docker", Name: "web", Action: "restart"}})
+	if err == nil {
+		t.Fatal("expected the malformed action to be reported")
+	}
+	if _, err := os.Stat(filepath.Join(relay.RequestDir, "01234567-89ab-cdef-0123-456789abcdef.json")); err != nil {
+		t.Fatalf("the valid action was dropped: %v", err)
 	}
 }

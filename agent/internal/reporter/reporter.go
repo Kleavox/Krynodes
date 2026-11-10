@@ -209,7 +209,7 @@ type SecurityReport struct {
 	Lockdown    bool         `json:"lockdown"`
 	RebootHour  *int         `json:"rebootHour"`
 	Platform    *Platform    `json:"platform,omitempty"`
-	Listeners   []Listener   `json:"listeners,omitempty"`
+	Listeners   *[]Listener  `json:"listeners,omitempty"`
 	Firewall    *Firewall    `json:"firewall,omitempty"`
 	Confinement *Confinement `json:"confinement,omitempty"`
 }
@@ -375,6 +375,7 @@ type InventoryReport struct {
 	Security  *SecurityReport   `json:"security,omitempty"`
 	Vault     *VaultSlot        `json:"vault,omitempty"`
 	Removed   *[]RemovedStack   `json:"removed,omitempty"`
+	Leftovers *[]string         `json:"leftovers,omitempty"`
 	Services  *[]ServiceEntry   `json:"services,omitempty"`
 	Stacks    *[]StackEntry     `json:"stacks,omitempty"`
 	Trust     *TrustReport      `json:"trust,omitempty"`

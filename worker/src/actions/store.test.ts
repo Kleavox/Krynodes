@@ -238,6 +238,52 @@ describe("action batches", () => {
     expect(await ids(A, NOW + 2 * MINUTE)).toEqual([forget!.id]);
   });
 
+  it("skips a step whose source step went away with a deleted server", async () => {
+    const { db, sqlite, sweep, status } = setup();
+    const batch = createBatch(db, {
+      action: "reshare",
+      mode: "rolling",
+      targets: [
+        { nodeId: A, action: "reshare" as const },
+        { nodeId: B, action: "store" as const, attachFrom: 0 },
+      ].map((step) => ({
+        ...step,
+        kind: "vault" as const,
+        name: "cloudflare",
+      })),
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    sqlite.prepare("DELETE FROM actions WHERE node_id = ?").run(A);
+    await sweep(NOW + MINUTE);
+    expect(status(batch.actions[1]!.id)).toBe("skipped");
+  });
+
+  it("gives actions delivered together the time to wait for one another", async () => {
+    const { db, sqlite, queue } = setup();
+    await queue("parallel", [A]);
+    const alone = await deliverActions(db, A, NOW);
+    expect(alone.map((action) => action.expiresAt)).toEqual([
+      iso(NOW + 10 * MINUTE),
+    ]);
+    sqlite.prepare("DELETE FROM actions").run();
+    await queue("parallel", [A]);
+    const batch = createBatch(db, {
+      action: "restart",
+      mode: "parallel",
+      targets: [{ nodeId: A, kind: "docker" as const, name: "web" }],
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    const together = await deliverActions(db, A, NOW);
+    expect(together.map((action) => action.expiresAt)).toEqual([
+      iso(NOW + 30 * MINUTE),
+      iso(NOW + 30 * MINUTE),
+    ]);
+  });
+
   it("reads one index entry on a heartbeat from a server with nothing to do", async () => {
     const { db, sqlite, queue } = setup();
     await queue("parallel", [A]);

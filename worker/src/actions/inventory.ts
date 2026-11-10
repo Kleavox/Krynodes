@@ -279,6 +279,7 @@ export async function applyInventory(
   const removed = existing.results
     .filter((row) => !after.has(keyOf(row)))
     .map(keyOf);
+  await applyNetworkInventory(db, node.id, inventory.network ?? null, at);
   await db.batch([
     ...(upserts.length > 0
       ? [
@@ -371,7 +372,6 @@ export async function applyInventory(
           : null,
       ),
   ]);
-  await applyNetworkInventory(db, node.id, inventory.network ?? null, at);
   return inventory.hash;
 }
 

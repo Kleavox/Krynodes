@@ -31,6 +31,7 @@ type securityState struct {
 	CheckedAt time.Time           `json:"checkedAt"`
 	Findings  []reporter.Finding  `json:"findings"`
 	Listeners []reporter.Listener `json:"listeners,omitempty"`
+	Listened  bool                `json:"listened,omitempty"`
 	Firewall  *reporter.Firewall  `json:"firewall,omitempty"`
 	Docker    *bool               `json:"docker,omitempty"`
 }
@@ -51,8 +52,8 @@ func (e Executor) output(ctx context.Context, name string, args ...string) (stri
 func (e Executor) security(ctx context.Context, force bool) *reporter.SecurityReport {
 	state, _ := readState[securityState](e.StateDir, "security.json")
 	if force || state.CheckedAt.IsZero() || e.Now().Sub(state.CheckedAt) >= checkEvery {
-		found, listeners := e.findings(ctx)
-		state = securityState{CheckedAt: e.Now(), Findings: found, Listeners: listeners, Firewall: e.adoptable(ctx), Docker: e.dockerConfined(ctx)}
+		found, listeners, listened := e.findings(ctx)
+		state = securityState{CheckedAt: e.Now(), Findings: found, Listeners: listeners, Listened: listened, Firewall: e.adoptable(ctx), Docker: e.dockerConfined(ctx)}
 		if err := writeJSON(e.StateDir, "security.json", state, 0o640); err != nil {
 			return nil
 		}
@@ -70,7 +71,10 @@ func (e Executor) security(ctx context.Context, force bool) *reporter.SecurityRe
 		report.RebootHour = window.Hour
 	}
 	report.Findings = findings
-	report.Listeners = state.Listeners
+	if state.Listened || len(state.Listeners) > 0 {
+		heard := append([]reporter.Listener{}, state.Listeners...)
+		report.Listeners = &heard
+	}
 	report.Firewall = e.firewallReport(state.Firewall)
 	report.Confinement = e.confinementReport(state.Docker)
 	return report
@@ -100,7 +104,7 @@ func (e Executor) confinementReport(docker *bool) *reporter.Confinement {
 	return report
 }
 
-func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.Listener) {
+func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.Listener, bool) {
 	found := []reporter.Finding{}
 	add := func(id, severity, detail string) {
 		if len(detail) > 300 {
@@ -156,6 +160,7 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		add("unconfined-container", "warning", "Containers started outside Krynodes that run unconfined: "+strings.Join(unconfined, ", "))
 	}
 	listeners, stub := e.publicListeners(ctx, settings)
+	listened := listeners != nil
 	firewall := e.firewallOf(ctx, platform.Family)
 	listeners = e.throughFirewall(ctx, firewall, listeners)
 	listeners = append(listeners, e.publicContainers(ctx)...)
@@ -177,7 +182,7 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 	if synced, _ := e.output(ctx, "timedatectl", "show", "-p", "NTPSynchronized", "--value"); strings.TrimSpace(synced) == "no" {
 		add("clock-unsynced", "warning", "The clock is not synchronized with a time server; signed actions can be refused")
 	}
-	return found, listeners
+	return found, listeners, listened
 }
 
 func (e Executor) sshSettings(ctx context.Context) (map[string]string, bool) {

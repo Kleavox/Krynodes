@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/internal/stream"
 )
 
 const (
@@ -88,9 +89,11 @@ func (r *Relay) Enqueue(requests []Request) error {
 	if err := os.MkdirAll(r.RequestDir, 0o750); err != nil {
 		return err
 	}
+	var refused error
 	for _, request := range requests {
 		if !requestName.MatchString(request.ID+".json") || !ValidTarget(request.Kind, request.Name) {
-			return fmt.Errorf("refusing malformed action %q", request.ID)
+			refused = errors.Join(refused, fmt.Errorf("refusing malformed action %q", request.ID))
+			continue
 		}
 		encoded, err := json.Marshal(request)
 		if err != nil {
@@ -105,7 +108,7 @@ func (r *Relay) Enqueue(requests []Request) error {
 		}
 	}
 	r.wake()
-	return nil
+	return refused
 }
 
 func (r *Relay) wake() {
@@ -185,6 +188,8 @@ func (r *Relay) Poll(ctx context.Context) error {
 				report.Inventory.Bridges = &reporter.BridgesSlot{Report: inventory.Bridges}
 				removed := inventory.Removed
 				report.Inventory.Removed = &removed
+				leftovers := inventory.Leftovers
+				report.Inventory.Leftovers = &leftovers
 				report.Inventory.Services = &services
 				report.Inventory.Stacks = &stacks
 				report.Inventory.Trust = &trust
@@ -203,6 +208,11 @@ func (r *Relay) Poll(ctx context.Context) error {
 	response, err := r.Server.PostActions(ctx, report)
 	if err != nil {
 		r.mu.Lock()
+		if errors.Is(err, stream.ErrNotConnected) {
+			r.retryAt = r.Now().Add(backoff(1))
+			r.mu.Unlock()
+			return err
+		}
 		r.failures++
 		r.retryAt = r.Now().Add(backoff(r.failures))
 		r.mu.Unlock()
