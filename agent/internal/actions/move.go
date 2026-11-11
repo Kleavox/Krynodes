@@ -20,13 +20,14 @@ import (
 )
 
 const (
-	maxSideBytes = 32 << 10
-	hostsFile    = "compose.krynodes-hosts.json"
+	maxSideBytes  = 32 << 10
+	hostsFile     = "compose.krynodes-hosts.json"
+	hostsPrevious = "compose.krynodes-hosts.previous.json"
 )
 
 var (
 	envName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
-	ownFiles  = []string{"compose.krynodes.json", "compose.krynodes.previous.json", hostsFile, "compose.previous.yaml", "krynodes.json", ".env", ".env.previous"}
+	ownFiles  = []string{"compose.krynodes.json", "compose.krynodes.previous.json", hostsFile, hostsPrevious, "compose.previous.yaml", "krynodes.json", ".env", ".env.previous"}
 	keptNames = append(slices.Clone(ownFiles), standardComposeFiles...)
 )
 
@@ -140,7 +141,7 @@ func sideFiles(directory string, composeFiles []string) ([]composeFile, error) {
 	files := []composeFile{}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !entry.Type().IsRegular() || slices.Contains(ownFiles, name) || slices.ContainsFunc(composeFiles, func(file string) bool {
+		if !entry.Type().IsRegular() || strings.HasPrefix(name, ".") || slices.Contains(keptNames, name) || slices.ContainsFunc(composeFiles, func(file string) bool {
 			return filepath.Base(file) == name && filepath.Clean(filepath.Dir(file)) == filepath.Clean(directory)
 		}) {
 			continue
@@ -389,6 +390,10 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 		return e.failed(request, err, e.states(ctx, stack))
 	}
 	if states, err := e.healthy(ctx, stack); err != nil {
+		if request.Action == "create" {
+			meta.Networks = madeNetworks(config, name)
+			writeJSON(directory, "krynodes.json", meta, 0o640)
+		}
 		return e.failed(request, err, states)
 	}
 	meta.Networks = madeNetworks(config, name)
@@ -422,14 +427,19 @@ func checkText(text, access string) error {
 
 func backup(directory string, names map[string]string) (func(), error) {
 	moved := map[string]string{}
+	var absent []string
 	restore := func() {
 		for from, to := range moved {
 			os.Remove(filepath.Join(directory, from))
 			os.Rename(filepath.Join(directory, to), filepath.Join(directory, from))
 		}
+		for _, from := range absent {
+			os.Remove(filepath.Join(directory, from))
+		}
 	}
 	for from, to := range names {
 		if err := copyFile(context.Background(), filepath.Join(directory, from), filepath.Join(directory, to)); errors.Is(err, os.ErrNotExist) {
+			absent = append(absent, from)
 			continue
 		} else if err != nil {
 			return nil, err
@@ -479,7 +489,7 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 		return e.refuse(request.ID, err)
 	}
 	directory := stack.Directory
-	previous := map[string]string{"compose.yaml": "compose.previous.yaml", "compose.krynodes.json": "compose.krynodes.previous.json"}
+	previous := map[string]string{"compose.yaml": "compose.previous.yaml", "compose.krynodes.json": "compose.krynodes.previous.json", hostsFile: hostsPrevious}
 	if command.Secrets != "" {
 		previous[".env"] = ".env.previous"
 	}
@@ -496,7 +506,9 @@ func (e Executor) edit(ctx context.Context, request Request, command Command, st
 			old.Files = append(old.Files, filepath.Join(directory, hostsFile))
 		}
 		e.syncRules(ctx)
-		e.docker(ctx, upTimeout, "up", composeArgs(old, "up", "-d")...)
+		if _, err := e.docker(ctx, upTimeout, "up", composeArgs(old, "up", "-d")...); err != nil {
+			result.Output += "; the previous file did not start again: " + err.Error()
+		}
 		return result
 	}
 	if err := writeWhole(directory, "compose.yaml", []byte(command.Compose), 0o640); err != nil {

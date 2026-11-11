@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -93,5 +94,26 @@ func TestAFullAccessStackTurnsLabelsOffOnlyWhereItNeedsTheServer(t *testing.T) {
 	}
 	if got := securityOpts(asMap(services["tools"])); !slices.Equal(got, []string{"label=disable"}) {
 		t.Fatalf("tools %q", got)
+	}
+}
+
+func TestAContainedStackWithKrynodesOwnLabelStillPassesTheContainedRules(t *testing.T) {
+	executor, run := stackExecutor(t)
+	dir := panelReady(t, executor, run, panelService(panelDir(executor)), nil)
+	run.respond[dockerSecurity] = selinuxDocker
+	if result := runRequest(t, executor, createRequest(t, idA, "panel", panelText)); !result.OK {
+		t.Fatalf("result %#v calls %q", result, run.calls)
+	}
+	if err := executor.stillContained(context.Background(), dir); err != nil {
+		t.Fatalf("Krynodes own label was refused: %v", err)
+	}
+	config := krynodesConfig(t, dir)
+	web := asMap(asMap(config["services"])["web"])
+	web["security_opt"] = append(asList(web["security_opt"]), "seccomp=unconfined")
+	if err := writeJSON(dir, "compose.krynodes.json", config, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.stillContained(context.Background(), dir); err == nil {
+		t.Fatal("another security option must still be refused")
 	}
 }

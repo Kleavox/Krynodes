@@ -212,6 +212,12 @@ const PROMOTE_SQL = `UPDATE actions SET deliverable_at = ?1
       WHERE source.batch_id = actions.batch_id
         AND source.position = actions.attach_from
         AND source.status = 'done')
+      AND NOT EXISTS (
+      SELECT 1 FROM actions earlier
+      WHERE earlier.batch_id = actions.batch_id
+        AND earlier.position < actions.position
+        AND earlier.attach_from IS NULL
+        AND earlier.status <> 'done')
     END`;
 
 const UNRELEASED = `json_extract(release, '$.released') = 1 AND id IN (

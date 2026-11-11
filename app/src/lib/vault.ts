@@ -498,10 +498,7 @@ export function planAddress(
   if (piece.holders === 1) return { ok: true, releaser: null };
   const other = nodes.find(
     (item) =>
-      item.id !== target &&
-      pieceOf(item, setId) !== null &&
-      item.reachable &&
-      item.online,
+      item.id !== target && pieceOf(item, setId) !== null && usable(item),
   );
   return other
     ? { ok: true, releaser: other.id }

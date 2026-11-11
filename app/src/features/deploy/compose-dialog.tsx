@@ -40,6 +40,7 @@ import {
   ReachField,
   SecretsEditor,
   heldProblem,
+  NO_SEAL_KEY,
   useNetworkBoxes,
   useStackNetwork,
   sealSecrets,
@@ -203,6 +204,10 @@ function ComposeForm({
 
   const save = async () => {
     if (!read || problem) return;
+    if (!target.sealKey && secrets.length > 0) {
+      toast.error(NO_SEAL_KEY);
+      return;
+    }
     setSealing(true);
     let locked: string | undefined;
     try {
@@ -216,7 +221,7 @@ function ComposeForm({
     const args = {
       ...(reaching ? { hostPorts: hostPorts.ports.join(",") } : {}),
       ...(serving ? network.args : {}),
-      ...(joining ? boxes.args : {}),
+      ...(joining ? boxes.args : { offers: "", peers: "" }),
       ...(target.named ? { title: shownTitle.trim() } : {}),
       ...(target.named && names.rows.length > 0 ? { names: names.arg } : {}),
     };

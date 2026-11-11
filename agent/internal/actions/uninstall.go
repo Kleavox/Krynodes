@@ -30,7 +30,7 @@ var turnedOff = map[string]string{
 	"confinement":      "Krynodes no longer manages SELinux or AppArmor; a system it turned on stays on",
 }
 
-var krynodesFiles = []string{"krynodes.json", "compose.krynodes.previous.json", "compose.previous.yaml", ".env.previous"}
+var krynodesFiles = []string{"krynodes.json", "compose.krynodes.previous.json", hostsPrevious, "compose.previous.yaml", ".env.previous"}
 
 func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	var removal Removal

@@ -385,6 +385,35 @@ describe("action batches", () => {
     );
   });
 
+  it("holds a step attached to the first one until the plain steps before it are done too", async () => {
+    const { db, finish } = setup();
+    const batch = createBatch(db, {
+      action: "reshare",
+      mode: "rolling",
+      targets: [
+        { nodeId: A, action: "reshare" as const },
+        { nodeId: B, action: "forget" as const },
+        { nodeId: C, action: "store" as const, attachFrom: 0 },
+      ].map((step) => ({
+        ...step,
+        kind: "vault" as const,
+        name: "cloudflare",
+      })),
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    const [first, plain, attached] = batch.actions;
+    const ids = async (nodeId: string, at: number) =>
+      (await deliverActions(db, nodeId, at)).map((action) => action.id);
+    expect(await ids(A, NOW)).toEqual([first!.id]);
+    await finish(A, first!.id, true, NOW + MINUTE);
+    expect(await ids(C, NOW + MINUTE)).toEqual([]);
+    expect(await ids(B, NOW + MINUTE)).toEqual([plain!.id]);
+    await finish(B, plain!.id, true, NOW + 2 * MINUTE);
+    expect(await ids(C, NOW + 2 * MINUTE)).toEqual([attached!.id]);
+  });
+
   it("reads one index entry on a heartbeat from a server with nothing to do", async () => {
     const { db, sqlite, queue } = setup();
     await queue("parallel", [A]);

@@ -30,7 +30,13 @@ export function parseStackNames(text: string): Record<string, string> | null {
   const names: Record<string, string> = {};
   for (const entry of text.split(",")) {
     const [service = "", name, ...rest] = entry.split("=");
-    if (name === undefined || rest.length > 0 || service in names) return null;
+    if (
+      name === undefined ||
+      rest.length > 0 ||
+      Object.hasOwn(names, service)
+    ) {
+      return null;
+    }
     names[service] = name;
   }
   return stackNamesValid(names) ? names : null;

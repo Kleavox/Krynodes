@@ -419,6 +419,45 @@ describe("operations in steps", () => {
     expect(outside.status).toBe(400);
   });
 
+  it("refuses a web address that already opens another stack, and a close outside the domain", async () => {
+    const t = routes();
+    t.sqlite
+      .prepare(
+        `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at)
+         VALUES ('shop.example.org', ?, 'shop', 'web', 80, 'everyone', 'owner', 'now')`,
+      )
+      .run(B);
+    const taken = await t.operate("expose", [
+      step({
+        nodeId: A,
+        kind: "compose",
+        name: "listmonk",
+        action: "expose",
+        args: {
+          service: "app",
+          port: "9000",
+          hostname: "shop.example.org",
+          mode: "everyone",
+          zone: "example.org",
+        },
+      }),
+    ]);
+    expect(taken.status).toBe(409);
+    expect(((await taken.json()) as { code: string }).code).toBe(
+      "HOSTNAME_TAKEN",
+    );
+    const elsewhere = await t.operate("unexpose", [
+      step({
+        nodeId: A,
+        kind: "compose",
+        name: "listmonk",
+        action: "unexpose",
+        args: { hostname: "listmonk-a.other.org", zone: "example.org" },
+      }),
+    ]);
+    expect(elsewhere.status).toBe(400);
+  });
+
   it("refuses a released piece from a server without one", async () => {
     const t = routes();
     t.sqlite.prepare("UPDATE nodes SET vault = NULL WHERE id = ?").run(B);

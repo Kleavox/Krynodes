@@ -642,3 +642,23 @@ func TestFilesInAStackFolderAreListedWithoutKrynodesOwnFiles(t *testing.T) {
 	}
 	_ = base64.StdEncoding
 }
+
+func TestRestoringABackupPutsOldFilesBackAndRemovesFilesThatWereNotThere(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	restore, err := backup(dir, map[string]string{"compose.yaml": "compose.previous.yaml", hostsFile: hostsPrevious})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("new"), 0o640)
+	os.WriteFile(filepath.Join(dir, hostsFile), []byte("{}"), 0o640)
+	restore()
+	if body, _ := os.ReadFile(filepath.Join(dir, "compose.yaml")); string(body) != "old" {
+		t.Fatalf("compose.yaml %q", body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, hostsFile)); !os.IsNotExist(err) {
+		t.Fatalf("an override that was not there before is kept: %v", err)
+	}
+}
