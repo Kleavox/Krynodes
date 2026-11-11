@@ -480,3 +480,42 @@ func TestAnAppArmorContainerDenialStopsItsStackAndAnUntraceableOneWarns(t *testi
 		t.Fatalf("warned %+v", warned)
 	}
 }
+
+func TestSELinuxTurnedOffAtBootIsRaisedThoughTheEnrollRestartWasOnceDue(t *testing.T) {
+	executor, _ := securityExecutor(t)
+	rootFile(t, executor, "/etc/os-release", rockyRelease)
+	rootFile(t, executor, "/sys/fs/selinux/enforce", "1")
+	rootFile(t, executor, confine.AuditLog, "")
+	state := recipeState{Applied: map[string]appliedRecipe{"confinement": {At: executorNow, Saved: map[string]string{"system": "selinux", "mode": "enforcing", "restart": "1"}}}}
+	if err := writeJSON(executor.StateDir, "recipes.json", state, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	executor.watchDenials(context.Background())
+	if saved := executor.readRecipes().Applied["confinement"].Saved; saved["finished"] != "1" {
+		t.Fatalf("the restart was not recorded as finished: %+v", saved)
+	}
+	if err := os.Remove(executor.path("/sys/fs/selinux/enforce")); err != nil {
+		t.Fatal(err)
+	}
+	rootFile(t, executor, "/proc/cmdline", "ro selinux=0\n")
+	executor.watchDenials(context.Background())
+	strong := eventsOfKind(t, executor, "confinement")
+	if len(strong) != 1 || strong[0].Detail["what"] != "SELinux was turned off at boot outside Krynodes" {
+		t.Fatalf("events %+v", strong)
+	}
+}
+
+func TestAnUnansweredAuditdQuestionIsNotAStoppedAuditService(t *testing.T) {
+	executor, run := selinuxWatch(t, true, "")
+	delete(run.respond, "systemctl is-active auditd")
+	run.failing["systemctl is-active auditd"] = ""
+	executor.watchDenials(context.Background())
+	if strong := eventsOfKind(t, executor, "confinement"); len(strong) != 0 {
+		t.Fatalf("events %+v", strong)
+	}
+	run.failing["systemctl is-active auditd"] = "inactive\n"
+	executor.watchDenials(context.Background())
+	if strong := eventsOfKind(t, executor, "confinement"); len(strong) != 1 {
+		t.Fatalf("a stopped audit service was not raised: %+v", strong)
+	}
+}

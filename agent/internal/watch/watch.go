@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var accepted = regexp.MustCompile(`Accepted publickey for (\S+) from (\S+) port \d+ ssh2: (\S+) (SHA256:\S+)`)
+var accepted = regexp.MustCompile(`^\S+ \S+ sshd(?:-session)?\[\d+\]: Accepted publickey for (\S+) from (\S+) port \d+ ssh2: (\S+) (SHA256:\S+)`)
 
 var keyTypes = map[string]string{
 	"ssh-ed25519":                        "ED25519",

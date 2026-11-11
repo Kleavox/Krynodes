@@ -276,7 +276,7 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		if err := e.markConfinement(request.Action); err != nil {
 			return e.failed(request, err, "")
 		}
-		defer e.markConfinement(request.Action)
+		defer e.holdConfinement(request.Action)()
 	}
 	save := func(output string) Result {
 		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
@@ -365,6 +365,11 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		}
 		if result.Installed {
 			if err := writeJSON(e.StateDir, "docker.json", dockerState{InstalledAt: e.Now()}, 0o640); err != nil {
+				return e.failed(request, err, "")
+			}
+		}
+		if result.Confined {
+			if err := writeJSON(e.StateDir, dockerSELinuxFile, dockerSELinuxRecord{Previous: result.Previous, Existed: result.Existed}, 0o640); err != nil {
 				return e.failed(request, err, "")
 			}
 		}
