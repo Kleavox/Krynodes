@@ -805,7 +805,7 @@ func TestARHELServerIsCheckedWithItsOwnTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := findingsOf(t, executor)
-	if found["updates-off"].Severity != "warning" || found["updates-pending"].Detail != "2 security updates are waiting" || found["reboot-pending"].Detail != "A restart is waiting" {
+	if found["updates-off"].Severity != "warning" || found["updates-pending"].Detail != "2 security updates are waiting" || found["reboot-pending"].Detail != "A restart has been waiting since 29 Sep" || found["reboot-pending"].Severity != "note" {
 		t.Fatalf("findings %#v", found)
 	}
 	if _, off := found["firewall-off"]; off {

@@ -500,13 +500,13 @@ func (e Executor) unlock(ctx context.Context, request Request, env recipes.Env) 
 	if state.At.IsZero() {
 		return e.refuse(request.ID, errors.New("the server is not locked down"))
 	}
-	if err := e.reopen(ctx, state); err != nil {
-		return e.failed(request, err, "")
-	}
 	if state.SSH {
 		if err := recipes.Undo(ctx, env, "ssh-keys-only", nil); err != nil {
 			return e.refuse(request.ID, err)
 		}
+	}
+	if err := e.reopen(ctx, state); err != nil {
+		return e.failed(request, err, "")
 	}
 	if err := os.Remove(filepath.Join(e.StateDir, "lockdown.json")); err != nil {
 		return e.failed(request, err, "")

@@ -287,7 +287,7 @@ func TestASaveRewritesOnlyKrynodesRulesAfterTailscaleChecksThem(t *testing.T) {
 	if fake.policy != want {
 		t.Fatalf("written:\n%s", fake.policy)
 	}
-	order := []string{"POST /api/v2/device/nA/tags", "POST /api/v2/device/nA/key", "POST /api/v2/tailnet/-/acl/validate", "POST /api/v2/tailnet/-/acl"}
+	order := []string{"POST /api/v2/tailnet/-/acl/validate", "POST /api/v2/device/nA/tags", "POST /api/v2/device/nA/key", "POST /api/v2/tailnet/-/acl"}
 	at := -1
 	for _, call := range order {
 		next := slices.Index(fake.calls, call)

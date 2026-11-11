@@ -140,17 +140,8 @@ func (e Executor) savePolicy(ctx context.Context, request Request, command Comma
 		tagged = strings.Split(args["tag"], ",")
 	}
 	for _, id := range tagged {
-		index := slices.IndexFunc(devices, func(device tailscale.Device) bool { return device.ID == id })
-		if index < 0 {
+		if !slices.ContainsFunc(devices, func(device tailscale.Device) bool { return device.ID == id }) {
 			return e.refuse(request.ID, fmt.Errorf("%s is not on your tailnet", id))
-		}
-		if !slices.Contains(devices[index].Tags, tailscale.Tag) {
-			if err := api.Tag(ctx, id, slices.Concat(devices[index].Tags, []string{tailscale.Tag})); err != nil {
-				return e.refuse(request.ID, err)
-			}
-		}
-		if err := api.NoExpiry(ctx, id); err != nil {
-			return e.refuse(request.ID, err)
 		}
 	}
 	lines, err := tailscale.Grants(rules, servers, tailscale.Rest(devices, policy.Tags))
@@ -160,6 +151,17 @@ func (e Executor) savePolicy(ctx context.Context, request Request, command Comma
 	next := tailscale.ApproveExitNodes(tailscale.Splice(body, policy, lines, args["expected"] == ""))
 	if err := api.Validate(ctx, next); err != nil {
 		return e.refuse(request.ID, err)
+	}
+	for _, id := range tagged {
+		index := slices.IndexFunc(devices, func(device tailscale.Device) bool { return device.ID == id })
+		if !slices.Contains(devices[index].Tags, tailscale.Tag) {
+			if err := api.Tag(ctx, id, slices.Concat(devices[index].Tags, []string{tailscale.Tag})); err != nil {
+				return e.refuse(request.ID, err)
+			}
+		}
+		if err := api.NoExpiry(ctx, id); err != nil {
+			return e.refuse(request.ID, err)
+		}
 	}
 	if err := api.SetPolicy(ctx, next, etag); err != nil {
 		return e.refuse(request.ID, err)
