@@ -1,7 +1,7 @@
 import type { Setup } from "@krynodes/protocol";
 
 import type { NodeRecord } from "../types";
-import { parseTimestamp } from "./format";
+import { nodeState, parseTimestamp } from "./format";
 
 const LABELS: Record<Setup["phase"], string> = {
   admin: "Adding Admin User",
@@ -23,7 +23,12 @@ export interface SetupView {
 
 type SetupNode = Pick<
   NodeRecord,
-  "setup" | "enrolled_at" | "last_seen_at" | "warnings"
+  | "setup"
+  | "enrolled_at"
+  | "last_seen_at"
+  | "warnings"
+  | "disabled_at"
+  | "interval_seconds"
 >;
 
 const SETTING_UP_MS = 60 * 60_000;
@@ -39,6 +44,7 @@ export function setupView(node: SetupNode, now: number): SetupView | null {
     };
   }
   if (node.setup && !node.setup.failed) {
+    if (node.last_seen_at && nodeState(node, now) === "offline") return null;
     return { label: "Setting Up", stopped: false, failed: false, step };
   }
   if (node.setup || (node.enrolled_at && !node.last_seen_at)) {

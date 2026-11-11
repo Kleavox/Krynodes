@@ -575,6 +575,10 @@ func writeWhole(directory, name string, encoded []byte, mode os.FileMode) error 
 	if err != nil {
 		return err
 	}
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		return err
+	}
 	if _, err := file.Write(encoded); err != nil {
 		file.Close()
 		return err

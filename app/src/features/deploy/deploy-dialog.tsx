@@ -98,7 +98,7 @@ function DeployForm({
     targets.map((member) => member.trust),
   );
   const offline = (member: StackMember) =>
-    nodeState(member.node, seen) === "offline";
+    nodeState(member.node, seen) !== "online";
 
   const submit = () =>
     run.mutate(

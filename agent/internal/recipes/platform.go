@@ -126,6 +126,7 @@ func Purge(ctx context.Context, env Env, packages ...string) error {
 }
 
 func Upgrade(ctx context.Context, env Env) error {
+	env.Timeout = upgradeTimeout
 	if Detect(env).Family == RHEL {
 		return env.run(ctx, "dnf", "upgrade", "-y", "-q")
 	}

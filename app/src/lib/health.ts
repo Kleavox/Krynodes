@@ -1,6 +1,7 @@
 import type { CheckRecord, NodeRecord } from "../types";
 import { checkDisplayStatus, nodeState, percentage } from "./format";
 import { quarantineReasons } from "./quarantine";
+import { setupView } from "./setup";
 
 export type UsageLevel = "ok" | "warn" | "critical";
 export type Severity = "critical" | "warning" | "healthy" | "idle";
@@ -32,6 +33,9 @@ export function nodeHealth(
   raised: string[] = [],
 ): { severity: Severity; reasons: string[] } {
   const state = nodeState(node, now);
+  if (state === "pending" && setupView(node, now)?.failed) {
+    return { severity: "critical", reasons: ["Setup Failed"] };
+  }
   if (state === "pending" || state === "disabled") {
     return { severity: "idle", reasons: [] };
   }

@@ -52,7 +52,7 @@ const BRANCH =
   "relative pl-10 before:absolute before:top-0 before:bottom-0 before:left-5 before:w-px before:bg-border-strong last:before:bottom-1/2 after:absolute after:top-1/2 after:left-5 after:h-px after:w-3 after:bg-border-strong";
 
 const offline = (member: ServiceMember, seen: number) =>
-  nodeState(member.node, seen) === "offline";
+  nodeState(member.node, seen) !== "online";
 
 export function KindLabel({ kind }: { kind: "stack" | ServiceKind }) {
   return <SmallLabel>{KIND[kind]}</SmallLabel>;
