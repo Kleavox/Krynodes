@@ -5,6 +5,8 @@ import {
   LoaderCircle,
 } from "lucide-react";
 
+import { toast } from "sonner";
+
 import { Busy } from "@/components/busy";
 import { CopyCommand } from "@/components/copy-command";
 import { Button } from "@/components/ui/button";
@@ -23,6 +25,7 @@ import {
 } from "@/lib/api";
 import { UPDATE_ATTEMPTS, agentState } from "@/lib/agent";
 import { timeAgo } from "@/lib/format";
+import { errorMessage } from "@/lib/http";
 import type { AgentRelease, NodeRecord } from "@/types";
 
 export function AgentDialog({
@@ -180,7 +183,10 @@ export function AgentDialog({
             checked={Boolean(node.auto_update)}
             disabled={settings.isPending}
             onCheckedChange={(checked) =>
-              settings.mutate({ id: node.id, autoUpdate: checked })
+              settings.mutate(
+                { id: node.id, autoUpdate: checked },
+                { onError: (error) => toast.error(errorMessage(error)) },
+              )
             }
           />
         </label>

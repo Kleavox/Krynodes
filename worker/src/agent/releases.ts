@@ -43,7 +43,8 @@ export async function checkAgentRelease(
   now = Date.now(),
 ): Promise<AgentRelease> {
   const found = await fetchLatestVersion();
-  const version = found ?? (await readAgentRelease(db)).version;
+  if (found === null) return readAgentRelease(db);
+  const version = found;
   const checkedAt = new Date(now).toISOString();
   await db
     .prepare(
@@ -65,8 +66,10 @@ export async function requestAutoUpdates(
     .prepare(
       `SELECT id, agent_version FROM nodes
        WHERE auto_update = 1 AND enrolled_at IS NOT NULL
-         AND disabled_at IS NULL AND update_requested_version IS NULL`,
+         AND disabled_at IS NULL
+         AND (update_requested_version IS NULL OR update_requested_version <> ?)`,
     )
+    .bind(version)
     .all<{ id: string; agent_version: string | null }>();
   const due = candidates.results.filter(
     (node) =>

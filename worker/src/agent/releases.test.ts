@@ -65,7 +65,7 @@ describe("checkAgentRelease", () => {
     });
   });
 
-  it("keeps the last known version when GitHub gives no answer", async () => {
+  it("keeps the last known version and the time it was last checked when GitHub gives no answer", async () => {
     const { db } = createTestDb();
     redirectTo("https://github.com/Kleavox/Krynodes/releases/tag/agent-v0.5.1");
     await checkAgentRelease(db, Date.parse("2026-09-28T08:00:00Z"));
@@ -75,7 +75,7 @@ describe("checkAgentRelease", () => {
     );
     expect(
       await checkAgentRelease(db, Date.parse("2026-09-29T08:00:00Z")),
-    ).toEqual({ version: "0.5.1", checkedAt: "2026-09-29T08:00:00.000Z" });
+    ).toEqual({ version: "0.5.1", checkedAt: "2026-09-28T08:00:00.000Z" });
   });
 });
 
@@ -133,5 +133,24 @@ describe("requestAutoUpdates", () => {
         )
         .all(),
     ).toEqual([{ id: "due" }]);
+  });
+
+  it("replaces a request for an older release with the newer one", async () => {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: "stuck" });
+    sqlite
+      .prepare(
+        "UPDATE nodes SET agent_version = '0.1.0', auto_update = 1, update_requested_version = '0.2.0', update_attempts = 3, update_error = 'failed' WHERE id = 'stuck'",
+      )
+      .run();
+    expect(await requestAutoUpdates(db, "0.2.0")).toBe(0);
+    expect(await requestAutoUpdates(db, "0.3.0")).toBe(1);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT update_requested_version AS version, update_attempts AS attempts, update_error AS error FROM nodes WHERE id = 'stuck'",
+        )
+        .get(),
+    ).toEqual({ version: "0.3.0", attempts: 1, error: null });
   });
 });

@@ -4,7 +4,7 @@ import {
   type WebhookEvent,
 } from "@krynodes/protocol";
 
-import { hubFor, streamsOn } from "../fleet/client";
+import { announce, hubFor, streamsOn } from "../fleet/client";
 import type { Env } from "../env";
 import type { TailnetMail } from "../lib/mail";
 import type { KrynodesApp } from "../routes/shared";
@@ -269,6 +269,7 @@ export function registerTailscaleHook(app: KrynodesApp): void {
         .map((alarm) => alarm.due);
       if (due.length > 0) {
         await wake(context.env, owner.owner_user_id, Math.min(...due));
+        await announce(context.env, owner.owner_user_id, ["services"]);
       }
     }
     return context.json({});

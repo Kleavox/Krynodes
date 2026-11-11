@@ -115,6 +115,7 @@ export async function applyNetworkInventory(
   if (!row) return;
   const prepared = inventory?.prepared;
   if (row.state === "in") {
+    if (!inventory) return;
     const points =
       inventory && inventory.points.length > 0
         ? JSON.stringify(inventory.points)

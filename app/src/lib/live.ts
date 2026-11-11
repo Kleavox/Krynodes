@@ -8,7 +8,12 @@ const SETTLE_MS = 300;
 
 const TOPICS: Record<string, QueryKey[]> = {
   actions: [queryKeys.services, ["actions"], queryKeys.network],
-  services: [queryKeys.services, ["packages"], queryKeys.overview],
+  services: [
+    queryKeys.services,
+    ["packages"],
+    queryKeys.overview,
+    queryKeys.tailscale,
+  ],
   checks: [queryKeys.overview, queryKeys.checkResults],
   nodes: [queryKeys.overview, queryKeys.recentMetrics, queryKeys.network],
 };
