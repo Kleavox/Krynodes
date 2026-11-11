@@ -1,8 +1,9 @@
-import { agentSupported, QUARANTINE } from "@krynodes/protocol";
+import { agentSupported, NETWORK, QUARANTINE } from "@krynodes/protocol";
 
 import { createBatch } from "../actions/store";
 import { toB64url } from "../lib/b64url";
 import type { QuarantineMail } from "../lib/mail";
+import { inRanges } from "../lib/ranges";
 import { changeStatement } from "../routes/network";
 
 export const QUARANTINE_ACTOR = "Quarantine";
@@ -71,15 +72,21 @@ interface Suspect {
   member: string | null;
 }
 
+const TAILSCALE_RANGES = [NETWORK.tailscale, "fd7a:115c:a1e0::/48"];
+
 function tailnetOf(text: string | null): string[] {
   try {
     const report = JSON.parse(text ?? "null") as {
       addresses?: unknown;
     } | null;
     return Array.isArray(report?.addresses)
-      ? report.addresses.filter(
-          (address): address is string => typeof address === "string",
-        )
+      ? report.addresses
+          .filter(
+            (address): address is string =>
+              typeof address === "string" &&
+              inRanges(address, TAILSCALE_RANGES),
+          )
+          .slice(0, 8)
       : [];
   } catch {
     return [];

@@ -137,6 +137,25 @@ describe("a member's public address", () => {
     expect(await pokes[0]!.json()).toEqual({ nodeIds: [OTHER] });
   });
 
+  it("leaves a quarantined server where it was", async () => {
+    const t = await setup();
+    joinNetwork(t.sqlite);
+    t.sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', ?, 'why', 'now', '{}')",
+      )
+      .run(NODE);
+    await seen(t, "203.0.113.99");
+    expect(
+      t.sqlite
+        .prepare("SELECT endpoint FROM network_members WHERE node_id = ?")
+        .get(NODE),
+    ).toEqual({ endpoint: "203.0.113.21:51821" });
+    expect(
+      t.sqlite.prepare("SELECT count(*) AS n FROM network_changes").get(),
+    ).toEqual({ n: 0 });
+  });
+
   it("leaves a server behind NAT alone", async () => {
     const t = await setup();
     joinNetwork(t.sqlite);

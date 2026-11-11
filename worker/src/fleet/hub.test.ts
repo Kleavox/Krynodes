@@ -1217,6 +1217,54 @@ describe("FleetHub", () => {
     expect(answered()).toBe(61);
   });
 
+  it("keeps the same 60 messages a minute when the server connects again", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    for (let index = 0; index < 60; index++) {
+      await t.send(ws, BASE + 5_000 + index * 100, heartbeat(10));
+    }
+    const again = await t.connect();
+    await t.send(again, BASE + 12_000, heartbeat(10));
+    expect(
+      again.replies().filter((reply) => reply.type === "heartbeat"),
+    ).toEqual([]);
+    await t.send(again, BASE + 66_000, heartbeat(10));
+    expect(
+      again.replies().filter((reply) => reply.type === "heartbeat"),
+    ).toHaveLength(1);
+  });
+
+  it("cuts off a second server's warning though one server left a long backlog", async () => {
+    const t = setup();
+    const other = "00000000-0000-4000-8000-000000000077";
+    seedNode(t.sqlite, { id: other });
+    const cutoffs: Record<string, number> = {};
+    const add = (node: string, id: string, at: number) => {
+      t.sqlite
+        .prepare(
+          "INSERT INTO warnings (node_id, id, kind, detail, at, cut_at) VALUES (?, ?, 'port', '{}', ?, ?)",
+        )
+        .run(node, id, new Date(at).toISOString(), new Date(at).toISOString());
+      cutoffs[`${node}|${id}`] = at;
+    };
+    for (let index = 0; index < 40; index++)
+      add(NODE, `w${index}`, BASE + index);
+    add(other, "late", BASE + 1_000);
+    await t.storage.put("cutoffs", cutoffs);
+    vi.setSystemTime(BASE + 60_000);
+    await t.hub.alarm();
+    expect(
+      t.sqlite
+        .prepare("SELECT node_id FROM quarantines ORDER BY node_id")
+        .all(),
+    ).toEqual(
+      [{ node_id: other }, { node_id: NODE }].sort((a, b) =>
+        a.node_id < b.node_id ? -1 : 1,
+      ),
+    );
+    expect(t.storage.alarm).toBe(BASE + 61_000);
+  });
+
   it("still mails a confirmed failure when the server's socket closed before the answer", async () => {
     const t = setup();
     const ws = await t.connect();

@@ -319,24 +319,22 @@ describe("the hub and quarantine", () => {
     ).toBe(writes);
   });
 
-  it("warns when an agent goes quiet while another server still sees its handshake", async () => {
+  it("warns when an agent goes quiet while two other servers still see its handshake, and not on one server's word", async () => {
     const { sqlite, harness, send } = setup();
     const quiet = await harness.connect(V1, OWNER);
     await send(quiet, beat(V1));
     quiet.close(1006, "gone");
     await harness.hub.webSocketClose(quiet as unknown as WebSocket);
-    const peer = await harness.connect(V2, OWNER);
     const late = NOW + 10 * 60_000;
-    await send(
-      peer,
-      beat(V2, {
+    const sees = (node: string, key: number, handshake: number) =>
+      beat(node, {
         network: {
           version: 1,
-          key: keyOf(2),
+          key: keyOf(key),
           links: [
             {
               key: keyOf(1),
-              handshake: Math.floor(late / 1000) - 30,
+              handshake,
               rx: 1,
               tx: 1,
               endpoint: null,
@@ -344,13 +342,53 @@ describe("the hub and quarantine", () => {
             },
           ],
         },
-      } as Partial<AgentHeartbeat>),
-      late,
-    );
+      } as Partial<AgentHeartbeat>);
+    const warnings = () =>
+      sqlite.prepare("SELECT node_id AS node, kind FROM warnings").all();
+    const peer = await harness.connect(V2, OWNER);
+    await send(peer, sees(V2, 2, Math.floor(late / 1000) - 30), late);
+    const other = await harness.connect(V3, OWNER);
+    await send(other, sees(V3, 3, Math.floor(late / 1000) + 3_600), late);
+    await harness.hub.alarm();
+    expect(warnings()).toEqual([]);
+  });
+
+  it("warns once a second server sees the quiet agent's handshake too", async () => {
+    const { sqlite, harness, send } = setup();
+    const quiet = await harness.connect(V1, OWNER);
+    await send(quiet, beat(V1));
+    quiet.close(1006, "gone");
+    await harness.hub.webSocketClose(quiet as unknown as WebSocket);
+    const late = NOW + 10 * 60_000;
+    for (const [node, key] of [
+      [V2, 2],
+      [V3, 3],
+    ] as const) {
+      const peer = await harness.connect(node, OWNER);
+      await send(
+        peer,
+        beat(node, {
+          network: {
+            version: 1,
+            key: keyOf(key),
+            links: [
+              {
+                key: keyOf(1),
+                handshake: Math.floor(late / 1000) - 30,
+                rx: 1,
+                tx: 1,
+                endpoint: null,
+                ms: null,
+              },
+            ],
+          },
+        } as Partial<AgentHeartbeat>),
+        late,
+      );
+    }
     await harness.hub.alarm();
     expect(
       sqlite.prepare("SELECT node_id AS node, kind FROM warnings").all(),
     ).toEqual([{ node: V1, kind: "quiet" }]);
-    expect(V3).toBeDefined();
   });
 });

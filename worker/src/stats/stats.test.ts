@@ -1062,3 +1062,20 @@ describe("serveStats", () => {
     expect(await head.text()).toBe("");
   });
 });
+
+describe("the version the public page is cached by", () => {
+  it("changes with a quarantine without saying how many there are", async () => {
+    const { db, sqlite } = createTestDb();
+    seedNode(sqlite, { id: "11111111-1111-4111-8111-111111111111" });
+    const before = await statusVersion(db);
+    expect(before).toMatch(/^[0-9a-f]{24}$/u);
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', '11111111-1111-4111-8111-111111111111', 'why', 'now', '{}')",
+      )
+      .run();
+    const after = await statusVersion(db);
+    expect(after).toMatch(/^[0-9a-f]{24}$/u);
+    expect(after).not.toBe(before);
+  });
+});
