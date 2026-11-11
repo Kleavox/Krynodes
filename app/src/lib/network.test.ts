@@ -2197,3 +2197,35 @@ describe("the link a test checks", () => {
     ).toBe("Test the link server-2 ↔ server-1");
   });
 });
+
+describe("knock settings in the document", () => {
+  it("carries the saved settings in every document but the one that deletes the network", async () => {
+    const created = await buildDocument(
+      null,
+      {
+        kind: "create",
+        range: "10.88.0.0/24",
+        port: 51820,
+        mtu: 1420,
+        join: [],
+      },
+      {},
+      undefined,
+      { scan: 5, stop: false },
+    );
+    expect(created.knocks).toEqual({ scan: 5, stop: false });
+    const again = await buildDocument(
+      created,
+      { kind: "again" },
+      {},
+      undefined,
+      {
+        scan: 20,
+        stop: true,
+      },
+    );
+    expect(again.knocks).toEqual({ scan: 20, stop: true });
+    const kept = await buildDocument(again, { kind: "again" }, {});
+    expect(kept.knocks).toEqual({ scan: 20, stop: true });
+  });
+});

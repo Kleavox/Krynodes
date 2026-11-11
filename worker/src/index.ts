@@ -79,6 +79,21 @@ export async function runRetention(env: Env): Promise<void> {
   await env.DB.prepare(
     "DELETE FROM devices WHERE datetime(removed_at) < datetime('now', '-365 days')",
   ).run();
+  await env.DB.prepare(
+    `DELETE FROM warnings
+     WHERE answer IS NOT NULL AND datetime(at) < datetime('now', '-90 days')`,
+  ).run();
+  await env.DB.prepare(
+    "DELETE FROM knocks WHERE datetime(at) < datetime('now', '-1 day')",
+  ).run();
+  await env.DB.prepare(
+    `DELETE FROM quarantines
+     WHERE released_at IS NOT NULL
+       AND datetime(released_at) < datetime('now', '-365 days')`,
+  ).run();
+  await env.DB.prepare(
+    "DELETE FROM network_changes WHERE datetime(at) < datetime('now', '-365 days')",
+  ).run();
 }
 
 export default worker;

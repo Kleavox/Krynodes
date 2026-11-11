@@ -91,6 +91,7 @@ func (e Executor) stopKnocking(ctx context.Context, scan network.Scan) error {
 		return err
 	}
 	if _, err := e.docker(ctx, upTimeout, "stop", "compose", "--project-name", scan.Who, "stop"); err != nil {
+		os.Remove(filepath.Join(e.StateDir, knockedDir, scan.Who+".json"))
 		return err
 	}
 	for _, id := range slices.Sorted(maps.Keys(mark.Restart)) {

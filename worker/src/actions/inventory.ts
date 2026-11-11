@@ -242,6 +242,8 @@ function changed(row: ServiceRow | undefined, entry: ServiceEntry): boolean {
   );
 }
 
+const SUSPECT = `EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = nodes.id AND q.released_at IS NULL)`;
+
 export async function applyInventory(
   db: D1Database,
   node: InventoryNode,
@@ -328,7 +330,9 @@ export async function applyInventory(
     ...(inventory.trust
       ? [
           db
-            .prepare("UPDATE nodes SET trust_report = ? WHERE id = ?")
+            .prepare(
+              `UPDATE nodes SET trust_report = ? WHERE id = ? AND NOT ${SUSPECT}`,
+            )
             .bind(JSON.stringify(inventory.trust), node.id),
         ]
       : []),
@@ -338,7 +342,8 @@ export async function applyInventory(
     db
       .prepare(
         `UPDATE nodes SET inventory_hash = ?1, inventory_at = ?2, refresh_requested_at = NULL,
-           docker = COALESCE(?3, docker), seal_key = COALESCE(?4, seal_key),
+           docker = COALESCE(?3, docker),
+           seal_key = CASE WHEN ${SUSPECT} THEN seal_key ELSE COALESCE(?4, seal_key) END,
            security = COALESCE(?5, security),
            vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END,
            updates = CASE WHEN ?9 = 1 THEN ?10 ELSE updates END,

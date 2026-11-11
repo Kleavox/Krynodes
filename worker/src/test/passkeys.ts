@@ -117,3 +117,48 @@ export async function testPassphrase() {
     },
   };
 }
+
+export async function signedBy(
+  passkey: TestPasskey,
+  body: Uint8Array,
+  origin: string,
+  now = Date.now(),
+) {
+  const pair = (await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const spki = new Uint8Array(
+    (await crypto.subtle.exportKey("spki", pair.publicKey)) as ArrayBuffer,
+  );
+  const rpId = new URL(origin).hostname;
+  const grant = encoder.encode(
+    JSON.stringify({
+      v: 1,
+      rpId,
+      sessionKey: toB64url(spki),
+      issuedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 5 * 60_000).toISOString(),
+      nonce: "n",
+    }),
+  );
+  const signature = new Uint8Array(
+    await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      pair.privateKey,
+      body,
+    ),
+  );
+  return {
+    grant: {
+      grant: toB64url(grant),
+      ...(await passkey.sign({
+        challenge: await sha256(grant),
+        origin,
+        rpId,
+      })),
+    },
+    signature: toB64url(signature),
+  };
+}

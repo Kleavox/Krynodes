@@ -82,6 +82,7 @@ export {
   type StackNetwork,
 } from "./network";
 export {
+  TRUST_VERSION_STEP,
   passphraseKeySchema,
   trustChangeSchema,
   trustKeySchema,

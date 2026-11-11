@@ -958,6 +958,25 @@ describe("FleetHub", () => {
     expect(t.storage.alarm).toBe(BASE + 480_000);
   });
 
+  it("answers a quiet warning when the server reports again", async () => {
+    const t = setup();
+    const ws = await t.connect();
+    await t.send(ws, BASE + 5_000, heartbeat(10));
+    vi.setSystemTime(BASE + 200_000);
+    await t.hub.alarm();
+    t.sqlite
+      .prepare(
+        "INSERT INTO warnings (node_id, id, kind, detail, at, cut_at) VALUES (?, 'quiet:1', 'quiet', '{}', 'now', 'later')",
+      )
+      .run(NODE);
+    await t.send(ws, BASE + 300_000, heartbeat(10));
+    expect(
+      t.sqlite
+        .prepare("SELECT answer FROM warnings WHERE node_id = ?")
+        .get(NODE),
+    ).toEqual({ answer: "back" });
+  });
+
   it("still calls a silent server offline when its stored security report is unreadable", async () => {
     const t = setup();
     t.sqlite

@@ -1500,6 +1500,7 @@ export const networkText = {
   rekey: "Make new network keys",
   test: (a: string, b: string) => `Test ${a} ↔ ${b}`,
   again: "Send the private network again",
+  knocks: "Send the quarantine settings to the private network",
   rule: (name: string) => `Put the firewall rule back on ${name}`,
   mtu: (name: string, size: number) => `Use MTU ${size} on ${name}`,
   rename: (from: string, to: string) =>
@@ -2025,6 +2026,7 @@ export async function buildDocument(
   change: DocumentChange,
   sealKeys: Record<string, string>,
   parent?: string,
+  knocks?: NonNullable<NetworkDocument["knocks"]>,
 ): Promise<NetworkDocument> {
   const next: NetworkDocument =
     change.kind === "create"
@@ -2130,5 +2132,6 @@ export async function buildDocument(
   }
   if (parent) next.parent = parent;
   else delete next.parent;
+  if (knocks && change.kind !== "delete") next.knocks = knocks;
   return networkDocumentSchema.parse(next);
 }

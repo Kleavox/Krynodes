@@ -18,6 +18,7 @@ import (
 const (
 	trustChangeLimit = 24 * time.Hour
 	maxTrustedKeys   = 20
+	trustVersionStep = 1000
 )
 
 var credentialID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -108,7 +109,7 @@ func checkKeys(keys []TrustKey) error {
 	if len(keys) > maxTrustedKeys {
 		return errors.New("too many devices")
 	}
-	var seen []string
+	var seen, held []string
 	for _, key := range keys {
 		if len(key.ID) > 1400 || !credentialID.MatchString(key.ID) {
 			return errors.New("a device id is not base64url")
@@ -116,7 +117,10 @@ func checkKeys(keys []TrustKey) error {
 		if slices.Contains(seen, key.ID) {
 			return errors.New("a device is listed twice")
 		}
-		seen = append(seen, key.ID)
+		if slices.Contains(held, key.PublicKey) {
+			return errors.New("two devices carry the same key")
+		}
+		seen, held = append(seen, key.ID), append(held, key.PublicKey)
 		if _, err := parseKey(key); err != nil {
 			return err
 		}
@@ -185,6 +189,9 @@ func ApplyTrustChange(current Trust, request Request, now time.Time) (Trust, err
 	if change.Version <= current.Version {
 		return Trust{}, errors.New("the version is not newer than the stored one")
 	}
+	if change.Version-current.Version > trustVersionStep {
+		return Trust{}, errors.New("the version is too far ahead of the stored one")
+	}
 	if change.Origin != current.Origin || change.RPID != current.RPID {
 		return Trust{}, errors.New("the change is for another origin")
 	}
@@ -198,6 +205,11 @@ func ApplyTrustChange(current Trust, request Request, now time.Time) (Trust, err
 	}
 	if err := checkKeys(core); err != nil {
 		return Trust{}, err
+	}
+	for _, key := range core {
+		if at := slices.IndexFunc(current.Core, func(known TrustKey) bool { return known.ID == key.ID }); at >= 0 && (current.Core[at].Alg != key.Alg || current.Core[at].PublicKey != key.PublicKey) {
+			return Trust{}, errors.New("a change cannot give a trusted device another key; remove it and add it again")
+		}
 	}
 	next := Trust{V: 2, NodeID: current.NodeID, Origin: current.Origin, RPID: current.RPID, Version: change.Version, Core: core, Access: access, Passphrase: current.Passphrase, RequireUV: current.RequireUV || change.RequireUV != nil}
 	if err := checkAccess(access, next.coreIDs()); err != nil {

@@ -15,7 +15,12 @@ import {
   useQuarantineSettings,
   useSaveQuarantineSettings,
 } from "@/lib/api";
+import {
+  useNetworkKeys,
+  useSignChange,
+} from "@/features/network/use-network-sign";
 import { errorMessage } from "@/lib/http";
+import { networkText } from "@/lib/network";
 import { QUARANTINE_INTRO, settingsRows } from "@/lib/quarantine";
 
 import { SettingsSection } from "./section";
@@ -29,6 +34,7 @@ export function QuarantineSettings() {
         <QuarantineForm
           initial={current.data.settings}
           member={network.data.network !== null}
+          members={network.data.members}
         />
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -48,11 +54,15 @@ export function QuarantineSettings() {
 function QuarantineForm({
   initial,
   member,
+  members,
 }: {
   initial: Settings;
   member: boolean;
+  members: Parameters<typeof useNetworkKeys>[0];
 }) {
   const save = useSaveQuarantineSettings();
+  const send = useSignChange();
+  const keys = useNetworkKeys(members);
   const [value, setValue] = useState(initial);
   const [saved, setSaved] = useState(initial);
   const changed = JSON.stringify(value) !== JSON.stringify(saved);
@@ -61,7 +71,22 @@ function QuarantineForm({
       className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
-        save.mutate(value, { onSuccess: (next) => setSaved(next.settings) });
+        send.reset();
+        save.mutate(value, {
+          onSuccess: (next) => {
+            const moved =
+              next.settings.scan !== saved.scan ||
+              next.settings.stop !== saved.stop;
+            setSaved(next.settings);
+            if (member && moved) {
+              send.mutate({
+                change: { kind: "again" },
+                text: networkText.knocks,
+                signers: keys.signers,
+              });
+            }
+          },
+        });
       }}
     >
       <ul className="divide-y rounded-lg border bg-card">
@@ -115,14 +140,25 @@ function QuarantineForm({
           {errorMessage(save.error)}
         </p>
       )}
+      {send.error && (
+        <p role="alert" className="text-sm text-destructive">
+          Saved, but the servers have not been told yet:{" "}
+          {errorMessage(send.error)} The next change to the private network
+          carries it.
+        </p>
+      )}
       <div className="flex items-center justify-end gap-3">
         {save.isSuccess && !changed && (
           <span role="status" className="text-xs text-success">
             Saved
           </span>
         )}
-        <Button type="submit" size="sm" disabled={!changed || save.isPending}>
-          {save.isPending ? <Busy>Saving</Busy> : "Save"}
+        <Button
+          type="submit"
+          size="sm"
+          disabled={!changed || save.isPending || send.isPending}
+        >
+          {save.isPending || send.isPending ? <Busy>Saving</Busy> : "Save"}
         </Button>
       </div>
     </form>

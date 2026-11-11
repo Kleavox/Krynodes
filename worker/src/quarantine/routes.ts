@@ -282,14 +282,20 @@ export function registerQuarantineRoutes(
           joins: [],
           leaves: [],
         });
-      const answer = answerStatement(
-        db,
-        node.id,
-        warning.id,
-        "me",
-        identity.email,
-        at,
-      );
+      const answer = db
+        .prepare(
+          `UPDATE warnings SET answer = 'me', answered_at = ?1, answered_by = ?2
+           WHERE node_id = ?3 AND answer IS NULL AND (id = ?4 OR (kind = ?5
+             AND ?6 IS NOT NULL AND json_extract(detail, '$.item') = ?6))`,
+        )
+        .bind(
+          at,
+          identity.email,
+          node.id,
+          warning.id,
+          warning.kind,
+          warning.detail.item || null,
+        );
       if (!ACCEPTS.includes(warning.kind)) {
         const refused = await confirmed(
           context,

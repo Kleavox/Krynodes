@@ -1348,6 +1348,10 @@ A daily cron (03:17 UTC) keeps the database small enough for the Free plan's
 | Removed devices                    | 1 year after removal               |
 | Removed stacks (on each server)    | 7 days, then deleted there         |
 | Enrollment tokens                  | 1 day after they expire            |
+| Answered warnings                  | 90 days                            |
+| Knock reports between servers      | 1 day                              |
+| Ended quarantines                  | 1 year after release               |
+| Private network changes            | 1 year                             |
 | Mail throttle (Durable Object)     | 1 hour                             |
 
 With 5 servers and about 50 actions a day this settles near 10 MB, and the
