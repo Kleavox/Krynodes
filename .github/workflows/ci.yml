@@ -164,6 +164,12 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+        env:
+          CLOUDFLARE_API_TOKEN: ""
+          CLOUDFLARE_ACCOUNT_ID: ""
+          KRY_D1_ID: ""
+          CF_ANALYTICS_TOKEN: ""
+          ALERT_EMAIL: ""
 
       - name: Build the app and the packages the Worker imports
         run: pnpm turbo run build --filter=@krynodes/worker^...

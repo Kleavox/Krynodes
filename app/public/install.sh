@@ -189,6 +189,16 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
 ' "$checked" | tail -n 3 >&2
     exit 1
   fi
+  if [ -x "$bin" ]; then
+    chmod 0755 "$tmp/$artifact"
+    have="$("$bin" version 2>/dev/null || true)"
+    got="$("$tmp/$artifact" version 2>/dev/null || true)"
+    if [ -n "$have" ] && [ -n "$got" ] && [ "$have" != "$got" ] &&
+      [ "$(printf '%s\n%s\n' "$have" "$got" | sort -V | tail -n 1)" = "$have" ]; then
+      echo "The download is agent $got, older than the $have on this server, so nothing was installed." >&2
+      exit 1
+    fi
+  fi
   install -m 0755 "$tmp/$artifact" "$bin"
 
   case ",$setup," in
