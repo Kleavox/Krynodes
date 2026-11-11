@@ -3,7 +3,7 @@ import { SESSION_MS, signedCommandSchema } from "@krynodes/protocol";
 import type { Env } from "../env";
 import { decodeJson, fromB64url } from "../lib/b64url";
 import type { KrynodesContext } from "../routes/shared";
-import { Refusal, verifyApproval } from "./approval";
+import { type Approval, Refusal, verifyApproval } from "./approval";
 import { loadFleet, type Fleet } from "./fleet";
 
 const INTENT_MS = 2 * 60_000;
@@ -13,21 +13,18 @@ type Fields = Record<string, unknown> | null;
 
 const bad = (message: string) => new Refusal(400, "BAD_PROOF", message);
 
-async function verifyIntent(
+export async function verifySigned(
   env: Env,
   fleet: Fleet,
-  header: string | undefined,
-  expected: { op: string; target: string },
+  signed: {
+    grant: Approval & { grant: string };
+    body: string;
+    signature: string;
+  },
   email: string,
   now = Date.now(),
 ): Promise<void> {
-  if (fleet.core.length === 0) return;
-  if (!header) {
-    throw new Refusal(403, "PROOF_NEEDED", "Confirm with a trusted passkey.");
-  }
-  const signed = signedCommandSchema.safeParse(decodeJson(header));
-  if (!signed.success) throw bad("The confirmation is malformed.");
-  const { grant: grantText, ...approval } = signed.data.grant;
+  const { grant: grantText, ...approval } = signed.grant;
   const grantBytes = fromB64url(grantText);
   await verifyApproval(env, fleet, grantBytes, approval, email);
 
@@ -44,7 +41,6 @@ async function verifyIntent(
   ) {
     throw bad("The passkey session has ended. Confirm again.");
   }
-  const intentBytes = fromB64url(signed.data.command);
   const key = await crypto.subtle
     .importKey(
       "spki",
@@ -59,12 +55,40 @@ async function verifyIntent(
     !(await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       key,
-      fromB64url(signed.data.signature),
-      intentBytes,
+      fromB64url(signed.signature),
+      fromB64url(signed.body),
     ))
   ) {
     throw bad("The confirmation did not verify.");
   }
+}
+
+async function verifyIntent(
+  env: Env,
+  fleet: Fleet,
+  header: string | undefined,
+  expected: { op: string; target: string },
+  email: string,
+  now = Date.now(),
+): Promise<void> {
+  if (fleet.core.length === 0) return;
+  if (!header) {
+    throw new Refusal(403, "PROOF_NEEDED", "Confirm with a trusted passkey.");
+  }
+  const signed = signedCommandSchema.safeParse(decodeJson(header));
+  if (!signed.success) throw bad("The confirmation is malformed.");
+  await verifySigned(
+    env,
+    fleet,
+    {
+      grant: signed.data.grant,
+      body: signed.data.command,
+      signature: signed.data.signature,
+    },
+    email,
+    now,
+  );
+  const origin = new URL(env.PUBLIC_ORIGIN);
   const intent = decodeJson(signed.data.command) as Fields;
   if (
     intent?.v !== 1 ||
@@ -92,7 +116,8 @@ export async function confirmed(
   fleet?: Fleet,
 ): Promise<Response | null> {
   const identity = context.get("identity");
-  const owned = fleet ?? (await loadFleet(context.env.DB, identity.id));
+  const loaded = fleet ?? (await loadFleet(context.env.DB, identity.id));
+  const owned = { ...loaded, core: loaded.proof };
   const usable = owned.devices
     .filter(
       (device) =>

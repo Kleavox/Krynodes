@@ -35,6 +35,7 @@ export interface Fleet {
   devices: FleetDevice[];
   nodes: FleetNode[];
   core: string[];
+  proof: string[];
   ids: (prints: string[]) => string[];
 }
 
@@ -104,7 +105,10 @@ export async function loadFleet(
       }>(),
     db
       .prepare(
-        `SELECT id, name, agent_version, trust_report FROM nodes
+        `SELECT id, name, agent_version, trust_report, EXISTS (
+           SELECT 1 FROM quarantines q
+           WHERE q.node_id = nodes.id AND q.released_at IS NULL) AS quarantined
+         FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
          ORDER BY name, id`,
       )
@@ -114,6 +118,7 @@ export async function loadFleet(
         name: string;
         agent_version: string | null;
         trust_report: string | null;
+        quarantined: number;
       }>(),
   ]);
   const listed = await Promise.all(
@@ -141,11 +146,31 @@ export async function loadFleet(
     listed
       .filter((device) => prints.includes(device.fingerprint))
       .map((device) => device.id);
-  const union = new Set(listedNodes.flatMap((node) => node.report?.core ?? []));
+  const suspect = new Set(
+    nodes.results.filter((row) => row.quarantined === 1).map((row) => row.id),
+  );
+  const union = new Set(
+    listedNodes.flatMap((node) =>
+      suspect.has(node.id) ? [] : (node.report?.core ?? []),
+    ),
+  );
+  const active = listed.filter((device) => device.removedAt === null);
+  const core = active
+    .filter((device) => union.has(device.fingerprint))
+    .map((device) => device.id);
   return {
     devices: listed,
     nodes: listedNodes,
-    core: ids([...union]),
+    core,
+    proof:
+      core.length > 0
+        ? core
+        : active
+            .filter(
+              (device) =>
+                device.verifies === true && device.lastUsedAt !== null,
+            )
+            .map((device) => device.id),
     ids,
   };
 }

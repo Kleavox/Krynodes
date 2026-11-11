@@ -1,5 +1,6 @@
 import {
   MIN_AGENT_VERSION,
+  TRUST_VERSION_STEP,
   evaluateQuorum,
   summarizeChange,
   trustChangeSchema,
@@ -192,8 +193,40 @@ function checkFingerprints(fleet: Fleet, change: TrustChange) {
       "Krynodes no longer uses a passphrase; passkeys confirm every change.",
     );
   }
+  const held = (change.core ?? []).map((key) => key.publicKey);
+  if (new Set(held).size !== held.length) {
+    throw new Refusal(400, "SAME_KEY", "Two passkeys carry the same key.");
+  }
+  const stored = Math.max(
+    0,
+    ...fleet.nodes.map((node) => node.report?.version ?? 0),
+  );
+  if (change.version - stored > TRUST_VERSION_STEP) {
+    throw new Refusal(
+      409,
+      "STALE_VERSION",
+      "The change is numbered too far ahead of the servers. Start again.",
+    );
+  }
   for (const key of change.core ?? []) {
     const device = fleet.devices.find((entry) => entry.id === key.id);
+    if (
+      device &&
+      (device.publicKey !== key.publicKey || device.alg !== key.alg)
+    ) {
+      throw new Refusal(
+        400,
+        "OTHER_KEY",
+        `${device.name} is listed with another key. Remove it and add it again.`,
+      );
+    }
+    if (!fleet.core.includes(key.id) && device?.removedAt !== null) {
+      throw new Refusal(
+        422,
+        "REMOVED_DEVICE",
+        `${device?.name ?? "A passkey"} is no longer in your list, so it cannot join.`,
+      );
+    }
     if (!fleet.core.includes(key.id) && device?.verifies !== true) {
       throw new Refusal(
         422,

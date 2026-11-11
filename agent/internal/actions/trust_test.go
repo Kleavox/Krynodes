@@ -377,3 +377,34 @@ func TestTheExecutorAppliesATrustRequestAndReportsIt(t *testing.T) {
 		t.Fatalf("calls %#v", run.calls)
 	}
 }
+
+func TestOneApprovalCannotGiveATrustedDeviceAnotherKey(t *testing.T) {
+	found := devices(t, "a", "b", "c")
+	other := devices(t, "x")
+	keys := keysOf(found, "a", "b", "c")
+	keys[1].PublicKey, keys[1].Alg = other["x"].key.PublicKey, other["x"].key.Alg
+	c := newChange(2, keys, map[string][]string{testNode: {"a", "b", "c"}}).by(found, "a")
+	_, err := apply(t, storeOf(found, []string{"a", "b", "c"}, []string{"a", "b", "c"}), c)
+	refused(t, err, "another key")
+}
+
+func TestTheSameKeyUnderTwoDevicesIsRefused(t *testing.T) {
+	found := devices(t, "a", "b", "c")
+	keys := keysOf(found, "a", "b", "c")
+	keys[2].PublicKey, keys[2].Alg = keys[0].PublicKey, keys[0].Alg
+	c := newChange(2, keys, map[string][]string{testNode: {"a", "b"}}).by(found, "a", "b")
+	_, err := apply(t, storeOf(found, []string{"a", "b"}, []string{"a", "b"}), c)
+	refused(t, err, "same key")
+}
+
+func TestAVersionFarAheadIsRefusedAndASmallStepPasses(t *testing.T) {
+	found := devices(t, "a")
+	store := storeOf(found, []string{"a"}, []string{"a"})
+	far := newChange(store.Version+1001, nil, map[string][]string{testNode: {"a"}}).by(found, "a")
+	_, err := apply(t, store, far)
+	refused(t, err, "too far ahead")
+	near := newChange(store.Version+1000, nil, map[string][]string{testNode: {"a"}}).by(found, "a")
+	if _, err := apply(t, store, near); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -6,7 +6,9 @@ import type { AgentNode } from "../agent/ingest";
 import { app } from "../app";
 import type { Env } from "../env";
 import { quarantine } from "../quarantine/quarantine";
-import { seedNode } from "../test/seed";
+import { fingerprint } from "../lib/webauthn";
+import { signedBy, testPasskey, type TestPasskey } from "../test/passkeys";
+import { OWNER, seedNode } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
 
 const A = "11111111-1111-4111-8111-111111111111";
@@ -126,16 +128,47 @@ function setup() {
       },
       env,
     );
-  const post = (
+  let trusted: Promise<TestPasskey> | null = null;
+  const passkey = () =>
+    (trusted ??= (async () => {
+      const made = await testPasskey("laptop");
+      sqlite
+        .prepare(
+          `INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at)
+           VALUES (?, ?, ?, -7, ?, '2026-09-01 00:00:00')`,
+        )
+        .run(made.id, OWNER, made.name, made.publicKey);
+      sqlite.prepare("UPDATE nodes SET trust_report = ?").run(
+        JSON.stringify({
+          version: 1,
+          core: [await fingerprint(made.publicKey)],
+          access: [],
+        }),
+      );
+      return made;
+    })());
+  const post = async (
     document: unknown,
     change = "Change the private network",
     detail: string | null = null,
-  ) =>
-    call("POST", "/api/network/document", {
-      signed: { grant, document: b64(document), signature: "c2lnbmF0dXJl" },
+    forged = false,
+  ) => {
+    const body = b64(document);
+    const signed = await signedBy(
+      await passkey(),
+      new Uint8Array(Buffer.from(body, "base64url")),
+      "https://kry.example.test",
+    );
+    return call("POST", "/api/network/document", {
+      signed: {
+        grant: signed.grant,
+        document: body,
+        signature: forged ? "c2lnbmF0dXJl" : signed.signature,
+      },
       change,
       detail,
     });
+  };
   const network = async () =>
     (await (await call("GET", "/api/network")).json()) as Record<
       string,
@@ -234,6 +267,18 @@ describe("the network document", () => {
       200,
     );
     expect((await network()).network).toMatchObject({ version: 2 });
+  });
+
+  it("writes nothing for a document whose signature does not verify", async () => {
+    const { post, network } = setup();
+    const forged = await post(
+      documentOf(1, [member(A, "10.88.0.1"), member(B, "10.88.0.2")]),
+      "Create the private network",
+      null,
+      true,
+    );
+    expect(forged.status).toBe(400);
+    expect((await network()).network).toBeNull();
   });
 
   it("returns the stored body and keeps every version in the history", async () => {

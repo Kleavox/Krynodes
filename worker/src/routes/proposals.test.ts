@@ -610,6 +610,33 @@ describe("proposals", () => {
     expect((await reply(oldReply)).code).toBe("NEEDS_AGENT");
   });
 
+  it("refuses another key for a known passkey, a version far ahead and a passkey that was forgotten", async () => {
+    const t = setup();
+    const [laptop, phone, other, tablet] = await fleet(4);
+    for (const key of [laptop!, phone!, tablet!]) await t.register(key);
+    await t.report(A, [laptop!, phone!], [laptop!, phone!], 3);
+    const swapped = t.change({
+      version: 4,
+      core: [laptop!, { ...phone!, publicKey: other!.publicKey }],
+      access: { [A]: [laptop!, phone!] },
+    });
+    const swap = await t.open(swapped, await t.approval(laptop!, swapped));
+    expect((await reply(swap)).code).toBe("OTHER_KEY");
+    const far = t.change({ version: 1004, access: { [A]: [laptop!] } });
+    const ahead = await t.open(far, await t.approval(laptop!, far));
+    expect((await reply(ahead)).code).toBe("STALE_VERSION");
+    t.sqlite
+      .prepare("UPDATE devices SET removed_at = '2026-10-01' WHERE id = ?")
+      .run(tablet!.id);
+    const admit = t.change({
+      version: 4,
+      core: [laptop!, phone!, tablet!],
+      access: { [A]: [laptop!, phone!] },
+    });
+    const gone = await t.open(admit, await t.approval(laptop!, admit));
+    expect((await reply(gone)).code).toBe("REMOVED_DEVICE");
+  });
+
   it("lists, cancels, expires and supersedes proposals", async () => {
     const t = setup();
     const [laptop, phone, tablet, helper, spare] = await fleet(5);
