@@ -25,6 +25,7 @@ import {
   loadBox,
   receive,
   type IncidentNotice,
+  keyOf,
   type MailBox,
   type ServerChanges,
 } from "../incident/notify";
@@ -70,6 +71,7 @@ import {
 } from "../quarantine/events";
 import {
   holdStatement,
+  QUARANTINE_ACTOR,
   quarantine,
   quarantineReport,
 } from "../quarantine/quarantine";
@@ -101,6 +103,8 @@ const CHECKS_KEPT_MS = 10 * 60_000;
 const MAILS_AT_ONCE = 5;
 const WATCHDOG_RETRY_MS = 60_000;
 const RECHECK_MS = 60_000;
+const PUSH_HEARD_MS = 60_000;
+const CUTOFFS_AT_ONCE = 10;
 const SETUP_SILENT_MS = 5 * 60_000;
 const SETUP_RESTART_MS = 20 * 60_000;
 
@@ -167,10 +171,7 @@ const watching = (ws: WebSocket) =>
 export class FleetHub {
   private readonly ctx: DurableObjectState;
   private readonly env: Env;
-  private readonly spent = new WeakMap<
-    WebSocket,
-    { since: number; count: number }
-  >();
+  private readonly spent = new Map<string, { since: number; count: number }>();
   private readonly network: HubNetwork;
   private readonly stopped = new Map<
     string,
@@ -293,20 +294,27 @@ export class FleetHub {
     for (const nodeId of nodeIds) {
       this.checks.delete(nodeId);
       const sockets = this.ctx.getWebSockets(nodeId);
-      const actions = sockets.some(
-        (ws) => (ws.deserializeAttachment() as StreamState | null)?.push,
-      )
-        ? await heartbeatActions(this.env.DB, nodeId, Date.now()).catch(
-            (error: unknown) => {
-              console.error("[kry fleet]", error);
-              return [];
-            },
-          )
-        : [];
+      const live = new Set(
+        sockets.filter((ws) => {
+          const state = ws.deserializeAttachment() as StreamState | null;
+          return (
+            state?.push &&
+            !state.away &&
+            Date.now() - this.heard(ws, state) < PUSH_HEARD_MS
+          );
+        }),
+      );
+      const actions =
+        live.size > 0
+          ? await heartbeatActions(this.env.DB, nodeId, Date.now()).catch(
+              (error: unknown) => {
+                console.error("[kry fleet]", error);
+                return [];
+              },
+            )
+          : [];
       for (const ws of sockets) {
-        const push =
-          actions.length > 0 &&
-          (ws.deserializeAttachment() as StreamState | null)?.push;
+        const push = actions.length > 0 && live.has(ws);
         try {
           ws.send(
             JSON.stringify(push ? { type: "poke", actions } : { type: "poke" }),
@@ -376,9 +384,11 @@ export class FleetHub {
   ): Promise<void> {
     if (watching(ws)) return;
     const now = Date.now();
-    const spent = this.spent.get(ws);
+    const sender =
+      (ws.deserializeAttachment() as StreamState | null)?.nodeId ?? "";
+    const spent = this.spent.get(sender);
     if (!spent || now - spent.since >= 60_000) {
-      this.spent.set(ws, { since: now, count: 1 });
+      this.spent.set(sender, { since: now, count: 1 });
     } else if (++spent.count > MESSAGES_PER_MINUTE) {
       if (spent.count === MESSAGES_PER_MINUTE + 1) {
         ws.send(JSON.stringify({ type: "error", code: "TOO_MANY_MESSAGES" }));
@@ -571,14 +581,34 @@ export class FleetHub {
     if (due.length === 0) return;
     const poke: string[] = [];
     const quarantined: string[] = [];
-    for (const [key] of due) {
-      const [nodeId, id] = key.split("|") as [string, string];
-      const cut = await cutOffWarning(this.env.DB, nodeId, id);
-      poke.push(...cut.nodes);
-      quarantined.push(...cut.quarantined);
-      delete stored[key];
+    const waiting = new Map<string, [string, number][]>();
+    for (const entry of due.sort((a, b) => a[1] - b[1])) {
+      const nodeId = entry[0].split("|")[0]!;
+      waiting.set(nodeId, [...(waiting.get(nodeId) ?? []), entry]);
     }
-    await this.ctx.storage.put(CUTOFFS, stored);
+    const turn: [string, number][] = [];
+    while (turn.length < CUTOFFS_AT_ONCE && waiting.size > 0) {
+      for (const [nodeId, entries] of waiting) {
+        turn.push(entries.shift()!);
+        if (entries.length === 0) waiting.delete(nodeId);
+        if (turn.length === CUTOFFS_AT_ONCE) break;
+      }
+    }
+    const done: [string, number][] = [];
+    try {
+      for (const entry of turn) {
+        const [nodeId, id] = entry[0].split("|") as [string, string];
+        const cut = await cutOffWarning(this.env.DB, nodeId, id);
+        poke.push(...cut.nodes);
+        quarantined.push(...cut.quarantined);
+        done.push(entry);
+      }
+    } catch (error) {
+      console.error("[kry fleet] cut off", error);
+    }
+    const kept = await this.cutoffs();
+    for (const [key, at] of done) if (kept[key] === at) delete kept[key];
+    await this.ctx.storage.put(CUTOFFS, kept);
     await this.poke(poke);
     this.announce(["all"]);
     await this.tell({ quarantined });
@@ -618,32 +648,60 @@ export class FleetHub {
   private async quiet(silent: { nodeId: string; seen: number }[], now: number) {
     if (silent.length === 0) return;
     const db = this.env.DB;
-    const members = (
+    const everyone = (
       await db
         .prepare(
-          `SELECT m.node_id, m.key, n.owner_user_id AS owner, n.name FROM network_members m
+          `SELECT m.node_id, m.key, n.owner_user_id AS owner, n.name, EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL) AS quarantined
+           FROM network_members m
            JOIN nodes n ON n.id = m.node_id
-           WHERE m.state = 'in' AND m.node_id IN (SELECT value FROM json_each(?))`,
+           WHERE m.state = 'in' AND n.owner_user_id IN (
+             SELECT owner_user_id FROM nodes WHERE id IN (SELECT value FROM json_each(?)))`,
         )
         .bind(JSON.stringify(silent.map((item) => item.nodeId)))
-        .all<{ node_id: string; key: string; owner: string; name: string }>()
+        .all<{
+          node_id: string;
+          key: string;
+          owner: string;
+          name: string;
+          quarantined: number;
+        }>()
     ).results;
+    const members = everyone.filter((member) =>
+      silent.some((item) => item.nodeId === member.node_id),
+    );
     const cutoffs: Cutoff[] = [];
     const warned: WarningMail[] = [];
     for (const member of members) {
-      const seenBy = [...this.network.latest]
-        .filter(
-          ([other, entry]) =>
-            other !== member.node_id &&
+      const peers = everyone.filter(
+        (peer) =>
+          peer.owner === member.owner &&
+          peer.node_id !== member.node_id &&
+          peer.quarantined === 0,
+      );
+      const seenBy = peers
+        .filter((peer) => {
+          const entry = this.network.latest.get(peer.node_id);
+          return (
+            entry !== undefined &&
+            now - entry.at < QUIET_HANDSHAKE_S * 1000 &&
+            this.ctx
+              .getWebSockets(peer.node_id)
+              .some(
+                (ws) => !(ws.deserializeAttachment() as StreamState).away,
+              ) &&
             entry.links.some(
               (link) =>
                 link.key === member.key &&
                 link.handshake !== null &&
+                link.handshake <= now / 1000 + 60 &&
                 now / 1000 - link.handshake < QUIET_HANDSHAKE_S,
-            ),
-        )
-        .map(([other]) => other);
-      if (seenBy.length === 0) continue;
+            )
+          );
+        })
+        .map((peer) => peer.node_id);
+      if (seenBy.length < Math.min(2, peers.length) || seenBy.length === 0) {
+        continue;
+      }
       const names = (
         await db
           .prepare(
@@ -691,8 +749,11 @@ export class FleetHub {
     const tailnet = await this.ctx.storage.get<Tailnet>(TAILNET);
     if (!tailnet || tailnet.due > now) return;
     const judged = await judgeTailnet(this.env.DB, tailnet.owner, now);
-    if (judged.due === null) await this.ctx.storage.delete(TAILNET);
-    else await this.ctx.storage.put(TAILNET, { ...tailnet, due: judged.due });
+    const latest = await this.ctx.storage.get<Tailnet>(TAILNET);
+    if (latest?.due === tailnet.due && latest.owner === tailnet.owner) {
+      if (judged.due === null) await this.ctx.storage.delete(TAILNET);
+      else await this.ctx.storage.put(TAILNET, { ...latest, due: judged.due });
+    }
     await this.tell({ tailnet: judged.mails });
   }
 
@@ -722,24 +783,26 @@ export class FleetHub {
 
   private async watchdog(now: number): Promise<IncidentNotice[]> {
     const db = this.env.DB;
-    const roster = await this.roster();
     const notices: IncidentNotice[] = [];
-    let changed = false;
-    const silent: { nodeId: string; entry: RosterEntry; seen: number }[] = [];
-    for (const [nodeId, entry] of Object.entries(roster)) {
-      if (entry.offline) continue;
-      const { seen, limit } = this.pulse(nodeId, entry);
-      if (seen === undefined) {
-        entry.lastSeen = now;
-        changed = true;
-        continue;
+    const silentIn = (roster: Record<string, RosterEntry>) => {
+      const unseen: string[] = [];
+      const silent: { nodeId: string; entry: RosterEntry; seen: number }[] = [];
+      for (const [nodeId, entry] of Object.entries(roster)) {
+        if (entry.offline) continue;
+        const { seen, limit } = this.pulse(nodeId, entry);
+        if (seen === undefined) unseen.push(nodeId);
+        else if (
+          now - seen > limit &&
+          now - (entry.checkedAt ?? 0) >= RECHECK_MS
+        ) {
+          silent.push({ nodeId, entry, seen });
+        }
       }
-      if (now - seen <= limit || now - (entry.checkedAt ?? 0) < RECHECK_MS) {
-        continue;
-      }
-      changed = true;
-      silent.push({ nodeId, entry, seen });
-    }
+      return { unseen, silent };
+    };
+    const first = silentIn(await this.roster());
+    const asked = new Set(first.silent.map((item) => item.nodeId));
+    const silent = first.silent;
     const ids = JSON.stringify(silent.map((item) => item.nodeId));
     const rows =
       silent.length === 0
@@ -762,7 +825,15 @@ export class FleetHub {
     const planned = await plannedNodes(db, [...known.keys()], now);
     const quiet: { nodeId: string; seen: number }[] = [];
     const failed: D1PreparedStatement[] = [];
-    for (const { nodeId, entry, seen } of silent) {
+    const roster = await this.roster();
+    const latest = silentIn(roster);
+    let changed = latest.unseen.length > 0;
+    for (const nodeId of latest.unseen) {
+      (roster[nodeId] as RosterEntry).lastSeen = now;
+    }
+    for (const { nodeId, entry, seen } of latest.silent) {
+      if (!asked.has(nodeId)) continue;
+      changed = true;
       const setup =
         known.get(nodeId)?.last_seen_at === null
           ? failedSetup(known.get(nodeId)?.setup ?? null, seen, now)
@@ -804,11 +875,11 @@ export class FleetHub {
         });
       }
     }
+    if (changed) await this.ctx.storage.put(ROSTER, roster);
     if (failed.length > 0) {
       await db.batch(failed);
       this.announce(["nodes"]);
     }
-    if (changed) await this.ctx.storage.put(ROSTER, roster);
     await this.quiet(quiet, now);
     return notices;
   }
@@ -873,6 +944,14 @@ export class FleetHub {
     });
   }
 
+  private async forgetMail(servers: ServerChanges[]) {
+    const box = await this.box();
+    for (const server of servers) {
+      for (const notice of server.down) delete box.failures[keyOf(notice)];
+    }
+    await this.ctx.storage.put(MAIL, box);
+  }
+
   private async mail(send: ServerChanges[]) {
     if (send.length === 0) return;
     try {
@@ -887,9 +966,23 @@ export class FleetHub {
         return nodeName ? [{ nodeName, ...server }] : [];
       });
       if (named.length > MAILS_AT_ONCE) {
-        await sendFleetEmail(this.env, named);
+        try {
+          await sendFleetEmail(this.env, named);
+        } catch (error) {
+          await this.forgetMail(named);
+          throw error;
+        }
       } else {
-        for (const server of named) await sendServerEmail(this.env, server);
+        let failure: unknown = null;
+        for (const server of named) {
+          try {
+            await sendServerEmail(this.env, server);
+          } catch (error) {
+            failure = error;
+            await this.forgetMail([server]);
+          }
+        }
+        if (failure !== null) throw failure;
       }
       await this.noteMail(this.mailSetup());
     } catch (error) {
@@ -1080,7 +1173,7 @@ export class FleetHub {
         away: false,
         networkStamp: network?.stamp ?? current.networkStamp,
       });
-      if (current.lastSeen === null || notices.length > 0) {
+      if (current.lastSeen === null || current.away || notices.length > 0) {
         await this.schedule(now);
       }
       reply({
@@ -1205,6 +1298,12 @@ export class FleetHub {
     if (!entry?.offline) return;
     roster[nodeId] = { interval: entry.interval, disk: entry.disk };
     await this.ctx.storage.put(ROSTER, roster);
+    await this.env.DB.prepare(
+      `UPDATE warnings SET answer = 'back', answered_at = ?, answered_by = ?
+       WHERE node_id = ? AND kind = 'quiet' AND answer IS NULL`,
+    )
+      .bind(new Date(Date.now()).toISOString(), QUARANTINE_ACTOR, nodeId)
+      .run();
   }
 
   private flushStatement(nodeId: string, flush: Flush) {

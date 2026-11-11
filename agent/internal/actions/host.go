@@ -167,6 +167,9 @@ func (e Executor) rebootDue(ctx context.Context) bool {
 	if err != nil || window.Hour == nil {
 		return false
 	}
+	if setup, err := readState[setupProgress](e.StateDir, setupFile); err == nil && setup.Phase != "" && e.Now().Sub(setup.At) <= setupStale {
+		return false
+	}
 	now := e.Now().UTC()
 	today := now.Format(time.DateOnly)
 	if now.Hour() != *window.Hour || window.Last == today {

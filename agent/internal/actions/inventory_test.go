@@ -476,3 +476,24 @@ func TestCollectAsksSystemdOnceAboutUnitsThatDoNotRun(t *testing.T) {
 		}
 	}
 }
+
+func TestTheInventoryKeepsEachListWithinWhatTheDashboardTakes(t *testing.T) {
+	many := func(count int, format string) []string {
+		list := make([]string, count)
+		for at := range list {
+			list[at] = fmt.Sprintf(format, at)
+		}
+		return list
+	}
+	inventory, err := NewInventory(Parts{
+		Leftovers: many(80, "old%03d"),
+		Stacks:    []reporter.StackEntry{{Project: "big", Public: many(70, "%d/tcp"), Containers: many(600, "big-%d"), Services: many(70, "svc%d")}},
+	}, executorNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack := inventory.Stacks[0]
+	if len(inventory.Leftovers) != 50 || len(stack.Public) != 64 || len(stack.Containers) != 500 || len(stack.Services) != 64 {
+		t.Fatalf("leftovers %d public %d containers %d services %d", len(inventory.Leftovers), len(stack.Public), len(stack.Containers), len(stack.Services))
+	}
+}

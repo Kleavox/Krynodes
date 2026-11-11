@@ -24,3 +24,12 @@ func TestAnEventAlwaysFitsWhatTheDashboardTakes(t *testing.T) {
 		t.Fatalf("detail %q", events[0].Detail)
 	}
 }
+
+func TestAnEventIDWithOtherCharactersIsHashed(t *testing.T) {
+	executor, _ := securityExecutor(t)
+	executor.event("wrong-port", "wrong-port:10.88.0.3:10.88.0.2:5432/tcp:497410", map[string]string{"from": "10.88.0.3"})
+	events := readEvents(t, executor)
+	if len(events) != 1 || !regexp.MustCompile(`^wrong-port:[A-Za-z0-9_.:-]{1,53}$`).MatchString(events[0].ID) {
+		t.Fatalf("events %+v", events)
+	}
+}

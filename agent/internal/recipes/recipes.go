@@ -23,18 +23,28 @@ type Env struct {
 	Run   Runner
 	Fetch Fetcher
 	Sleep func(time.Duration)
+
+	Timeout time.Duration
+}
+
+func (e Env) limit() time.Duration {
+	if e.Timeout > 0 {
+		return e.Timeout
+	}
+	return stepTimeout
 }
 
 const (
-	autoUpgrades  = "/etc/apt/apt.conf.d/52krynodes-auto-upgrades"
-	sshDropIn     = "/etc/ssh/sshd_config.d/10-krynodes.conf"
-	rootDropIn    = "/etc/ssh/sshd_config.d/00-krynodes-root.conf"
-	oldRootDropIn = "/etc/ssh/sshd_config.d/10-krynodes-root.conf"
-	jail          = "/etc/fail2ban/jail.d/krynodes.local"
-	stubDropIn    = "/etc/systemd/resolved.conf.d/krynodes-no-stub.conf"
-	resolvConf    = "/etc/resolv.conf"
-	fullResolver  = "/run/systemd/resolve/resolv.conf"
-	stepTimeout   = 15 * time.Minute
+	autoUpgrades   = "/etc/apt/apt.conf.d/52krynodes-auto-upgrades"
+	sshDropIn      = "/etc/ssh/sshd_config.d/10-krynodes.conf"
+	rootDropIn     = "/etc/ssh/sshd_config.d/00-krynodes-root.conf"
+	oldRootDropIn  = "/etc/ssh/sshd_config.d/10-krynodes-root.conf"
+	jail           = "/etc/fail2ban/jail.d/krynodes.local"
+	stubDropIn     = "/etc/systemd/resolved.conf.d/krynodes-no-stub.conf"
+	resolvConf     = "/etc/resolv.conf"
+	fullResolver   = "/run/systemd/resolve/resolv.conf"
+	stepTimeout    = 15 * time.Minute
+	upgradeTimeout = time.Hour
 )
 
 var (
@@ -64,7 +74,7 @@ func (e Env) real(name string) string {
 }
 
 func (e Env) run(ctx context.Context, name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(ctx, stepTimeout)
+	ctx, cancel := context.WithTimeout(ctx, e.limit())
 	defer cancel()
 	output, _, err := e.Run(ctx, name, args...)
 	if err != nil {
@@ -78,7 +88,7 @@ func (e Env) run(ctx context.Context, name string, args ...string) error {
 }
 
 func (e Env) output(ctx context.Context, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, stepTimeout)
+	ctx, cancel := context.WithTimeout(ctx, e.limit())
 	defer cancel()
 	output, _, err := e.Run(ctx, name, args...)
 	return string(output), err

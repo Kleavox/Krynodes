@@ -278,6 +278,13 @@ export function useQuarantineSettings() {
   });
 }
 
+export const savedKnocks = async () => {
+  const { settings } = await apiFetch<{ settings: QuarantineSettings }>(
+    "/api/settings/quarantine",
+  );
+  return { scan: settings.scan, stop: settings.stop };
+};
+
 export const useSaveQuarantineSettings = () =>
   useApiMutation(
     (settings: QuarantineSettings) =>

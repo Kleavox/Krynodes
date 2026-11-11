@@ -56,6 +56,26 @@ describe("quarantine", () => {
     ).toEqual([{ change: "Quarantine vps-1", by: "Quarantine" }]);
   });
 
+  it("blocks only Tailscale addresses, whatever else the suspect reported", async () => {
+    const { db, sqlite } = setup();
+    sqlite.prepare("UPDATE nodes SET tailscale = ? WHERE id = ?").run(
+      JSON.stringify({
+        installed: true,
+        addresses: ["100.101.7.10", "10.88.0.2", "8.8.8.8", "not an address"],
+      }),
+      V1,
+    );
+    await quarantine(db, { nodeId: V1, why: "test", now: NOW });
+    const timeline = JSON.parse(
+      (
+        sqlite.prepare("SELECT timeline FROM quarantines").get() as {
+          timeline: string;
+        }
+      ).timeline,
+    ) as { tailnet: string[] };
+    expect(timeline.tailnet).toEqual(["100.101.7.10"]);
+  });
+
   it("starts once for a server already quarantined", async () => {
     const { db, sqlite } = setup();
     await quarantine(db, { nodeId: V1, why: "first", now: NOW });

@@ -111,3 +111,22 @@ func TestWarnOnlyStopsNothing(t *testing.T) {
 		t.Fatalf("events %+v", events)
 	}
 }
+
+func TestAStopThatFailsLeavesNoMarkSoTheStackIsStoppedOnTheNextLook(t *testing.T) {
+	executor, run, _, _, _ := joinedServer(t)
+	knockingStack(t, executor)
+	run.respond[journalCall()] = knockLines(network.ReachPrefix, "krc111111111111", "172.30.0.2", 14, func(index int) string { return fmt.Sprintf("10.88.0.%d:6379", index+1) })
+	run.respond["docker ps -a --filter label=com.docker.compose.project=app --format {{.ID}}"] = "c1\n"
+	stop := "env KRY_PRIVATE_IP=10.88.0.2 docker compose --project-name app stop"
+	run.failing[stop] = "daemon busy\n"
+	executor.watchKnocks(context.Background())
+	if _, err := os.Stat(filepath.Join(executor.StateDir, "knocked", "app.json")); !os.IsNotExist(err) {
+		t.Fatalf("mark kept after a failed stop: %v", err)
+	}
+	delete(run.failing, stop)
+	run.calls = nil
+	executor.watchKnocks(context.Background())
+	if !slices.Contains(run.calls, stop) || !executor.knocked("app") {
+		t.Fatalf("not stopped on the next look: %v", run.calls)
+	}
+}

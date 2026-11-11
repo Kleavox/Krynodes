@@ -4,6 +4,7 @@ import {
   postItWasMe,
   postNetworkDocument,
   postRelease,
+  savedKnocks,
   useApiMutation,
   useCloudflare,
   useDevices,
@@ -180,6 +181,7 @@ export function useRelease(node: NodeRecord) {
           },
           inputs.sealKeys,
           base?.parent,
+          await savedKnocks(),
         );
         const sealed = await signCommand(session, document);
         await postNetworkDocument({

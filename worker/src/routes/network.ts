@@ -18,7 +18,8 @@ import {
   readNetwork,
   storedDocument,
 } from "../network/document";
-import { ownersRefusal } from "../trust/approval";
+import { Refusal } from "../trust/approval";
+import { verifySigned } from "../trust/intent";
 import { loadFleet, syncedUpdates } from "../trust/fleet";
 import {
   invalidRequest,
@@ -357,16 +358,22 @@ export function registerNetworkRoutes(
     const db = context.env.DB;
     const identity = context.get("identity");
     const owner = identity.id;
-    const refused = await ownersRefusal(
-      context.env,
-      await loadFleet(db, owner),
-      [signed.grant],
-      identity.email,
-    );
-    if (refused) {
+    try {
+      await verifySigned(
+        context.env,
+        await loadFleet(db, owner),
+        {
+          grant: signed.grant,
+          body: signed.document,
+          signature: signed.signature,
+        },
+        identity.email,
+      );
+    } catch (error) {
+      if (!(error instanceof Refusal)) throw error;
       return context.json(
-        { code: refused.code, message: refused.message },
-        refused.status,
+        { code: error.code, message: error.message },
+        error.status,
       );
     }
     const [row, members, addresses, blocked, nodes] = await Promise.all([

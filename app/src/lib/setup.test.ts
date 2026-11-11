@@ -10,6 +10,7 @@ const server = (extra: Partial<NodeRecord> = {}) =>
   ({
     enrolled_at: ago(30),
     last_seen_at: ago(0),
+    interval_seconds: 60,
     setup: null,
     warnings: [],
     ...extra,
@@ -38,6 +39,18 @@ describe("setupView", () => {
         ),
       ).toEqual({ label: "Setting Up", stopped: false, failed: false, step });
     }
+  });
+
+  it("shows no running setup for a server that reported before and went offline", () => {
+    expect(
+      setupView(
+        server({
+          last_seen_at: ago(30),
+          setup: { phase: "docker", step: 4, of: 6 },
+        }),
+        NOW,
+      ),
+    ).toBeNull();
   });
 
   it("names the step a setup stopped at", () => {

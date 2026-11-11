@@ -10,6 +10,7 @@ import {
   ACTION_QUERIES,
   postActions,
   postNetworkDocument,
+  savedKnocks,
   useApiMutation,
   useDevices,
   useServices,
@@ -215,6 +216,7 @@ export async function finishJoin() {
       change,
       current.sealKeys,
       base?.parent,
+      await savedKnocks(),
     );
     const session = activeSession() ?? (await openSession(current.signers));
     const names = ready.map(({ seat }) => seat.name);
@@ -272,6 +274,7 @@ async function signChange(input: Change) {
     input.change,
     input.sealKeys ?? {},
     base?.parent,
+    await savedKnocks(),
   );
   await postNetworkDocument({
     signed: await signDocument(session, document),

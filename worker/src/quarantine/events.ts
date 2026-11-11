@@ -70,7 +70,9 @@ export function warningStatement(
   return db
     .prepare(
       `INSERT OR IGNORE INTO warnings (node_id, id, kind, detail, at, cut_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE ?7 IS NULL OR NOT EXISTS (
+         SELECT 1 FROM warnings WHERE node_id = ?1 AND kind = ?3 AND answer IS NULL
+           AND json_extract(detail, '$.item') = ?7)`,
     )
     .bind(
       warning.nodeId,
@@ -79,6 +81,7 @@ export function warningStatement(
       JSON.stringify(warning.detail),
       warning.at,
       warning.cutAt === null ? null : iso(warning.cutAt),
+      warning.detail.item || null,
     );
 }
 
@@ -295,12 +298,20 @@ async function knocked(
   const members = (
     await db
       .prepare(
-        `SELECT m.node_id, m.address FROM network_members m JOIN nodes n ON n.id = m.node_id
+        `SELECT m.node_id, m.address, EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL) AS quarantined
+         FROM network_members m JOIN nodes n ON n.id = m.node_id
          WHERE n.owner_user_id = ? AND m.state = 'in'`,
       )
       .bind(owner)
-      .all<{ node_id: string; address: string | null }>()
+      .all<{ node_id: string; address: string | null; quarantined: number }>()
   ).results;
+  if (
+    !members.some(
+      (member) => member.node_id === reporter && member.quarantined === 0,
+    )
+  ) {
+    return [];
+  }
   const suspect = members.find(
     (member) => member.address === knock.from && member.node_id !== reporter,
   );

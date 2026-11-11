@@ -3,6 +3,8 @@ import { z } from "zod";
 const b64url = /^[A-Za-z0-9_-]+$/u;
 const credential = z.string().min(1).max(1400).regex(b64url);
 
+export const TRUST_VERSION_STEP = 1000;
+
 export const trustKeySchema = z.strictObject({
   id: credential,
   name: z.string().min(1).max(40),

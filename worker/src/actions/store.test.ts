@@ -13,6 +13,7 @@ import {
   heartbeatActions,
   PENDING_SQL,
   plannedNodes,
+  stoppedChecks,
   sweepStatements,
   workUnderway,
   type BatchMode,
@@ -238,6 +239,152 @@ describe("action batches", () => {
     expect(await ids(A, NOW + 2 * MINUTE)).toEqual([forget!.id]);
   });
 
+  it("skips a step whose source step went away with a deleted server", async () => {
+    const { db, sqlite, sweep, status } = setup();
+    const batch = createBatch(db, {
+      action: "reshare",
+      mode: "rolling",
+      targets: [
+        { nodeId: A, action: "reshare" as const },
+        { nodeId: B, action: "store" as const, attachFrom: 0 },
+      ].map((step) => ({
+        ...step,
+        kind: "vault" as const,
+        name: "cloudflare",
+      })),
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    sqlite.prepare("DELETE FROM actions WHERE node_id = ?").run(A);
+    await sweep(NOW + MINUTE);
+    expect(status(batch.actions[1]!.id)).toBe("skipped");
+  });
+
+  it("gives actions delivered together the time to wait for one another", async () => {
+    const { db, sqlite, queue } = setup();
+    await queue("parallel", [A]);
+    const alone = await deliverActions(db, A, NOW);
+    expect(alone.map((action) => action.expiresAt)).toEqual([
+      iso(NOW + 10 * MINUTE),
+    ]);
+    sqlite.prepare("DELETE FROM actions").run();
+    await queue("parallel", [A]);
+    const batch = createBatch(db, {
+      action: "restart",
+      mode: "parallel",
+      targets: [{ nodeId: A, kind: "docker" as const, name: "web" }],
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    const together = await deliverActions(db, A, NOW);
+    expect(together.map((action) => action.expiresAt)).toEqual([
+      iso(NOW + 30 * MINUTE),
+      iso(NOW + 30 * MINUTE),
+    ]);
+  });
+
+  it("takes a stopped stack back after any verb that starts it again", async () => {
+    const { db, sqlite, finish } = setup();
+    for (const action of ["restart", "deploy", "restore"] as const) {
+      sqlite
+        .prepare(
+          "INSERT INTO stopped_stacks (node_id, project, at, tried, count) VALUES (?, 'shop', 'now', '[]', 1)",
+        )
+        .run(A);
+      const batch = createBatch(db, {
+        action,
+        mode: "parallel",
+        targets: [{ nodeId: A, kind: "compose" as const, name: "shop" }],
+        requestedBy: "owner@example.test",
+        now: NOW,
+      });
+      await db.batch(batch.statements);
+      await deliverActions(db, A, NOW);
+      await finish(A, batch.actions[0]!.id, true, NOW + MINUTE);
+      expect(
+        sqlite.prepare("SELECT project FROM stopped_stacks").all(),
+      ).toEqual([]);
+      sqlite.prepare("DELETE FROM actions").run();
+    }
+  });
+
+  it("opens the quarantine again when the release step did not finish", async () => {
+    const { db, sqlite, finish } = setup();
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline, released_at, released_by) VALUES ('q1', ?, 'why', ?, '{}', ?, 'device')",
+      )
+      .run(A, iso(NOW - MINUTE), iso(NOW));
+    sqlite
+      .prepare("UPDATE nodes SET release = ? WHERE id = ?")
+      .run(JSON.stringify({ token: "t", released: true }), A);
+    const batch = createBatch(db, {
+      action: "release",
+      mode: "rolling",
+      targets: [{ nodeId: A, kind: "host" as const, name: "server" }],
+      requestedBy: "owner@example.test",
+      now: NOW,
+    });
+    await db.batch(batch.statements);
+    await deliverActions(db, A, NOW);
+    await finish(A, batch.actions[0]!.id, false, NOW + MINUTE);
+    expect(sqlite.prepare("SELECT released_at FROM quarantines").get()).toEqual(
+      { released_at: null },
+    );
+    expect(
+      sqlite.prepare("SELECT release FROM nodes WHERE id = ?").get(A),
+    ).toEqual({ release: null });
+  });
+
+  it("stops muting a check once its stack was started again through another target", async () => {
+    const { db, sqlite } = setup();
+    sqlite
+      .prepare(
+        `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at, containers)
+         VALUES (?, 'shop', '/srv/shop', 1, 1, 1, 0, 'now', ?)`,
+      )
+      .run(A, JSON.stringify(["web"]));
+    sqlite
+      .prepare(
+        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', 'web', 'running')",
+      )
+      .run(A);
+    const ran = async (
+      kind: "docker" | "compose",
+      name: string,
+      action: "stop" | "start",
+      at: number,
+    ) => {
+      const batch = createBatch(db, {
+        action,
+        mode: "parallel",
+        targets: [{ nodeId: A, kind, name }],
+        requestedBy: "owner@example.test",
+        now: at,
+      });
+      await db.batch(batch.statements);
+      sqlite
+        .prepare(
+          "UPDATE actions SET status = 'done', finished_at = ? WHERE id = ?",
+        )
+        .run(iso(at), batch.actions[0]!.id);
+    };
+    const check = { id: "chk-web", kind: "CONTAINER", target: "web" };
+    const node = { id: A, ownerId: OWNER };
+    await ran("docker", "web", "stop", NOW);
+    expect(await stoppedChecks(db, node, [check])).toEqual(
+      new Set(["chk-web"]),
+    );
+    await ran("compose", "shop", "start", NOW + MINUTE);
+    expect(await stoppedChecks(db, node, [check])).toEqual(new Set());
+    await ran("docker", "web", "stop", NOW + 2 * MINUTE);
+    expect(await stoppedChecks(db, node, [check])).toEqual(
+      new Set(["chk-web"]),
+    );
+  });
+
   it("reads one index entry on a heartbeat from a server with nothing to do", async () => {
     const { db, sqlite, queue } = setup();
     await queue("parallel", [A]);
@@ -247,7 +394,7 @@ describe("action batches", () => {
     expect(statements[0]).not.toMatch(/UPDATE/u);
     expect(await heartbeatActions(db, A, NOW)).toHaveLength(1);
     expect(statements.filter((sql) => sql.startsWith("UPDATE"))).toHaveLength(
-      5,
+      7,
     );
   });
 

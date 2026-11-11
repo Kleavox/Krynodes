@@ -3,7 +3,7 @@ import { fromB64url } from "../lib/b64url";
 import { verifyAssertion } from "../lib/webauthn";
 import type { Fleet } from "./fleet";
 
-interface Approval {
+export interface Approval {
   credentialId: string;
   authenticatorData: string;
   clientDataJSON: string;

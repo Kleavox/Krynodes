@@ -26,7 +26,7 @@ describe("Krynodes retention", () => {
     const { env, statements, run } = retentionEnv();
     await runRetention(env);
 
-    expect(run).toHaveBeenCalledTimes(7);
+    expect(run).toHaveBeenCalledTimes(11);
     expect(statements[0]).toContain("DELETE FROM node_windows");
     expect(statements.join("\n")).toContain("incidents");
     expect(statements[3]).toContain("FROM actions");

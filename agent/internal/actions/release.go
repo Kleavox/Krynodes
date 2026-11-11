@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -91,30 +92,67 @@ func (e Executor) release(ctx context.Context, request Request, command Command)
 		return e.failed(request, err, "")
 	}
 	cfg.Token = string(token)
-	if err := config.Save(e.ConfigPath, cfg); err != nil {
-		return e.failed(request, err, "")
-	}
 	keys := filepath.Join(e.StateDir, "keys")
 	if err := os.MkdirAll(keys, 0o700); err != nil {
 		return e.failed(request, err, "")
 	}
-	if err := os.Rename(filepath.Join(dir, "seal.key"), filepath.Join(keys, "seal.key")); err != nil {
+	record := e.readNetwork()
+	moves := [][2]string{{filepath.Join(dir, "seal.key"), filepath.Join(keys, "seal.key")}}
+	if record.Key != "" {
+		for _, name := range []string{"key", "signer"} {
+			moves = append(moves, [2]string{filepath.Join(dir, name), filepath.Join(e.networkDir(), name)})
+		}
+	}
+	undo, err := swapFiles(moves)
+	if err != nil {
 		return e.failed(request, err, "")
 	}
-	if record := e.readNetwork(); record.Key != "" {
-		for _, name := range []string{"key", "signer"} {
-			if err := os.Rename(filepath.Join(dir, name), filepath.Join(e.networkDir(), name)); err != nil {
-				return e.failed(request, err, "")
-			}
-		}
+	if record.Key != "" {
+		before := record
 		record.Key, record.Signer, record.Announce = pending.Key, pending.Signer, nil
 		if err := e.saveNetwork(record); err != nil {
+			undo()
 			return e.failed(request, err, "")
 		}
+		if err := config.Save(e.ConfigPath, cfg); err != nil {
+			undo()
+			e.saveNetwork(before)
+			return e.failed(request, err, "")
+		}
+	} else if err := config.Save(e.ConfigPath, cfg); err != nil {
+		undo()
+		return e.failed(request, err, "")
+	}
+	for _, move := range moves {
+		os.Remove(move[1] + ".before-release")
 	}
 	os.Remove(filepath.Join(e.StateDir, releaseFile))
 	os.RemoveAll(dir)
 	e.retake(ctx, true)
 	e.Run(context.WithoutCancel(ctx), "systemctl", "restart", "--no-block", agentUnit)
 	return Result{ID: request.ID, OK: true, Output: "released: new keys and a new sign-in to Krynodes", FinishedAt: e.stamp()}
+}
+
+func swapFiles(moves [][2]string) (func(), error) {
+	done := 0
+	undo := func() {
+		for _, move := range slices.Backward(moves[:done]) {
+			os.Rename(move[1], move[0])
+			os.Rename(move[1]+".before-release", move[1])
+		}
+	}
+	for _, move := range moves {
+		kept := move[1] + ".before-release"
+		if err := os.Rename(move[1], kept); err != nil && !errors.Is(err, os.ErrNotExist) {
+			undo()
+			return nil, err
+		}
+		if err := os.Rename(move[0], move[1]); err != nil {
+			os.Rename(kept, move[1])
+			undo()
+			return nil, err
+		}
+		done++
+	}
+	return undo, nil
 }

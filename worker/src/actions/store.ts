@@ -11,6 +11,18 @@ import { tailscaleResults } from "../tailscale/results";
 import { loadEstate } from "./attention";
 
 const ACTION_TTL_MS = 10 * 60_000;
+const RUN_BUDGET_MS = 20 * 60_000;
+const START_VERBS: string[] = [
+  "create",
+  "restore",
+  "deploy",
+  "rollback",
+  "start",
+  "restart",
+  "edit",
+  "adopt",
+  "expose",
+];
 const ABANDON_MS = 15 * 60_000;
 const LONG_ABANDON_MS = 60 * 60_000;
 const PLANNED_MS = 30 * 60_000;
@@ -181,7 +193,12 @@ const SKIP_SQL = `UPDATE actions SET status = 'skipped', finished_at = ?1,
     SELECT 1 FROM actions earlier
     WHERE earlier.batch_id = actions.batch_id
       AND earlier.position < actions.position
-      AND earlier.status IN ('failed', 'expired', 'cancelled', 'skipped'))`;
+      AND earlier.status IN ('failed', 'expired', 'cancelled', 'skipped'))
+    OR status = 'queued' AND deliverable_at IS NULL
+      AND attach_from IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM actions source
+    WHERE source.batch_id = actions.batch_id
+      AND source.position = actions.attach_from)`;
 
 const PROMOTE_SQL = `UPDATE actions SET deliverable_at = ?1
   WHERE status = 'queued' AND deliverable_at IS NULL AND CASE
@@ -196,6 +213,25 @@ const PROMOTE_SQL = `UPDATE actions SET deliverable_at = ?1
         AND source.position = actions.attach_from
         AND source.status = 'done')
     END`;
+
+const UNRELEASED = `json_extract(release, '$.released') = 1 AND id IN (
+    SELECT a.node_id FROM actions a
+    WHERE a.action = 'release'
+      AND a.status IN ('failed', 'expired', 'skipped', 'cancelled')
+      AND NOT EXISTS (
+        SELECT 1 FROM actions later
+        WHERE later.node_id = a.node_id AND later.action = 'release'
+          AND later.requested_at > a.requested_at))`;
+
+const REOPEN_SQL = `UPDATE quarantines SET released_at = NULL, released_by = NULL
+  WHERE released_at IS NOT NULL
+    AND node_id IN (SELECT id FROM nodes WHERE ${UNRELEASED})
+    AND NOT EXISTS (
+      SELECT 1 FROM quarantines other
+      WHERE other.node_id = quarantines.node_id
+        AND (other.released_at IS NULL OR other.at > quarantines.at))`;
+
+const UNRELEASE_SQL = `UPDATE nodes SET release = NULL WHERE ${UNRELEASED}`;
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -223,6 +259,8 @@ export function sweepStatements(
       ),
     db.prepare(SKIP_SQL).bind(at),
     db.prepare(PROMOTE_SQL).bind(at),
+    db.prepare(REOPEN_SQL),
+    db.prepare(UNRELEASE_SQL),
   ];
 }
 
@@ -232,7 +270,7 @@ export const REBOOT_MS = 10 * 60_000;
 const WORK_SQL = `FROM actions
   WHERE node_id IN (SELECT value FROM json_each(?1))
     AND action NOT IN (SELECT value FROM json_each(?5)) AND (
-    (status = 'queued' AND deliverable_at IS NOT NULL)
+    (status = 'queued' AND deliverable_at >= ?6)
     OR (status = 'sent' AND sent_at >= ?4)
     OR (status IN ('done', 'failed') AND finished_at >=
       CASE WHEN action = 'reboot' THEN ?3 ELSE ?2 END))`;
@@ -243,6 +281,7 @@ const workBinds = (nodeIds: string[], now: number, rebootSince: number) => [
   iso(now - rebootSince),
   iso(now - PLANNED_MS),
   JSON.stringify(NOT_WORK),
+  iso(now - ACTION_TTL_MS),
 ];
 
 export async function plannedNodes(
@@ -290,17 +329,40 @@ export async function stoppedChecks(
 ): Promise<Set<string>> {
   const stopped = await db
     .prepare(
-      `SELECT kind, name, action FROM (
-         SELECT kind, name, action,
+      `SELECT kind, name, action, requested_at FROM (
+         SELECT kind, name, action, requested_at,
            ROW_NUMBER() OVER (PARTITION BY kind, name ORDER BY requested_at DESC) AS n
          FROM actions
          WHERE node_id = ? AND status = 'done'
            AND action NOT IN (SELECT value FROM json_each(?)))
-       WHERE n = 1 AND action = 'stop'`,
+       WHERE n = 1 AND (action = 'stop' OR action IN (SELECT value FROM json_each(?)))`,
     )
-    .bind(node.id, JSON.stringify(NOT_WORK))
-    .all<{ kind: string; name: string; action: string }>();
-  return touchedChecks(db, node, checks, stopped.results);
+    .bind(node.id, JSON.stringify(NOT_WORK), JSON.stringify(START_VERBS))
+    .all<{
+      kind: string;
+      name: string;
+      action: string;
+      requested_at: string;
+    }>();
+  const stops = stopped.results.filter((row) => row.action === "stop");
+  if (stops.length === 0) return new Set();
+  const server = (await loadEstate(db, node.ownerId)).server(node.id);
+  const latest = (check: (typeof checks)[number], started: boolean) =>
+    stopped.results
+      .filter(
+        (row) =>
+          (row.action !== "stop") === started &&
+          workTouches(check, row, server),
+      )
+      .reduce((at, row) => (row.requested_at > at ? row.requested_at : at), "");
+  return new Set(
+    checks
+      .filter((check) => {
+        const stop = latest(check, false);
+        return stop !== "" && latest(check, true) < stop;
+      })
+      .map((check) => check.id),
+  );
 }
 
 async function touchedChecks(
@@ -409,7 +471,11 @@ export async function deliverActions(
     kind: row.kind,
     name: row.name,
     action: row.action,
-    expiresAt: iso(Date.parse(row.deliverable_at) + ACTION_TTL_MS),
+    expiresAt: iso(
+      Date.parse(row.deliverable_at) +
+        ACTION_TTL_MS +
+        (rows.results.length > 1 ? RUN_BUDGET_MS : 0),
+    ),
     ...(row.signed === null
       ? {}
       : { signed: JSON.parse(row.signed) as unknown }),
@@ -577,7 +643,9 @@ function followUp(
   const stopped = db
     .prepare("DELETE FROM stopped_stacks WHERE node_id = ? AND project = ?")
     .bind(nodeId, action.name);
-  if (action.action === "start") return [stopped];
+  if (action.action !== "restore" && START_VERBS.includes(action.action)) {
+    return [stopped];
+  }
   const stack = db
     .prepare("DELETE FROM stacks WHERE node_id = ? AND project = ?")
     .bind(nodeId, action.name);
@@ -597,7 +665,7 @@ function followUp(
     ];
   }
   if (action.action === "purge") return [stack, removed, stopped];
-  if (action.action === "restore") return [removed];
+  if (action.action === "restore") return [removed, stopped];
   return [];
 }
 

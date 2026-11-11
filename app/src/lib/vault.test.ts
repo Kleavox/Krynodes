@@ -716,6 +716,7 @@ describe("the Tailscale credential in pieces", () => {
       id: A,
       name: "server-1",
       agent_version: "0.7.0",
+      enrolled_at: "2026-10-26 06:00:00",
       last_seen_at: "2026-10-27 06:59:50",
       interval_seconds: 60,
       quarantine: { at: "2026-10-27T06:00:00Z", why: "why" },

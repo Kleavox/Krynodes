@@ -533,7 +533,7 @@ export function vaultNodes(
           fingerprint === null
             ? (entry.trust?.access.length ?? 0) > 0
             : (entry.trust?.access.includes(fingerprint) ?? false),
-        online: nodeState(node, seen) !== "offline",
+        online: nodeState(node, seen) === "online",
         quarantined: Boolean(node.quarantine),
         version: node.agent_version,
       },

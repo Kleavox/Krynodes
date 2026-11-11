@@ -184,7 +184,7 @@ async function movedEndpoint(
   const member = await db
     .prepare(
       `SELECT m.endpoint, m.port, n.name FROM network_members m JOIN nodes n ON n.id = m.node_id
-       WHERE m.node_id = ? AND m.state = 'in' AND m.nat = 0`,
+       WHERE m.node_id = ? AND m.state = 'in' AND m.nat = 0 AND NOT EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL)`,
     )
     .bind(nodeId)
     .first<{ endpoint: string | null; port: number; name: string }>();
