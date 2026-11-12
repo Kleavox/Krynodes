@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/config"
+	"github.com/Kleavox/krynodes/agent/internal/confine"
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
@@ -165,6 +166,24 @@ func TestAGoodReleaseSwapsTheKeysAndTheSignInToKrynodes(t *testing.T) {
 	}
 	if !slices.Contains(r.run.calls, "systemctl restart --no-block "+agentUnit) {
 		t.Fatalf("the agent was not restarted: %q", r.run.calls)
+	}
+}
+
+func TestAReleaseSetsAManagedSELinuxBackToEnforcing(t *testing.T) {
+	r := quarantinedServer(t)
+	os.WriteFile(r.mark, nil, 0o640)
+	rootFile(t, r.executor, "/etc/os-release", rockyRelease)
+	rootFile(t, r.executor, "/sys/fs/selinux/enforce", "0")
+	rootFile(t, r.executor, confine.SELinuxConfig, "SELINUX=permissive\nSELINUXTYPE=targeted\n")
+	manage(t, r.executor, "selinux")
+	pending, code := r.code(t)
+	result := throughBoth(t, r.executor, releaseRequest(t, fresh(1), pending, code))
+	config, _ := os.ReadFile(r.executor.path(confine.SELinuxConfig))
+	if !result.OK || !strings.Contains(result.Output, "SELinux enforces again") || !slices.Contains(r.run.calls, "setenforce 1") || !strings.Contains(string(config), "SELINUX=enforcing\n") {
+		t.Fatalf("release %+v config %q calls %q", result, config, r.run.calls)
+	}
+	if _, err := os.Stat(filepath.Join(r.executor.StateDir, confinementMark)); err != nil {
+		t.Fatalf("the change was not marked as Krynodes' own: %v", err)
 	}
 }
 

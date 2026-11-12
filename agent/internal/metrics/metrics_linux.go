@@ -78,7 +78,7 @@ func readCPU() (cpuSample, error) {
 	}
 
 	var total uint64
-	for _, value := range values {
+	for _, value := range values[:min(len(values), 8)] {
 		total += value
 	}
 	return cpuSample{idle: values[3] + values[4], total: total}, nil

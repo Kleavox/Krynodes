@@ -211,3 +211,21 @@ func TestChangeBooleanGoesToTheHostUnitSigned(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConfineContainersRelabelsAStackKrynodesStoppedButDoesNotStartIt(t *testing.T) {
+	executor, run := securityExecutor(t)
+	dir := managedSELinux(t, executor, run)
+	if err := writeJSON(filepath.Join(executor.StateDir, knockedDir), "panel.json", knockedStack{At: executor.Now()}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if result := hostRun(t, executor, hostRequest(t, idA, "confinement", "containers", map[string]string{"on": "1"})); !result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	level, _ := executor.levelFor("panel")
+	if !slices.Contains(run.calls, "chcon -R -t container_file_t -l "+level+" "+dir) {
+		t.Fatalf("the stopped stack was not relabelled: %q", run.calls)
+	}
+	if slices.Contains(run.calls, composeCall(dir, "compose.krynodes.json", "up -d")) || !executor.knocked("panel") {
+		t.Fatalf("the stack Krynodes stopped was started again: %q", run.calls)
+	}
+}

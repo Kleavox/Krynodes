@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/safefile"
 )
 
 type Config struct {
@@ -45,10 +47,10 @@ func Save(path string, cfg Config) error {
 		return fmt.Errorf("encode config: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := safefile.Write(path, data, 0o600); err != nil {
 		return fmt.Errorf("write config %q: %w", path, err)
 	}
-	return os.Chmod(path, 0o600)
+	return nil
 }
 
 func validate(raw Config) (Config, error) {

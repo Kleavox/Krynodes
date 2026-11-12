@@ -78,12 +78,13 @@ export function confinementRow(
       .filter(Boolean)
       .join(" · ") || null;
   const selinux = found.system === "selinux";
+  const running = selinux && found.mode === "enforcing" && !found.restart;
   const actions: ConfineStep[] = found.managed
     ? [
         "denials",
-        ...(selinux && found.docker === false ? ["containers" as const] : []),
-        ...(selinux && found.docker === true ? ["uncontain" as const] : []),
-        ...(selinux && booleans ? ["boolean" as const] : []),
+        ...(running && found.docker === false ? ["containers" as const] : []),
+        ...(running && found.docker === true ? ["uncontain" as const] : []),
+        ...(running && booleans ? ["boolean" as const] : []),
       ]
     : [
         "denials",

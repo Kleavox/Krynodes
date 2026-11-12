@@ -397,7 +397,7 @@ export function SourcesSection({
                     onSelect: () =>
                       onOpen({
                         kind: "droprepo",
-                        name: repoName(source.file),
+                        name: source.name,
                         label: source.name,
                       }),
                   },

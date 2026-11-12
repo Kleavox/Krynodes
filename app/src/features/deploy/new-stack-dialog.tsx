@@ -47,6 +47,7 @@ import {
 import {
   AccessChoice,
   FullAccessSummary,
+  NO_SEAL_KEY,
   NetworkBoxes,
   NetworkSection,
   ReachField,
@@ -185,6 +186,10 @@ function NewStackForm({
   const create = async () => {
     setTouched(true);
     if (!ready) return;
+    if (modern && !sealKey && secrets.length > 0) {
+      toast.error(NO_SEAL_KEY);
+      return;
+    }
     setSealing(true);
     let sealed: string | undefined;
     try {

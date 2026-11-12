@@ -266,6 +266,9 @@ export function HeldSecrets({
   );
 }
 
+export const NO_SEAL_KEY =
+  "This server has not reported its key yet, so the secrets cannot be sent. Try again in a minute.";
+
 export async function sealSecrets(
   sealKey: string,
   rows: SecretRow[],

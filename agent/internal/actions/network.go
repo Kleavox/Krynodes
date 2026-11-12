@@ -806,6 +806,9 @@ func (e Executor) networkInventory(snapshot Snapshot) *reporter.NetworkInventory
 	record := e.readNetwork()
 	switch {
 	case record.Joined && record.Document != nil:
+		if snapshot.Docker == "missing" {
+			return nil
+		}
 		networkRange := netip.MustParsePrefix(record.Document.Range)
 		points := []reporter.NetworkPoint{}
 		for _, stack := range snapshot.Stacks {

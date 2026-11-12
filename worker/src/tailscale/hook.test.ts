@@ -185,13 +185,22 @@ describe("the Tailscale webhook", () => {
     expect(t.alarms()).toEqual([]);
   });
 
-  it("refuses another secret, a tailnet nobody connected, a replay and a bad header, storing and mailing nothing", async () => {
+  it("knows the tailnet by its secret, whatever name the event gives it", async () => {
+    const t = hooked();
+    const event = created("nas-7", "tag:kry");
+    expect((await t.post([{ ...event, tailnet: "example.com" }])).status).toBe(
+      200,
+    );
+    expect(t.alarms()).toHaveLength(1);
+  });
+
+  it("refuses another secret, two tailnets in one body, a replay and a bad header, storing and mailing nothing", async () => {
     const t = hooked();
     const event = created("nas-7", "tag:kry");
     expect((await t.post([event], { secret: "tskey-other" })).status).toBe(401);
-    expect((await t.post([{ ...event, tailnet: "other.ts.net" }])).status).toBe(
-      401,
-    );
+    expect(
+      (await t.post([event, { ...event, tailnet: "other.ts.net" }])).status,
+    ).toBe(401);
     expect((await t.post([event], { age: 600 })).status).toBe(401);
     expect((await t.post([event], { header: "t=1,v1=zz" })).status).toBe(401);
     expect((await t.post([event], { header: "" })).status).toBe(401);

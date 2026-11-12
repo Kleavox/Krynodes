@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,7 +16,9 @@ import (
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/config"
+	"github.com/Kleavox/krynodes/agent/internal/confine"
 	"github.com/Kleavox/krynodes/agent/internal/network"
+	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
 )
@@ -87,6 +90,10 @@ func (e Executor) release(ctx context.Context, request Request, command Command)
 	if err != nil || tokenHash(string(token)) != pending.Token {
 		return e.refuse(request.ID, errors.New("the keys this server made are gone; run sudo kry release-code again"))
 	}
+	enforced, err := e.enforceAgain(ctx)
+	if err != nil {
+		return e.refuse(request.ID, fmt.Errorf("SELinux could not be set back to enforcing, so nothing was released: %w", err))
+	}
 	cfg, err := config.Load(e.ConfigPath)
 	if err != nil {
 		return e.failed(request, err, "")
@@ -130,7 +137,25 @@ func (e Executor) release(ctx context.Context, request Request, command Command)
 	os.RemoveAll(dir)
 	e.retake(ctx, true)
 	e.Run(context.WithoutCancel(ctx), "systemctl", "restart", "--no-block", agentUnit)
-	return Result{ID: request.ID, OK: true, Output: "released: new keys and a new sign-in to Krynodes", FinishedAt: e.stamp()}
+	output := "released: new keys and a new sign-in to Krynodes"
+	if enforced {
+		output += "; SELinux enforces again"
+	}
+	return Result{ID: request.ID, OK: true, Output: output, FinishedAt: e.stamp()}
+}
+
+func (e Executor) enforceAgain(ctx context.Context) (bool, error) {
+	env := e.recipeEnv()
+	found := confine.Read(e.Root, string(recipes.Detect(env).Family))
+	applied, managed := e.readRecipes().Applied["confinement"]
+	if !managed || applied.Saved["system"] != found.System || found.System != confine.SELinux || found.Mode != confine.Permissive || restartDue(found, applied.Saved) {
+		return false, nil
+	}
+	if err := e.markConfinement("release"); err != nil {
+		return false, err
+	}
+	defer e.holdConfinement("release")()
+	return true, recipes.EnforceSELinux(ctx, env)
 }
 
 func swapFiles(moves [][2]string) (func(), error) {

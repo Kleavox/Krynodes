@@ -245,6 +245,23 @@ describe("the security check on screen", () => {
     ).toBe(false);
   });
 
+  it("shows SSH that the server says takes keys only as set up by hand", () => {
+    const told = report({
+      findings: [
+        {
+          id: "ssh-no-password",
+          severity: "note",
+          detail: "SSH takes keys only",
+        },
+      ],
+    });
+    expect(
+      recipeChoices(told).find((choice) => choice.id === "ssh-keys-only")
+        ?.outside,
+    ).toBe(true);
+    expect(recommended(told)).not.toContain("ssh-keys-only");
+  });
+
   it("colours a finding by how bad it is", () => {
     expect(findingTone({ id: "dns-stub", severity: "note", detail: "x" })).toBe(
       "idle",

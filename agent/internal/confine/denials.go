@@ -2,12 +2,15 @@ package confine
 
 import (
 	"bytes"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -58,6 +61,9 @@ func parseLine(line string) (Denial, bool) {
 	for _, match := range auditField.FindAllStringSubmatch(line, -1) {
 		if _, seen := fields[match[1]]; !seen {
 			fields[match[1]] = strings.Trim(match[2], `"`)
+			if slices.Contains([]string{"comm", "path", "name", "exe"}, match[1]) && !strings.HasPrefix(match[2], `"`) {
+				fields[match[1]] = unhex(match[2])
+			}
 		}
 	}
 	denial := Denial{Program: fields["comm"]}
@@ -67,6 +73,7 @@ func parseLine(line string) (Denial, bool) {
 		denial.At = time.Unix(seconds, 0)
 	}
 	avc := avcDenied.FindStringSubmatch(line)
+	kind := recordType(line)
 	switch {
 	case fields["apparmor"] == "DENIED":
 		denial.Kind, denial.System, denial.Type = Denied, AppArmor, fields["profile"]
@@ -84,15 +91,43 @@ func parseLine(line string) (Denial, bool) {
 			target = fields["src"] + "/" + strings.TrimSuffix(fields["tclass"], "_socket")
 		}
 		denial.Wanted = strings.TrimSpace(avc[1] + " " + target)
-	case strings.Contains(line, "type=MAC_STATUS") || strings.Contains(line, "type=1404"):
+	case kind == "MAC_STATUS" || kind == "1404":
 		denial.Kind, denial.System, denial.Enforcing = Status, SELinux, fields["enforcing"]
-	case strings.Contains(line, "type=MAC_POLICY_LOAD") || strings.Contains(line, "type=1403"):
+	case kind == "MAC_POLICY_LOAD" || kind == "1403":
 		denial.Kind, denial.System = Policy, SELinux
 	default:
 		return Denial{}, false
 	}
 	denial.Program, denial.Type, denial.Wanted = clip(denial.Program, 64), clip(denial.Type, 200), clip(denial.Wanted, 200)
 	return denial, true
+}
+
+func recordType(line string) string {
+	line = strings.TrimSpace(line)
+	at := strings.Index(line, "type=")
+	if at < 0 {
+		return ""
+	}
+	before := line[:at]
+	node := strings.HasPrefix(before, "node=") && strings.Count(before, " ") == 1
+	if before != "" && !node && !strings.HasSuffix(before, "audit: ") {
+		return ""
+	}
+	kind, _, _ := strings.Cut(line[at+len("type="):], " ")
+	return kind
+}
+
+func unhex(value string) string {
+	raw, err := hex.DecodeString(value)
+	if err != nil || len(raw) == 0 {
+		return value
+	}
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == utf8.RuneError {
+			return -1
+		}
+		return r
+	}, string(raw))
 }
 
 func clip(text string, most int) string {

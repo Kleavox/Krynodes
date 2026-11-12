@@ -111,6 +111,12 @@ func TestHoldWaitsWhileKrynodesChangesTheServer(t *testing.T) {
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if slices.Contains(run.calls, "apt-mark hold nodejs") {
+		t.Fatalf("the hold ran in the checks sandbox: %v", run.calls)
+	}
+	if err := executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if result := readResult(t, executor, idA); !result.OK || result.Output != "hold nodejs 20.18.0" || !slices.Contains(run.calls, "apt-mark hold nodejs") {
 		t.Fatalf("got %+v after %v", result, run.calls)
 	}

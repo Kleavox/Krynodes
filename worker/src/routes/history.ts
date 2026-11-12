@@ -2,7 +2,7 @@ import { ownerOf, touches } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 
 import { laterDone, loadEstate, notFixed } from "../actions/attention";
-import { unchangedList } from "../fleet/client";
+import { announce, unchangedList } from "../fleet/client";
 import { QUESTIONS, SEALED_VERBS, type ActionRow } from "../actions/store";
 import { READ_ONLY, toActionRecord } from "./services";
 import type { KrynodesApp, KrynodesEnv } from "./shared";
@@ -307,6 +307,7 @@ export function registerHistoryRoutes(
     if (result.meta.changes === 0) {
       return context.json({ code: "NOT_FOUND" }, 404);
     }
+    await announce(context.env, identity.id, ["actions"]);
     return context.body(null, 204);
   });
 }

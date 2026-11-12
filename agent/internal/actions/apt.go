@@ -78,13 +78,6 @@ func (e Executor) apt(ctx context.Context, request Request) (Result, bool) {
 		if e.hostBusy(ctx) {
 			return e.refuse(request.ID, errHostBusy), false
 		}
-		ctx, cancel := context.WithTimeout(ctx, commandTimeout)
-		defer cancel()
-		if output, _, err := e.Run(ctx, "apt-mark", request.Action, request.Name); err != nil {
-			return e.failed(request, err, string(output)), false
-		}
-		said := strings.TrimSpace(request.Action + " " + request.Name + " " + apt.Version(e.Root, request.Name))
-		return Result{ID: request.ID, OK: true, Output: said, FinishedAt: e.stamp()}, false
 	case "preview", "refresh":
 		if _, err := asked(request); err != nil {
 			return e.refuse(request.ID, err), false
@@ -252,6 +245,14 @@ func (e Executor) applyApt(ctx context.Context, request Request) Result {
 	job := e.aptJob(request.ID)
 	distro, _, _ := e.aptFacts()
 	switch request.Action {
+	case "hold", "unhold":
+		ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+		defer cancel()
+		if output, _, err := e.Run(ctx, "apt-mark", request.Action, request.Name); err != nil {
+			return e.failed(request, err, string(output))
+		}
+		said := strings.TrimSpace(request.Action + " " + request.Name + " " + apt.Version(e.Root, request.Name))
+		return Result{ID: request.ID, OK: true, Output: said, FinishedAt: e.stamp()}
 	case "refresh":
 		if err := job.Refresh(ctx); err != nil {
 			return e.refuse(request.ID, err)

@@ -276,7 +276,7 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		if err := e.markConfinement(request.Action); err != nil {
 			return e.failed(request, err, "")
 		}
-		defer e.markConfinement(request.Action)
+		defer e.holdConfinement(request.Action)()
 	}
 	save := func(output string) Result {
 		if err := writeJSON(e.StateDir, "recipes.json", state, 0o640); err != nil {
@@ -368,6 +368,11 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 				return e.failed(request, err, "")
 			}
 		}
+		if result.Confined {
+			if err := writeJSON(e.StateDir, dockerSELinuxFile, dockerSELinuxRecord{Previous: result.Previous, Existed: result.Existed}, 0o640); err != nil {
+				return e.failed(request, err, "")
+			}
+		}
 		return Result{ID: request.ID, OK: true, Output: result.Message, FinishedAt: e.stamp()}
 	case "release":
 		return e.release(ctx, request, command)
@@ -376,7 +381,7 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 	case "signin":
 		return e.signIn(ctx, request, command)
 	case "join":
-		return e.joinTailnet(ctx, request)
+		return e.joinTailnet(ctx, request, command)
 	case "exitnode":
 		return e.exitNode(ctx, request, command)
 	case "dns":
@@ -495,13 +500,13 @@ func (e Executor) unlock(ctx context.Context, request Request, env recipes.Env) 
 	if state.At.IsZero() {
 		return e.refuse(request.ID, errors.New("the server is not locked down"))
 	}
-	if err := e.reopen(ctx, state); err != nil {
-		return e.failed(request, err, "")
-	}
 	if state.SSH {
 		if err := recipes.Undo(ctx, env, "ssh-keys-only", nil); err != nil {
 			return e.refuse(request.ID, err)
 		}
+	}
+	if err := e.reopen(ctx, state); err != nil {
+		return e.failed(request, err, "")
 	}
 	if err := os.Remove(filepath.Join(e.StateDir, "lockdown.json")); err != nil {
 		return e.failed(request, err, "")

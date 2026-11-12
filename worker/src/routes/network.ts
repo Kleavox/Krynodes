@@ -132,7 +132,8 @@ export function registerNetworkRoutes(
         db
           .prepare(
             `SELECT id, at, change, detail, requested_by, device_id FROM network_changes
-             WHERE owner_user_id = ? ORDER BY at DESC, id DESC LIMIT ?`,
+             WHERE owner_user_id = ? AND change NOT LIKE 'Test % ↔ %'
+             ORDER BY at DESC, id DESC LIMIT ?`,
           )
           .bind(owner, CHANGES)
           .all<{

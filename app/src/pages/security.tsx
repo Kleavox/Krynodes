@@ -163,7 +163,9 @@ export function SecurityPage() {
                     report={report}
                     seen={seen}
                     open={expanded}
-                    checking={scan.isPending}
+                    checking={
+                      scan.isPending && !!scan.variables?.includes(node.id)
+                    }
                     onToggle={() => toggle(node.id)}
                     onCheck={() => scan.mutate([node.id])}
                   />

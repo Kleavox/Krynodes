@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/safefile"
 )
 
 const (
@@ -105,7 +107,7 @@ func ReadStatus(path, current string) (Status, bool) {
 
 func Apply(options Options) error {
 	options = withDefaults(options)
-	raw, err := os.ReadFile(options.RequestPath)
+	raw, err := safefile.Read(options.RequestPath, 256)
 	if err != nil {
 		return fmt.Errorf("read update request: %w", err)
 	}
@@ -462,10 +464,7 @@ func (o Options) writeStatus(version, message string) {
 	if err != nil {
 		return
 	}
-	temporary := o.StatusPath + ".tmp"
-	if os.WriteFile(temporary, raw, 0o644) == nil {
-		_ = os.Rename(temporary, o.StatusPath)
-	}
+	_ = safefile.Write(o.StatusPath, raw, 0o644)
 }
 
 func isNewer(target, current string) (bool, error) {

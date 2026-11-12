@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Kleavox/krynodes/agent/internal/confine"
+	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
@@ -37,6 +38,12 @@ type securityState struct {
 }
 
 const maxListeners = 100
+
+const rebootSeenFile = "reboot-seen.json"
+
+type rebootSeen struct {
+	Since time.Time `json:"since"`
+}
 
 func (e Executor) path(name string) string {
 	return filepath.Join(e.Root, filepath.FromSlash(name))
@@ -117,6 +124,8 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		passwords := settings["passwordauthentication"] == "yes" || settings["kbdinteractiveauthentication"] == "yes"
 		if passwords {
 			add("ssh-password", "serious", "SSH accepts passwords")
+		} else {
+			add("ssh-no-password", "note", "SSH takes keys only")
 		}
 		if passwords && settings["permitrootlogin"] == "yes" {
 			add("ssh-root", "serious", "Root can log in over SSH with a password")
@@ -142,7 +151,18 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 	} else if waiting > 1 {
 		add("updates-pending", "warning", fmt.Sprintf("%d security updates are waiting", waiting))
 	}
-	if needed, since := recipes.RebootNeeded(ctx, e.recipeEnv()); needed {
+	needed, since := recipes.RebootNeeded(ctx, e.recipeEnv())
+	if !needed {
+		os.Remove(filepath.Join(e.StateDir, rebootSeenFile))
+	} else if since.IsZero() {
+		seen, _ := readState[rebootSeen](e.StateDir, rebootSeenFile)
+		if seen.Since.IsZero() {
+			seen.Since = e.Now()
+			writeJSON(e.StateDir, rebootSeenFile, seen, 0o640)
+		}
+		since = seen.Since
+	}
+	if needed {
 		switch {
 		case since.IsZero():
 			add("reboot-pending", "note", "A restart is waiting")
@@ -163,8 +183,17 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 	listened := listeners != nil
 	firewall := e.firewallOf(ctx, platform.Family)
 	listeners = e.throughFirewall(ctx, firewall, listeners)
-	listeners = append(listeners, e.publicContainers(ctx)...)
-	if public := listenerEntries(listeners); len(public) > 0 {
+	warned := slices.Clone(listeners)
+	closed := e.readFirewall()
+	for _, container := range e.publicContainers(ctx) {
+		listeners = append(listeners, container)
+		if !closed.Closed || slices.ContainsFunc(closed.Open, func(open network.Opening) bool {
+			return open.Port == container.Port && open.Protocol == container.Protocol && open.From == network.FromEveryone
+		}) {
+			warned = append(warned, container)
+		}
+	}
+	if public := listenerEntries(warned); len(public) > 0 {
 		add("public-ports", "warning", "Listening on public addresses outside Krynodes: "+strings.Join(public, ", "))
 	}
 	if len(listeners) > maxListeners {

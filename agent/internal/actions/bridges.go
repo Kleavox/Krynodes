@@ -149,20 +149,51 @@ func pin(name string, record *bridgeRecord, key string) (string, error) {
 }
 
 func (e Executor) unpin(project string) error {
+	_, err := e.letGo(project)
+	return err
+}
+
+func (e Executor) letGo(project string) (map[string]map[string]string, error) {
 	records := e.readBridges()
-	changed := false
+	freed := map[string]map[string]string{}
 	for name, record := range records {
 		for _, key := range slices.Sorted(maps.Keys(record.Pins)) {
 			if strings.HasPrefix(key, project+"/") {
+				if freed[name] == nil {
+					freed[name] = map[string]string{}
+				}
+				freed[name][key] = record.Pins[key]
 				record.Freed = append(record.Freed, record.Pins[key])
 				delete(record.Pins, key)
-				changed = true
 			}
 		}
 		records[name] = record
 	}
-	if !changed {
+	if len(freed) == 0 {
+		return nil, nil
+	}
+	return freed, e.saveBridges(records)
+}
+
+func (e Executor) takeBack(pins map[string]map[string]string) error {
+	if len(pins) == 0 {
 		return nil
+	}
+	records := e.readBridges()
+	for name, held := range pins {
+		record, known := records[name]
+		for _, key := range slices.Sorted(maps.Keys(held)) {
+			at := slices.Index(record.Freed, held[key])
+			if !known || at < 0 {
+				return fmt.Errorf("the address this stack had on %s was given to another stack; delete it and create it again", name)
+			}
+			record.Freed = slices.Delete(slices.Clone(record.Freed), at, at+1)
+			if record.Pins == nil {
+				record.Pins = map[string]string{}
+			}
+			record.Pins[key] = held[key]
+		}
+		records[name] = record
 	}
 	return e.saveBridges(records)
 }

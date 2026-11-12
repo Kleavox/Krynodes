@@ -222,7 +222,9 @@ function shaped(kind: string, steps: Step[]): boolean {
         is(main, "compose", verb) &&
         (!released || releasesTo(first!, main!, main!)) &&
         (verb === "unexpose"
-          ? HOSTNAME.test(main!.args.hostname ?? "") && !!main!.args.zone
+          ? HOSTNAME.test(main!.args.hostname ?? "") &&
+            !!main!.args.zone &&
+            (main!.args.hostname ?? "").endsWith(`.${main!.args.zone}`)
           : exposeArgs(main!)) &&
         tail.length <= (verb === "unexpose" ? 1 : 0) &&
         tail.every(
@@ -650,6 +652,24 @@ export function registerOperationRoutes(
             },
             422,
           );
+        }
+        if (step.action === "expose") {
+          const held = await db
+            .prepare(
+              `SELECT n.name, w.project FROM web_addresses w JOIN nodes n ON n.id = w.node_id
+               WHERE w.hostname = ? AND (w.node_id <> ? OR w.project <> ?)`,
+            )
+            .bind(step.args.hostname ?? "", step.nodeId, step.name)
+            .first<{ name: string; project: string }>();
+          if (held) {
+            return context.json(
+              {
+                code: "HOSTNAME_TAKEN",
+                message: `${step.args.hostname} already opens ${held.project} on ${held.name}. Close that web address first.`,
+              },
+              409,
+            );
+          }
         }
       }
     }

@@ -139,3 +139,21 @@ func TestProfilesReadsEachProfileAndItsMode(t *testing.T) {
 		t.Fatalf("profiles %v", profiles)
 	}
 }
+
+func TestAPolicyLoadNamedInsideAnotherRecordIsNotAPolicyLoad(t *testing.T) {
+	forged := `type=USER_LOGIN msg=audit(1700000005.000:461): pid=77 uid=0 auid=4294967295 msg='op=login acct="x type=MAC_POLICY_LOAD y" exe="/usr/sbin/sshd" res=failed'`
+	if found := Parse(forged + "\n"); len(found) != 0 {
+		t.Fatalf("found %+v", found)
+	}
+	if found := Parse("node=web-1 " + policy[len("audit: "):] + "\n"); len(found) != 1 || found[0].Kind != Policy {
+		t.Fatalf("a record with a node name was not read: %+v", found)
+	}
+}
+
+func TestHexEncodedNamesAreShownAsText(t *testing.T) {
+	line := `type=AVC msg=audit(1700000006.000:462): avc:  denied  { read } for  pid=5 comm=6D7920617070 name=736563726574206B6579 scontext=system_u:system_r:container_t:s0:c1,c2 tcontext=system_u:object_r:etc_t:s0 tclass=file permissive=0`
+	found := Parse(line + "\n")
+	if len(found) != 1 || found[0].Program != "my app" || found[0].Wanted != "read secret key" {
+		t.Fatalf("found %+v", found)
+	}
+}

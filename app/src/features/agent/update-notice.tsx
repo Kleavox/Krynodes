@@ -41,7 +41,14 @@ export function UpdateNotice({
         className="size-4 shrink-0 text-primary"
       />
       <p className="min-w-0 flex-1 text-sm">
-        Agent <span className="font-mono">{release.version}</span> is available
+        {release.version ? (
+          <>
+            Agent <span className="font-mono">{release.version}</span> is
+            available
+          </>
+        ) : (
+          "Agents need an update"
+        )}
         <span className="text-muted-foreground">
           {" "}
           · {behind.length} {behind.length === 1 ? "server" : "servers"} behind
