@@ -9,7 +9,7 @@ try {
     "go",
     [
       "run",
-      "golang.org/x/tools/cmd/deadcode@latest",
+      "golang.org/x/tools/cmd/deadcode@v0.52.0",
       "-filter",
       "^github.com/Kleavox/krynodes/agent/(cmd|internal)/[a-z]+$",
       "./...",

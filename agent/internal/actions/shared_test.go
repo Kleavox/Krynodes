@@ -298,3 +298,43 @@ func TestRemovingAStackFreesItsAddresses(t *testing.T) {
 		t.Fatalf("record %#v", record)
 	}
 }
+
+func TestRestoringARemovedStackTakesItsAddressesBack(t *testing.T) {
+	executor, run := bridgeExecutor(t, "1")
+	sharedRecord(t, executor, "contained", nil)
+	sharedPanel(t, executor, run, nil)
+	if result := createPanel(t, executor, "contained", nil); !result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	dir := panelDir(executor)
+	asked := 0
+	executor.Collect = func(context.Context, []string) (Snapshot, error) {
+		asked++
+		if asked > 1 {
+			return Snapshot{Compose: true, Docker: "ready"}, nil
+		}
+		return Snapshot{Stacks: []Stack{{Project: "panel", Directory: dir, Files: []string{filepath.Join(dir, "compose.krynodes.json")}}}, Compose: true, Docker: "ready"}, nil
+	}
+	if result := runRequest(t, executor, composeRequest(t, idB, "panel", "remove", nil)); !result.OK {
+		t.Fatalf("result %#v", result)
+	}
+	entry, parked := binOf(t, executor).Stacks["panel"]
+	if !parked || entry.Pins["apps-inner"]["panel/web"] != "172.24.0.2" {
+		t.Fatalf("the removed stack did not remember its address: %#v", entry)
+	}
+	if err := executor.takeBack(entry.Pins); err != nil {
+		t.Fatal(err)
+	}
+	if record := executor.readBridges()["apps-inner"]; record.Pins["panel/web"] != "172.24.0.2" || len(record.Freed) != 0 {
+		t.Fatalf("record %#v", record)
+	}
+}
+
+func TestARemovedStackWhoseAddressWentToAnotherStackCannotComeBack(t *testing.T) {
+	executor, _ := bridgeExecutor(t, "1")
+	sharedRecord(t, executor, "contained", nil)
+	err := executor.takeBack(map[string]map[string]string{"apps-inner": {"panel/web": "172.24.0.2"}})
+	if err == nil || !strings.Contains(err.Error(), "given to another stack") {
+		t.Fatalf("err %v", err)
+	}
+}

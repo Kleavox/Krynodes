@@ -675,6 +675,7 @@ describe("the steps", () => {
         kind: "host",
         name: "tailscale",
         action: "join",
+        args: { tailnet: CONNECTED.tailnet },
         attachFrom: 1,
       },
     ]);

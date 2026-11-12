@@ -72,6 +72,19 @@ describe("usageLevel", () => {
 });
 
 describe("nodeHealth", () => {
+  it("counts a server whose setup failed as an issue, and one still setting up as idle", () => {
+    expect(
+      nodeHealth(
+        node({ last_seen_at: null, enrolled_at: seen(7_200) }),
+        [],
+        NOW,
+      ),
+    ).toEqual({ severity: "critical", reasons: ["Setup Failed"] });
+    expect(
+      nodeHealth(node({ last_seen_at: null, enrolled_at: seen(600) }), [], NOW),
+    ).toEqual({ severity: "idle", reasons: [] });
+  });
+
   it("is healthy when online, checks pass and usage is normal", () => {
     expect(nodeHealth(node(), [check("UP")], NOW)).toEqual({
       severity: "healthy",

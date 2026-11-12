@@ -326,3 +326,16 @@ func TestTheRepositoryIsReadBeforeItIsAdded(t *testing.T) {
 		t.Fatalf("got %+v", plain)
 	}
 }
+
+func TestAKeyFileWithMoreThanTheApprovedKeyIsRefusedAndNothingIsWritten(t *testing.T) {
+	m, served, job := repoMachine(t)
+	served[tailscaleRepo.Key] = append(keyBytes(t), keyBytes(t)...)
+	repo := tailscaleRepo
+	repo.Fingerprint = "21dae8a9e6167221bd7a7023d8f3939d95389cc8"
+	if _, err := job.AddRepo(context.Background(), repo); err == nil || !strings.Contains(err.Error(), "holds 2 keys") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(at(m.root, "/etc/apt")); !os.IsNotExist(err) {
+		t.Fatalf("something was written: %v", err)
+	}
+}

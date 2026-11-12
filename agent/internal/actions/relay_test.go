@@ -416,6 +416,8 @@ func TestTheHeartbeatCarriesSetupWhileItRunsAndSaysWhereItStopped(t *testing.T) 
 		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: boot}, &reporter.Setup{Phase: "upgrade", Step: 2, Of: 6}},
 		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-61 * time.Second), Boot: boot}, &reporter.Setup{Phase: "upgrade", Step: 2, Of: 6, Stopped: true}},
 		{setupProgress{Phase: "restart", Step: 6, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: "an-earlier-boot"}, nil},
+		{setupProgress{Phase: "docker", Step: 4, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: "an-earlier-boot"}, &reporter.Setup{Phase: "docker", Step: 4, Of: 6, Stopped: true}},
+		{setupProgress{Phase: "docker", Step: 4, Of: 6, At: executorNow.Add(-25 * time.Hour), Boot: "an-earlier-boot"}, nil},
 		{setupProgress{Phase: "docker", Step: 4, Of: 6, At: executorNow.Add(-25 * time.Hour), Boot: boot}, nil},
 	} {
 		if got := report(&step.progress); !reflect.DeepEqual(got, step.want) {
@@ -631,5 +633,53 @@ func TestEnqueueKeepsTheActionsAfterAMalformedOne(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(relay.RequestDir, "01234567-89ab-cdef-0123-456789abcdef.json")); err != nil {
 		t.Fatalf("the valid action was dropped: %v", err)
+	}
+}
+
+func TestASetupThatStalledOnceStaysLoudForTheRestOfIt(t *testing.T) {
+	relay := watchingRelay(t)
+	boot := strings.TrimSpace(relay.Boot())
+	write := func(age time.Duration) {
+		t.Helper()
+		if err := writeJSON(relay.StateDir, setupFile, setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-age), Boot: boot, Quiet: true}, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(5 * time.Second)
+	if relay.SettingUp() == nil {
+		t.Fatal("a fresh quiet setup is quiet")
+	}
+	write(61 * time.Second)
+	if relay.SettingUp() != nil {
+		t.Fatal("a stalled setup is loud")
+	}
+	write(5 * time.Second)
+	if relay.SettingUp() != nil {
+		t.Fatal("the setup went quiet again after it had been loud")
+	}
+}
+
+func TestNoInventoryGoesOutWhileTheServerSetsUpQuietly(t *testing.T) {
+	relay := watchingRelay(t)
+	poster := &fakePoster{}
+	relay.Server = poster
+	writeInventory(t, relay, []Service{{Kind: "docker", Name: "resolver", State: "running"}}, executorNow)
+	if err := writeJSON(relay.StateDir, setupFile, setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-5 * time.Second), Boot: strings.TrimSpace(relay.Boot()), Quiet: true}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.reports) != 0 {
+		t.Fatalf("sent during a quiet setup: %+v", poster.reports)
+	}
+	if err := os.Remove(filepath.Join(relay.StateDir, setupFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := relay.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(poster.reports) != 1 || poster.reports[0].Inventory == nil {
+		t.Fatalf("not sent after setup: %+v", poster.reports)
 	}
 }

@@ -134,6 +134,19 @@ describe("intake", () => {
     ]);
   });
 
+  it("does not count a knock reported by a server outside the network or one that is quarantined", async () => {
+    const { db, sqlite, open } = setup([V1, V2]);
+    await intake(db, { nodeId: V3, events: [knock(41)], now: NOW });
+    expect(open()).toEqual([]);
+    sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', ?, 'held', 'now', '{}')",
+      )
+      .run(V2);
+    await intake(db, { nodeId: V2, events: [knock(41)], now: NOW });
+    expect(open()).toEqual([{ node: V2, why: "held" }]);
+  });
+
   it("forgets knocks older than the agreement window", async () => {
     const { db, open } = setup();
     await intake(db, { nodeId: V2, events: [knock(41)], now: NOW });

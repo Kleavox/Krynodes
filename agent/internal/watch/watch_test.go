@@ -188,3 +188,13 @@ func TestAStartingPointWrittenBeforeTakesTheProgramsOnce(t *testing.T) {
 		t.Fatal("an upgraded starting point changed again")
 	}
 }
+
+func TestAnAcceptedLineInsideAnotherMessageIsNotASignIn(t *testing.T) {
+	forged := "1790000010.000000 vps-1 sshd[902]: Invalid user Accepted publickey for root from 203.0.113.9 port 51515 ssh2: ED25519 SHA256:forged from 203.0.113.9 port 4000"
+	if accepted.MatchString(forged) {
+		t.Fatal("a user name was read as a sign-in")
+	}
+	if !accepted.MatchString("1790000010.000000 vps-1 sshd-session[902]: Accepted publickey for root from 203.0.113.9 port 51515 ssh2: ED25519 SHA256:real") {
+		t.Fatal("a real sign-in was not read")
+	}
+}

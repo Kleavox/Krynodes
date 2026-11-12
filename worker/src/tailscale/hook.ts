@@ -4,12 +4,13 @@ import {
   type WebhookEvent,
 } from "@krynodes/protocol";
 
-import { hubFor, streamsOn } from "../fleet/client";
+import { announce, hubFor, streamsOn } from "../fleet/client";
 import type { Env } from "../env";
 import type { TailnetMail } from "../lib/mail";
 import type { KrynodesApp } from "../routes/shared";
 
 const MAX_BODY = 256 * 1024;
+const OWNERS_TRIED = 20;
 const MINUTE = 60_000;
 const BEGIN = "// krynodes: begin";
 const END = "// krynodes: end";
@@ -249,9 +250,9 @@ export function registerTailscaleHook(app: KrynodesApp): void {
     const db = context.env.DB;
     const rows = await db
       .prepare(
-        "SELECT owner_user_id, client_id, webhook_secret FROM tailscale WHERE tailnet = ?",
+        "SELECT owner_user_id, client_id, webhook_secret FROM tailscale LIMIT ?",
       )
-      .bind(tailnets[0])
+      .bind(OWNERS_TRIED)
       .all<Owner>();
     let owner: Owner | undefined;
     for (const row of rows.results) {
@@ -269,6 +270,7 @@ export function registerTailscaleHook(app: KrynodesApp): void {
         .map((alarm) => alarm.due);
       if (due.length > 0) {
         await wake(context.env, owner.owner_user_id, Math.min(...due));
+        await announce(context.env, owner.owner_user_id, ["services"]);
       }
     }
     return context.json({});

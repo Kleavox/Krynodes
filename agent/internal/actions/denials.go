@@ -131,8 +131,8 @@ func (e Executor) newDenials(ctx context.Context, state *denialState, auditd boo
 	return output, ok
 }
 
-func (e Executor) localModules(ctx context.Context) []string {
-	output, _ := e.output(ctx, "semodule", "--list-modules=full")
+func (e Executor) localModules(ctx context.Context) ([]string, bool) {
+	output, ok := e.output(ctx, "semodule", "--list-modules=full")
 	modules := []string{}
 	for line := range strings.SplitSeq(output, "\n") {
 		if fields := strings.Fields(line); len(fields) >= 2 && fields[0] == "400" {
@@ -140,11 +140,11 @@ func (e Executor) localModules(ctx context.Context) []string {
 		}
 	}
 	slices.Sort(modules)
-	return modules
+	return modules, ok
 }
 
-func (e Executor) unshipped(ctx context.Context, modules []string) []string {
-	output, _ := e.output(ctx, "rpm", "-qa", "--qf", "[%{FILENAMES} %{FILEDIGESTS}\n]")
+func (e Executor) unshipped(ctx context.Context, modules []string) ([]string, bool) {
+	output, ok := e.output(ctx, "rpm", "-qa", "--qf", "[%{FILENAMES} %{FILEDIGESTS}\n]")
 	shipped := map[string]bool{}
 	for line := range strings.SplitSeq(output, "\n") {
 		space := strings.LastIndex(line, " ")
@@ -163,7 +163,7 @@ func (e Executor) unshipped(ctx context.Context, modules []string) []string {
 			shipped[module] = e.sameModule(file, digest, module, kind)
 		}
 	}
-	return slices.DeleteFunc(modules, func(name string) bool { return shipped[name] })
+	return slices.DeleteFunc(modules, func(name string) bool { return shipped[name] }), ok
 }
 
 func (e Executor) sameModule(file, digest, module, kind string) bool {
@@ -248,7 +248,10 @@ func (e Executor) verdict(ctx context.Context, denial confine.Denial, levels map
 	}
 	project := levels[denial.Level]
 	if id != "" {
-		label, _ := e.output(ctx, "docker", "inspect", "--format", `{{index .Config.Labels "com.docker.compose.project"}}`, id)
+		label, ok := e.output(ctx, "docker", "inspect", "--format", `{{index .Config.Labels "com.docker.compose.project"}}`, id)
+		if !ok {
+			return "", warningVerdict
+		}
 		project = strings.TrimSpace(label)
 	}
 	verdict, access := strongVerdict, ""
@@ -303,7 +306,10 @@ func (e Executor) watchDenials(ctx context.Context) {
 	settled := func(at time.Time) bool { return !at.Before(boot.Add(bootSettle)) && !excused(at) }
 
 	active, _ := e.output(ctx, "systemctl", "is-active", "auditd")
-	auditd := !slices.Contains([]string{"", "inactive", "failed", "unknown"}, strings.TrimSpace(active))
+	auditd := state.Auditd
+	if answer := strings.TrimSpace(active); answer != "" {
+		auditd = !slices.Contains([]string{"inactive", "failed", "unknown"}, answer)
+	}
 	if managed && found.System == confine.SELinux && state.Auditd && !auditd && !marked && !busy {
 		if running, _ := e.output(ctx, "systemctl", "is-system-running"); strings.TrimSpace(running) != "stopping" {
 			raise("auditd", "The audit service stopped while Krynodes manages SELinux")
@@ -317,9 +323,15 @@ func (e Executor) watchDenials(ctx context.Context) {
 	if !managed {
 		state.Modules, state.Profiles = nil, nil
 	} else if baseline && found.System == confine.SELinux {
-		state.Modules = e.localModules(ctx)
+		if modules, ok := e.localModules(ctx); ok {
+			state.Modules = modules
+		}
 	}
 	state.Managed = managed
+	if managed {
+		e.restartFinished(found)
+		applied = e.readRecipes().Applied["confinement"]
+	}
 	restart := restartDue(found, applied.Saved)
 	if managed && !marked && !restart {
 		switch {
@@ -395,13 +407,17 @@ func (e Executor) watchDenials(ctx context.Context) {
 		}
 	}
 	if policy {
-		modules := e.localModules(ctx)
-		if added := slices.DeleteFunc(slices.Clone(modules), func(name string) bool { return slices.Contains(state.Modules, name) }); len(added) > 0 && !marked {
-			if added = e.unshipped(ctx, added); len(added) > 0 {
-				raise("module "+strings.Join(added, " "), "A local SELinux module or permissive type was added: "+strings.Join(added, ", "))
+		if modules, read := e.localModules(ctx); read {
+			if added := slices.DeleteFunc(slices.Clone(modules), func(name string) bool { return slices.Contains(state.Modules, name) }); len(added) > 0 && !marked {
+				new, checked := e.unshipped(ctx, added)
+				if !checked {
+					modules = slices.DeleteFunc(modules, func(name string) bool { return slices.Contains(added, name) })
+				} else if len(new) > 0 {
+					raise("module "+strings.Join(new, " "), "A local SELinux module or permissive type was added: "+strings.Join(new, ", "))
+				}
 			}
+			state.Modules = modules
 		}
-		state.Modules = modules
 	}
 	for hour := range maps.Clone(state.Hours) {
 		if at, err := strconv.ParseInt(hour, 10, 64); err != nil || now.Unix()/3600-at >= 24 {

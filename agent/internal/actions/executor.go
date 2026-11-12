@@ -97,6 +97,14 @@ func (e Executor) Execute(ctx context.Context) error {
 	}
 	reboot := false
 	scanned := false
+	var scans []Result
+	defer func() {
+		for _, result := range scans {
+			if err := writeJSON(filepath.Join(e.StateDir, "results"), result.ID+".json", result, 0o640); err != nil {
+				log.Printf("scan result: %v", err)
+			}
+		}
+	}()
 	processed := 0
 	started := e.Now()
 run:
@@ -149,6 +157,10 @@ run:
 				}
 			}
 			if forwarded {
+				continue
+			}
+			if result.OK && item.request.Kind == "host" && item.request.Action == "scan" {
+				scans = append(scans, result)
 				continue
 			}
 			if err := writeJSON(filepath.Join(e.StateDir, "results"), item.id+".json", result, 0o640); err != nil {
@@ -218,7 +230,7 @@ func (e Executor) clearWake() {
 		return
 	}
 	for _, entry := range entries {
-		if err := os.Remove(filepath.Join(wake, entry.Name())); err != nil {
+		if err := os.RemoveAll(filepath.Join(wake, entry.Name())); err != nil {
 			log.Printf("clear wake marker: %v", err)
 		}
 	}
@@ -573,6 +585,10 @@ func writeWhole(directory, name string, encoded []byte, mode os.FileMode) error 
 	temporary := filepath.Join(directory, "."+name+".tmp")
 	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
+		return err
+	}
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
 		return err
 	}
 	if _, err := file.Write(encoded); err != nil {

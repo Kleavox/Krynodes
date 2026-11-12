@@ -25,7 +25,7 @@ const PRIVATE_IP = /^\$\{?KRY_PRIVATE_IP\}?$/u;
 const EVERY_ADDRESS = /^(0\.0\.0\.0|::|\[::\])?$/u;
 
 function load(text: string): Loaded {
-  const doc = parseDocument(text);
+  const doc = parseDocument(text, { merge: true });
   if (doc.errors.length > 0) {
     return {
       services: null,
@@ -182,7 +182,7 @@ export const usesPrivateIp = (text: string) =>
   /\$\{?KRY_PRIVATE_IP\b/u.test(text);
 
 export function usePrivateAddress(text: string): string {
-  const doc = parseDocument(text);
+  const doc = parseDocument(text, { merge: true });
   const services = doc.get("services");
   if (doc.errors.length > 0 || !isMap(services)) return text;
   let changed = false;
@@ -210,7 +210,7 @@ const record = (value: unknown): Record<string, unknown> =>
 export function sharedNetworksOf(
   text: string,
 ): { key: string; name: string; services: string[] }[] {
-  const doc = parseDocument(text);
+  const doc = parseDocument(text, { merge: true });
   if (doc.errors.length > 0) return [];
   const value = record(doc.toJS());
   const services = record(value.services);
@@ -329,7 +329,7 @@ export function moveCompose(
   keep: string[],
   pins: Record<string, string>,
 ): { text: string; flagged: string[] } {
-  const doc = parseDocument(text);
+  const doc = parseDocument(text, { merge: true });
   const services = doc.get("services") as YAMLMap | undefined;
   if (!isMap(services)) return { text, flagged: [] };
   const all = services.items.map((item) =>

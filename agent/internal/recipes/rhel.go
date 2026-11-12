@@ -32,17 +32,17 @@ func (unmarked) Is(target error) bool {
 }
 
 func rhelUpdates(ctx context.Context, env Env) (map[string]string, error) {
+	if !env.has(ctx, "dnf-plugins-core") {
+		if _, err := env.install(ctx, "dnf-plugins-core"); err != nil {
+			return nil, err
+		}
+	}
 	notices, err := env.output(ctx, "dnf", "-q", "updateinfo", "list", "--security", "--all")
 	if err != nil {
 		return nil, fmt.Errorf("dnf could not read the security notices: %w", err)
 	}
 	if strings.TrimSpace(notices) == "" {
 		return nil, unmarked(Detect(env).Name)
-	}
-	if !env.has(ctx, "dnf-plugins-core") {
-		if _, err := env.install(ctx, "dnf-plugins-core"); err != nil {
-			return nil, err
-		}
 	}
 	files := []struct{ path, body string }{
 		{updatesService, "[Unit]\nDescription=Krynodes security updates\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/dnf -y upgrade --security\n"},

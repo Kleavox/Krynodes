@@ -27,10 +27,10 @@ var turnedOff = map[string]string{
 	"fail2ban":         "fail2ban no longer guards SSH",
 	"firewall":         "The firewall rules Krynodes added are gone",
 	"free-port-53":     "systemd-resolved holds port 53 again",
-	"confinement":      "SELinux or AppArmor is back as Krynodes found it",
+	"confinement":      "Krynodes no longer manages SELinux or AppArmor; a system it turned on stays on",
 }
 
-var krynodesFiles = []string{"krynodes.json", "compose.krynodes.previous.json", "compose.previous.yaml", ".env.previous"}
+var krynodesFiles = []string{"krynodes.json", "compose.krynodes.previous.json", hostsPrevious, "compose.previous.yaml", ".env.previous"}
 
 func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	var removal Removal

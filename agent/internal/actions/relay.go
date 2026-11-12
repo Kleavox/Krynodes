@@ -67,6 +67,7 @@ type Relay struct {
 	problem   string
 	steps     map[string]sentStep
 	queued    map[string]time.Time
+	loud      string
 }
 
 func backoff(failures int) time.Duration {
@@ -164,6 +165,9 @@ func (r *Relay) Poll(ctx context.Context) error {
 		inventory = &current
 	} else {
 		r.note(err)
+	}
+	if r.SettingUp() != nil {
+		inventory = nil
 	}
 	r.mu.Lock()
 	acked, refreshAt, sentList := r.acked, r.refreshAt, r.sentList
@@ -356,7 +360,12 @@ func (r *Relay) Report(beat *reporter.Heartbeat) {
 func (r *Relay) SettingUp() *reporter.Setup {
 	progress, _ := readState[setupProgress](r.StateDir, setupFile)
 	setup := r.readSetup()
-	if !progress.Quiet || setup == nil || setup.Stopped {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if progress.Quiet && setup != nil && setup.Stopped {
+		r.loud = progress.Boot
+	}
+	if !progress.Quiet || setup == nil || setup.Stopped || (r.loud != "" && r.loud == progress.Boot) {
 		return nil
 	}
 	return setup
@@ -368,12 +377,18 @@ func (r *Relay) readSetup() *reporter.Setup {
 	if r.Boot != nil {
 		boot = strings.TrimSpace(r.Boot())
 	}
-	if err != nil || progress.Phase == "" || progress.Boot != boot {
+	if err != nil || progress.Phase == "" {
 		return nil
 	}
 	age := r.Now().Sub(progress.At)
 	if age > setupKept {
 		return nil
+	}
+	if progress.Boot != boot {
+		if progress.Phase == "restart" || boot == "" {
+			return nil
+		}
+		return &reporter.Setup{Phase: progress.Phase, Step: progress.Step, Of: progress.Of, Stopped: true}
 	}
 	return &reporter.Setup{Phase: progress.Phase, Step: progress.Step, Of: progress.Of, Stopped: age > setupStale}
 }

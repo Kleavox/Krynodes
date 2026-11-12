@@ -61,7 +61,8 @@ func TestTheInstallerPassesSetupAfterTheTrustKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, output)
 	}
-	want := "kry enroll --endpoint https://kry.example --token token-1\n" +
+	want := "kry version\n" +
+		"kry enroll --endpoint https://kry.example --token token-1\n" +
 		"kry setup --recommended --docker --reboot-hour 20 --network 10.88.0.0/24 --begin\n" +
 		"kry install-service\n" +
 		"kry trust --initial --origin https://kry.example key1 key2\n" +
@@ -92,7 +93,7 @@ func TestTheInstallerChecksSELinuxOrAppArmorBeforeItEnrolls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, output)
 	}
-	if !strings.HasPrefix(log, "kry setup --confine --check\nkry enroll --endpoint https://kry.example --token token-1\n") {
+	if !strings.HasPrefix(log, "kry version\nkry setup --confine --check\nkry enroll --endpoint https://kry.example --token token-1\n") {
 		t.Fatalf("log\n%s", log)
 	}
 	t.Setenv("FAIL_CHECK", "1")
@@ -126,7 +127,8 @@ func TestTheServedInstallerRunsWithTheArgumentsItCarries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, output)
 	}
-	want := "kry enroll --endpoint https://kry.example --token token-1\n" +
+	want := "kry version\n" +
+		"kry enroll --endpoint https://kry.example --token token-1\n" +
 		"kry setup --recommended --reboot-hour 20 --begin\n" +
 		"kry install-service\n" +
 		"kry trust --initial --origin https://kry.example --access phone -- phone.-7.key1 laptop.-7.key2\n" +

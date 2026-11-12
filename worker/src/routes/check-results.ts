@@ -21,6 +21,8 @@ const WINDOW_MS = 300_000;
 const INCIDENT_PAD_MS = 10 * 60_000;
 const BEFORE_MS = 3_600_000;
 const RECENT_SPAN_MS = 30 * 86_400_000;
+const BOARD_LOOKBACK_MS = 7 * 86_400_000;
+const WINDOWS_SHOWN = 600;
 
 const epoch = (value: string) =>
   Date.parse(
@@ -228,8 +230,9 @@ export function registerCheckResultRoutes(
         .all<{ started_at: string; resolved_at: string | null }>(),
       loadEstate(db, owner),
     ]);
-    const earliest = Math.min(
-      ...open.results.map((incident) => epoch(incident.started_at)),
+    const earliest = Math.max(
+      now - BOARD_LOOKBACK_MS,
+      Math.min(...open.results.map((incident) => epoch(incident.started_at))),
     );
     const actions =
       open.results.length > 0
@@ -328,7 +331,7 @@ export function registerCheckResultRoutes(
       .prepare(
         `SELECT node_id, window_start, checks, uptime_seconds FROM node_windows
          WHERE node_id = ? AND window_start >= ? AND window_start <= ?
-         ORDER BY window_start DESC LIMIT 100`,
+         ORDER BY window_start DESC LIMIT ${WINDOWS_SHOWN}`,
       )
       .bind(
         incident.node_id,
@@ -393,7 +396,9 @@ export function registerCheckResultRoutes(
         ? (quietByNode(
             rows.results,
             mergeLive([node], live?.nodes ?? null),
-            start,
+            rows.results.length === WINDOWS_SHOWN
+              ? Math.max(start, epoch(rows.results.at(-1)!.window_start))
+              : start,
             now,
           )[node.id]?.quiet ?? [])
         : [],

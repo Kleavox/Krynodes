@@ -317,7 +317,7 @@ const rebootAt = (
   offsetMinutes: number,
 ) =>
   security?.recipes.includes("reboot-window") && security.rebootHour !== null
-    ? `${String(fromUtcHour(security.rebootHour, offsetMinutes)).padStart(2, "0")}:00`
+    ? `${String(Math.floor(fromUtcHour(security.rebootHour, offsetMinutes))).padStart(2, "0")}:00`
     : null;
 
 export const restartOnYou = (

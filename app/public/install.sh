@@ -182,10 +182,22 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
   (cd "$tmp" && sha256sum -c "$artifact.sha256" >/dev/null)
   fetch "$base/$artifact.sig" "$tmp/$artifact.sig"
   printf '%s' "$release_key" >"$tmp/release.pem"
-  if ! openssl pkeyutl -verify -pubin -inkey "$tmp/release.pem" -rawin -in "$tmp/$artifact" -sigfile "$tmp/$artifact.sig" >/dev/null 2>&1; then
-    echo "The download is not signed by the Krynodes release key, so nothing was installed." >&2
-    echo "This check needs OpenSSL 1.1.1 or newer." >&2
+  if ! checked=$(openssl pkeyutl -verify -pubin -inkey "$tmp/release.pem" -rawin -in "$tmp/$artifact" -sigfile "$tmp/$artifact.sig" 2>&1); then
+    echo "The download could not be checked against the Krynodes release key, so nothing was installed." >&2
+    echo "This check needs OpenSSL 3.0 or newer; this server has: $(openssl version 2>/dev/null || echo none)." >&2
+    printf '%s
+' "$checked" | tail -n 3 >&2
     exit 1
+  fi
+  if [ -x "$bin" ]; then
+    chmod 0755 "$tmp/$artifact"
+    have="$("$bin" version 2>/dev/null || true)"
+    got="$("$tmp/$artifact" version 2>/dev/null || true)"
+    if [ -n "$have" ] && [ -n "$got" ] && [ "$have" != "$got" ] &&
+      [ "$(printf '%s\n%s\n' "$have" "$got" | sort -V | tail -n 1)" = "$have" ]; then
+      echo "The download is agent $got, older than the $have on this server, so nothing was installed." >&2
+      exit 1
+    fi
   fi
   install -m 0755 "$tmp/$artifact" "$bin"
 

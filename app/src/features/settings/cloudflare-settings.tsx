@@ -177,6 +177,11 @@ export function CloudflareSettings() {
               })}
             </p>
           )}
+          {setId && settings.data && !settings.data.expiresAt && (
+            <p className="text-xs text-muted-foreground">
+              Its expiry shows after the next web address is opened.
+            </p>
+          )}
           {busy > 0 ? (
             <p role="status" className="text-sm text-warning">
               The token is being changed: {busy}{" "}

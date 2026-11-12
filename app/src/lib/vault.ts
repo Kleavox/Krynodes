@@ -498,10 +498,7 @@ export function planAddress(
   if (piece.holders === 1) return { ok: true, releaser: null };
   const other = nodes.find(
     (item) =>
-      item.id !== target &&
-      pieceOf(item, setId) !== null &&
-      item.reachable &&
-      item.online,
+      item.id !== target && pieceOf(item, setId) !== null && usable(item),
   );
   return other
     ? { ok: true, releaser: other.id }
@@ -533,7 +530,7 @@ export function vaultNodes(
           fingerprint === null
             ? (entry.trust?.access.length ?? 0) > 0
             : (entry.trust?.access.includes(fingerprint) ?? false),
-        online: nodeState(node, seen) !== "offline",
+        online: nodeState(node, seen) === "online",
         quarantined: Boolean(node.quarantine),
         version: node.agent_version,
       },

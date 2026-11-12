@@ -398,6 +398,9 @@ func (e Executor) unexpose(ctx context.Context, request Request, command Command
 	if !hostnamePattern.MatchString(hostname) {
 		return e.refuse(request.ID, fmt.Errorf("%q is not a name", hostname))
 	}
+	if !strings.HasSuffix(hostname, "."+command.Args["zone"]) {
+		return e.refuse(request.ID, fmt.Errorf("%s is not in %s; set the domain back to close this web address", hostname, command.Args["zone"]))
+	}
 	token, err := e.secret(request, command, "cloudflare")
 	if err != nil {
 		return e.refuse(request.ID, err)

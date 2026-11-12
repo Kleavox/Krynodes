@@ -500,6 +500,26 @@ func TestExportSealsSecretsAndFilesForTheTarget(t *testing.T) {
 	}
 }
 
+func TestExportRefusesAnEnvFileAMoveWouldChange(t *testing.T) {
+	executor, _ := stackExecutor(t)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
+	withStacks(&executor, stack)
+	target, _ := ecdh.P256().GenerateKey(rand.Reader)
+	for body, refused := range map[string]bool{
+		"DB_URL=postgres://u:${DB_PASS}@db/app\n": true,
+		"MOTTO=\"it's fine\"\n":                   true,
+		"PRICE='$5'\nPLAIN=yes\n":                 false,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		request := composeRequest(t, fresh(len(body)), "panel", "export", func(c *Command) { c.Args = map[string]string{"key": seal.Public(target)} })
+		if result := runRequest(t, executor, request); result.OK == refused || refused && !strings.Contains(result.Output, "a move would change") {
+			t.Fatalf("%q: %#v", body, result)
+		}
+	}
+}
+
 func TestExportRefusesFilesBeyond32KB(t *testing.T) {
 	executor, _ := stackExecutor(t)
 	dir, stack := ownPanel(t, executor, "contained", panelText)
@@ -641,4 +661,24 @@ func TestFilesInAStackFolderAreListedWithoutKrynodesOwnFiles(t *testing.T) {
 		t.Fatalf("files %#v %v", files, err)
 	}
 	_ = base64.StdEncoding
+}
+
+func TestRestoringABackupPutsOldFilesBackAndRemovesFilesThatWereNotThere(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	restore, err := backup(dir, map[string]string{"compose.yaml": "compose.previous.yaml", hostsFile: hostsPrevious})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte("new"), 0o640)
+	os.WriteFile(filepath.Join(dir, hostsFile), []byte("{}"), 0o640)
+	restore()
+	if body, _ := os.ReadFile(filepath.Join(dir, "compose.yaml")); string(body) != "old" {
+		t.Fatalf("compose.yaml %q", body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, hostsFile)); !os.IsNotExist(err) {
+		t.Fatalf("an override that was not there before is kept: %v", err)
+	}
 }

@@ -481,6 +481,7 @@ function RenameDialog({
       onOpenChange={(open) => {
         if (open) return;
         rename.reset();
+        setName("");
         onClose();
       }}
     >
@@ -492,7 +493,12 @@ function RenameDialog({
               event.preventDefault();
               rename.mutate(
                 { id: device.id, name: name.trim() || device.name },
-                { onSuccess: onClose },
+                {
+                  onSuccess: () => {
+                    setName("");
+                    onClose();
+                  },
+                },
               );
             }}
           >
@@ -503,6 +509,7 @@ function RenameDialog({
               <Label htmlFor="rename-device">Name</Label>
               <Input
                 id="rename-device"
+                key={device.id}
                 defaultValue={device.name}
                 maxLength={40}
                 autoFocus

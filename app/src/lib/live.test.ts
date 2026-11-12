@@ -19,6 +19,7 @@ describe("live updates", () => {
       ["services"],
       ["packages"],
       ["overview"],
+      ["tailscale"],
     ]);
     expect(keysFor(["all"])).toBeNull();
     expect(keysFor(["unknown"])).toEqual([]);

@@ -101,7 +101,16 @@ export function EnrollDialog({
                   : "No trusted passkey yet. Set one up first (Passkeys in the account menu) so this server trusts it from the start; until then it takes the first passkeys the dashboard sends."}
               </p>
             </DialogHeader>
-            <SetupOptions value={setup} onChange={change} keys={keys} />
+            <SetupOptions
+              value={setup}
+              onChange={change}
+              keys={defaults.data ? keys : undefined}
+            />
+            {defaults.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {errorMessage(defaults.error)}
+              </p>
+            )}
             {create.error && (
               <p role="alert" className="text-sm text-destructive">
                 {errorMessage(create.error)}

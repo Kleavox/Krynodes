@@ -419,6 +419,45 @@ describe("operations in steps", () => {
     expect(outside.status).toBe(400);
   });
 
+  it("refuses a web address that already opens another stack, and a close outside the domain", async () => {
+    const t = routes();
+    t.sqlite
+      .prepare(
+        `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at)
+         VALUES ('shop.example.org', ?, 'shop', 'web', 80, 'everyone', 'owner', 'now')`,
+      )
+      .run(B);
+    const taken = await t.operate("expose", [
+      step({
+        nodeId: A,
+        kind: "compose",
+        name: "listmonk",
+        action: "expose",
+        args: {
+          service: "app",
+          port: "9000",
+          hostname: "shop.example.org",
+          mode: "everyone",
+          zone: "example.org",
+        },
+      }),
+    ]);
+    expect(taken.status).toBe(409);
+    expect(((await taken.json()) as { code: string }).code).toBe(
+      "HOSTNAME_TAKEN",
+    );
+    const elsewhere = await t.operate("unexpose", [
+      step({
+        nodeId: A,
+        kind: "compose",
+        name: "listmonk",
+        action: "unexpose",
+        args: { hostname: "listmonk-a.other.org", zone: "example.org" },
+      }),
+    ]);
+    expect(elsewhere.status).toBe(400);
+  });
+
   it("refuses a released piece from a server without one", async () => {
     const t = routes();
     t.sqlite.prepare("UPDATE nodes SET vault = NULL WHERE id = ?").run(B);
@@ -1184,8 +1223,51 @@ describe("steps that feed the next", () => {
     });
   });
 
+  const dated = (t: Awaited<ReturnType<typeof hub>>) => {
+    t.sqlite
+      .prepare(
+        `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at, expires_at)
+         VALUES ('app.example.org', ?, 'panel', 'web', 80, 'allow', 'owner', '2026-11-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z')`,
+      )
+      .run(A);
+    t.sqlite
+      .prepare("UPDATE cloudflare SET reminded_at = '2026-12-02T00:00:00.000Z'")
+      .run();
+    return () => ({
+      ...(t.sqlite.prepare("SELECT expires_at FROM web_addresses").get() as {
+        expires_at: string | null;
+      }),
+      ...(t.sqlite.prepare("SELECT reminded_at FROM cloudflare").get() as {
+        reminded_at: string | null;
+      }),
+    });
+  };
+
+  it("forgets the old token's expiry and reminder once another token is in place", async () => {
+    const t = await hub();
+    const known = dated(t);
+    const [id] = await t.operate(
+      "split",
+      [
+        step({
+          nodeId: A,
+          kind: "vault",
+          name: "cloudflare",
+          action: "store",
+          args: { set: NEXT, holders: "1" },
+        }),
+      ],
+      { zone: "example.org" },
+    );
+    expect(known().expires_at).toBe("2027-01-01T00:00:00.000Z");
+    await t.beat(A);
+    await t.finish(A, id!, "stored");
+    expect(known()).toEqual({ expires_at: null, reminded_at: null });
+  });
+
   it("gives each server its own new piece after a re-split", async () => {
     const t = await hub();
+    const known = dated(t);
     t.sqlite
       .prepare("UPDATE nodes SET vault = ?")
       .run(JSON.stringify({ set: SET, holders: 3 }));
@@ -1257,6 +1339,10 @@ describe("steps that feed the next", () => {
     await t.finish(C, ids[3]!, "stored");
     expect(t.sqlite.prepare("SELECT set_id FROM cloudflare").get()).toEqual({
       set_id: NEXT,
+    });
+    expect(known()).toEqual({
+      expires_at: "2027-01-01T00:00:00.000Z",
+      reminded_at: "2026-12-02T00:00:00.000Z",
     });
     expect(
       t.sqlite

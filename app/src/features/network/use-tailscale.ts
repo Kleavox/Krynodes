@@ -85,6 +85,9 @@ const outputOf = <T>(action: ActionRecord): T | null => {
 const failed = (action: ActionRecord | undefined, otherwise: string) =>
   action?.status === "done" ? null : action?.output || otherwise;
 
+const settled = (actions: ActionRecord[]) =>
+  actions.find((action) => action.status !== "done") ?? actions.at(-1);
+
 async function finished(ids: string[]): Promise<ActionRecord[]> {
   const started = Date.now();
   for (;;) {
@@ -191,7 +194,7 @@ async function read(
     finished(sent.actions.map((action) => action.id)),
     finished(asked.actions.map((action) => action.id)),
   ]);
-  const policy = reading.at(-1);
+  const policy = settled(reading);
   const problem = failed(policy, "The policy file could not be read.");
   if (problem) throw new Error(problem);
   const answer = outputOf<PolicyRead>(policy!);
@@ -234,7 +237,7 @@ async function save(
     label: input.label,
   });
   const sent = await sendOperation(session, { kind: "tailnet" }, steps);
-  const job = (await finished(sent.actions.map((action) => action.id))).at(-1);
+  const job = settled(await finished(sent.actions.map((action) => action.id)));
   const problem = failed(job, "Tailscale did not take the rules.");
   if (problem) throw new Error(problem);
   const answer = outputOf<{
@@ -407,8 +410,8 @@ export const useJoinTailnet = () =>
       { kind: "tailnet" },
       joinSteps(useOf(nodes, connected), keyOf, connected, nodeId),
     );
-    const joined = (await finished(sent.actions.map((action) => action.id))).at(
-      -1,
+    const joined = settled(
+      await finished(sent.actions.map((action) => action.id)),
     );
     const problem = failed(joined, "The server did not join your tailnet.");
     if (problem) throw new Error(problem);
@@ -460,8 +463,8 @@ export const useRemoveFromTailnet = () =>
         nodeId,
       ),
     );
-    const job = (await finished(sent.actions.map((action) => action.id))).at(
-      -1,
+    const job = settled(
+      await finished(sent.actions.map((action) => action.id)),
     );
     const problem = failed(job, "Tailscale did not remove the server.");
     if (problem) throw new Error(problem);

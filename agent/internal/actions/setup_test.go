@@ -404,3 +404,20 @@ func TestSetupSaysSecurityUpdatesAreNotAvailableWithoutNotices(t *testing.T) {
 		t.Fatalf("got\n%s", got)
 	}
 }
+
+func TestTheRestartWindowWaitsWhileSetupRuns(t *testing.T) {
+	executor, _ := newExecutor(t)
+	hour := executor.Now().UTC().Hour()
+	if err := writeJSON(executor.StateDir, "reboot.json", rebootWindow{Hour: &hour}, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(executor.StateDir, setupFile, setupProgress{Phase: "protections", Step: 3, Of: 6, At: executor.Now().Add(-10 * time.Second)}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if executor.rebootDue(context.Background()) {
+		t.Fatal("the server would restart in the middle of setup")
+	}
+	if window, _ := readState[rebootWindow](executor.StateDir, "reboot.json"); window.Last != "" {
+		t.Fatalf("window %+v", window)
+	}
+}

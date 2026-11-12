@@ -898,6 +898,7 @@ export const joinSteps = (
     kind: "host",
     name: "tailscale",
     action: "join",
+    args: { tailnet: connected.tailnet },
     attachFrom: 1,
   },
 ];

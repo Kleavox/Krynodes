@@ -274,6 +274,9 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 		if err == nil && result.Installed {
 			err = writeJSON(e.StateDir, "docker.json", dockerState{InstalledAt: e.Now()}, 0o640)
 		}
+		if err == nil && result.Confined {
+			err = writeJSON(e.StateDir, dockerSELinuxFile, dockerSELinuxRecord{Previous: result.Previous, Existed: result.Existed}, 0o640)
+		}
 		switch {
 		case err != nil:
 			mark("✗", "Docker", ": "+err.Error())

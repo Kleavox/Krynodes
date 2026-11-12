@@ -248,7 +248,15 @@ export async function statusVersion(db: D1Database): Promise<string> {
       said: string | null;
       held: string | null;
     }>();
-  return `${row?.count ?? 0}:${row?.changed ?? ""}:${row?.said ?? ""}:${row?.held ?? ""}`;
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(
+      `${row?.count ?? 0}:${row?.changed ?? ""}:${row?.said ?? ""}:${row?.held ?? ""}`,
+    ),
+  );
+  return [...new Uint8Array(digest).slice(0, 12)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 export async function loadStatus(

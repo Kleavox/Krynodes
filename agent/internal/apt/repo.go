@@ -20,6 +20,7 @@ const (
 	keyrings     = "/etc/apt/keyrings"
 	ourKeyring   = keyrings + "/krynodes-"
 	shownPackage = 20
+	maxListing   = 64 << 20
 )
 
 type Repo struct {
@@ -164,7 +165,7 @@ func (j Job) PreviewRepo(ctx context.Context, repo Repo) RepoPreview {
 	var names []string
 	if packed, err := j.Get(ctx, listing+".gz"); err == nil {
 		if reader, err := gzip.NewReader(bytes.NewReader(packed)); err == nil {
-			unpacked, _ := io.ReadAll(reader)
+			unpacked, _ := io.ReadAll(io.LimitReader(reader, maxListing))
 			names = packageNames(string(unpacked))
 		}
 	} else if plain, err := j.Get(ctx, listing); err == nil {
@@ -208,6 +209,9 @@ func (j Job) AddRepo(ctx context.Context, repo Repo) (string, error) {
 	body, keys, err := j.key(ctx, repo.Key)
 	if err != nil {
 		return "", err
+	}
+	if len(keys) > 1 {
+		return "", fmt.Errorf("the key file at %s holds %d keys; Krynodes adds only a file that holds the one key you approved", repo.Key, len(keys))
 	}
 	if !slices.ContainsFunc(keys, func(key Key) bool { return key.Fingerprint == wanted }) {
 		return "", fmt.Errorf("the key at %s has fingerprint %s, not the %s you approved; nothing was added", repo.Key, keys[0].Fingerprint, wanted)

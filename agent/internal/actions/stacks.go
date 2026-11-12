@@ -36,6 +36,8 @@ type removedStack struct {
 	Directory string    `json:"directory"`
 	Files     []string  `json:"files"`
 	RemovedAt time.Time `json:"removedAt"`
+
+	Pins map[string]map[string]string `json:"pins,omitempty"`
 }
 
 type stackBin struct {
@@ -69,6 +71,9 @@ func (e Executor) wipe(ctx context.Context, project, directory string) error {
 		if _, err := e.docker(ctx, upTimeout, "remove volumes", append([]string{"volume", "rm"}, names...)...); err != nil {
 			return err
 		}
+	}
+	if err := e.unpin(project); err != nil {
+		return err
 	}
 	if e.ownStack(directory) {
 		return os.RemoveAll(directory)
@@ -113,6 +118,14 @@ func (e Executor) removedStack(ctx context.Context, request Request, snapshot Sn
 		return e.refuse(request.ID, err)
 	}
 	stack.Files = files
+	if err := e.takeBack(entry.Pins); err != nil {
+		return e.refuse(request.ID, err)
+	}
+	entry.Pins = nil
+	bin.Stacks[request.Name] = entry
+	if err := e.saveBin(bin); err != nil {
+		return e.failed(request, err, "")
+	}
 	if err := e.syncRules(ctx, rulesFor(request.Name, entry.Directory, nil, e.metaOf(entry.Directory))); err != nil {
 		return e.failed(request, err, "")
 	}
@@ -220,15 +233,16 @@ func (e Executor) remove(ctx context.Context, request Request, stack Stack) Resu
 	if err != nil {
 		return e.failed(request, err, "")
 	}
+	pins, err := e.letGo(stack.Project)
+	if err != nil {
+		return e.failed(request, err, "")
+	}
 	if request.Action == "purge" {
 		delete(bin.Stacks, stack.Project)
 	} else {
-		bin.Stacks[stack.Project] = removedStack{Directory: stack.Directory, Files: stack.Files, RemovedAt: e.Now()}
+		bin.Stacks[stack.Project] = removedStack{Directory: stack.Directory, Files: stack.Files, RemovedAt: e.Now(), Pins: pins}
 	}
 	if err := e.saveBin(bin); err != nil {
-		return e.failed(request, err, "")
-	}
-	if err := e.unpin(stack.Project); err != nil {
 		return e.failed(request, err, "")
 	}
 	e.syncRules(ctx)
@@ -672,6 +686,7 @@ func (e Executor) stillContained(ctx context.Context, directory string) error {
 	if err := readJSON(filepath.Join(directory, "compose.krynodes.json"), &config); err != nil {
 		return err
 	}
+	dropLabels(config)
 	if err := vet(config, directory, e.kindOf(ctx)); err != nil {
 		return fmt.Errorf("%w; it was made under older rules, so edit it or choose Full access", err)
 	}

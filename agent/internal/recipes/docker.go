@@ -20,6 +20,9 @@ type Fetcher func(ctx context.Context, url string) ([]byte, error)
 type DockerResult struct {
 	Message   string
 	Installed bool
+	Confined  bool
+	Previous  string
+	Existed   bool
 }
 
 const (
@@ -111,10 +114,13 @@ func InstallDocker(ctx context.Context, env Env, args map[string]string) (Docker
 			return DockerResult{}, err
 		}
 	}
+	var confined DockerResult
 	if missing != nil && args["selinux"] == "1" {
-		if _, _, err := MergeDaemon(env, "selinux-enabled", true); err != nil {
+		previous, existed, err := MergeDaemon(env, "selinux-enabled", true)
+		if err != nil {
 			return DockerResult{}, err
 		}
+		confined = DockerResult{Confined: true, Previous: previous, Existed: existed}
 	}
 	if _, err := env.install(ctx, packages...); err != nil {
 		return DockerResult{}, err
@@ -129,7 +135,8 @@ func InstallDocker(ctx context.Context, env Env, args map[string]string) (Docker
 	if version = strings.TrimSpace(version); version != "" {
 		message = "Docker " + version + " with Compose"
 	}
-	return DockerResult{Message: message, Installed: missing != nil}, nil
+	confined.Message, confined.Installed = message, missing != nil
+	return confined, nil
 }
 
 func MergeDaemon(env Env, key string, value any) (string, bool, error) {

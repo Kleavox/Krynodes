@@ -58,7 +58,8 @@ export function DeleteNodeDialog({
   onDeleted?: () => void;
 }) {
   const remove = useDeleteNode();
-  const network = useNetwork().data;
+  const networkRead = useNetwork();
+  const network = networkRead.data;
   const member = network?.members.find(
     (entry) => entry.nodeId === node.id && entry.state === "in",
   );
@@ -269,7 +270,11 @@ export function DeleteNodeDialog({
       { onSuccess: started },
     );
 
+  const reads = [services, overview, settings, networkRead];
+  const unread = reads.find((read) => read.error)?.error ?? null;
   const busy =
+    unread !== null ||
+    reads.some((read) => !read.data) ||
     leave.isPending ||
     operate.isPending ||
     credential.isPending ||
@@ -277,6 +282,7 @@ export function DeleteNodeDialog({
     unblock.isPending ||
     remove.isPending;
   const error =
+    unread ??
     credential.error ??
     unblock.error ??
     leave.error ??

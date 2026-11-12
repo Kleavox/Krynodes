@@ -212,6 +212,12 @@ const PROMOTE_SQL = `UPDATE actions SET deliverable_at = ?1
       WHERE source.batch_id = actions.batch_id
         AND source.position = actions.attach_from
         AND source.status = 'done')
+      AND NOT EXISTS (
+      SELECT 1 FROM actions earlier
+      WHERE earlier.batch_id = actions.batch_id
+        AND earlier.position < actions.position
+        AND earlier.attach_from IS NULL
+        AND earlier.status <> 'done')
     END`;
 
 const UNRELEASED = `json_extract(release, '$.released') = 1 AND id IN (
@@ -569,16 +575,35 @@ function followUp(
   if (action.action === "store") {
     const { set, holders } = argsOf(action);
     if (!set) return [];
+    const switched = `owner_user_id = (SELECT owner_user_id FROM nodes WHERE id = ?3)
+             AND set_id IS NOT ?1
+             AND (SELECT COUNT(*) FROM actions
+                  WHERE batch_id = ?4 AND action = 'store' AND status = 'done') >= ?5`;
+    const reshared = `EXISTS (SELECT 1 FROM actions WHERE batch_id = ?4 AND action = 'reshare')`;
+    const values = [
+      set,
+      at,
+      nodeId,
+      action.batch_id,
+      Number(holders) > 1 ? 2 : 1,
+    ];
     return [
       db
         .prepare(
-          `UPDATE cloudflare SET set_id = ?1, updated_at = ?2
-           WHERE owner_user_id = (SELECT owner_user_id FROM nodes WHERE id = ?3)
-             AND set_id IS NOT ?1
-             AND (SELECT COUNT(*) FROM actions
-                  WHERE batch_id = ?4 AND action = 'store' AND status = 'done') >= ?5`,
+          `UPDATE web_addresses SET expires_at = NULL
+           WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id =
+                   (SELECT owner_user_id FROM nodes WHERE id = ?3))
+             AND NOT ${reshared}
+             AND EXISTS (SELECT 1 FROM cloudflare WHERE ${switched})`,
         )
-        .bind(set, at, nodeId, action.batch_id, Number(holders) > 1 ? 2 : 1),
+        .bind(...values),
+      db
+        .prepare(
+          `UPDATE cloudflare SET set_id = ?1, updated_at = ?2,
+             reminded_at = CASE WHEN ${reshared} THEN reminded_at END
+           WHERE ${switched}`,
+        )
+        .bind(...values),
     ];
   }
   if (action.action === "uninstall") {

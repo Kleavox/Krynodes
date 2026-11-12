@@ -199,8 +199,9 @@ within 30 seconds of its restart. The firewall must list SSH as allowed after
 Krynodes turns it on. Docker must have published packages for the system's
 codename and architecture. A package Krynodes installs waits up to 10 minutes
 for another apt, for its lock and for its package lists alike: a new server
-often runs its first unattended upgrade while it enrolls. Turning a protection
-off never asks. Other systems (Fedora among them) run the agent, the
+often runs its first unattended upgrade while it enrolls. Protections stay on
+once they are on; only Free Port 53 can be turned off, and that takes a
+passkey. Other systems (Fedora among them) run the agent, the
 checks and the Security check, but not Protections or Docker setup.
 
 Releases are cut by `.github/workflows/agent-release.yml` whenever

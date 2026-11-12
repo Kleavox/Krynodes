@@ -104,6 +104,7 @@ const MAILS_AT_ONCE = 5;
 const WATCHDOG_RETRY_MS = 60_000;
 const RECHECK_MS = 60_000;
 const PUSH_HEARD_MS = 60_000;
+const CUTOFFS_AT_ONCE = 10;
 const SETUP_SILENT_MS = 5 * 60_000;
 const SETUP_RESTART_MS = 20 * 60_000;
 
@@ -170,10 +171,7 @@ const watching = (ws: WebSocket) =>
 export class FleetHub {
   private readonly ctx: DurableObjectState;
   private readonly env: Env;
-  private readonly spent = new WeakMap<
-    WebSocket,
-    { since: number; count: number }
-  >();
+  private readonly spent = new Map<string, { since: number; count: number }>();
   private readonly network: HubNetwork;
   private readonly stopped = new Map<
     string,
@@ -386,9 +384,11 @@ export class FleetHub {
   ): Promise<void> {
     if (watching(ws)) return;
     const now = Date.now();
-    const spent = this.spent.get(ws);
+    const sender =
+      (ws.deserializeAttachment() as StreamState | null)?.nodeId ?? "";
+    const spent = this.spent.get(sender);
     if (!spent || now - spent.since >= 60_000) {
-      this.spent.set(ws, { since: now, count: 1 });
+      this.spent.set(sender, { since: now, count: 1 });
     } else if (++spent.count > MESSAGES_PER_MINUTE) {
       if (spent.count === MESSAGES_PER_MINUTE + 1) {
         ws.send(JSON.stringify({ type: "error", code: "TOO_MANY_MESSAGES" }));
@@ -581,14 +581,33 @@ export class FleetHub {
     if (due.length === 0) return;
     const poke: string[] = [];
     const quarantined: string[] = [];
-    for (const [key] of due) {
-      const [nodeId, id] = key.split("|") as [string, string];
-      const cut = await cutOffWarning(this.env.DB, nodeId, id);
-      poke.push(...cut.nodes);
-      quarantined.push(...cut.quarantined);
+    const waiting = new Map<string, [string, number][]>();
+    for (const entry of due.sort((a, b) => a[1] - b[1])) {
+      const nodeId = entry[0].split("|")[0]!;
+      waiting.set(nodeId, [...(waiting.get(nodeId) ?? []), entry]);
+    }
+    const turn: [string, number][] = [];
+    while (turn.length < CUTOFFS_AT_ONCE && waiting.size > 0) {
+      for (const [nodeId, entries] of waiting) {
+        turn.push(entries.shift()!);
+        if (entries.length === 0) waiting.delete(nodeId);
+        if (turn.length === CUTOFFS_AT_ONCE) break;
+      }
+    }
+    const done: [string, number][] = [];
+    try {
+      for (const entry of turn) {
+        const [nodeId, id] = entry[0].split("|") as [string, string];
+        const cut = await cutOffWarning(this.env.DB, nodeId, id);
+        poke.push(...cut.nodes);
+        quarantined.push(...cut.quarantined);
+        done.push(entry);
+      }
+    } catch (error) {
+      console.error("[kry fleet] cut off", error);
     }
     const kept = await this.cutoffs();
-    for (const [key, at] of due) if (kept[key] === at) delete kept[key];
+    for (const [key, at] of done) if (kept[key] === at) delete kept[key];
     await this.ctx.storage.put(CUTOFFS, kept);
     await this.poke(poke);
     this.announce(["all"]);
@@ -629,32 +648,60 @@ export class FleetHub {
   private async quiet(silent: { nodeId: string; seen: number }[], now: number) {
     if (silent.length === 0) return;
     const db = this.env.DB;
-    const members = (
+    const everyone = (
       await db
         .prepare(
-          `SELECT m.node_id, m.key, n.owner_user_id AS owner, n.name FROM network_members m
+          `SELECT m.node_id, m.key, n.owner_user_id AS owner, n.name, EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL) AS quarantined
+           FROM network_members m
            JOIN nodes n ON n.id = m.node_id
-           WHERE m.state = 'in' AND m.node_id IN (SELECT value FROM json_each(?))`,
+           WHERE m.state = 'in' AND n.owner_user_id IN (
+             SELECT owner_user_id FROM nodes WHERE id IN (SELECT value FROM json_each(?)))`,
         )
         .bind(JSON.stringify(silent.map((item) => item.nodeId)))
-        .all<{ node_id: string; key: string; owner: string; name: string }>()
+        .all<{
+          node_id: string;
+          key: string;
+          owner: string;
+          name: string;
+          quarantined: number;
+        }>()
     ).results;
+    const members = everyone.filter((member) =>
+      silent.some((item) => item.nodeId === member.node_id),
+    );
     const cutoffs: Cutoff[] = [];
     const warned: WarningMail[] = [];
     for (const member of members) {
-      const seenBy = [...this.network.latest]
-        .filter(
-          ([other, entry]) =>
-            other !== member.node_id &&
+      const peers = everyone.filter(
+        (peer) =>
+          peer.owner === member.owner &&
+          peer.node_id !== member.node_id &&
+          peer.quarantined === 0,
+      );
+      const seenBy = peers
+        .filter((peer) => {
+          const entry = this.network.latest.get(peer.node_id);
+          return (
+            entry !== undefined &&
+            now - entry.at < QUIET_HANDSHAKE_S * 1000 &&
+            this.ctx
+              .getWebSockets(peer.node_id)
+              .some(
+                (ws) => !(ws.deserializeAttachment() as StreamState).away,
+              ) &&
             entry.links.some(
               (link) =>
                 link.key === member.key &&
                 link.handshake !== null &&
+                link.handshake <= now / 1000 + 60 &&
                 now / 1000 - link.handshake < QUIET_HANDSHAKE_S,
-            ),
-        )
-        .map(([other]) => other);
-      if (seenBy.length === 0) continue;
+            )
+          );
+        })
+        .map((peer) => peer.node_id);
+      if (seenBy.length < Math.min(2, peers.length) || seenBy.length === 0) {
+        continue;
+      }
       const names = (
         await db
           .prepare(
