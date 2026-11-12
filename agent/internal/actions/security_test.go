@@ -193,7 +193,7 @@ func TestAHealthyServerHasOnlyNotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := findingsOf(t, executor)
-	if len(found) != 2 || found["ssh-keys"].Severity != "note" || found["ssh-keys"].Detail != "SSH keys for root" || found["root-login"].Severity != "note" {
+	if len(found) != 3 || found["ssh-no-password"].Severity != "note" || found["ssh-keys"].Severity != "note" || found["ssh-keys"].Detail != "SSH keys for root" || found["root-login"].Severity != "note" {
 		t.Fatalf("findings %#v", found)
 	}
 }
@@ -214,7 +214,7 @@ func TestFullAccessStacksMayHoldDockerButTheirPortsAreNamed(t *testing.T) {
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if found := findingsOf(t, executor); len(found) != 3 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (resolver-dns-1)" {
+	if found := findingsOf(t, executor); len(found) != 4 || found["public-ports"].Detail != "Listening on public addresses outside Krynodes: 53/udp (resolver-dns-1)" {
 		t.Fatalf("findings %#v", found)
 	}
 }
@@ -299,8 +299,16 @@ func TestFirewalldLetsInTheServicesAndPortsOfTheInternetZone(t *testing.T) {
 		t.Fatalf("public ports %q", got)
 	}
 	run.respond["firewall-cmd --info-zone=public"] = "public (active)\n  target: ACCEPT\n"
+	early := false
+	run.effects = map[string]func(){"firewall-cmd --info-zone=public": func() {
+		_, err := os.Stat(filepath.Join(executor.StateDir, "results", idB+".json"))
+		early = early || err == nil
+	}}
 	if result := runRequest(t, executor, Request{ID: idB, Kind: "host", Name: "server", Action: "scan", ExpiresAt: executorNow.Add(time.Minute).Format(time.RFC3339Nano)}); !result.OK {
 		t.Fatalf("scan %#v", result)
+	}
+	if early {
+		t.Fatal("the scan answered before the server was read again")
 	}
 	if got := publicPortsOf(t, executor); !strings.Contains(got, "5432/tcp (postgres)") {
 		t.Fatalf("a zone that accepts everything leaves every listener public: %q", got)

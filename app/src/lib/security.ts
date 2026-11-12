@@ -28,7 +28,15 @@ const OFF_FINDING: Record<string, string> = {
   "no-root-login": "root-login",
 };
 
-const ELSEWHERE = new Set([...Object.values(OFF_FINDING), "ssh-keys"]);
+const ON_FINDING: Record<string, string> = {
+  "ssh-keys-only": "ssh-no-password",
+};
+
+const ELSEWHERE = new Set([
+  ...Object.values(OFF_FINDING),
+  ...Object.values(ON_FINDING),
+  "ssh-keys",
+]);
 
 export const notesOf = (report: SecurityReport) =>
   report.findings.filter(
@@ -135,9 +143,11 @@ export function recipeChoices(report: SecurityReport): RecipeChoice[] {
       outside:
         !applied &&
         !unavailable &&
-        off !== undefined &&
-        !has(report, off) &&
-        (id !== "no-root-login" || has(report, "ssh-keys")),
+        (ON_FINDING[id] !== undefined
+          ? has(report, ON_FINDING[id])
+          : off !== undefined &&
+            !has(report, off) &&
+            (id !== "no-root-login" || has(report, "ssh-keys"))),
       blocked: applied
         ? null
         : unavailable

@@ -381,7 +381,7 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 	case "signin":
 		return e.signIn(ctx, request, command)
 	case "join":
-		return e.joinTailnet(ctx, request)
+		return e.joinTailnet(ctx, request, command)
 	case "exitnode":
 		return e.exitNode(ctx, request, command)
 	case "dns":

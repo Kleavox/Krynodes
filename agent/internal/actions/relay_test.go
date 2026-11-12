@@ -416,6 +416,8 @@ func TestTheHeartbeatCarriesSetupWhileItRunsAndSaysWhereItStopped(t *testing.T) 
 		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: boot}, &reporter.Setup{Phase: "upgrade", Step: 2, Of: 6}},
 		{setupProgress{Phase: "upgrade", Step: 2, Of: 6, At: executorNow.Add(-61 * time.Second), Boot: boot}, &reporter.Setup{Phase: "upgrade", Step: 2, Of: 6, Stopped: true}},
 		{setupProgress{Phase: "restart", Step: 6, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: "an-earlier-boot"}, nil},
+		{setupProgress{Phase: "docker", Step: 4, Of: 6, At: executorNow.Add(-30 * time.Second), Boot: "an-earlier-boot"}, &reporter.Setup{Phase: "docker", Step: 4, Of: 6, Stopped: true}},
+		{setupProgress{Phase: "docker", Step: 4, Of: 6, At: executorNow.Add(-25 * time.Hour), Boot: "an-earlier-boot"}, nil},
 		{setupProgress{Phase: "docker", Step: 4, Of: 6, At: executorNow.Add(-25 * time.Hour), Boot: boot}, nil},
 	} {
 		if got := report(&step.progress); !reflect.DeepEqual(got, step.want) {

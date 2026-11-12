@@ -716,6 +716,9 @@ func TestARunEmptiesTheWakeFolderBeforeAnythingElse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wake, "now"), nil, 0o640); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(wake, "folder", "inside"), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	broken := errors.New("systemd did not answer")
 	executor.Collect = func(context.Context, []string) (Snapshot, error) { return Snapshot{}, broken }
 	if err := executor.Execute(context.Background()); !errors.Is(err, broken) {

@@ -133,6 +133,23 @@ func readEnv(path string) (map[string]string, error) {
 	return values, nil
 }
 
+func movable(path string, values map[string]string) error {
+	raw, _ := os.ReadFile(path)
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "export "))
+		name, value, found := strings.Cut(line, "=")
+		name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+		if !found || strings.HasPrefix(line, "#") || !envName.MatchString(name) {
+			continue
+		}
+		literal := len(value) >= 2 && value[0] == '\'' && value[len(value)-1] == '\''
+		if (!literal && strings.Contains(value, "$")) || strings.ContainsAny(values[name], "'\n\r\x00") {
+			return fmt.Errorf("%s in this stack's .env uses $ or a quote that a move would change; write it there as %s='value' with no ' inside, then move again", name, name)
+		}
+	}
+	return nil
+}
+
 func sideFiles(directory string, composeFiles []string) ([]composeFile, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -228,6 +245,9 @@ func (e Executor) export(request Request, command Command, stack Stack) Result {
 	listed, err := sideFiles(stack.Directory, append(slices.Clone(stack.Files), e.sourceFile(stack)))
 	if err != nil {
 		return e.failed(request, err, "")
+	}
+	if err := movable(filepath.Join(stack.Directory, ".env"), env); err != nil {
+		return e.refuse(request.ID, err)
 	}
 	bundle := moveBundle{Env: env, Files: map[string][]byte{}}
 	var total int64

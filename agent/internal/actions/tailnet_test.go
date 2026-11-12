@@ -508,6 +508,29 @@ func TestJoinRefusesARunningTailscaleAndCleansUpAFailure(t *testing.T) {
 	}
 }
 
+func TestJoinLeavesATailnetTheSignatureDidNotName(t *testing.T) {
+	executor, run := tailnetServer(t)
+	executor.Stream = func(ctx context.Context, each func(string), name string, args ...string) error { return nil }
+	join := func(id, tailnet string) Result {
+		request := hostRequest(t, id, "tailscale", "join", map[string]string{"tailnet": tailnet})
+		request.Attachment = sealFor(t, executor, map[string]string{"authKey": tsKey})
+		delete(run.respond, "tailscale status --json")
+		run.sequence = map[string][]string{"tailscale status --json": {`{"BackendState":"NeedsLogin"}`, serverOneTailnet}}
+		hostQueue(t, executor, request)
+		if err := executor.HostApply(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return readResult(t, executor, id)
+	}
+	if result := join(idB, "tail9999.ts.net"); result.OK || !strings.Contains(result.Output, "joined tail0000.ts.net, not tail9999.ts.net") || !slices.Contains(run.calls, "tailscale logout") {
+		t.Fatalf("another tailnet %#v calls %v", result, run.calls)
+	}
+	run.calls = nil
+	if result := join(idC, "tail0000.ts.net"); !result.OK || slices.Contains(run.calls, "tailscale logout") {
+		t.Fatalf("the named tailnet %#v calls %v", result, run.calls)
+	}
+}
+
 const exitNodeFile = "/etc/sysctl.d/99-krynodes-exit-node.conf"
 
 func ranInOrder(calls []string, want ...string) bool {

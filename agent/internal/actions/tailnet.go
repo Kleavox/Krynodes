@@ -176,7 +176,7 @@ func (e Executor) savePolicy(ctx context.Context, request Request, command Comma
 	return e.answer(request, map[string]any{"saved": true, "at": e.stamp(), "etag": etag, "block": tailscale.BlockHash(lines), "lines": lines, "members": members, "devices": ids}, true)
 }
 
-func (e Executor) joinTailnet(ctx context.Context, request Request) Result {
+func (e Executor) joinTailnet(ctx context.Context, request Request, command Command) Result {
 	if _, err := os.Stat(e.path(tailscale.Binary)); err != nil {
 		return e.refuse(request.ID, errors.New("tailscale is not installed"))
 	}
@@ -199,6 +199,16 @@ func (e Executor) joinTailnet(ctx context.Context, request Request) Result {
 		return e.refuse(request.ID, errors.New(strings.ReplaceAll(err.Error(), key.AuthKey, "the one-time key")))
 	}
 	status := tailscale.Status(ctx, run)
+	if want := command.Args["tailnet"]; want != "" && (status.Tailnet == nil || *status.Tailnet != want) {
+		joined := "another tailnet"
+		if status.Tailnet != nil {
+			joined = *status.Tailnet
+		}
+		if output, _, err := e.Run(ctx, "tailscale", "logout"); err != nil {
+			return e.refuse(request.ID, fmt.Errorf("the one-time key joined %s, not %s, and signing out failed: %s; run tailscale logout on this server", joined, want, strings.TrimSpace(string(output))))
+		}
+		return e.refuse(request.ID, fmt.Errorf("the one-time key joined %s, not %s; this server was signed out of it again", joined, want))
+	}
 	return e.answer(request, struct {
 		ID        *string  `json:"id"`
 		Addresses []string `json:"addresses"`

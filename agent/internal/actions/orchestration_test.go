@@ -500,6 +500,26 @@ func TestExportSealsSecretsAndFilesForTheTarget(t *testing.T) {
 	}
 }
 
+func TestExportRefusesAnEnvFileAMoveWouldChange(t *testing.T) {
+	executor, _ := stackExecutor(t)
+	dir, stack := ownPanel(t, executor, "contained", panelText)
+	withStacks(&executor, stack)
+	target, _ := ecdh.P256().GenerateKey(rand.Reader)
+	for body, refused := range map[string]bool{
+		"DB_URL=postgres://u:${DB_PASS}@db/app\n": true,
+		"MOTTO=\"it's fine\"\n":                   true,
+		"PRICE='$5'\nPLAIN=yes\n":                 false,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		request := composeRequest(t, fresh(len(body)), "panel", "export", func(c *Command) { c.Args = map[string]string{"key": seal.Public(target)} })
+		if result := runRequest(t, executor, request); result.OK == refused || refused && !strings.Contains(result.Output, "a move would change") {
+			t.Fatalf("%q: %#v", body, result)
+		}
+	}
+}
+
 func TestExportRefusesFilesBeyond32KB(t *testing.T) {
 	executor, _ := stackExecutor(t)
 	dir, stack := ownPanel(t, executor, "contained", panelText)

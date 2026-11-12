@@ -124,6 +124,8 @@ func (e Executor) findings(ctx context.Context) ([]reporter.Finding, []reporter.
 		passwords := settings["passwordauthentication"] == "yes" || settings["kbdinteractiveauthentication"] == "yes"
 		if passwords {
 			add("ssh-password", "serious", "SSH accepts passwords")
+		} else {
+			add("ssh-no-password", "note", "SSH takes keys only")
 		}
 		if passwords && settings["permitrootlogin"] == "yes" {
 			add("ssh-root", "serious", "Root can log in over SSH with a password")

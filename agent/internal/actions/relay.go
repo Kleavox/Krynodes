@@ -377,12 +377,18 @@ func (r *Relay) readSetup() *reporter.Setup {
 	if r.Boot != nil {
 		boot = strings.TrimSpace(r.Boot())
 	}
-	if err != nil || progress.Phase == "" || progress.Boot != boot {
+	if err != nil || progress.Phase == "" {
 		return nil
 	}
 	age := r.Now().Sub(progress.At)
 	if age > setupKept {
 		return nil
+	}
+	if progress.Boot != boot {
+		if progress.Phase == "restart" || boot == "" {
+			return nil
+		}
+		return &reporter.Setup{Phase: progress.Phase, Step: progress.Step, Of: progress.Of, Stopped: true}
 	}
 	return &reporter.Setup{Phase: progress.Phase, Step: progress.Step, Of: progress.Of, Stopped: age > setupStale}
 }
