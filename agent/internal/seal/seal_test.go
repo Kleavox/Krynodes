@@ -139,3 +139,26 @@ func TestADamagedServerKeyIsSetAsideAndMadeAgain(t *testing.T) {
 		t.Fatalf("the damaged key is set aside: %v", err)
 	}
 }
+
+func TestAMessageSealedFromASenderOpensOnlyWithThatSendersKey(t *testing.T) {
+	sender, _ := ecdh.P256().GenerateKey(rand.Reader)
+	other, _ := ecdh.P256().GenerateKey(rand.Reader)
+	recipient, _ := ecdh.P256().GenerateKey(rand.Reader)
+	sealed, err := SealFrom(sender, Public(recipient), []byte("piece"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain, err := OpenFrom(recipient, Public(sender), sealed); err != nil || string(plain) != "piece" {
+		t.Fatalf("from the sender: %q %v", plain, err)
+	}
+	if _, err := OpenFrom(recipient, Public(other), sealed); err == nil {
+		t.Fatal("it opened as if another server had sent it")
+	}
+	if _, err := Open(recipient, sealed); err == nil {
+		t.Fatal("it opened without naming a sender")
+	}
+	plain, _ := Seal(Public(recipient), []byte("piece"))
+	if _, err := OpenFrom(recipient, Public(sender), plain); err == nil {
+		t.Fatal("a message anyone could seal passed as the sender's")
+	}
+}

@@ -23,6 +23,7 @@ import {
   useNetworkKeys,
   useSignChange,
 } from "@/features/network/use-network-sign";
+import { finished } from "@/features/network/use-tailscale";
 import { removalReady } from "@/lib/agent";
 import {
   useCloudflare,
@@ -67,6 +68,8 @@ export function DeleteNodeDialog({
   const keys = useNetworkKeys(network?.members ?? []);
   const operate = useSignedOperation(false);
   const credential = useSignedOperation(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareProblem, setShareProblem] = useState<string | null>(null);
   const run = useSignedAction(false);
   const unblock = useSignedAction(false);
   const quarantined = !!node.quarantine;
@@ -131,6 +134,7 @@ export function DeleteNodeDialog({
       leave.reset();
       operate.reset();
       credential.reset();
+      setShareProblem(null);
       run.reset();
       unblock.reset();
       setKeepAgent(false);
@@ -188,7 +192,30 @@ export function DeleteNodeDialog({
               });
             },
           },
-          { onSuccess: then },
+          {
+            onSuccess: (sent) => {
+              setSharing(true);
+              setShareProblem(null);
+              finished(sent.actions.map((action) => action.id))
+                .then((actions) => {
+                  const stopped = actions.find(
+                    (action) => action.status !== "done",
+                  );
+                  if (stopped) {
+                    setShareProblem(
+                      stopped.output ||
+                        `The Tailscale credential could not be shared again, so ${node.name} was not deleted.`,
+                    );
+                    return;
+                  }
+                  then();
+                })
+                .catch((problem: unknown) =>
+                  setShareProblem(errorMessage(problem)),
+                )
+                .finally(() => setSharing(false));
+            },
+          },
         )
       : then();
   const unblockThen = (then: () => void) =>
@@ -278,12 +305,14 @@ export function DeleteNodeDialog({
     leave.isPending ||
     operate.isPending ||
     credential.isPending ||
+    sharing ||
     run.isPending ||
     unblock.isPending ||
     remove.isPending;
   const error =
     unread ??
     credential.error ??
+    shareProblem ??
     unblock.error ??
     leave.error ??
     remove.error ??

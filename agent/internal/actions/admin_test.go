@@ -22,6 +22,10 @@ const (
 	adminAgain   = "Open this server in Krynodes, choose Actions → Add Admin User and run the command it gives within 30 minutes."
 )
 
+func init() {
+	adminWait = 0
+}
+
 type adminTerminal struct {
 	out    *strings.Builder
 	answer bool

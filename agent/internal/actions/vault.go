@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"crypto/ecdh"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,7 +117,11 @@ func (e Executor) secret(request Request, command Command, name string) ([]byte,
 	pieces := [][]byte{own.Piece}
 	if request.Attachment != "" {
 		var other vaultPiece
-		if err := e.opened(request.Attachment, &other); err != nil {
+		if from := command.Args["from"]; from != "" {
+			if err := e.openedFrom(from, request.Attachment, &other); err != nil {
+				return nil, fmt.Errorf("the second piece did not come from the server your passkey named: %w", err)
+			}
+		} else if err := e.opened(request.Attachment, &other); err != nil {
 			return nil, fmt.Errorf("the second piece: %w", err)
 		}
 		if other.Set != own.Set {
@@ -145,7 +150,11 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 			sealed = request.Attachment
 		}
 		var piece vaultPiece
-		if err := e.opened(sealed, &piece); err != nil {
+		if from := command.Args["from"]; from != "" && command.Piece == "" {
+			if err := e.openedFrom(from, sealed, &piece); err != nil {
+				return e.refuse(request.ID, fmt.Errorf("the piece did not come from the server your passkey named: %w", err))
+			}
+		} else if err := e.opened(sealed, &piece); err != nil {
 			return e.refuse(request.ID, fmt.Errorf("the piece: %w", err))
 		}
 		holders, err := strconv.Atoi(command.Args["holders"])
@@ -174,8 +183,20 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 			return e.refuse(request.ID, err)
 		}
 		encoded, _ := json.Marshal(vaultPiece{Set: own.Set, Piece: own.Piece})
-		sealed, err := seal.Seal(command.Args["key"], encoded)
-		if err != nil {
+		var sealed string
+		if sender := command.Args["sender"]; sender != "" {
+			key, err := e.sealKey()
+			if err != nil {
+				return e.refuse(request.ID, err)
+			}
+			if seal.Public(key) != sender {
+				return e.refuse(request.ID, errors.New("this server's key is not the one your passkey named as the sender"))
+			}
+			sealed, err = seal.SealFrom(key, command.Args["key"], encoded)
+			if err != nil {
+				return e.refuse(request.ID, err)
+			}
+		} else if sealed, err = seal.Seal(command.Args["key"], encoded); err != nil {
 			return e.refuse(request.ID, err)
 		}
 		return ok(sealed)
@@ -192,7 +213,30 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 	return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
 }
 
+func (e Executor) cleanAfter(ctx context.Context, request Request, command Command) Result {
+	gone := command.Args["cleanup"]
+	if gone == "" || request.Name == "tailscale" {
+		return e.refuse(request.ID, errors.New("the cleanup names no server"))
+	}
+	token, err := e.secret(request, command, request.Name)
+	if err != nil {
+		return e.refuse(request.ID, err)
+	}
+	cf := e.cloudflare(token)
+	zone, err := cf.Zone(ctx, command.Args["zone"])
+	if err != nil {
+		return e.failed(request, err, "")
+	}
+	if err := cf.Clean(ctx, zone.AccountID, zone.ID, "krynodes-"+gone); err != nil {
+		return e.failed(request, err, "")
+	}
+	return Result{ID: request.ID, OK: true, Output: "cleaned", FinishedAt: e.stamp()}
+}
+
 func (e Executor) reshare(ctx context.Context, request Request, command Command) Result {
+	if command.Args["only"] == "cleanup" {
+		return e.cleanAfter(ctx, request, command)
+	}
 	if !setPattern.MatchString(command.Args["set"]) {
 		return e.refuse(request.ID, errors.New("the new split has no valid id"))
 	}
@@ -213,10 +257,24 @@ func (e Executor) reshare(ctx context.Context, request Request, command Command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
+	var own *ecdh.PrivateKey
+	if sender := command.Args["sender"]; sender != "" {
+		if own, err = e.sealKey(); err != nil {
+			return e.refuse(request.ID, err)
+		}
+		if seal.Public(own) != sender {
+			return e.refuse(request.ID, errors.New("this server's key is not the one your passkey named as the sender"))
+		}
+	}
 	sealed := map[string]string{}
 	for index, entry := range holders {
 		encoded, _ := json.Marshal(vaultPiece{Set: command.Args["set"], Piece: split[index]})
-		if sealed[entry.node], err = seal.Seal(entry.key, encoded); err != nil {
+		if own != nil {
+			sealed[entry.node], err = seal.SealFrom(own, entry.key, encoded)
+		} else {
+			sealed[entry.node], err = seal.Seal(entry.key, encoded)
+		}
+		if err != nil {
 			return e.refuse(request.ID, fmt.Errorf("the key of %s: %w", entry.node, err))
 		}
 	}

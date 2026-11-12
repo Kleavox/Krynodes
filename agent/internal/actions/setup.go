@@ -143,6 +143,13 @@ func (e Executor) BeginSetup(options SetupOptions) error {
 	return writeJSON(e.StateDir, setupFile, setupProgress{Phase: phases[0], Step: 1, Of: len(phases), At: e.Now(), Boot: e.boot(), Quiet: true}, 0o644)
 }
 
+const GoneFile = "gone"
+
+func SetupRunning(stateDir string, now time.Time) bool {
+	progress, err := readState[setupProgress](stateDir, setupFile)
+	return err == nil && progress.Phase != "" && progress.Phase != "restart" && now.Sub(progress.At) <= setupStale
+}
+
 func (e Executor) FinishSetup(ctx context.Context, out io.Writer) error {
 	progress, err := readState[setupProgress](e.StateDir, setupFile)
 	if err != nil || progress.Phase != "restart" || progress.Boot != e.boot() {
@@ -202,8 +209,17 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 	confined := e.confined(options, platform.Family)
 	track := e.track(setupPhases(options, confined))
 	e.startWatch(ctx)
+	deleted := false
+	gone := func() bool {
+		if _, err := os.Stat(e.GoneMark); deleted || e.GoneMark == "" || err != nil {
+			return deleted
+		}
+		deleted = true
+		mark("✗", "This server was deleted in Krynodes", ", so the rest of setup is skipped")
+		return true
+	}
 	admin := false
-	if options.Admin != "" {
+	if options.Admin != "" && !gone() {
 		track.enter("admin")
 		defer e.markAdmin(options.Admin, options.AdminKeys)()
 		var result recipes.AdminResult
@@ -212,7 +228,7 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			e.acceptAdmin(options.Admin, result, options.AdminKeys)
 		}
 	}
-	if options.Upgrade {
+	if options.Upgrade && !gone() {
 		track.enter("upgrade")
 		if err := recipes.Upgrade(ctx, env); err != nil {
 			mark("✗", "Packages", ": "+err.Error())
@@ -221,7 +237,7 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 		}
 		e.retake(ctx, false)
 	}
-	if options.Recommended {
+	if options.Recommended && !gone() {
 		track.enter("protections")
 		state := e.readRecipes()
 		for _, step := range setupSteps {
@@ -264,11 +280,11 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 		e.syncPublish(ctx)
 	}
 	restart := false
-	if options.Confine {
+	if options.Confine && !gone() {
 		track.enter(confined)
 		restart = e.setupConfine(ctx, env, platform.Family, mark)
 	}
-	if options.Docker {
+	if options.Docker && !gone() {
 		track.enter("docker")
 		result, err := recipes.InstallDocker(ctx, env, e.installArgs(args))
 		if err == nil && result.Installed {
@@ -286,7 +302,7 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 			mark("✓", result.Message, "")
 		}
 	}
-	if options.Network != "" {
+	if options.Network != "" && !gone() {
 		track.enter("network")
 		if _, err := e.prepareNetwork(ctx, options.Network, 0); err != nil {
 			mark("✗", "Private network", ": "+err.Error())
@@ -298,7 +314,7 @@ func (e Executor) Setup(ctx context.Context, options SetupOptions, out io.Writer
 		e.noRootLogin(ctx, options.Admin, mark)
 	}
 	os.Remove(filepath.Join(e.StateDir, "security.json"))
-	restart = options.Restart && (restart || e.restartNeeded(ctx, env))
+	restart = options.Restart && !gone() && (restart || e.restartNeeded(ctx, env))
 	track.end(restart)
 	if restart {
 		mark("✓", "Restart", " · the server restarts when the install finishes")

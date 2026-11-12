@@ -355,3 +355,12 @@ func TestADeployWithoutAnyComposeFileIsRefused(t *testing.T) {
 		t.Fatalf("result %+v calls %q", result, run.calls)
 	}
 }
+
+func TestRollbackSaysSoWhenEveryImageIsPinnedByDigest(t *testing.T) {
+	executor, run, _ := deployExecutor(t, "rollback")
+	keep(t, executor, imageRecord{Service: "db", Reference: "postgres@sha256:abc", ID: "sha256:pg"})
+	result := execute(t, executor)
+	if result.OK || !strings.Contains(result.Output, "pinned by digest") || slices.Contains(run.calls, upCall) {
+		t.Fatalf("result %+v calls %q", result, run.calls)
+	}
+}

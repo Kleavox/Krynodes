@@ -126,14 +126,16 @@ const portText = z
     (text) => Number(text) >= NETWORK.port && Number(text) <= NETWORK.lastPort,
   );
 
+const PROBE_PEERS = 31;
+
 const peersText = z
   .string()
-  .max(1200)
+  .max(1600)
   .refine((text) => {
     const peers = text.split(" ");
     return (
       peers.length >= 1 &&
-      peers.length <= 16 &&
+      peers.length <= PROBE_PEERS &&
       peers.every((peer) => {
         const found = endpointPort(peer);
         return (
@@ -220,7 +222,7 @@ export const networkInspectSchema = z.strictObject({
 
 export const networkProbeSchema = z.strictObject({
   listened: z.boolean(),
-  arrived: z.array(z.string().max(45)).max(16),
+  arrived: z.array(z.string().max(45)).max(PROBE_PEERS),
 });
 
 export const networkTestSchema = z.strictObject({

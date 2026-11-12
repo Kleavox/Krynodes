@@ -277,6 +277,38 @@ func TestPokesArriveEvenInFragmentsAndPingsAreAnswered(t *testing.T) {
 	}
 }
 
+func TestFramesThatBreakTheProtocolDeliverNothing(t *testing.T) {
+	for name, send := range map[string]func(p *peer){
+		"a message inside a message": func(p *peer) {
+			p.write(opText, []byte(`{"type":`), false)
+			p.write(opText, []byte(`{"type":"poke"}`), true)
+		},
+		"a long ping": func(p *peer) {
+			p.write(opPing, make([]byte, 126), true)
+			p.write(opText, []byte(`{"type":"poke"}`), true)
+		},
+		"a split ping": func(p *peer) {
+			p.write(opPing, []byte("hi"), false)
+			p.write(opText, []byte(`{"type":"poke"}`), true)
+		},
+	} {
+		srv, _ := server(t, func(p *peer) {
+			send(p)
+			for {
+				if _, _, err := p.read(); err != nil {
+					return
+				}
+			}
+		})
+		c, _ := client(t, srv.URL)
+		select {
+		case <-c.Pokes():
+			t.Fatalf("%s: the connection went on", name)
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+}
+
 func TestItReconnectsAtOnceAfterTheServerCloses(t *testing.T) {
 	var first atomic.Bool
 	srv, dials := server(t, func(p *peer) {

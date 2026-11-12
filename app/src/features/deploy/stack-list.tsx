@@ -1,4 +1,4 @@
-import { FEATURE_AGENT } from "@krynodes/protocol";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol";
 import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -111,7 +111,7 @@ function StackControls({
     reach: agentCurrent(member.node),
     title: stackTitle(member.stack),
     names: member.stack.names,
-    named: agentGap(member.node.agent_version, FEATURE_AGENT) === null,
+    named: agentGap(member.node.agent_version) === null,
     entry,
     containers: member.stack.containers ?? [],
   };

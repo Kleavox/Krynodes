@@ -353,8 +353,8 @@ describe("container checks", () => {
     target: "resolver-resolver-1",
   };
 
-  it("creates one on agent 0.7.0 or newer", async () => {
-    const { send, sqlite } = containers("0.7.0");
+  it("creates one on agent 0.7.20 or newer", async () => {
+    const { send, sqlite } = containers("0.7.20");
     expect((await send("POST", "/api/checks", create)).status).toBe(201);
     expect(
       sqlite
@@ -367,7 +367,7 @@ describe("container checks", () => {
     const { send } = containers(version);
     const refusal = {
       code: "AGENT_TOO_OLD",
-      message: `Update the agent on ${NODE} to 0.7.0 or newer.`,
+      message: `Update the agent on ${NODE} to 0.7.20 or newer.`,
     };
     const response = await send("POST", "/api/checks", create);
     expect(response.status).toBe(409);
@@ -381,7 +381,7 @@ describe("container checks", () => {
   });
 
   it("refuses a name Docker would not give a container", async () => {
-    const { send } = containers("0.7.0");
+    const { send } = containers("0.7.20");
     for (const target of ["-web", "web/1", "web 1", "x".repeat(129)]) {
       expect(
         (await send("POST", "/api/checks", { ...create, target })).status,

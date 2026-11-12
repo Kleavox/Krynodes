@@ -49,7 +49,10 @@ export function ReleaseDialog({
     }
     onOpenChange(next);
   };
-  const error = problem ?? (release.error ? errorMessage(release.error) : null);
+  const releasing = quarantine.data?.releasing === true;
+  const error = releasing
+    ? `${node.name} is being released. It stays quarantined until it reports that its new keys are in place.`
+    : (problem ?? (release.error ? errorMessage(release.error) : null));
 
   return (
     <Dialog open={open} onOpenChange={close}>
@@ -73,7 +76,7 @@ export function ReleaseDialog({
                 {
                   onSuccess: () => {
                     toast.success(
-                      `Releasing ${node.name}. It makes new keys and reports again.`,
+                      `Releasing ${node.name}. It stays quarantined until its new keys are in place.`,
                     );
                     close(false);
                   },
@@ -133,7 +136,7 @@ export function ReleaseDialog({
             </Button>
             <Button
               type="submit"
-              disabled={release.isPending || quarantine.isFetching}
+              disabled={release.isPending || quarantine.isFetching || releasing}
             >
               <KeyRound aria-hidden="true" />
               {release.isPending ? <Waiting /> : "Release"}

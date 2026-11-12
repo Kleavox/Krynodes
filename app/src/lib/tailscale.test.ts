@@ -591,7 +591,7 @@ describe("the steps", () => {
     expect(await connectSteps({ ...input, holders: one })).toEqual({
       ok: false,
       reason:
-        "Connect needs two servers with agent 0.7.0 that your passkey reaches; 1 is.",
+        "Connect needs two servers with agent 0.7.20 that your passkey reaches; 1 is.",
     });
     const two = await connectSteps({
       ...input,
@@ -622,14 +622,14 @@ describe("the steps", () => {
       kind: "vault",
       name: "tailscale",
       action: "release",
-      args: { to: P, key: "key-p", set: SET },
+      args: { to: P, key: "key-p", set: SET, sender: "key-i" },
     };
     const job = (action: string, args: Record<string, string>) => ({
       nodeId: P,
       kind: "vault",
       name: "tailscale",
       action,
-      args: { client: "kT9xQ2hN4CNTRL", ...args },
+      args: { client: "kT9xQ2hN4CNTRL", from: "key-i", ...args },
       attachFrom: 0,
     });
     expect(readSteps(USE, KEY, CONNECTED)).toEqual([
@@ -840,10 +840,10 @@ describe("Exit Node and Tailscale DNS rows", () => {
     keyExpiry: null,
   };
 
-  it("says what an agent before 0.7.4 cannot do yet", () => {
+  it("says what an agent before 0.7.20 cannot do yet", () => {
     for (const line of [exitNodeLine, dnsLine]) {
-      expect(line(running, "0.7.3")).toEqual({
-        text: "Needs agent 0.7.4 or newer",
+      expect(line(running, "0.7.19")).toEqual({
+        text: "Needs agent 0.7.20 or newer",
         warn: false,
         changes: false,
       });
@@ -852,20 +852,23 @@ describe("Exit Node and Tailscale DNS rows", () => {
 
   it("shows -- when the server could not read it", () => {
     for (const line of [exitNodeLine, dnsLine]) {
-      expect(line(running, "0.7.4")).toEqual({
+      expect(line(running, "0.7.24")).toEqual({
         text: "--",
         warn: false,
         changes: true,
       });
       expect(
-        line({ ...running, exitNode: null, acceptDNS: null }, "0.7.4").text,
+        line({ ...running, exitNode: null, acceptDNS: null }, "0.7.24").text,
       ).toBe("--");
     }
   });
 
   it("names off, on and waiting for Tailscale's approval", () => {
     const exit = (advertised: boolean, approved: boolean) =>
-      exitNodeLine({ ...running, exitNode: { advertised, approved } }, "0.7.4");
+      exitNodeLine(
+        { ...running, exitNode: { advertised, approved } },
+        "0.7.24",
+      );
     expect(exit(false, false)).toEqual({
       text: "Off",
       warn: false,
@@ -881,8 +884,10 @@ describe("Exit Node and Tailscale DNS rows", () => {
       warn: true,
       changes: true,
     });
-    expect(dnsLine({ ...running, acceptDNS: true }, "0.7.4").text).toBe("On");
-    expect(dnsLine({ ...running, acceptDNS: false }, "0.7.4").text).toBe("Off");
+    expect(dnsLine({ ...running, acceptDNS: true }, "0.7.24").text).toBe("On");
+    expect(dnsLine({ ...running, acceptDNS: false }, "0.7.24").text).toBe(
+      "Off",
+    );
   });
 
   it("explains the exit node before turning it on or off", () => {

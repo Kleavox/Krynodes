@@ -19,8 +19,7 @@ export interface ActionRequest {
   target: ActionTarget;
 }
 
-const SOON =
-  "Servers on agent 0.7.6 or newer start it within seconds; older ones at their next report.";
+const SOON = "Servers start it within seconds.";
 
 export const DESCRIPTION: Record<ActionRequest["action"], string> = {
   start: SOON,

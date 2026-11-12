@@ -282,6 +282,9 @@ func (e Executor) applyApt(ctx context.Context, request Request) Result {
 		}
 		return e.answer(request, map[string]string{"file": file}, true)
 	case "droprepo":
+		if _, err := os.Stat(filepath.Join(e.StateDir, "docker.json")); err == nil && (request.Name == "docker" || request.Name == "docker-ce") {
+			return e.refuse(request.ID, errors.New("this source came with Docker, which Krynodes installed here; it is what keeps Docker updated"))
+		}
 		if err := job.DropRepo(ctx, request.Name, distro); err != nil {
 			return e.refuse(request.ID, err)
 		}

@@ -473,7 +473,7 @@ describe("loadStatus", () => {
     expect(service!.recentInfo.since).toBe(Date.parse("2026-09-28T09:47:00Z"));
   });
 
-  it("returns only public, enabled checks with their incidents, newest first", async () => {
+  it("returns public checks with their incidents, newest first, and a paused one as paused", async () => {
     const { db, sqlite } = fleet();
     publish(sqlite, "a", { name: "Website", note: "Main website" });
     publish(sqlite, "b", { name: "Hidden", public: false });
@@ -496,17 +496,28 @@ describe("loadStatus", () => {
 
     const view = await loadStatus(db, NOW);
 
-    expect(view.services.map((service) => service.name)).toEqual(["Website"]);
-    expect(view.services[0]).toMatchObject({
+    expect(
+      view.services.map((service) => [service.name, service.state]),
+    ).toEqual([
+      ["Paused", "paused"],
+      ["Website", "up"],
+    ]);
+    expect(view.services[1]).toMatchObject({
       note: "Main website",
       state: "up",
     });
-    expect(view.services[0]!.days[89]!.state).toBe("partial");
-    expect(view.services[0]!.days[89 - 40]!.state).toBe("partial");
+    expect(view.services[1]!.days[89]!.state).toBe("partial");
+    expect(view.services[1]!.days[89 - 40]!.state).toBe("partial");
     expect(view.incidents).toEqual([
       {
         name: "Website",
         startedAt: Date.parse("2026-09-28T11:30:00.000Z"),
+        resolvedAt: null,
+        updates: [],
+      },
+      {
+        name: "Paused",
+        startedAt: Date.parse("2026-09-27T11:00:00.000Z"),
         resolvedAt: null,
         updates: [],
       },

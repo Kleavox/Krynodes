@@ -198,3 +198,34 @@ func TestAnAcceptedLineInsideAnotherMessageIsNotASignIn(t *testing.T) {
 		t.Fatal("a real sign-in was not read")
 	}
 }
+
+func TestAnAccountThatCannotLogInIsNotAUserButItsKeysStillCount(t *testing.T) {
+	root := server(t)
+	start := read(t, root)
+	passwd, _ := os.ReadFile(filepath.Join(root, "etc", "passwd"))
+	write(t, root, "/etc/passwd", string(passwd)+"snap_daemon:x:1001:1001::/nonexistent:/usr/sbin/nologin\nbuilder:x:1002:1002::/home/builder:/bin/false\n")
+	if changes := Compare(start, read(t, root)); len(changes) != 0 {
+		t.Fatalf("a service account warned: %+v", changes)
+	}
+	write(t, root, "/home/builder/.ssh/authorized_keys", otherKey+"\n")
+	if changes := Compare(start, read(t, root)); len(changes) != 1 || changes[0].Kind != "ssh-key" || changes[0].Detail["user"] != "builder" {
+		t.Fatalf("a key on a service account: %+v", changes)
+	}
+	write(t, root, "/etc/passwd", string(passwd)+"snap_daemon:x:1001:1001::/nonexistent:/bin/bash\n")
+	if changes := Compare(start, read(t, root)); len(changes) != 1 || changes[0].Kind != "user" || changes[0].Item != "snap_daemon" {
+		t.Fatalf("a service account given a shell: %+v", changes)
+	}
+}
+
+func TestAUserNamedInASudoersFileIsAnAdminForLogins(t *testing.T) {
+	root := server(t)
+	write(t, root, "/etc/sudoers.d/90-cloud-init-users", "# Created by cloud-init\nDefaults:cloud !requiretty\ncloud ALL=(ALL) NOPASSWD:ALL\n%ops ALL=(ALL) ALL\nUser_Alias OPS = budi\n")
+	start := read(t, root)
+	if !slices.Contains(start.Admins, "cloud") || slices.Contains(start.Admins, "%ops") || slices.Contains(start.Admins, "User_Alias") || slices.Contains(start.Admins, "Defaults:cloud") {
+		t.Fatalf("admins %v", start.Admins)
+	}
+	journal := "1790000010.000000 vps-1 sshd[902]: Accepted publickey for cloud from 203.0.113.9 port 51515 ssh2: ED25519 " + otherPrint + "\n"
+	if logins := Logins(journal, start, start); len(logins) != 1 || logins[0].Detail["user"] != "cloud" {
+		t.Fatalf("logins %+v", logins)
+	}
+}

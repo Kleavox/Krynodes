@@ -92,17 +92,11 @@ export {
 } from "./change";
 export { summarizeChange, type ChangeSummary } from "./summary";
 export {
-  agentHasFeatures,
-  agentHasSecurity,
-  agentSetsBooleans,
+  agentSealsFromSender,
   agentSupported,
-  agentTakesPush,
-  BOOLEAN_AGENT,
   compareVersions,
-  FEATURE_AGENT,
   MIN_AGENT_VERSION,
-  PUSH_AGENT,
-  SECURITY_AGENT,
+  SEAL_AGENT,
 } from "./versions";
 export { evaluateQuorum, type QuorumInput, type QuorumResult } from "./quorum";
 export {

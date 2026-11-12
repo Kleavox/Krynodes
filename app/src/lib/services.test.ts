@@ -474,39 +474,39 @@ describe("restart automatically", () => {
 
   it("says why it cannot be turned on", () => {
     expect(
-      autoRestartBlocker(check, node("n1", "server-1", "0.7.0"), entry()),
+      autoRestartBlocker(check, node("n1", "server-1", "0.7.20"), entry()),
     ).toBeNull();
     expect(
       autoRestartBlocker(check, node("n1", "server-1", "0.4.1"), entry()),
-    ).toBe("Needs agent 0.7.0");
+    ).toBe("Needs agent 0.7.20");
     expect(autoRestartBlocker(check, undefined, entry())).toBe(
       "Server Not Found",
     );
     expect(
       autoRestartBlocker(
         check,
-        { ...node("n1", "server-1", "0.7.0"), agent_version: null },
+        { ...node("n1", "server-1", "0.7.20"), agent_version: null },
         entry(),
       ),
     ).toBe("Waiting for First Report");
     expect(
       autoRestartBlocker(
         { ...check, target: "ssh" },
-        node("n1", "server-1", "0.7.0"),
+        node("n1", "server-1", "0.7.20"),
         entry(),
       ),
     ).toBe("Krynodes never restarts this unit");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "server-1", "0.7.0"),
+        node("n1", "server-1", "0.7.20"),
         entry({ services: [] }),
       ),
     ).toBe("The unit is not on this server");
     expect(
       autoRestartBlocker(
         check,
-        node("n1", "server-1", "0.7.0"),
+        node("n1", "server-1", "0.7.20"),
         entry({ trust: null }),
       ),
     ).toBe("Not Trusted Yet");

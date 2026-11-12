@@ -8,7 +8,7 @@ import { SecurityRowHead } from "./security-row";
 
 const SEEN = Date.parse("2026-11-03T10:00:00Z");
 
-const node = (agent = "0.7.15") =>
+const node = (agent = "0.7.35") =>
   ({ id: "n1", name: "server-1", agent_version: agent }) as NodeRecord;
 
 const report: SecurityReport = {

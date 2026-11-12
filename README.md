@@ -207,11 +207,13 @@ checks and the Security check, but not Protections or Docker setup.
 Releases are cut by `.github/workflows/agent-release.yml` whenever
 `agent/VERSION` changes on `main`, as `agent-v<version>` with `krynodes-linux-amd64`
 and `krynodes-linux-arm64`, their checksums, ed25519 signatures and build
-provenance. The workflow signs with the repository secret `AGENT_SIGNING_KEY`
-and refuses to publish if it does not match `agent/internal/update/release.pub`.
-The signing job runs in the GitHub environment `release`, which holds the key
-and waits for the owner's approval; a push that does not bump the version never
-reaches it. Every action in the workflows is pinned to a commit SHA
+provenance. The workflow signs with the secret `AGENT_SIGNING_KEY` and refuses
+to publish if it does not match `agent/internal/update/release.pub`. The key is
+a secret of the GitHub environment `release`, not of the repository: only the
+signing job runs there, and it waits for the owner's approval. A push that does
+not bump the version never reaches it, a version lower than the last release is
+refused, and the tag is made when the release is published, so a failed run
+leaves nothing behind. Every action in the workflows is pinned to a commit SHA
 (`pnpm lint:actions` refuses a tag), and Dependabot proposes updates weekly.
 
 The agent accepts only TLS 1.3 when it talks to Krynodes or
@@ -316,7 +318,7 @@ up to a minute.
   a connection that stays silent for 75 seconds and reconnects after 1 second,
   doubling to 1 minute (with jitter). Cloudflare closes every connection on a
   deploy or restart; agents are back within seconds and report at once.
-- Agents before 0.7.0 are not supported: they are refused (426), the Worker
+- Agents before 0.7.20 are not supported: they are refused (426), the Worker
   refuses every action for them, and the server page's agent dialog shows the
   command to update such a server by hand.
 - At a 60-second interval a server costs about 870 D1 writes a day.

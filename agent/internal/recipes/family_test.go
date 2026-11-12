@@ -250,3 +250,18 @@ func TestFirewalldUndoRemovesOnlyItsPortsAndStopsItIfItWasOff(t *testing.T) {
 		t.Fatalf("a firewall that was on stays on: %q", run.calls)
 	}
 }
+
+func TestFirewalldThatFailsHalfwayClosesThePortsItOpened(t *testing.T) {
+	env, run := onRelease(t, "rocky")
+	run.respond["firewall-cmd --state"] = "running\n"
+	run.failing["firewall-cmd --permanent --query-port=80/tcp"] = true
+	run.failing["firewall-cmd --permanent --query-port=443/tcp"] = true
+	run.failing["firewall-cmd --permanent --add-port=443/tcp"] = true
+	if _, err := Apply(context.Background(), env, "firewall", map[string]string{"ports": "80/tcp,443/tcp"}); err == nil {
+		t.Fatal("the failure was swallowed")
+	}
+	mustCall(t, run, "firewall-cmd --permanent --remove-port=80/tcp")
+	if slices.Contains(run.calls, "firewall-cmd --permanent --remove-port=22/tcp") || slices.Contains(run.calls, "systemctl disable --now firewalld") {
+		t.Fatalf("calls %q", run.calls)
+	}
+}

@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/actions"
@@ -52,7 +55,7 @@ func setupCommand(args []string) error {
 	case !*recommended && !*confine && !*docker && !*upgrade && !*restart && !*finish && *join == "" && *admin == "" && len(adminKeys) == 0:
 		return errors.New("choose --recommended, --confine, --docker, --network or more")
 	case *admin != "" && !recipes.ValidAdminName(*admin):
-		return errors.New("--admin takes your user name, not root")
+		return errors.New("--admin takes your user name, not root or kry")
 	case *admin != "" && (len(adminKeys) == 0 || len(adminKeys) > 4):
 		return errors.New("--admin needs one to four --admin-key")
 	case *admin == "" && len(adminKeys) > 0:
@@ -64,7 +67,7 @@ func setupCommand(args []string) error {
 	case runtime.GOOS != "linux" || os.Geteuid() != 0:
 		return errors.New("setup must run as root on Linux")
 	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, GoneMark: filepath.Join(stateDirectory, actions.GoneFile)}
 	if *check {
 		return executor.CheckConfine(context.Background())
 	}
@@ -78,6 +81,7 @@ func setupCommand(args []string) error {
 	if *begin {
 		return executor.BeginSetup(options)
 	}
+	signal.Ignore(syscall.SIGHUP)
 	return executor.Setup(context.Background(), options, os.Stdout)
 }
 

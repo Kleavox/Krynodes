@@ -57,6 +57,8 @@ type Executor struct {
 	ConfigPath string
 
 	QuarantineMark string
+	GoneMark       string
+	Held           func(context.Context) (bool, error)
 
 	CloudflareBase string
 	CloudflareHTTP *http.Client

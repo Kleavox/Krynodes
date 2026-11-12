@@ -13,6 +13,7 @@ const STATE_LABEL: Record<ServiceState, string> = {
   up: "Up",
   down: "Down",
   nodata: "No data",
+  paused: "Paused",
 };
 
 const MONTHS = [
@@ -105,7 +106,7 @@ h3{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
 .state{flex:none;padding:5px 8px;border:1px solid var(--border);border-radius:999px;font:500 12px/1 ${MONO}}
 .state-up{color:var(--up)}
 .state-down{color:var(--down);border-color:rgba(237,116,119,.45)}
-.state-nodata{color:var(--muted)}
+.state-nodata,.state-paused{color:var(--muted)}
 .range{position:absolute;opacity:0;pointer-events:none}
 .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:40px 0 12px}
 .section-head h2{margin:0}
@@ -179,7 +180,11 @@ export function banner(services: Service[]): {
       tone: "down",
     };
   }
-  if (services.every((service) => service.state === "nodata")) {
+  if (
+    services.every(
+      (service) => service.state === "nodata" || service.state === "paused",
+    )
+  ) {
     return { text: "No Recent Data", tone: "nodata" };
   }
   return { text: "All Systems Operational", tone: "up" };

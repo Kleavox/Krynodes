@@ -100,12 +100,12 @@ const signedFor = (target: Record<string, string>) => ({
 function setup() {
   const { db, sqlite } = createTestDb();
   for (const [id, version, owner] of [
-    [A, "0.7.0", undefined],
-    [B, "0.7.0", undefined],
-    [C, "0.7.0", undefined],
-    [D, "0.7.0", undefined],
+    [A, "0.7.20", undefined],
+    [B, "0.7.20", undefined],
+    [C, "0.7.20", undefined],
+    [D, "0.7.20", undefined],
     [OLD, "0.6.14", undefined],
-    [FOREIGN, "0.7.0", "someone-else"],
+    [FOREIGN, "0.7.20", "someone-else"],
   ] as const) {
     seedNode(sqlite, { id, owner });
     sqlite
@@ -386,7 +386,7 @@ describe("the network document", () => {
     expect(old.status).toBe(422);
     expect(await json(old)).toEqual({
       code: "AGENT_TOO_OLD",
-      message: "Update the agent on old to 0.7.0 or newer.",
+      message: "Update the agent on old to 0.7.20 or newer.",
     });
     expect(
       (
@@ -573,13 +573,13 @@ describe("servers getting ready", () => {
 });
 
 describe("network actions", () => {
-  it("are refused below 0.7.0 and read beside a pending change", async () => {
+  it("are refused below 0.7.20 and read beside a pending change", async () => {
     const { change, ask } = setup();
     const old = await change(OLD, "prepare");
     expect(old.status).toBe(422);
     expect(await json(old)).toEqual({
       code: "AGENT_TOO_OLD",
-      message: "Update the agent on old to 0.7.0 or newer.",
+      message: "Update the agent on old to 0.7.20 or newer.",
     });
     expect((await ask(OLD, "inspect", {})).status).toBe(422);
     expect((await change(A, "prepare")).status).toBe(201);
@@ -587,7 +587,7 @@ describe("network actions", () => {
     expect((await ask(A, "inspect", {})).status).toBe(201);
     expect((await ask(A, "inspect", {})).status).toBe(201);
     const peers = Array.from(
-      { length: 17 },
+      { length: 32 },
       (_, index) => `10.0.0.${index + 1}:51820`,
     ).join(" ");
     expect((await ask(A, "probe", { port: "51820", peers })).status).toBe(400);
@@ -661,5 +661,24 @@ describe("Delete Node", () => {
       code: "NETWORK_MEMBER",
       message: "Remove vps-1 from the private network first.",
     });
+  });
+
+  it("refuses to take Krynodes off a server that is still in the network", async () => {
+    const { post, call } = setup();
+    await post(documentOf(1, [member(A, "10.88.0.1"), member(B, "10.88.0.2")]));
+    const target = {
+      id: crypto.randomUUID(),
+      nodeId: A,
+      kind: "host",
+      name: "server",
+    };
+    const refused = await call("POST", "/api/actions", {
+      action: "uninstall",
+      targets: [
+        { ...target, signed: signedFor({ ...target, action: "uninstall" }) },
+      ],
+    });
+    expect(refused.status).toBe(409);
+    expect(await json(refused)).toMatchObject({ code: "NETWORK_MEMBER" });
   });
 });

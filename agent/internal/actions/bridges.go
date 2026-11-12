@@ -148,6 +148,31 @@ func pin(name string, record *bridgeRecord, key string) (string, error) {
 	return chosen, nil
 }
 
+func (e Executor) dropStalePins(project string, uses []sharedUse) error {
+	kept := map[[2]string]bool{}
+	for _, use := range uses {
+		for _, service := range use.services {
+			kept[[2]string{use.name, project + "/" + service}] = true
+		}
+	}
+	records := e.readBridges()
+	changed := false
+	for name, record := range records {
+		for _, key := range slices.Sorted(maps.Keys(record.Pins)) {
+			if strings.HasPrefix(key, project+"/") && !kept[[2]string{name, key}] {
+				record.Freed = append(record.Freed, record.Pins[key])
+				delete(record.Pins, key)
+				changed = true
+			}
+		}
+		records[name] = record
+	}
+	if !changed {
+		return nil
+	}
+	return e.saveBridges(records)
+}
+
 func (e Executor) unpin(project string) error {
 	_, err := e.letGo(project)
 	return err

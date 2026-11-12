@@ -40,10 +40,32 @@ func (key Key) Item() string {
 }
 
 type State struct {
-	Keys  []Key    `json:"keys"`
-	Users []string `json:"users"`
-	Sudo  []string `json:"sudo"`
-	Ports []string `json:"ports"`
+	Keys   []Key    `json:"keys"`
+	Users  []string `json:"users"`
+	Sudo   []string `json:"sudo"`
+	Ports  []string `json:"ports"`
+	Admins []string `json:"admins,omitempty"`
+}
+
+func noLogin(shell string) bool {
+	name := path.Base(strings.TrimSpace(shell))
+	return name == "nologin" || name == "false"
+}
+
+func sudoUsers(body []byte) []string {
+	var users []string
+	for line := range strings.SplitSeq(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.Contains(line, "=") {
+			continue
+		}
+		name := fields[0]
+		if strings.ContainsAny(name[:1], "#%@+") || name == "Defaults" || strings.HasPrefix(name, "Defaults") || strings.HasSuffix(name, "_Alias") || name == strings.ToUpper(name) {
+			continue
+		}
+		users = append(users, name)
+	}
+	return users
 }
 
 type Change struct {
@@ -79,7 +101,9 @@ func Read(root string) (State, error) {
 		if err != nil || (uid != 0 && uid < 1000) || uid == 65534 {
 			continue
 		}
-		state.Users = append(state.Users, fields[0])
+		if uid == 0 || !noLogin(fields[6]) {
+			state.Users = append(state.Users, fields[0])
+		}
 		for _, name := range []string{"authorized_keys", "authorized_keys2"} {
 			file := path.Join(fields[5], ".ssh", name)
 			found, _ := lines(root, file)
@@ -102,6 +126,11 @@ func Read(root string) (State, error) {
 		if body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file))); err == nil {
 			sum := sha256.Sum256(body)
 			state.Sudo = append(state.Sudo, "file:"+file+":"+hex.EncodeToString(sum[:8]))
+			for _, user := range sudoUsers(body) {
+				if !slices.Contains(state.Admins, user) {
+					state.Admins = append(state.Admins, user)
+				}
+			}
 		}
 	}
 	for _, line := range group {
@@ -266,7 +295,7 @@ func sudoRule(item string) string {
 }
 
 func Logins(journal string, start, now State) []Change {
-	admins := []string{"root"}
+	admins := append([]string{"root"}, now.Admins...)
 	for _, item := range now.Sudo {
 		if parts := strings.SplitN(item, ":", 3); len(parts) == 3 && parts[0] == "group" {
 			admins = append(admins, parts[2])

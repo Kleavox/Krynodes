@@ -15,7 +15,7 @@ import (
 
 const (
 	probeMagic = "krynodes-probe-1"
-	maxPeers   = 16
+	maxPeers   = maxMembers - 1
 )
 
 func ProbeArgs(args map[string]string) (int, []netip.AddrPort, error) {
@@ -30,7 +30,7 @@ func ProbeArgs(args map[string]string) (int, []netip.AddrPort, error) {
 	}
 	fields := strings.Fields(args["peers"])
 	if len(fields) == 0 || len(fields) > maxPeers {
-		return 0, nil, errors.New("a probe sends to 1 to 16 peers")
+		return 0, nil, errors.New("a probe sends to 1 to 31 peers")
 	}
 	peers := make([]netip.AddrPort, 0, len(fields))
 	for _, field := range fields {

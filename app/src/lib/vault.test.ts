@@ -97,7 +97,7 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: "KA", set: SET },
+        args: { to: A, key: "KA", set: SET, sender: "KB" },
       },
       {
         nodeId: A,
@@ -108,8 +108,9 @@ describe("the Cloudflare token in pieces", () => {
           holders: `${A}:KA,${C}:KC`,
           set: "next-set",
           source: SET,
-          cleanup: B,
           zone: "example.org",
+          sender: "KA",
+          from: "KB",
         },
         attachFrom: 0,
       },
@@ -118,7 +119,7 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: "next-set", holders: "2", source: SET },
+        args: { set: "next-set", holders: "2", source: SET, from: "KA" },
         attachFrom: 1,
         attachKey: A,
       },
@@ -127,9 +128,30 @@ describe("the Cloudflare token in pieces", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: "next-set", holders: "2", source: SET },
+        args: { set: "next-set", holders: "2", source: SET, from: "KA" },
         attachFrom: 1,
         attachKey: C,
+      },
+      {
+        nodeId: B,
+        kind: "vault",
+        name: "cloudflare",
+        action: "release",
+        args: { to: A, key: "KA", set: SET, sender: "KB" },
+      },
+      {
+        nodeId: A,
+        kind: "vault",
+        name: "cloudflare",
+        action: "reshare",
+        args: {
+          only: "cleanup",
+          cleanup: B,
+          source: SET,
+          zone: "example.org",
+          from: "KB",
+        },
+        attachFrom: 4,
       },
     ]);
   });
@@ -172,6 +194,7 @@ describe("web addresses", () => {
       zone: "example.org",
       aud: "aud-1",
       source: SET,
+      releaserKey: "KB",
     };
     expect(exposeSteps({ ...address, releaser: B })).toEqual([
       {
@@ -179,7 +202,7 @@ describe("web addresses", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: "KA", set: SET },
+        args: { to: A, key: "KA", set: SET, sender: "KB" },
       },
       {
         nodeId: A,
@@ -195,6 +218,7 @@ describe("web addresses", () => {
           zone: "example.org",
           aud: "aud-1",
           source: SET,
+          from: "KB",
         },
         attachFrom: 0,
       },
@@ -224,6 +248,7 @@ describe("web addresses", () => {
         hostname: "listmonk-a.example.org",
         zone: "example.org",
         releaser: B,
+        releaserKey: "KB",
         disposal: "purge",
         source: SET,
       }).map((step) => step.action),
@@ -425,7 +450,7 @@ describe("planning the pieces", () => {
       assembler: A,
       releaser: B,
     });
-    expect(planAddress([kept, node(B)], A, SET)).toEqual({
+    expect(planAddress([kept, node(B)], A, SET)).toMatchObject({
       ok: true,
       releaser: B,
     });
@@ -443,7 +468,7 @@ describe("planning the pieces", () => {
         A,
         SET,
       ),
-    ).toEqual({ ok: true, releaser: null });
+    ).toMatchObject({ ok: true, releaser: null });
   });
 
   it("gives pieces only to servers that are reachable and online now", () => {
@@ -511,13 +536,13 @@ describe("planning the pieces", () => {
   });
 
   it("finds a second piece for a web address", () => {
-    expect(planAddress([node(A), node(B)], A, SET)).toEqual({
+    expect(planAddress([node(A), node(B)], A, SET)).toMatchObject({
       ok: true,
       releaser: B,
     });
     expect(
       planAddress([node(A, { vault: { set: SET, holders: 1 } })], A, SET),
-    ).toEqual({ ok: true, releaser: null });
+    ).toMatchObject({ ok: true, releaser: null });
     expect(
       planAddress([node(A, { vault: null }), node(B)], A, SET),
     ).toMatchObject({ ok: false });
@@ -596,7 +621,7 @@ describe("removing a server that holds a piece", () => {
     ).toEqual({
       ok: false,
       reason:
-        "No other server with agent 0.7.0 that your passkey reaches can take the token.",
+        "No other server with agent 0.7.20 that your passkey reaches can take the token.",
     });
   });
 });
@@ -619,10 +644,10 @@ describe("a token change on its way", () => {
 });
 
 describe("the Tailscale credential in pieces", () => {
-  it("leaves out quarantined servers, and servers before agent 0.7.0 for Tailscale", async () => {
+  it("leaves out quarantined servers, and servers before agent 0.7.20 for Tailscale", async () => {
     const nodes = [
-      node(A, { version: "0.7.0" }),
-      node(B, { version: "0.7.0", quarantined: true }),
+      node(A, { version: "0.7.20" }),
+      node(B, { version: "0.7.20", quarantined: true }),
       node(C, { version: "0.6.14" }),
     ];
     expect(splitHolders(nodes).map((holder) => holder.nodeId)).toEqual([A, C]);
@@ -664,13 +689,13 @@ describe("the Tailscale credential in pieces", () => {
   });
 
   it("refuses to leave the credential with one server, since any two rebuild it", () => {
-    const on = { version: "0.7.0" };
+    const on = { version: "0.7.20" };
     expect(
       planRemoval([node(A, on), node(B, on)], A, SET, false, "tailscale"),
     ).toEqual({
       ok: false,
       reason:
-        "Only one other server with agent 0.7.0 that your passkey reaches can take the credential, and it needs two.",
+        "Only one other server with agent 0.7.20 that your passkey reaches can take the credential, and it needs two.",
     });
     expect(
       planRemoval(
@@ -715,7 +740,7 @@ describe("the Tailscale credential in pieces", () => {
     const row = {
       id: A,
       name: "server-1",
-      agent_version: "0.7.0",
+      agent_version: "0.7.20",
       enrolled_at: "2026-10-26 06:00:00",
       last_seen_at: "2026-10-27 06:59:50",
       interval_seconds: 60,
@@ -742,7 +767,7 @@ describe("the Tailscale credential in pieces", () => {
         reachable: true,
         online: true,
         quarantined: true,
-        version: "0.7.0",
+        version: "0.7.20",
       },
     ]);
     expect(vaultNodes(data, [row], "fp", seen)[0]?.vault).toEqual({

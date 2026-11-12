@@ -208,16 +208,16 @@ describe("network actions", () => {
     );
   });
 
-  it("limits a probe to 16 peers on the network's ports", () => {
+  it("limits a probe to 31 peers on the network's ports", () => {
     const peers = (count: number, port = 51820) =>
       Array.from(
         { length: count },
         (_, i) => `203.0.113.${i + 1}:${port}`,
       ).join(" ");
-    expect(networkArgsValid("probe", { port: "51820", peers: peers(16) })).toBe(
+    expect(networkArgsValid("probe", { port: "51820", peers: peers(31) })).toBe(
       true,
     );
-    expect(networkArgsValid("probe", { port: "51820", peers: peers(17) })).toBe(
+    expect(networkArgsValid("probe", { port: "51820", peers: peers(32) })).toBe(
       false,
     );
     expect(
@@ -245,7 +245,7 @@ describe("network actions", () => {
       hostname: "vps-1",
       operatingSystem: "linux",
       architecture: "amd64",
-      agentVersion: "0.7.0",
+      agentVersion: "0.7.20",
       metrics: {
         cpuPercent: null,
         memoryUsedBytes: null,

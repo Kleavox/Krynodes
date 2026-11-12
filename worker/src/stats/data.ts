@@ -7,7 +7,7 @@ const STALE_MS = 180_000;
 const SLOT_MS = 30 * 60_000;
 const SLOTS = 48;
 
-export type ServiceState = "up" | "down" | "nodata";
+export type ServiceState = "up" | "down" | "nodata" | "paused";
 type DayState = "up" | "partial" | "down" | "none";
 type SlotState = "up" | "partial" | "down" | "nodata" | "none";
 
@@ -229,6 +229,7 @@ export function serviceState(
   now: number,
   staleMs = STALE_MS,
 ): ServiceState {
+  if (status === "PAUSED") return "paused";
   if (!lastSeenAt || now - toMs(lastSeenAt) > staleMs) return "nodata";
   if (status === "UP") return "up";
   return status === "DOWN" ? "down" : "nodata";
@@ -271,19 +272,20 @@ export async function loadStatus(
     db
       .prepare(
         `SELECT c.id, c.name, c.public_note,
-                CASE WHEN EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = c.node_id AND q.released_at IS NULL)
+                CASE WHEN c.enabled = 0 THEN 'PAUSED'
+                  WHEN EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = c.node_id AND q.released_at IS NULL)
                   THEN 'UNTRUSTED' ELSE c.status END AS status,
                 n.last_seen_at, c.created_at,
                 n.interval_seconds
          FROM checks c LEFT JOIN nodes n ON n.id = c.node_id
-         WHERE c.public = 1 AND c.enabled = 1 ORDER BY c.name`,
+         WHERE c.public = 1 ORDER BY c.name`,
       )
       .all<CheckRow>(),
     db
       .prepare(
         `SELECT i.id, i.check_id, i.started_at, i.resolved_at
          FROM incidents i
-         WHERE i.check_id IN (SELECT id FROM checks WHERE public = 1 AND enabled = 1)
+         WHERE i.check_id IN (SELECT id FROM checks WHERE public = 1)
            AND (i.resolved_at IS NULL OR datetime(i.resolved_at) >= datetime(?))`,
       )
       .bind(since)
@@ -292,7 +294,7 @@ export async function loadStatus(
       .prepare(
         `SELECT w.window_start, w.checks
          FROM node_windows w
-         WHERE w.node_id IN (SELECT node_id FROM checks WHERE public = 1 AND enabled = 1)
+         WHERE w.node_id IN (SELECT node_id FROM checks WHERE public = 1)
            AND w.window_start >= ?`,
       )
       .bind(recentSince)
@@ -303,7 +305,7 @@ export async function loadStatus(
          FROM incident_updates u
          WHERE u.incident_id IN (
            SELECT i.id FROM incidents i
-           WHERE i.check_id IN (SELECT id FROM checks WHERE public = 1 AND enabled = 1)
+           WHERE i.check_id IN (SELECT id FROM checks WHERE public = 1)
              AND (i.resolved_at IS NULL OR datetime(i.resolved_at) >= datetime(?)))
          ORDER BY u.created_at DESC, u.id DESC`,
       )

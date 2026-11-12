@@ -83,6 +83,12 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	if _, err := os.Stat(filepath.Join(e.StateDir, "vault.json")); err == nil {
 		removal.Token = "This server held a piece of the Cloudflare token. Unless the dashboard spread the token before this, spread it again on its Cloudflare page so enough servers keep a piece."
 	}
+	if _, err := os.Stat(filepath.Join(e.StateDir, vaultName("tailscale"))); err == nil {
+		if removal.Token != "" {
+			removal.Token += " "
+		}
+		removal.Token += "This server held a piece of the Tailscale credential. Unless the dashboard spread it before this, connect Tailscale again on the Network page so enough servers keep a piece."
+	}
 	composeDir := filepath.Join(e.StateDir, "compose")
 	keepDir := filepath.Join(filepath.Dir(e.StateDir), "krynodes-stacks")
 	entries, _ := os.ReadDir(composeDir)

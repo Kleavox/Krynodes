@@ -118,7 +118,7 @@ describe("the heartbeat carries what the server saw", () => {
     hostname: "vps-1",
     operatingSystem: "linux",
     architecture: "amd64",
-    agentVersion: "0.7.0",
+    agentVersion: "0.7.20",
     metrics: {
       cpuPercent: 1,
       memoryUsedBytes: 1,

@@ -88,7 +88,7 @@ const failed = (action: ActionRecord | undefined, otherwise: string) =>
 const settled = (actions: ActionRecord[]) =>
   actions.find((action) => action.status !== "done") ?? actions.at(-1);
 
-async function finished(ids: string[]): Promise<ActionRecord[]> {
+export async function finished(ids: string[]): Promise<ActionRecord[]> {
   const started = Date.now();
   for (;;) {
     try {

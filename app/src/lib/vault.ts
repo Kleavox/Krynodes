@@ -74,11 +74,12 @@ export const release = (
   to: string,
   key: string,
   set: string,
+  sender: string,
   name: VaultName = "cloudflare",
 ): OperationTarget => ({
   ...vault(releaser, name),
   action: "release",
-  args: { to, key, set },
+  args: { to, key, set, sender },
 });
 
 export function reshareSteps(input: {
@@ -101,6 +102,7 @@ export function reshareSteps(input: {
           input.assembler,
           input.keyOf[input.assembler] ?? "",
           input.source,
+          input.keyOf[input.releaser] ?? "",
           name,
         ),
       ]
@@ -115,8 +117,9 @@ export function reshareSteps(input: {
         .join(","),
       set: input.set,
       source: input.source,
-      ...(input.cleanup ? { cleanup: input.cleanup } : {}),
       zone: input.zone,
+      sender: input.keyOf[input.assembler] ?? "",
+      ...(input.releaser ? { from: input.keyOf[input.releaser] ?? "" } : {}),
     },
     ...(input.releaser ? { attachFrom: 0 } : {}),
   });
@@ -128,9 +131,36 @@ export function reshareSteps(input: {
         set: input.set,
         holders: String(input.holders.length),
         source: input.source,
+        from: input.keyOf[input.assembler] ?? "",
       },
       attachFrom: index,
       attachKey: holder.nodeId,
+    });
+  }
+  if (input.cleanup) {
+    if (input.releaser) {
+      steps.push(
+        release(
+          input.releaser,
+          input.assembler,
+          input.keyOf[input.assembler] ?? "",
+          input.source,
+          input.keyOf[input.releaser] ?? "",
+          name,
+        ),
+      );
+    }
+    steps.push({
+      ...vault(input.assembler, name),
+      action: "reshare",
+      args: {
+        only: "cleanup",
+        cleanup: input.cleanup,
+        source: input.source,
+        zone: input.zone,
+        ...(input.releaser ? { from: input.keyOf[input.releaser] ?? "" } : {}),
+      },
+      ...(input.releaser ? { attachFrom: steps.length - 1 } : {}),
     });
   }
   for (const nodeId of input.forgets) {
@@ -171,11 +201,20 @@ export function exposeSteps(input: {
   zone: string;
   aud: string;
   releaser: string | null;
+  releaserKey: string;
   source: string;
 }): OperationTarget[] {
   return [
     ...(input.releaser
-      ? [release(input.releaser, input.target, input.targetKey, input.source)]
+      ? [
+          release(
+            input.releaser,
+            input.target,
+            input.targetKey,
+            input.source,
+            input.releaserKey,
+          ),
+        ]
       : []),
     {
       nodeId: input.target,
@@ -191,6 +230,7 @@ export function exposeSteps(input: {
         zone: input.zone,
         aud: input.aud,
         source: input.source,
+        ...(input.releaser ? { from: input.releaserKey } : {}),
       },
       ...(input.releaser ? { attachFrom: 0 } : {}),
     },
@@ -204,12 +244,21 @@ export function unexposeSteps(input: {
   hostname: string;
   zone: string;
   releaser: string | null;
+  releaserKey: string;
   disposal?: "remove" | "purge";
   source: string;
 }): OperationTarget[] {
   return [
     ...(input.releaser
-      ? [release(input.releaser, input.target, input.targetKey, input.source)]
+      ? [
+          release(
+            input.releaser,
+            input.target,
+            input.targetKey,
+            input.source,
+            input.releaserKey,
+          ),
+        ]
       : []),
     {
       nodeId: input.target,
@@ -220,6 +269,7 @@ export function unexposeSteps(input: {
         hostname: input.hostname,
         zone: input.zone,
         source: input.source,
+        ...(input.releaser ? { from: input.releaserKey } : {}),
       },
       ...(input.releaser ? { attachFrom: 0 } : {}),
     },
@@ -486,7 +536,7 @@ export function planAddress(
   nodes: VaultNode[],
   target: string,
   setId: string | null,
-): Plan<{ releaser: string | null }> {
+): Plan<{ releaser: string | null; releaserKey: string }> {
   const node = nodes.find((item) => item.id === target);
   const piece = pieceOf(node, setId);
   if (!piece) {
@@ -495,13 +545,13 @@ export function planAddress(
       reason: `${node?.name ?? "This server"} holds no piece of the Cloudflare token. Spread it again under Settings, Cloudflare.`,
     };
   }
-  if (piece.holders === 1) return { ok: true, releaser: null };
+  if (piece.holders === 1) return { ok: true, releaser: null, releaserKey: "" };
   const other = nodes.find(
     (item) =>
       item.id !== target && pieceOf(item, setId) !== null && usable(item),
   );
   return other
-    ? { ok: true, releaser: other.id }
+    ? { ok: true, releaser: other.id, releaserKey: other.sealKey ?? "" }
     : {
         ok: false,
         reason: "Another server holding a piece of the token must be online.",

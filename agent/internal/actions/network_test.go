@@ -402,7 +402,7 @@ func TestAProbeIsLimitedAndSaysWhetherItListened(t *testing.T) {
 	executor, _ := networkExecutor(t)
 	probeListen, probeOn = 50*time.Millisecond, netip.MustParseAddr("127.0.0.1")
 	t.Cleanup(func() { probeListen, probeOn = 20*time.Second, netip.IPv6Unspecified() })
-	peers := make([]string, 17)
+	peers := make([]string, 32)
 	for index := range peers {
 		peers[index] = "203.0.113." + string(rune('1'+index%9)) + ":51820"
 	}
@@ -411,8 +411,8 @@ func TestAProbeIsLimitedAndSaysWhetherItListened(t *testing.T) {
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if result := readResult(t, executor, idA); result.OK || !strings.Contains(result.Output, "1 to 16 peers") {
-		t.Fatalf("17 peers %+v", result)
+	if result := readResult(t, executor, idA); result.OK || !strings.Contains(result.Output, "1 to 31 peers") {
+		t.Fatalf("32 peers %+v", result)
 	}
 	var answer struct {
 		Listened *bool     `json:"listened"`

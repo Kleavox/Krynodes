@@ -5,7 +5,7 @@ export const OFFER_ENTRY =
   /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,62}=\d{1,5}\/(tcp|udp)$/u;
 export const PEER_ENTRY =
   /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,62}\.[a-z0-9][a-z0-9_-]{0,62}:\d{1,5}\/(tcp|udp)$/u;
-export const ADMIN_NAME = /^[a-z_][a-z0-9_-]{0,31}$/u;
+export const ADMIN_NAME = /^(?!(?:root|kry)$)[a-z_][a-z0-9_-]{0,31}$/u;
 export const ADMIN_KEY_ARG = /^[A-Za-z0-9+/]+={0,3}:[A-Za-z0-9._-]{1,32}$/u;
 
 const label = z.string().min(1).max(255);

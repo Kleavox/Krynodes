@@ -108,6 +108,20 @@ export function registerDeviceRoutes(
           owner: device.account,
           mine: device.account === identity.email,
         })),
+      removing: fleet.devices
+        .filter((device) => device.removedAt !== null)
+        .map((device) => ({
+          id: device.id,
+          name: device.name,
+          servers: fleet.nodes
+            .filter(
+              (node) =>
+                node.report?.core.includes(device.fingerprint) ||
+                node.report?.access.includes(device.fingerprint),
+            )
+            .map((node) => node.name),
+        }))
+        .filter((device) => device.servers.length > 0),
     });
   });
 

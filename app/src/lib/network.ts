@@ -1988,11 +1988,18 @@ export async function baseOf(
   return {
     document: {
       ...document,
-      members: document.members.map((member) =>
-        view.quarantined.includes(member.node)
-          ? { ...member, cut: true as const }
-          : member,
-      ),
+      members: document.members.map((member) => {
+        const moved = view.members.find(
+          (entry) => entry.nodeId === member.node && entry.state === "in",
+        )?.endpoint;
+        const placed =
+          member.endpoint !== null && moved
+            ? { ...member, endpoint: moved }
+            : member;
+        return view.quarantined.includes(member.node)
+          ? { ...placed, cut: true as const }
+          : placed;
+      }),
     },
     parent: b64url(await crypto.subtle.digest("SHA-256", bytes)),
   };

@@ -33,8 +33,7 @@ export const MODES: { value: BatchMode; label: string; detail: string }[] = [
   {
     value: "parallel",
     label: "All at Once",
-    detail:
-      "Every server runs it at once; one before agent 0.7.6 at its next report.",
+    detail: "Every server runs it at once.",
   },
 ];
 

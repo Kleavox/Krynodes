@@ -32,6 +32,7 @@ type envelope struct {
 
 type Client struct {
 	Deliver func([]reporter.ActionRequest) error
+	Gone    func(bool)
 
 	endpoint string
 	token    string
@@ -129,6 +130,9 @@ func (c *Client) Run(ctx context.Context) {
 			attempt++
 			if errors.Is(err, errUnknownServer) {
 				wait = c.goneDelay
+				if c.Gone != nil {
+					c.Gone(true)
+				}
 				log.Printf("Krynodes does not know this server any more (it was deleted or its token replaced); remove the agent with: sudo kry uninstall-service")
 			}
 			log.Printf("live connection to Krynodes failed: %v; retrying in %s", err, wait.Round(time.Second))
@@ -138,6 +142,9 @@ func (c *Client) Run(ctx context.Context) {
 			continue
 		}
 		log.Printf("live connection to Krynodes open")
+		if c.Gone != nil {
+			c.Gone(false)
+		}
 		opened := time.Now()
 		code := c.serve(ctx, connection)
 		if ctx.Err() != nil {

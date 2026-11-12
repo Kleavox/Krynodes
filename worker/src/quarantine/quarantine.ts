@@ -28,7 +28,11 @@ export const holdStatement = (db: D1Database, nodeId: string, at: string) =>
       `UPDATE actions SET status = 'cancelled', finished_at = ?1, attachment = NULL
        WHERE node_id = ?2 AND status = 'queued'
          AND action NOT IN (SELECT value FROM json_each(?3))
-         AND NOT (action = 'lockdown' AND requested_by = ?4)`,
+         AND NOT (action = 'lockdown' AND requested_by = ?4)
+         AND batch_id NOT IN (
+           SELECT batch_id FROM actions
+           WHERE node_id = ?2 AND kind = 'host' AND name = 'server'
+             AND action = 'release' AND status IN ('queued', 'sent'))`,
     )
     .bind(at, nodeId, READS, QUARANTINE_ACTOR);
 

@@ -544,6 +544,33 @@ function followUp(
   at: string,
   output: string,
 ): D1PreparedStatement[] {
+  if (
+    action.kind === "host" &&
+    action.name === "server" &&
+    action.action === "release"
+  ) {
+    return [
+      db
+        .prepare(
+          `UPDATE quarantines SET released_at = ?1,
+             released_by = (SELECT device_id FROM actions WHERE id = ?3)
+           WHERE node_id = ?2 AND released_at IS NULL`,
+        )
+        .bind(at, nodeId, action.id),
+      db
+        .prepare(
+          `UPDATE warnings SET answer = 'released', answered_at = ?1,
+             answered_by = (SELECT requested_by FROM actions WHERE id = ?3)
+           WHERE node_id = ?2 AND answer IS NULL`,
+        )
+        .bind(at, nodeId, action.id),
+      db
+        .prepare(
+          "UPDATE nodes SET seal_key = COALESCE(?1, seal_key), inventory_hash = NULL WHERE id = ?2",
+        )
+        .bind(argsOf(action).seal ?? null, nodeId),
+    ];
+  }
   if (SEALED_VERBS.includes(action.action)) {
     const attach = db
       .prepare(

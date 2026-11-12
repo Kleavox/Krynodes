@@ -1,5 +1,5 @@
 import { ADMIN_NAME } from "@krynodes/protocol";
-import { FEATURE_AGENT } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
 import type { NodeRecord } from "../types";
 import { agentGap, FIRST_REPORT } from "./devices";
@@ -26,7 +26,7 @@ const MAX_BLOB = 16384;
 export const MAX_ADMIN_KEYS = 4;
 
 const NAME_HINT =
-  "Lowercase letters, digits, dashes and underscores. Not root.";
+  "Lowercase letters, digits, dashes and underscores. Not root or kry.";
 
 const bytesOf = (blob: string) =>
   Uint8Array.from(atob(blob), (char) => char.charCodeAt(0));
@@ -156,7 +156,7 @@ export function adminBlocker(
   node: Pick<NodeRecord, "name" | "agent_version">,
   keys: AdminKey[],
 ): string | null {
-  const gap = agentGap(node.agent_version, FEATURE_AGENT);
+  const gap = agentGap(node.agent_version);
   if (gap === FIRST_REPORT) return gap;
   if (gap !== null) return `${gap} · ${node.name} runs ${node.agent_version}`;
   return keys.length === 0 ? NO_KEYS : null;

@@ -360,7 +360,7 @@ describe("older agents", () => {
       expect(await old.json()).toMatchObject({ code: "AGENT_UPDATE_REQUIRED" });
     }
     expect(t.hub).toHaveLength(0);
-    expect(await (await open("kry-agent/0.7.0")).text()).toBe("from hub");
+    expect(await (await open("kry-agent/0.7.20")).text()).toBe("from hub");
     expect(await (await open("kry-agent/dev")).text()).toBe("from hub");
   });
 
@@ -373,5 +373,34 @@ describe("older agents", () => {
     expect(
       (await t.call("PUT", "/api/agent-http", {}, { enabled: true })).status,
     ).toBe(404);
+  });
+});
+
+describe("a server asking whether it is held", () => {
+  it("answers only its own token, and says held while a quarantine is open", async () => {
+    const t = await setup();
+    const held = async () =>
+      (await (await t.call("GET", "/api/agent/held")).json()) as {
+        held: boolean;
+      };
+    expect(await held()).toEqual({ held: false });
+    const node = t.sqlite.prepare("SELECT id FROM nodes LIMIT 1").get() as {
+      id: string;
+    };
+    t.sqlite
+      .prepare(
+        "INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', ?, 'why', 'now', '{}')",
+      )
+      .run(node.id);
+    expect(await held()).toEqual({ held: true });
+    t.sqlite.prepare("UPDATE quarantines SET released_at = 'now'").run();
+    expect(await held()).toEqual({ held: false });
+    expect(
+      (
+        await t.call("GET", "/api/agent/held", {
+          authorization: "Bearer other",
+        })
+      ).status,
+    ).toBe(401);
   });
 });

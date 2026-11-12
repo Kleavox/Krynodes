@@ -1,5 +1,5 @@
 import type { BridgesReport } from "@krynodes/protocol";
-import { agentHasFeatures, FEATURE_AGENT } from "@krynodes/protocol/versions";
+import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 
@@ -114,7 +114,7 @@ export function DockerNetworks({ node }: { node: NodeRecord }) {
   const [creating, setCreating] = useState(false);
   const [copying, setCopying] = useState<BridgeNetwork | null>(null);
   const [deleting, setDeleting] = useState<BridgeNetwork | null>(null);
-  const current = agentHasFeatures(node.agent_version);
+  const current = agentSupported(node.agent_version);
   const updatable =
     release !== null &&
     ["available", "failed"].includes(agentState(node, release, now));
@@ -142,7 +142,7 @@ export function DockerNetworks({ node }: { node: NodeRecord }) {
           <span className="ml-auto flex items-center gap-2">
             <span className="font-mono text-xs text-muted-foreground">
               {node.agent_version
-                ? `Needs agent ${FEATURE_AGENT} · ${node.name} runs ${node.agent_version}`
+                ? `Needs agent ${MIN_AGENT_VERSION} · ${node.name} runs ${node.agent_version}`
                 : FIRST_REPORT}
             </span>
             {updatable && (

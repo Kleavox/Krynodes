@@ -21,7 +21,7 @@ const heartbeat = (
   hostname: "server-1",
   operatingSystem: "linux",
   architecture: "amd64",
-  agentVersion: "0.7.0",
+  agentVersion: "0.7.20",
   metrics: {
     cpuPercent: cpu,
     memoryUsedBytes: 4,
@@ -372,7 +372,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.7.0",
+      agentVersion: "0.7.20",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -390,7 +390,7 @@ describe("FleetHub", () => {
     const ws = await t.connect();
     const newer = (beat: AgentHeartbeat) => ({
       ...beat,
-      agentVersion: "0.7.0",
+      agentVersion: "0.7.20",
     });
     await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
     await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
@@ -1522,7 +1522,7 @@ describe("FleetHub", () => {
             "x-kry-node": NODE,
             "x-kry-owner": "standalone",
             "x-kry-interval": "60",
-            "x-kry-version": "0.7.6",
+            "x-kry-version": "0.7.26",
           },
         }),
       );
@@ -1534,7 +1534,7 @@ describe("FleetHub", () => {
 
     it("pushes queued actions inside the poke to an agent that takes them", async () => {
       const t = setup();
-      const ws = await t.connect("0.7.6");
+      const ws = await t.connect("0.7.26");
       const id = await queue(t);
       vi.setSystemTime(BASE + 1_000);
       expect(await poke(t)).toEqual({ poked: 1 });
@@ -1555,19 +1555,9 @@ describe("FleetHub", () => {
       expect(status(t, id)).toEqual({ status: "sent" });
     });
 
-    it("keeps actions for the heartbeat of an agent older than 0.7.6", async () => {
-      const t = setup();
-      const ws = await t.connect("0.7.5");
-      const id = await queue(t);
-      vi.setSystemTime(BASE + 1_000);
-      expect(await poke(t)).toEqual({ poked: 1 });
-      expect(ws.replies()).toEqual([{ type: "poke" }]);
-      expect(status(t, id)).toEqual({ status: "queued" });
-    });
-
     it("leaves actions queued when the connection has not answered for a minute", async () => {
       const t = setup();
-      const ws = await t.connect("0.7.6");
+      const ws = await t.connect("0.7.26");
       const id = await queue(t);
       vi.setSystemTime(BASE + 61_000);
       expect(await poke(t)).toEqual({ poked: 1 });
@@ -1577,7 +1567,7 @@ describe("FleetHub", () => {
 
     it("still pokes when the actions cannot be read", async () => {
       const t = setup();
-      const ws = await t.connect("0.7.6");
+      const ws = await t.connect("0.7.26");
       const prepare = vi.spyOn(t.db, "prepare").mockImplementation(() => {
         throw new Error("D1 is down");
       });
@@ -1602,7 +1592,7 @@ describe("FleetHub", () => {
         OTHER,
         "standalone",
         60,
-        "0.7.6",
+        "0.7.26",
       );
       const batch = createBatch(t.db, {
         action: "restart",
@@ -1649,13 +1639,13 @@ describe("FleetHub", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET update_requested_version = '0.7.1', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
+        "UPDATE nodes SET update_requested_version = '0.7.21', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
       )
       .run(new Date(BASE - 16 * 60_000).toISOString(), NODE);
     const ws = await t.connect();
     await t.send(ws, BASE + 5_000, {
       ...heartbeat(10),
-      update: { version: "0.7.1", message: "download stalled" },
+      update: { version: "0.7.21", message: "download stalled" },
     });
     const row = t.sqlite
       .prepare(
@@ -1674,7 +1664,7 @@ describe("FleetHub", () => {
     expect(ws.replies().at(-1)).toMatchObject({
       response: {
         update: {
-          version: "0.7.1",
+          version: "0.7.21",
           requestedAt: new Date(BASE + 5_000).toISOString(),
         },
       },

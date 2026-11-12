@@ -13,7 +13,7 @@ const node = (id: string, name: string) =>
   ({
     id,
     name,
-    agent_version: "0.7.15",
+    agent_version: "0.7.35",
     enrolled_at: "2026-11-01T00:00:00Z",
     disabled_at: null,
     last_seen_at: "2026-11-04T09:59:50Z",
@@ -51,7 +51,7 @@ const picker = (preset?: string, members: NetworkView["members"] = []) =>
           services={undefined}
           view={{ ...view, members }}
           ranges={[]}
-          release="0.7.15"
+          release="0.7.35"
           preset={preset}
           now={NOW}
         />

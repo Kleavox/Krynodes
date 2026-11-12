@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { createBatch } from "../actions/store";
+import { quarantine } from "../quarantine/quarantine";
 import { app } from "../app";
 import type { Env } from "../env";
 import { hubHarness, type FakeSocket } from "../test/hub";
@@ -57,14 +59,18 @@ const RULES = JSON.stringify([
   { from: "devices", to: "servers", ports: ["22/tcp"] },
 ]);
 
-const release = (from: string, to: string) =>
-  step({
+let releaser = B;
+
+const release = (from: string, to: string) => {
+  releaser = from;
+  return step({
     nodeId: from,
     kind: "vault",
     name: "tailscale",
     action: "release",
-    args: { set: TS_SET, to, key: keyOf(to) },
+    args: { set: TS_SET, to, key: keyOf(to), sender: keyOf(from) },
   });
+};
 
 const job = (action: string, args: Record<string, string> = {}, node = A) =>
   step({
@@ -72,7 +78,7 @@ const job = (action: string, args: Record<string, string> = {}, node = A) =>
     kind: "vault",
     name: "tailscale",
     action,
-    args: { client: "kQ1clientCNTRL", ...args },
+    args: { client: "kQ1clientCNTRL", from: keyOf(releaser), ...args },
     attachFrom: 0,
   });
 
@@ -102,7 +108,7 @@ const CONNECT = {
   },
 };
 
-function routes(version = "0.7.0") {
+function routes(version = "0.7.21") {
   const { db, sqlite } = createTestDb();
   for (const id of [A, B, C]) {
     seedNode(sqlite, { id });
@@ -356,7 +362,7 @@ describe("Tailscale operations", () => {
     });
   });
 
-  it("needs agent 0.7.0 for a Tailscale step", async () => {
+  it("needs agent 0.7.20 for a Tailscale step", async () => {
     const t = routes("0.6.14");
     const response = await t.operate("tailnet", [release(B, A), job("policy")]);
     expect(response.status).toBe(422);
@@ -418,7 +424,7 @@ async function hub() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.7.0', seal_key = ?, tailscale_vault = ? WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.21', seal_key = ?, tailscale_vault = ? WHERE id = ?",
       )
       .run(keyOf(id), JSON.stringify({ set: TS_SET, holders: 2 }), id);
   }
@@ -450,7 +456,7 @@ async function hub() {
           hostname: "web-01",
           operatingSystem: "Debian 12.10",
           architecture: "amd64",
-          agentVersion: "0.7.0",
+          agentVersion: "0.7.21",
           metrics: {
             cpuPercent: 1,
             memoryUsedBytes: 1,
@@ -673,5 +679,103 @@ describe("Tailscale results", () => {
         )
         .get(),
     ).toEqual({ cleared: 1 });
+  });
+});
+
+describe("a release on a quarantined server", () => {
+  it("reaches the server while it is quarantined, and only its answer lifts the quarantine", async () => {
+    const t = await hub();
+    const held = async () =>
+      (await t.beat(A)) as {
+        actions?: { id: string }[];
+        quarantined?: boolean;
+      };
+    const open = () =>
+      t.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS open FROM quarantines WHERE released_at IS NULL",
+        )
+        .get();
+    await quarantine(t.db, { nodeId: A, why: "why", now: Date.now() });
+    expect((await held()).quarantined).toBe(true);
+    const releaseId = crypto.randomUUID();
+    const unlockId = crypto.randomUUID();
+    const batch = createBatch(t.db, {
+      action: "release",
+      mode: "rolling",
+      targets: [
+        { id: releaseId, nodeId: A, kind: "host", name: "server" },
+        {
+          id: unlockId,
+          nodeId: A,
+          kind: "host",
+          name: "server",
+          action: "unlock",
+        },
+      ],
+      requestedBy: "owner",
+      now: Date.now(),
+    });
+    await t.db.batch(batch.statements);
+    const waiting = await held();
+    expect(waiting.quarantined).toBe(true);
+    expect(waiting.actions?.map((action) => action.id)).toContain(releaseId);
+    expect(open()).toEqual({ open: 1 });
+    expect(
+      t.sqlite.prepare("SELECT status FROM actions WHERE id = ?").get(unlockId),
+    ).toEqual({ status: "queued" });
+    await t.finish(A, releaseId, "released");
+    expect(open()).toEqual({ open: 0 });
+    const after = await held();
+    expect(after.quarantined).toBeUndefined();
+    expect(after.actions?.map((action) => action.id)).toContain(unlockId);
+  });
+
+  it("stays quarantined, with nothing left queued, when the server refuses the release", async () => {
+    const t = await hub();
+    await quarantine(t.db, { nodeId: A, why: "why", now: Date.now() });
+    await t.beat(A);
+    const releaseId = crypto.randomUUID();
+    const batch = createBatch(t.db, {
+      action: "release",
+      mode: "rolling",
+      targets: [{ id: releaseId, nodeId: A, kind: "host", name: "server" }],
+      requestedBy: "owner",
+      now: Date.now(),
+    });
+    await t.db.batch(batch.statements);
+    await t.beat(A);
+    await t.finish(A, releaseId, "refused: the code does not match", false);
+    const after = (await t.beat(A)) as { quarantined?: boolean };
+    expect(after.quarantined).toBe(true);
+    expect(
+      t.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS open FROM quarantines WHERE released_at IS NULL",
+        )
+        .get(),
+    ).toEqual({ open: 1 });
+  });
+});
+
+describe("a server that lost its private network state", () => {
+  it("is let go once it was removed, and stays a member until then", async () => {
+    const t = await hub();
+    const member = (nodeId: string, state: string, index: number) =>
+      t.sqlite
+        .prepare(
+          `INSERT INTO network_members (node_id, state, address, port, key, signer, endpoint, nat, since)
+           VALUES (?, ?, ?, 51820, ?, ?, NULL, 0, 'now')`,
+        )
+        .run(nodeId, state, `10.88.0.${index}`, `key-${index}`, `sig-${index}`);
+    member(A, "leaving", 1);
+    member(B, "in", 2);
+    await t.beat(A);
+    await t.beat(B);
+    expect(
+      t.sqlite
+        .prepare("SELECT node_id, state FROM network_members ORDER BY address")
+        .all(),
+    ).toEqual([{ node_id: B, state: "in" }]);
   });
 });

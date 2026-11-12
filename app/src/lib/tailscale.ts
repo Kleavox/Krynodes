@@ -4,11 +4,7 @@ import {
   type TailnetRule,
   type TailscaleReport,
 } from "@krynodes/protocol";
-import {
-  agentHasSecurity,
-  MIN_AGENT_VERSION,
-  SECURITY_AGENT,
-} from "@krynodes/protocol/versions";
+import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
 import type {
   ActionRecord,
@@ -827,11 +823,13 @@ const opened = (
     use.assembler,
     keyOf[use.assembler] ?? "",
     connected.setId ?? "",
+    keyOf[use.releaser] ?? "",
     "tailscale",
   );
 
 const job = (
   use: Use,
+  keyOf: Record<string, string>,
   connected: TailnetConnected,
   action: ActionVerb,
   args: Record<string, string> = {},
@@ -840,7 +838,11 @@ const job = (
   kind: "vault",
   name: "tailscale",
   action,
-  args: { client: connected.clientId, ...args },
+  args: {
+    client: connected.clientId,
+    from: keyOf[use.releaser] ?? "",
+    ...args,
+  },
   attachFrom: 0,
 });
 
@@ -850,7 +852,7 @@ export const readSteps = (
   connected: TailnetConnected,
 ): OperationTarget[] => [
   opened(use, keyOf, connected),
-  job(use, connected, "policy"),
+  job(use, keyOf, connected, "policy"),
 ];
 
 export function saveSteps(input: {
@@ -871,7 +873,7 @@ export function saveSteps(input: {
     : [];
   return [
     opened(input.use, input.keyOf, input.connected),
-    job(input.use, input.connected, "save", {
+    job(input.use, input.keyOf, input.connected, "save", {
       rules: JSON.stringify(input.rules),
       servers: JSON.stringify(
         Object.fromEntries(
@@ -892,7 +894,7 @@ export const joinSteps = (
   to: string,
 ): OperationTarget[] => [
   opened(use, keyOf, connected),
-  job(use, connected, "key", { to, key: keyOf[to] ?? "" }),
+  job(use, keyOf, connected, "key", { to, key: keyOf[to] ?? "" }),
   {
     nodeId: to,
     kind: "host",
@@ -911,7 +913,7 @@ export const removeSteps = (
   node: string,
 ): OperationTarget[] => [
   opened(use, keyOf, connected),
-  job(use, connected, "remove", { device, node }),
+  job(use, keyOf, connected, "remove", { device, node }),
 ];
 
 export const disconnectSteps = (servers: TailnetServer[]): OperationTarget[] =>
@@ -961,7 +963,7 @@ export interface TailnetSetting {
 }
 
 const NEEDS_SECURITY: TailnetSetting = {
-  text: `Needs agent ${SECURITY_AGENT} or newer`,
+  text: `Needs agent ${MIN_AGENT_VERSION} or newer`,
   warn: false,
   changes: false,
 };
@@ -972,7 +974,7 @@ export function exitNodeLine(
   report: TailscaleReport,
   version: string | null,
 ): TailnetSetting {
-  if (!agentHasSecurity(version)) return NEEDS_SECURITY;
+  if (!agentSupported(version)) return NEEDS_SECURITY;
   const exit = report.exitNode;
   if (!exit) return UNREAD;
   if (!exit.advertised) return { text: "Off", warn: false, changes: true };
@@ -985,7 +987,7 @@ export function dnsLine(
   report: TailscaleReport,
   version: string | null,
 ): TailnetSetting {
-  if (!agentHasSecurity(version)) return NEEDS_SECURITY;
+  if (!agentSupported(version)) return NEEDS_SECURITY;
   if (report.acceptDNS === undefined || report.acceptDNS === null) {
     return UNREAD;
   }

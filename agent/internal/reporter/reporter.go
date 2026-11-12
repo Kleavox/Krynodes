@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -517,6 +518,10 @@ func New(endpoint, token, version string) *Client {
 func (c *Client) Enroll(ctx context.Context, host Host) (Enrollment, error) {
 	var enrollment Enrollment
 	err := c.doJSON(ctx, http.MethodPost, "/api/agent/enroll", host, &enrollment)
+	var refused *ResponseError
+	if errors.As(err, &refused) && refused.Status == http.StatusUnauthorized {
+		return enrollment, fmt.Errorf("%w. An enroll command works once: if this server already shows in Krynodes, an earlier try got through and its answer was lost; delete the server there and copy a new command", err)
+	}
 	return enrollment, err
 }
 

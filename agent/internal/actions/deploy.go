@@ -379,6 +379,7 @@ func (e Executor) rollback(ctx context.Context, request Request, stack Stack) Re
 	if len(record.Previous) == 0 {
 		return e.refuse(request.ID, errors.New("nothing to roll back to"))
 	}
+	retagged := 0
 	for _, image := range record.Previous {
 		if strings.Contains(image.Reference, "@sha256:") {
 			continue
@@ -386,6 +387,10 @@ func (e Executor) rollback(ctx context.Context, request Request, stack Stack) Re
 		if _, err := e.docker(ctx, collectTimeout, "tag", "tag", image.ID, image.Reference); err != nil {
 			return e.failed(request, err, "")
 		}
+		retagged++
+	}
+	if retagged == 0 {
+		return e.refuse(request.ID, errors.New("nothing to roll back to: every image of this stack is pinned by digest, so the compose file already names the exact image; put the earlier digest back with Edit Compose"))
 	}
 	if _, err := e.docker(ctx, upTimeout, "up", composeArgs(stack, "up", "-d")...); err != nil {
 		return e.failed(request, err, e.states(ctx, stack))

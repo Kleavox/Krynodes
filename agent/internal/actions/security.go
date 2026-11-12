@@ -271,13 +271,13 @@ func (e Executor) securityUpdates(ctx context.Context, family recipes.Family) in
 		if !ok {
 			return 0
 		}
-		count := 0
+		packages := map[string]bool{}
 		for line := range strings.SplitSeq(output, "\n") {
-			if strings.TrimSpace(line) != "" {
-				count++
+			if fields := strings.Fields(line); len(fields) > 0 {
+				packages[fields[len(fields)-1]] = true
 			}
 		}
-		return count
+		return len(packages)
 	}
 	output, ok := e.output(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=1", "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache=", "upgrade")
 	if !ok {

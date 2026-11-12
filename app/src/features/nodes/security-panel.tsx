@@ -1,7 +1,4 @@
-import {
-  agentHasSecurity,
-  agentSetsBooleans,
-} from "@krynodes/protocol/versions";
+import { agentSupported } from "@krynodes/protocol/versions";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
@@ -113,7 +110,7 @@ function RecipeDialog({
   const needsHour = turnOn && ids.includes("reboot-window");
   const firewall = turnOn && ids.includes("firewall");
   const closedMode =
-    firewall && (closing || agentHasSecurity(node.agent_version));
+    firewall && (closing || agentSupported(node.agent_version));
   const wall = report?.firewall;
   const rows = !report
     ? []
@@ -439,7 +436,7 @@ export function ServerSecurity({
   const notice = protectionsNotice(report);
   const notes = notesOf(report);
   const found = report.confinement;
-  const confine = confinementRow(found, agentSetsBooleans(node.agent_version));
+  const confine = confinementRow(found, agentSupported(node.agent_version));
   const firewall = choices.find((choice) => choice.id === "firewall")!;
   const status = (choice: RecipeChoice) =>
     choice.unavailable

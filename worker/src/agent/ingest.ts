@@ -31,6 +31,7 @@ export interface AgentNode {
   release?: string | null;
   setup?: string | null;
   quarantined?: number;
+  leaving?: number;
 }
 
 export interface LiveCheck {

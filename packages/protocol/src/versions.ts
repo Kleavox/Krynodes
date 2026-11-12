@@ -1,8 +1,5 @@
-export const MIN_AGENT_VERSION = "0.7.0";
-export const FEATURE_AGENT = "0.7.1";
-export const SECURITY_AGENT = "0.7.4";
-export const PUSH_AGENT = "0.7.6";
-export const BOOLEAN_AGENT = "0.7.7";
+export const MIN_AGENT_VERSION = "0.7.20";
+export const SEAL_AGENT = "0.7.21";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 
@@ -23,14 +20,5 @@ const reaches = (version: string | null | undefined, floor: string) =>
 export const agentSupported = (version: string | null | undefined) =>
   reaches(version, MIN_AGENT_VERSION);
 
-export const agentHasFeatures = (version: string | null | undefined) =>
-  reaches(version, FEATURE_AGENT);
-
-export const agentHasSecurity = (version: string | null | undefined) =>
-  reaches(version, SECURITY_AGENT);
-
-export const agentTakesPush = (version: string | null | undefined) =>
-  reaches(version, PUSH_AGENT);
-
-export const agentSetsBooleans = (version: string | null | undefined) =>
-  reaches(version, BOOLEAN_AGENT);
+export const agentSealsFromSender = (version: string | null | undefined) =>
+  reaches(version, SEAL_AGENT);

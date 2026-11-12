@@ -113,7 +113,7 @@ describe("the SSH keys in Enroll Defaults", () => {
     expect(adminNameProblem("")).toBeNull();
     for (const name of ["root", "User1", "1abc", "a b"]) {
       expect(adminNameProblem(name)).toBe(
-        "Lowercase letters, digits, dashes and underscores. Not root.",
+        "Lowercase letters, digits, dashes and underscores. Not root or kry.",
       );
     }
   });
@@ -153,10 +153,10 @@ describe("Add Admin User at enroll and on a server", () => {
   });
 
   it("says why Add Admin User cannot run", () => {
-    const node = { name: "server-2", agent_version: "0.7.1" };
+    const node = { name: "server-2", agent_version: "0.7.21" };
     expect(adminBlocker(node, keys)).toBeNull();
-    expect(adminBlocker({ ...node, agent_version: "0.7.0" }, keys)).toBe(
-      "Needs agent 0.7.1 · server-2 runs 0.7.0",
+    expect(adminBlocker({ ...node, agent_version: "0.7.19" }, keys)).toBe(
+      "Needs agent 0.7.20 · server-2 runs 0.7.19",
     );
     expect(adminBlocker({ ...node, agent_version: null }, keys)).toBe(
       "Waiting for First Report",

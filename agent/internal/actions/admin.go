@@ -22,6 +22,11 @@ const (
 	maxAdminKeys  = 4
 )
 
+var (
+	adminWait  = 20 * time.Second
+	adminEvery = 2 * time.Second
+)
+
 var errAdminAgain = errors.New("Open this server in Krynodes, choose Actions → Add Admin User and run the command it gives within 30 minutes.")
 
 type adminTicket struct {
@@ -140,6 +145,13 @@ func (e Executor) applyRecipe(ctx context.Context, state recipeState, id string,
 
 func (e Executor) AdminUser(ctx context.Context, name string, out io.Writer, tty recipes.Terminal) error {
 	ticket, err := readState[adminTicket](e.StateDir, adminFile)
+	for waited := time.Duration(0); (err != nil || ticket.Name != name) && waited < adminWait; waited += adminEvery {
+		if waited == 0 {
+			fmt.Fprintln(out, "Waiting for Krynodes to hand this server the request…")
+		}
+		time.Sleep(adminEvery)
+		ticket, err = readState[adminTicket](e.StateDir, adminFile)
+	}
 	if err != nil || ticket.Name != name || !e.Now().Before(ticket.Until) {
 		return errAdminAgain
 	}

@@ -47,6 +47,19 @@ func createPanel(t *testing.T, executor Executor, access string, args map[string
 	}))
 }
 
+func TestAStackLetsGoOfTheAddressOfAServiceItNoLongerHas(t *testing.T) {
+	executor, run := bridgeExecutor(t, "1")
+	sharedRecord(t, executor, "contained", map[string]string{"panel/old": "172.24.0.2", "immich/db": "172.24.0.3"})
+	sharedPanel(t, executor, run, nil)
+	if result := createPanel(t, executor, "contained", map[string]string{"offers": "apps-inner/web=3001/tcp", "hostPorts": "3000/tcp"}); !result.OK {
+		t.Fatalf("result %#v calls %q", result, run.calls)
+	}
+	record := executor.readBridges()["apps-inner"]
+	if _, stale := record.Pins["panel/old"]; stale || record.Pins["panel/web"] != "172.24.0.4" || record.Pins["immich/db"] != "172.24.0.3" || !slices.Contains(record.Freed, "172.24.0.2") {
+		t.Fatalf("record %#v", record)
+	}
+}
+
 func TestAContainedStackJoinsAKrynodesContainedNetworkWithAFixedAddress(t *testing.T) {
 	executor, run := bridgeExecutor(t, "1")
 	sharedRecord(t, executor, "contained", nil)
