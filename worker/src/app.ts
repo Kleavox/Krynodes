@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 
 import { announce } from "./fleet/client";
 import { securityHeaders } from "./lib/security-headers";
@@ -47,6 +48,18 @@ app.use("*", async (context, next) => {
   requireGuardInProduction(context.env);
   await next();
 });
+
+app.use(
+  "/api/*",
+  bodyLimit({
+    maxSize: 2 * 1024 * 1024,
+    onError: (context) =>
+      context.json(
+        { code: "TOO_LARGE", message: "That request is too large." },
+        413,
+      ),
+  }),
+);
 
 app.use("/api/*", async (context, next) => {
   if (
@@ -106,7 +119,16 @@ app.use("/api/*", async (context, next) => {
   }
   const identity = context.get("identity");
   if (identity) {
-    await announce(context.env, identity.id, topicsFor(context.req.path));
+    const work = announce(
+      context.env,
+      identity.id,
+      topicsFor(context.req.path),
+    );
+    try {
+      context.executionCtx.waitUntil(work);
+    } catch {
+      await work;
+    }
   }
 });
 
