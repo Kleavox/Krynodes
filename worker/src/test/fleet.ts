@@ -34,7 +34,7 @@ export function seedFleet(
         OWNER,
         name,
         `hash-${id}`,
-        id === OLD ? "0.6.14" : "0.7.0",
+        id === OLD ? "0.6.14" : "0.7.20",
         id === V1
           ? JSON.stringify({
               installed: true,

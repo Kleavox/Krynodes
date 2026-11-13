@@ -2,17 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import * as versions from "./versions";
 import {
-  agentHasFeatures,
-  agentSetsBooleans,
-  BOOLEAN_AGENT,
-  agentHasSecurity,
+  agentSealsFromSender,
   agentSupported,
-  agentTakesPush,
-  FEATURE_AGENT,
   compareVersions,
   MIN_AGENT_VERSION,
-  PUSH_AGENT,
-  SECURITY_AGENT,
+  SEAL_AGENT,
 } from "./versions";
 
 describe("agent versions", () => {
@@ -21,68 +15,32 @@ describe("agent versions", () => {
     expect(compareVersions("0.3.1", "0.3.1")).toBe(0);
   });
 
-  it("supports only agent 0.7.0 and later, and builds from source", () => {
-    expect(MIN_AGENT_VERSION).toBe("0.7.0");
-    expect(agentSupported("0.7.0")).toBe(true);
-    expect(agentSupported("0.7.1")).toBe(true);
-    expect(agentSupported("0.6.14")).toBe(false);
+  it("supports only agent 0.7.20 and later, and builds from source", () => {
+    expect(MIN_AGENT_VERSION).toBe("0.7.20");
+    expect(agentSupported("0.7.20")).toBe(true);
+    expect(agentSupported("0.7.21")).toBe(true);
     expect(agentSupported("0.10.0")).toBe(true);
-    expect(agentSupported("0.6.13")).toBe(false);
-    expect(agentSupported("0.6.0")).toBe(false);
-    expect(agentSupported("0.5.1")).toBe(false);
-    expect(agentSupported("0.4.1")).toBe(false);
+    expect(agentSupported("0.7.19")).toBe(false);
+    expect(agentSupported("0.7.2")).toBe(false);
+    expect(agentSupported("0.6.14")).toBe(false);
     expect(agentSupported("dev")).toBe(true);
     expect(agentSupported(null)).toBe(false);
   });
 
-  it("gates the new features on agent 0.7.1", () => {
-    expect(FEATURE_AGENT).toBe("0.7.1");
-    expect(agentHasFeatures("0.7.1")).toBe(true);
-    expect(agentHasFeatures("0.7.2")).toBe(true);
-    expect(agentHasFeatures("0.7.0")).toBe(false);
-    expect(agentHasFeatures("dev")).toBe(true);
-    expect(agentHasFeatures(null)).toBe(false);
-  });
-
-  it("gates Exit Node, Tailscale DNS, the firewall and confinement on agent 0.7.4", () => {
-    expect(SECURITY_AGENT).toBe("0.7.4");
-    expect(agentHasSecurity("0.7.4")).toBe(true);
-    expect(agentHasSecurity("0.7.10")).toBe(true);
-    expect(agentHasSecurity("0.7.3")).toBe(false);
-    expect(agentHasSecurity("dev")).toBe(true);
-    expect(agentHasSecurity(null)).toBe(false);
-  });
-
-  it("sends actions inside the poke from agent 0.7.6", () => {
-    expect(PUSH_AGENT).toBe("0.7.6");
-    expect(agentTakesPush("0.7.6")).toBe(true);
-    expect(agentTakesPush("0.7.10")).toBe(true);
-    expect(agentTakesPush("0.7.5")).toBe(false);
-    expect(agentTakesPush("dev")).toBe(true);
-    expect(agentTakesPush(null)).toBe(false);
-  });
-
-  it("sets SELinux booleans from agent 0.7.7", () => {
-    expect(BOOLEAN_AGENT).toBe("0.7.7");
-    expect(agentSetsBooleans("0.7.7")).toBe(true);
-    expect(agentSetsBooleans("0.7.10")).toBe(true);
-    expect(agentSetsBooleans("0.7.6")).toBe(false);
-    expect(agentSetsBooleans("dev")).toBe(true);
-    expect(agentSetsBooleans(null)).toBe(false);
+  it("binds a piece to its sender from agent 0.7.21", () => {
+    expect(SEAL_AGENT).toBe("0.7.21");
+    expect(agentSealsFromSender("0.7.21")).toBe(true);
+    expect(agentSealsFromSender("0.7.20")).toBe(false);
+    expect(agentSealsFromSender("dev")).toBe(true);
+    expect(agentSealsFromSender(null)).toBe(false);
   });
 
   it("keeps the feature gates above the minimum and none below it", () => {
     expect(Object.keys(versions).sort()).toEqual([
-      "BOOLEAN_AGENT",
-      "FEATURE_AGENT",
       "MIN_AGENT_VERSION",
-      "PUSH_AGENT",
-      "SECURITY_AGENT",
-      "agentHasFeatures",
-      "agentHasSecurity",
-      "agentSetsBooleans",
+      "SEAL_AGENT",
+      "agentSealsFromSender",
       "agentSupported",
-      "agentTakesPush",
       "compareVersions",
     ]);
   });

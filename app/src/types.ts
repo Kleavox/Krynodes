@@ -115,6 +115,7 @@ export interface StoppedStack {
 export interface QuarantineView {
   quarantine: QuarantineRecord | null;
   release: PendingRelease | null;
+  releasing?: boolean;
   stopped: StoppedStack[];
   changeThese: {
     stacks: string[];
@@ -638,6 +639,7 @@ export interface DeviceRecord {
 
 export interface DevicesResponse {
   devices: DeviceRecord[];
+  removing?: { id: string; name: string; servers: string[] }[];
 }
 
 type ProposalStatus =

@@ -21,7 +21,7 @@ async function setup() {
   for (const id of [A, B]) {
     seedNode(sqlite, { id });
     sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.0' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.20' WHERE id = ?")
       .run(id);
     sqlite
       .prepare(
@@ -46,7 +46,7 @@ async function setup() {
   const heartbeat = (
     nodeId: string,
     results: AgentHeartbeat["results"] = undefined,
-    version = "0.7.0",
+    version = "0.7.20",
   ): AgentHeartbeat => ({
     nodeId,
     hostname: "web-01",

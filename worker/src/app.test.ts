@@ -70,6 +70,19 @@ describe("changes from another site", () => {
     ).not.toBe(403);
   });
 
+  it("refuses a body over two megabytes before reading it", async () => {
+    const send = (size: number) =>
+      app.request(
+        `${ORIGIN}/api/agent/enroll`,
+        { method: "POST", body: "x".repeat(size) },
+        env(),
+      );
+    const response = await send(2 * 1024 * 1024 + 1);
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ code: "TOO_LARGE" });
+    expect((await send(2 * 1024 * 1024)).status).toBe(400);
+  });
+
   it("keeps the live feed to the dashboard", async () => {
     const response = await app.request(
       `${ORIGIN}/api/live`,

@@ -49,7 +49,7 @@ function setup() {
     seedNode(sqlite, { id, owner });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.7.0', last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.20', last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(id);
   }
@@ -150,6 +150,39 @@ describe("deploy devices", () => {
     expect((await reply(call("GET", "/api/devices"))).devices).toEqual([
       expect.objectContaining({ id: "ZGV2aWNlLTE", name: "Laptop", alg: -7 }),
     ]);
+  });
+
+  it("keeps naming a removed passkey while a server still trusts it", async () => {
+    const { sqlite, call, device } = setup();
+    await device();
+    const read = async () =>
+      (await reply(call("GET", "/api/devices"))) as unknown as {
+        devices: { fingerprint: string }[];
+        removing: unknown[];
+      };
+    const listed = await read();
+    expect(listed.removing).toEqual([]);
+    const node = sqlite.prepare("SELECT id, name FROM nodes LIMIT 1").get() as {
+      id: string;
+      name: string;
+    };
+    sqlite.prepare("UPDATE nodes SET trust_report = ? WHERE id = ?").run(
+      JSON.stringify({
+        version: 2,
+        core: [listed.devices[0]!.fingerprint],
+        access: [],
+      }),
+      node.id,
+    );
+    sqlite.prepare("UPDATE devices SET removed_at = 'now'").run();
+    expect(await reply(call("GET", "/api/devices"))).toEqual({
+      devices: [],
+      removing: [{ id: "ZGV2aWNlLTE", name: "Laptop", servers: [node.name] }],
+    });
+    sqlite
+      .prepare("UPDATE nodes SET trust_report = ? WHERE id = ?")
+      .run(JSON.stringify({ version: 3, core: [], access: [] }), node.id);
+    expect((await read()).removing).toEqual([]);
   });
 });
 

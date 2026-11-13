@@ -1,16 +1,10 @@
 import { pokeSoon, unchangedList } from "../fleet/client";
 import {
-  BOOLEAN_AGENT,
-  FEATURE_AGENT,
+  MIN_AGENT_VERSION,
   FIREWALL_VERBS,
   KIND_VERBS,
-  MIN_AGENT_VERSION,
   RECIPES,
-  SECURITY_AGENT,
   UNSIGNED_VERBS,
-  agentHasFeatures,
-  agentHasSecurity,
-  agentSetsBooleans,
   agentSupported,
   hostVerbFits,
   isProtectedTarget,
@@ -818,52 +812,11 @@ export function registerServiceRoutes(
         422,
       );
     }
-    const behind = targets.find(
-      (target) =>
-        needsFeatures(target, action, argsOf(target)) &&
-        !agentHasFeatures(byId.get(target.nodeId)!.agent_version),
-    );
-    if (behind) {
-      return context.json(
-        {
-          code: "AGENT_TOO_OLD",
-          message: `Update the agent on ${byId.get(behind.nodeId)!.name} to ${FEATURE_AGENT} or newer.`,
-        },
-        422,
-      );
-    }
-    const unready = targets.find(
-      (target) =>
-        needsSecurity(target, action, argsOf(target)) &&
-        !agentHasSecurity(byId.get(target.nodeId)!.agent_version),
-    );
-    if (unready) {
-      return context.json(
-        {
-          code: "AGENT_TOO_OLD",
-          message: `Update the agent on ${byId.get(unready.nodeId)!.name} to ${SECURITY_AGENT} or newer.`,
-        },
-        422,
-      );
-    }
-    const unset = targets.find(
-      (target) =>
-        target.kind === "host" &&
-        action === "boolean" &&
-        !agentSetsBooleans(byId.get(target.nodeId)!.agent_version),
-    );
-    if (unset) {
-      return context.json(
-        {
-          code: "AGENT_TOO_OLD",
-          message: `Update the agent on ${byId.get(unset.nodeId)!.name} to ${BOOLEAN_AGENT} or newer.`,
-        },
-        422,
-      );
-    }
-    if (then) {
-      const member = await networkMember(db, targets[0]!.nodeId);
-      if (member) return member(context);
+    if (then || action === "uninstall") {
+      for (const target of targets) {
+        const member = await networkMember(db, target.nodeId);
+        if (member) return member(context);
+      }
     }
     const aptless = targets.find(
       (target) => target.kind === "apt" && byId.get(target.nodeId)!.apt === 0,

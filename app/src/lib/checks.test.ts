@@ -429,15 +429,15 @@ describe("dockerKindBlocker", () => {
       "Waiting for First Report",
     );
     expect(dockerKindBlocker("n1", serverTwo("0.6.14"), "ready")).toBe(
-      "Needs agent 0.7.0",
+      "Needs agent 0.7.20",
     );
-    expect(dockerKindBlocker("n1", serverTwo("0.7.1"), "missing")).toBe(
+    expect(dockerKindBlocker("n1", serverTwo("0.7.21"), "missing")).toBe(
       "No Docker on server-2",
     );
     expect(
-      dockerKindBlocker("n1", serverTwo("0.7.1"), "no-compose"),
+      dockerKindBlocker("n1", serverTwo("0.7.21"), "no-compose"),
     ).toBeNull();
-    expect(dockerKindBlocker("n1", serverTwo("0.7.1"), null)).toBeNull();
+    expect(dockerKindBlocker("n1", serverTwo("0.7.21"), null)).toBeNull();
   });
 });
 

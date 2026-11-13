@@ -97,6 +97,17 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     });
   });
 
+  app.get("/api/agent/held", async (context) => {
+    const node = await authenticateAgent(context);
+    if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
+    const open = await context.env.DB.prepare(
+      "SELECT 1 AS held FROM quarantines WHERE node_id = ? AND released_at IS NULL LIMIT 1",
+    )
+      .bind(node.id)
+      .first<{ held: number }>();
+    return context.json({ held: open !== null });
+  });
+
   app.get("/api/agent/address", (context) => seenAddress(context, null));
   app.post("/api/agent/address", async (context) =>
     seenAddress(context, readInterfaces(await readJson(context))),

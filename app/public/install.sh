@@ -2,6 +2,7 @@
 set -eu
 
 main() {
+  trap '' HUP
   mode="enroll"
   if [ "${1:-}" = "--update" ]; then
     mode="update"
@@ -113,8 +114,8 @@ main() {
   fi
   if [ -n "$admin" ]; then
     case "$admin" in
-      root | [!a-z_]* | *[!a-z0-9_-]*)
-        echo "--admin takes your user name, not root" >&2
+      root | kry | [!a-z_]* | *[!a-z0-9_-]*)
+        echo "--admin takes your user name, not root or kry" >&2
         exit 1
         ;;
     esac

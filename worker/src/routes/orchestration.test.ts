@@ -65,7 +65,7 @@ function routes() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.7.0', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.21', docker = 'ready', seal_key = ?, vault = ?, last_seen_at = datetime('now') WHERE id = ?",
       )
       .run(keyOf(id), JSON.stringify({ set: SET, holders: 3 }), id);
   }
@@ -237,7 +237,7 @@ describe("operations in steps", () => {
   it("ends a move with what other servers' stacks reach, never on its own two servers", async () => {
     const t = routes();
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.0' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.20' WHERE id = ?")
       .run(C);
     t.sqlite
       .prepare(
@@ -274,7 +274,7 @@ describe("operations in steps", () => {
   it("creates the stack's networks on the target first, as the source has them", async () => {
     const t = routes();
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.1' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.21' WHERE id = ?")
       .run(B);
     t.sqlite.prepare("UPDATE nodes SET bridges = ? WHERE id = ?").run(
       JSON.stringify({
@@ -341,14 +341,14 @@ describe("operations in steps", () => {
       expect((await t.operate("move", steps)).status).toBe(400);
     }
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.0' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.19' WHERE id = ?")
       .run(B);
     expect(
       await code(await t.operate("move", [exported!, network(), created!])),
     ).toBe("AGENT_TOO_OLD");
   });
 
-  it("needs agent 0.7.0 on every server in the operation", async () => {
+  it("needs agent 0.7.20 on every server in the operation", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -368,6 +368,7 @@ describe("operations in steps", () => {
       path: "/admin",
       zone: "example.org",
       aud: "aud-1",
+      from: keyOf(B),
     };
     const open = await t.operate("expose", [
       step({
@@ -375,7 +376,7 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: keyOf(A), set: SET },
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
       }),
       step({
         nodeId: A,
@@ -394,14 +395,18 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: keyOf(A), set: SET },
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
       }),
       step({
         nodeId: A,
         kind: "compose",
         name: "listmonk",
         action: "unexpose",
-        args: { hostname: "listmonk-a.example.org", zone: "example.org" },
+        args: {
+          hostname: "listmonk-a.example.org",
+          zone: "example.org",
+          from: keyOf(B),
+        },
         attachFrom: 0,
       }),
       step({ nodeId: A, kind: "compose", name: "listmonk", action: "purge" }),
@@ -467,7 +472,7 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: keyOf(A), set: SET },
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
       }),
       step({
         nodeId: A,
@@ -481,6 +486,7 @@ describe("operations in steps", () => {
           mode: "allow",
           zone: "example.org",
           aud: "aud-1",
+          from: keyOf(B),
         },
         attachFrom: 0,
       }),
@@ -505,7 +511,7 @@ describe("operations in steps", () => {
           kind: "vault",
           name: "cloudflare",
           action: "release",
-          args: { to: A, key: keyOf(A), set },
+          args: { to: A, key: keyOf(A), set, sender: keyOf(B) },
         }),
         step({
           nodeId: A,
@@ -519,6 +525,7 @@ describe("operations in steps", () => {
             mode: "allow",
             zone: "example.org",
             aud: "aud-1",
+            from: keyOf(B),
             source: set,
           },
           attachFrom: 0,
@@ -641,7 +648,7 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: keyOf(A), set: SET },
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
       }),
       step({
         nodeId: A,
@@ -653,6 +660,8 @@ describe("operations in steps", () => {
           set: NEXT,
           cleanup: B,
           zone: "example.org",
+          sender: keyOf(A),
+          from: keyOf(B),
         },
         attachFrom: 0,
       }),
@@ -661,7 +670,7 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: NEXT, holders: "2" },
+        args: { set: NEXT, holders: "2", from: keyOf(A) },
         attachFrom: 1,
         attachKey: A,
       }),
@@ -670,7 +679,7 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: NEXT, holders: "2" },
+        args: { set: NEXT, holders: "2", from: keyOf(A) },
         attachFrom: 1,
         attachKey: C,
       }),
@@ -690,7 +699,7 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: keyOf(A), set: SET },
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
       }),
       step({
         nodeId: A,
@@ -701,6 +710,8 @@ describe("operations in steps", () => {
           holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
           set: NEXT,
           zone: "example.org",
+          sender: keyOf(A),
+          from: keyOf(B),
         },
         attachFrom: 0,
       }),
@@ -709,12 +720,143 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: NEXT, holders: "2" },
+        args: { set: NEXT, holders: "2", from: keyOf(A) },
         attachFrom: 1,
         attachKey: A,
       }),
     ]);
     expect(missing.status).toBe(400);
+  });
+
+  it("cleans up after the leaving server only once every new piece is stored", async () => {
+    const t = routes();
+    const release = () =>
+      step({
+        nodeId: B,
+        kind: "vault",
+        name: "cloudflare",
+        action: "release",
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
+      });
+    const stores = [A, C].map((nodeId) =>
+      step({
+        nodeId,
+        kind: "vault",
+        name: "cloudflare",
+        action: "store",
+        args: { set: NEXT, holders: "2", from: keyOf(A) },
+        attachFrom: 1,
+        attachKey: nodeId,
+      }),
+    );
+    const reshare = () =>
+      step({
+        nodeId: A,
+        kind: "vault",
+        name: "cloudflare",
+        action: "reshare",
+        args: {
+          holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
+          set: NEXT,
+          source: SET,
+          zone: "example.org",
+          sender: keyOf(A),
+          from: keyOf(B),
+        },
+        attachFrom: 0,
+      });
+    const clean = (attachFrom: number, extra: Record<string, string> = {}) =>
+      step({
+        nodeId: A,
+        kind: "vault",
+        name: "cloudflare",
+        action: "reshare",
+        args: {
+          only: "cleanup",
+          cleanup: B,
+          source: SET,
+          zone: "example.org",
+          from: keyOf(B),
+          ...extra,
+        },
+        attachFrom,
+      });
+    const early = await t.operate("reshare", [
+      release(),
+      reshare(),
+      stores[0]!,
+      release(),
+      clean(3),
+      stores[1]!,
+    ]);
+    expect(early.status).toBe(400);
+    const unbound = await t.operate("reshare", [
+      release(),
+      reshare(),
+      ...stores,
+      release(),
+      clean(4, { from: keyOf(C) }),
+    ]);
+    expect(unbound.status).toBe(400);
+    const done = await t.operate("reshare", [
+      release(),
+      reshare(),
+      ...stores,
+      release(),
+      clean(4),
+    ]);
+    expect(done.status).toBe(201);
+    expect(t.rows().map((row) => [row.action, row.attachFrom])).toEqual([
+      ["release", null],
+      ["reshare", 0],
+      ["store", 1],
+      ["store", 1],
+      ["release", null],
+      ["reshare", 4],
+    ]);
+  });
+
+  it("refuses a re-split whose pieces are not bound to the server that makes them", async () => {
+    const t = routes();
+    const reshare = (sender: string, from: string) =>
+      t.operate("reshare", [
+        step({
+          nodeId: A,
+          kind: "vault",
+          name: "cloudflare",
+          action: "reshare",
+          args: {
+            holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
+            set: NEXT,
+            source: SET,
+            zone: "example.org",
+            ...(sender ? { sender } : {}),
+          },
+        }),
+        ...[A, C].map((nodeId) =>
+          step({
+            nodeId,
+            kind: "vault",
+            name: "cloudflare",
+            action: "store",
+            args: { set: NEXT, holders: "2", ...(from ? { from } : {}) },
+            attachFrom: 0,
+            attachKey: nodeId,
+          }),
+        ),
+      ]);
+    expect((await reshare("", "")).status).toBe(409);
+    expect((await reshare(keyOf(A), keyOf(C))).status).toBe(409);
+    expect((await reshare(keyOf(C), keyOf(C))).status).toBe(409);
+    t.sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.7.20' WHERE id = ?")
+      .run(C);
+    const old = await reshare(keyOf(A), keyOf(A));
+    expect(old.status).toBe(422);
+    expect(((await old.json()) as { message: string }).message).toContain(
+      "0.7.21",
+    );
+    expect(t.rows()).toEqual([]);
   });
 
   it("re-splits, takes Krynodes off the leaving server and marks it for deletion", async () => {
@@ -724,7 +866,7 @@ describe("operations in steps", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: keyOf(A), set: SET },
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
       }),
       step({
         nodeId: A,
@@ -736,6 +878,8 @@ describe("operations in steps", () => {
           set: NEXT,
           cleanup: B,
           zone: "example.org",
+          sender: keyOf(A),
+          from: keyOf(B),
         },
         attachFrom: 0,
       }),
@@ -745,7 +889,7 @@ describe("operations in steps", () => {
           kind: "vault",
           name: "cloudflare",
           action: "store",
-          args: { set: NEXT, holders: "2" },
+          args: { set: NEXT, holders: "2", from: keyOf(A) },
           attachFrom: 1,
           attachKey: nodeId,
         }),
@@ -789,7 +933,7 @@ describe("operations in steps", () => {
   });
 });
 
-describe("single steps of agent 0.7.0", () => {
+describe("single steps of agent 0.7.20", () => {
   const single = (
     t: ReturnType<typeof routes>,
     target: Step,
@@ -1019,7 +1163,7 @@ describe("single steps of agent 0.7.0", () => {
     ).toBe(201);
   });
 
-  it("needs agent 0.7.0 for a stack with an access level or secrets", async () => {
+  it("needs agent 0.7.20 for a stack with an access level or secrets", async () => {
     const t = routes();
     t.sqlite
       .prepare("UPDATE nodes SET agent_version = '0.4.0' WHERE id = ?")
@@ -1055,7 +1199,7 @@ async function hub() {
     seedNode(sqlite, { id });
     sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.7.0', docker = 'ready', seal_key = ? WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.21', docker = 'ready', seal_key = ? WHERE id = ?",
       )
       .run(keyOf(id), id);
   }
@@ -1086,7 +1230,7 @@ async function hub() {
           hostname: "web-01",
           operatingSystem: "Debian 12.10",
           architecture: "amd64",
-          agentVersion: "0.7.0",
+          agentVersion: "0.7.20",
           metrics: {
             cpuPercent: 1,
             memoryUsedBytes: 1,
@@ -1277,7 +1421,7 @@ describe("steps that feed the next", () => {
         kind: "vault",
         name: "cloudflare",
         action: "release",
-        args: { to: A, key: keyOf(A), set: SET },
+        args: { to: A, key: keyOf(A), set: SET, sender: keyOf(B) },
       }),
       step({
         nodeId: A,
@@ -1288,6 +1432,8 @@ describe("steps that feed the next", () => {
           holders: `${A}:${keyOf(A)},${C}:${keyOf(C)}`,
           set: NEXT,
           zone: "example.org",
+          sender: keyOf(A),
+          from: keyOf(B),
         },
         attachFrom: 0,
       }),
@@ -1296,7 +1442,7 @@ describe("steps that feed the next", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: NEXT, holders: "2" },
+        args: { set: NEXT, holders: "2", from: keyOf(A) },
         attachFrom: 1,
         attachKey: A,
       }),
@@ -1305,7 +1451,7 @@ describe("steps that feed the next", () => {
         kind: "vault",
         name: "cloudflare",
         action: "store",
-        args: { set: NEXT, holders: "2" },
+        args: { set: NEXT, holders: "2", from: keyOf(A) },
         attachFrom: 1,
         attachKey: C,
       }),
@@ -1429,7 +1575,7 @@ describe("steps that feed the next", () => {
   });
 });
 
-describe("the inventory of agent 0.7.0", () => {
+describe("the inventory of agent 0.7.20", () => {
   it("keeps the seal key, the security report, the vault and stack access", async () => {
     const t = await hub();
     const security = {

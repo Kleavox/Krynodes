@@ -528,27 +528,39 @@ func firewall(ctx context.Context, env Env, chosen, networkPort string) (map[str
 			rules = append(rules, port)
 		}
 	}
+	var added []string
+	failed := func(err error) (map[string]string, error) {
+		saved["rules"], saved["wasActive"] = strings.Join(added, ","), fmt.Sprint(active)
+		if back := Undo(ctx, env, "firewall", saved); back != nil {
+			return nil, fmt.Errorf("%w; putting the firewall back also failed: %v", err, back)
+		}
+		return nil, err
+	}
 	for _, rule := range rules {
-		if err := env.run(ctx, "ufw", "allow", rule, "comment", "krynodes"); err != nil {
-			return nil, err
+		answer, err := env.output(ctx, "ufw", "allow", rule, "comment", "krynodes")
+		if err != nil {
+			return failed(err)
+		}
+		if !strings.Contains(answer, "Skipping") {
+			added = append(added, rule)
 		}
 	}
 	if port, err := strconv.Atoi(networkPort); err == nil {
 		for _, command := range network.Open("ufw", port) {
 			if err := env.run(ctx, command[0], command[1:]...); err != nil {
-				return nil, err
+				return failed(err)
 			}
 		}
 	}
 	if !active {
 		for _, step := range [][]string{{"default", "deny", "incoming"}, {"default", "allow", "outgoing"}, {"--force", "enable"}} {
 			if err := env.run(ctx, "ufw", step...); err != nil {
-				return nil, err
+				return failed(err)
 			}
 		}
 	}
 	saved["wasActive"] = fmt.Sprint(active)
-	saved["rules"] = strings.Join(rules, ",")
+	saved["rules"] = strings.Join(added, ",")
 	if !active {
 		if status, _ := env.output(ctx, "ufw", "status"); !sshAllowed(status, sshPorts(ctx, env)) {
 			return nil, firewallBack(undo(ctx, env, "firewall", saved))

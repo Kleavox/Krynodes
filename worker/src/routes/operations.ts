@@ -1,11 +1,11 @@
 import {
   bridgesReportSchema,
-  FEATURE_AGENT,
   MIN_AGENT_VERSION,
   NETWORK,
   QUARANTINE,
-  agentHasFeatures,
+  SEAL_AGENT,
   agentSupported,
+  agentSealsFromSender,
   isValidTarget,
   signedCommandSchema,
 } from "@krynodes/protocol";
@@ -35,6 +35,7 @@ import {
   type KrynodesApp,
   type KrynodesEnv,
 } from "./shared";
+import { networkMember } from "./admin";
 
 const uuid = z.string().uuid();
 const HOSTNAME =
@@ -146,10 +147,16 @@ function decodeBridges(text: string | null): unknown {
 const is = (step: Step | undefined, kind: string, ...actions: string[]) =>
   step !== undefined && step.kind === kind && actions.includes(step.action);
 
+const cleanupOf = (steps: Step[]) =>
+  steps.find((step) => step.action === "reshare" && step.args.cleanup)?.args
+    .cleanup;
+
 const releasesTo = (release: Step, target: Step, attach: Step) =>
   release.args.to === target.nodeId &&
   release.nodeId !== target.nodeId &&
-  attach.attachFrom === 0;
+  attach.attachFrom === 0 &&
+  !!release.args.sender &&
+  attach.args.from === release.args.sender;
 
 function exposeArgs(step: Step): boolean {
   const {
@@ -288,11 +295,41 @@ function shaped(kind: string, steps: Step[]): boolean {
         leaving &&
         (last.name !== "server" ||
           last.attachFrom !== undefined ||
-          last.nodeId !== reshare!.args.cleanup)
+          last.nodeId !== cleanupOf(steps))
       ) {
         return false;
       }
-      const rest = steps.slice(index + 1, leaving ? -1 : undefined);
+      const all = steps.slice(index + 1, leaving ? -1 : undefined);
+      const cleanAt = all.findIndex((step) => step.action === "reshare");
+      let rest = all;
+      if (cleanAt !== -1) {
+        const clean = all[cleanAt]!;
+        const before = all[cleanAt - 1];
+        const freed = is(before, "vault", "release");
+        if (
+          clean.kind !== "vault" ||
+          clean.args.only !== "cleanup" ||
+          !clean.args.cleanup ||
+          reshare!.args.cleanup !== undefined ||
+          clean.nodeId !== reshare!.nodeId ||
+          clean.args.source !== reshare!.args.source ||
+          clean.args.zone !== reshare!.args.zone ||
+          all.slice(cleanAt).some((step) => step.action === "store") ||
+          (freed
+            ? before!.args.to !== clean.nodeId ||
+              before!.nodeId === clean.nodeId ||
+              before!.args.set !== clean.args.source ||
+              !before!.args.sender ||
+              clean.args.from !== before!.args.sender ||
+              clean.attachFrom !== index + cleanAt
+            : clean.attachFrom !== undefined)
+        ) {
+          return false;
+        }
+        rest = all.filter(
+          (_, at) => at !== cleanAt && !(freed && at === cleanAt - 1),
+        );
+      }
       const stores = rest.filter((step) => step.action === "store");
       const forgets = rest.filter((step) => step.action === "forget");
       const holders = (reshare!.args.holders ?? "")
@@ -389,8 +426,7 @@ export function registerOperationRoutes(
       }
       steps.push({ ...step, args });
     }
-    const cleanup = steps.find((step) => step.action === "reshare")?.args
-      .cleanup;
+    const cleanup = cleanupOf(steps);
     const leaving = steps.some((step) => step.action === "uninstall");
     const vaults = new Set(
       steps.filter((step) => step.kind === "vault").map((step) => step.name),
@@ -470,22 +506,6 @@ export function registerOperationRoutes(
         422,
       );
     }
-    const behind = steps.find(
-      (step) =>
-        (step.kind === "bridge" ||
-          (step.kind === "compose" &&
-            (hasStackNetworkArgs(step.args) || hasStackNameArgs(step.args)))) &&
-        !agentHasFeatures(byId.get(step.nodeId)!.agent_version),
-    );
-    if (behind) {
-      return context.json(
-        {
-          code: "AGENT_TOO_OLD",
-          message: `Update the agent on ${byId.get(behind.nodeId)!.name} to ${FEATURE_AGENT} or newer.`,
-        },
-        422,
-      );
-    }
     const networks = steps.filter((step) => step.kind === "bridge");
     if (networks.length > 0) {
       const source = bridgesReportSchema.safeParse(
@@ -516,7 +536,36 @@ export function registerOperationRoutes(
         );
       }
     }
+    const removed = steps.find((step) => step.action === "uninstall");
+    if (removed) {
+      const member = await networkMember(db, removed.nodeId);
+      if (member) return member(context);
+    }
     for (const step of steps) {
+      if (step.kind === "vault" && step.action === "release") {
+        const releaser = byId.get(step.nodeId)!;
+        const behindSeal = [releaser, byId.get(step.args.to ?? "")].find(
+          (node) => node && !agentSealsFromSender(node.agent_version),
+        );
+        if (behindSeal) {
+          return context.json(
+            {
+              code: "AGENT_TOO_OLD",
+              message: `Update the agent on ${behindSeal.name} to ${SEAL_AGENT} or newer.`,
+            },
+            422,
+          );
+        }
+        if (!releaser.seal_key || releaser.seal_key !== step.args.sender) {
+          return context.json(
+            {
+              code: "KEY_CHANGED",
+              message: "A server's key changed. Refresh and try again.",
+            },
+            409,
+          );
+        }
+      }
       if (step.args.key !== undefined) {
         const target = byId.get(step.args.to ?? "");
         if (!target || target.seal_key !== step.args.key) {
@@ -554,8 +603,25 @@ export function registerOperationRoutes(
     }
     if (kind === "reshare") {
       const reshare = steps.find((step) => step.action === "reshare")!;
+      const stores = steps.filter((step) => step.action === "store");
+      const behindSeal = [reshare, ...stores].find(
+        (step) => !agentSealsFromSender(byId.get(step.nodeId)!.agent_version),
+      );
+      if (behindSeal) {
+        return context.json(
+          {
+            code: "AGENT_TOO_OLD",
+            message: `Update the agent on ${byId.get(behindSeal.nodeId)!.name} to ${SEAL_AGENT} or newer.`,
+          },
+          422,
+        );
+      }
+      const sender = byId.get(reshare.nodeId)!.seal_key;
       const listed = (reshare.args.holders ?? "").split(",");
       if (
+        !sender ||
+        reshare.args.sender !== sender ||
+        stores.some((step) => step.args.from !== sender) ||
         listed.some((entry) => {
           const [node, key] = entry.split(":");
           return !node || byId.get(node)?.seal_key !== key;

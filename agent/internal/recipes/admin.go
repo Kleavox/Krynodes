@@ -49,7 +49,7 @@ type Terminal interface {
 }
 
 func ValidAdminName(name string) bool {
-	return adminName.MatchString(name) && name != "root"
+	return adminName.MatchString(name) && name != "root" && name != "kry"
 }
 
 func ParseAdminKey(arg string) (AdminKey, error) {
@@ -93,6 +93,8 @@ func AddAdmin(ctx context.Context, env Env, name string, keys []AdminKey, tty Te
 	switch {
 	case name == "root":
 		return AdminResult{}, errors.New("root cannot be the admin user")
+	case name == "kry":
+		return AdminResult{}, errors.New("kry is the account Krynodes runs as; pick your own user name")
 	case !adminName.MatchString(name):
 		return AdminResult{}, fmt.Errorf("%.40s is not a user name", name)
 	}

@@ -58,7 +58,7 @@ const beat = (nodeId: string, network: NetworkBeat): AgentHeartbeat => ({
   hostname: nodeId.slice(0, 4),
   operatingSystem: "linux",
   architecture: "amd64",
-  agentVersion: "0.7.0",
+  agentVersion: "0.7.20",
   metrics: {
     cpuPercent: 1,
     memoryUsedBytes: 4,
@@ -109,7 +109,7 @@ function setup() {
   for (const id of [A, B, C]) {
     seedNode(sqlite, { id });
     sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.0' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.20' WHERE id = ?")
       .run(id);
   }
   sqlite

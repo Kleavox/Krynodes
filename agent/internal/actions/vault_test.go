@@ -478,3 +478,134 @@ func TestAnOlderTunnelOnAContainedStackIsStartedAgainOnce(t *testing.T) {
 		t.Fatal("a locked-down server starts nothing")
 	}
 }
+
+func TestAReshareNamedBySenderSealsPiecesOnlyThatSenderCouldHaveMade(t *testing.T) {
+	executor, _, _ := cloudflareExecutor(t)
+	split := pieces(t, "cf-token", 3)
+	storePiece(t, executor, split[0], "3")
+	own := mustKey(t, executor)
+	holder, _ := ecdh.P256().GenerateKey(rand.Reader)
+	next := "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a21"
+	reshare := func(id, sender string) Result {
+		request := vaultRequest(t, id, "reshare", func(c *Command) {
+			c.Args = map[string]string{"holders": "node-1:" + seal.Public(holder) + ",node-2:" + seal.Public(holder), "set": next, "zone": "example.org", "sender": sender}
+		})
+		request.Attachment = sealedPiece(t, executor, splitSet, split[2])
+		return runRequest(t, executor, request)
+	}
+	if result := reshare(idB, seal.Public(holder)); result.OK || !strings.Contains(result.Output, "named as the sender") {
+		t.Fatalf("another sender %#v", result)
+	}
+	result := reshare(fresh(1), seal.Public(own))
+	var out map[string]string
+	if err := json.Unmarshal([]byte(result.Output), &out); !result.OK || err != nil {
+		t.Fatalf("reshare %#v", result)
+	}
+	if _, err := seal.OpenFrom(holder, seal.Public(own), out["node-1"]); err != nil {
+		t.Fatalf("the holder cannot open its piece: %v", err)
+	}
+	if _, err := seal.Open(holder, out["node-1"]); err == nil {
+		t.Fatal("the piece opens without the sender")
+	}
+}
+
+func TestAStoreThatNamesItsSenderRefusesAPieceFromAnyoneElse(t *testing.T) {
+	executor, _, _ := cloudflareExecutor(t)
+	sender, _ := ecdh.P256().GenerateKey(rand.Reader)
+	split := pieces(t, "cf-token", 2)
+	encoded, _ := json.Marshal(vaultPiece{Set: splitSet, Piece: split[0]})
+	store := func(id, attachment string) Result {
+		request := vaultRequest(t, id, "store", func(c *Command) {
+			c.Args = map[string]string{"set": splitSet, "holders": "2", "from": seal.Public(sender)}
+		})
+		request.Attachment = attachment
+		return runRequest(t, executor, request)
+	}
+	forged, _ := seal.Seal(seal.Public(mustKey(t, executor)), encoded)
+	if result := store(idA, forged); result.OK || !strings.Contains(result.Output, "did not come from the server your passkey named") {
+		t.Fatalf("a forged piece %#v", result)
+	}
+	if _, err := executor.readVault("cloudflare"); err == nil {
+		t.Fatal("the forged piece was stored")
+	}
+	genuine, _ := seal.SealFrom(sender, seal.Public(mustKey(t, executor)), encoded)
+	if result := store(idB, genuine); !result.OK {
+		t.Fatalf("the sender's piece %#v", result)
+	}
+}
+
+func TestAReleasedPieceIsBoundToTheServerThatReleasedIt(t *testing.T) {
+	executor, _, _ := cloudflareExecutor(t)
+	split := pieces(t, "cf-token", 2)
+	storePiece(t, executor, split[0], "2")
+	own := mustKey(t, executor)
+	assembler, _ := ecdh.P256().GenerateKey(rand.Reader)
+	release := func(id, sender string) Result {
+		return runRequest(t, executor, vaultRequest(t, id, "release", func(c *Command) {
+			c.Args = map[string]string{"to": "node-2", "key": seal.Public(assembler), "set": splitSet, "sender": sender}
+		}))
+	}
+	if result := release(idB, seal.Public(assembler)); result.OK || !strings.Contains(result.Output, "named as the sender") {
+		t.Fatalf("another sender %#v", result)
+	}
+	result := release(fresh(1), seal.Public(own))
+	if !result.OK {
+		t.Fatalf("release %#v", result)
+	}
+	if _, err := seal.OpenFrom(assembler, seal.Public(own), result.Output); err != nil {
+		t.Fatalf("the assembler cannot open it: %v", err)
+	}
+	if _, err := seal.Open(assembler, result.Output); err == nil {
+		t.Fatal("the piece opens without the sender")
+	}
+}
+
+func TestAServerRebuildingTheTokenRefusesASecondPieceFromAnyoneElse(t *testing.T) {
+	executor, _, _ := cloudflareExecutor(t)
+	split := pieces(t, "cf-token", 2)
+	storePiece(t, executor, split[0], "2")
+	releaser, _ := ecdh.P256().GenerateKey(rand.Reader)
+	holder, _ := ecdh.P256().GenerateKey(rand.Reader)
+	encoded, _ := json.Marshal(vaultPiece{Set: splitSet, Piece: split[1]})
+	reshare := func(id, attachment string) Result {
+		request := vaultRequest(t, id, "reshare", func(c *Command) {
+			c.Args = map[string]string{"holders": "node-1:" + seal.Public(holder) + ",node-2:" + seal.Public(holder), "set": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a21", "zone": "example.org", "from": seal.Public(releaser)}
+		})
+		request.Attachment = attachment
+		return runRequest(t, executor, request)
+	}
+	forged, _ := seal.Seal(seal.Public(mustKey(t, executor)), encoded)
+	if result := reshare(idB, forged); result.OK || !strings.Contains(result.Output, "did not come from the server your passkey named") {
+		t.Fatalf("a forged piece %#v", result)
+	}
+	genuine, _ := seal.SealFrom(releaser, seal.Public(mustKey(t, executor)), encoded)
+	if result := reshare(fresh(1), genuine); !result.OK {
+		t.Fatalf("the releaser's piece %#v", result)
+	}
+}
+
+func TestTheCleanupStepRebuildsTheTokenAndOnlyCleansUp(t *testing.T) {
+	executor, _, fake := cloudflareExecutor(t)
+	split := pieces(t, "cf-token", 3)
+	storePiece(t, executor, split[0], "3")
+	cf := &cloudflare.Client{Token: "cf-token", Base: executor.CloudflareBase, HTTP: executor.CloudflareHTTP}
+	ctx := context.Background()
+	gone, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-gone")
+	cf.Point(ctx, "zone-1", "panel-gone.example.org", gone)
+	before, _ := os.ReadFile(filepath.Join(executor.StateDir, vaultName("cloudflare")))
+	request := vaultRequest(t, idB, "reshare", func(c *Command) {
+		c.Args = map[string]string{"only": "cleanup", "cleanup": "node-gone", "zone": "example.org", "source": splitSet}
+	})
+	request.Attachment = sealedPiece(t, executor, splitSet, split[2])
+	result := runRequest(t, executor, request)
+	after, _ := os.ReadFile(filepath.Join(executor.StateDir, vaultName("cloudflare")))
+	if !result.OK || result.Output != "cleaned" || len(fake.Tunnels) != 0 || len(fake.Records) != 0 || string(before) != string(after) {
+		t.Fatalf("result %#v tunnels %v records %v", result, fake.Tunnels, fake.Records)
+	}
+	nameless := vaultRequest(t, fresh(1), "reshare", func(c *Command) {
+		c.Args = map[string]string{"only": "cleanup", "zone": "example.org", "source": splitSet}
+	})
+	if result := runRequest(t, executor, nameless); result.OK {
+		t.Fatalf("a cleanup that names no server %#v", result)
+	}
+}

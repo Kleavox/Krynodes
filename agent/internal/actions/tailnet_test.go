@@ -463,7 +463,7 @@ func TestJoinSignsInWithTheOneTimeKeyFromAFile(t *testing.T) {
 	if !result.OK || result.Output != `{"id":"nSelf1CNTRL","addresses":["100.101.7.20","fd7a:115c:a1e0::20"],"name":"server-1.tail0000.ts.net"}` {
 		t.Fatalf("join %#v", result)
 	}
-	if held != tsKey || !slices.Contains(seen, "--accept-dns=false") || !slices.Contains(seen, "--ssh=false") || slices.Contains(seen, tsKey) {
+	if held != tsKey || !slices.Contains(seen, "--reset") || !slices.Contains(seen, "--accept-dns=false") || !slices.Contains(seen, "--ssh=false") || slices.Contains(seen, tsKey) {
 		t.Fatalf("args %v held %q", seen, held)
 	}
 	leftovers, _ := filepath.Glob(filepath.Join(executor.StateDir, "*tailscale-key*"))

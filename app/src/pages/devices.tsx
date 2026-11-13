@@ -682,6 +682,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
     (server) => states.get(server.node.id) === "behind",
   );
   const old = fleet.trusted.filter((server) => !agentCurrent(server.node));
+  const removing = useDevices().data?.removing ?? [];
   const admitting = new Set(
     fleet.open.flatMap((proposal) =>
       (decodeChange(proposal.change)?.core ?? []).map((key) => key.id),
@@ -729,6 +730,16 @@ function Manage({ fleet }: { fleet: Fleet }) {
       ),
     );
   } else {
+    for (const gone of removing) {
+      notices.push(
+        <Notice key={`removing-${gone.id}`} tone="warning">
+          {gone.name} was removed, but {gone.servers.join(", ")} still{" "}
+          {gone.servers.length === 1 ? "trusts" : "trust"} it. Sync{" "}
+          {gone.servers.length === 1 ? "that server" : "those servers"} to
+          finish removing it.
+        </Notice>,
+      );
+    }
     if (old.length > 0) {
       notices.push(
         <Notice key="old" tone="warning">

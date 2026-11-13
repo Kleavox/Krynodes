@@ -54,10 +54,10 @@ const reply = async (response: Response | Promise<Response>) =>
 function setup() {
   const { db, sqlite } = createTestDb();
   for (const [id, version, owner] of [
-    [A, "0.7.0", undefined],
-    [B, "0.7.0", undefined],
-    [C, "0.7.0", undefined],
-    [FOREIGN, "0.7.0", "someone-else"],
+    [A, "0.7.20", undefined],
+    [B, "0.7.20", undefined],
+    [C, "0.7.20", undefined],
+    [FOREIGN, "0.7.20", "someone-else"],
   ] as const) {
     seedNode(sqlite, { id, owner });
     sqlite
@@ -443,7 +443,7 @@ describe("logs", () => {
   });
 });
 
-describe("agents before 0.7.0", () => {
+describe("agents before 0.7.20", () => {
   it("are refused every action, a plain restart too", async () => {
     const { restart, sqlite } = setup();
     sqlite
@@ -453,7 +453,7 @@ describe("agents before 0.7.0", () => {
     expect(old.status).toBe(422);
     expect(await reply(old)).toMatchObject({
       code: "AGENT_TOO_OLD",
-      message: expect.stringContaining("0.7.0"),
+      message: expect.stringContaining("0.7.20"),
     });
     expect(sqlite.prepare("SELECT COUNT(*) AS n FROM actions").get()).toEqual({
       n: 0,
@@ -565,7 +565,7 @@ describe("stack, container and auto-restart commands", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.7.1', docker = 'ready' WHERE id IN (?, ?)",
+        "UPDATE nodes SET agent_version = '0.7.21', docker = 'ready' WHERE id IN (?, ?)",
       )
       .run(A, B);
     t.sqlite.prepare("UPDATE nodes SET docker = 'missing' WHERE id = ?").run(B);
@@ -703,7 +703,7 @@ describe("removed stacks", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.7.1', docker = 'ready' WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.21', docker = 'ready' WHERE id = ?",
       )
       .run(A);
     t.sqlite
@@ -822,7 +822,7 @@ describe("removed stacks", () => {
   });
 });
 
-describe("shared networks and admin users of agent 0.7.1", () => {
+describe("shared networks and admin users of agent 0.7.21", () => {
   const KEY =
     "AAAAC3NzaC1lZDI1NTE5AAAAIJQIdIFdIOrfxkgPwGXPHesM4bMreTr2K6zwvH2eRuGK";
 
@@ -830,9 +830,12 @@ describe("shared networks and admin users of agent 0.7.1", () => {
     const t = setup();
     t.sqlite
       .prepare(
-        "UPDATE nodes SET agent_version = '0.7.1', docker = 'ready' WHERE id = ?",
+        "UPDATE nodes SET agent_version = '0.7.21', docker = 'ready' WHERE id = ?",
       )
       .run(A);
+    t.sqlite
+      .prepare("UPDATE nodes SET agent_version = '0.7.19' WHERE id = ?")
+      .run(B);
     const send = (
       action: string,
       target: { nodeId: string; kind: string; name: string },
@@ -858,7 +861,7 @@ describe("shared networks and admin users of agent 0.7.1", () => {
     return { ...t, send };
   }
 
-  it("creates and deletes a network with signed arguments, on agent 0.7.1 only", async () => {
+  it("creates and deletes a network with signed arguments, on agent 0.7.21 only", async () => {
     const t = current();
     const network = { nodeId: A, kind: "bridge", name: "apps-inner" };
     const created = await t.send("create", network, {
@@ -903,7 +906,7 @@ describe("shared networks and admin users of agent 0.7.1", () => {
     expect(behind.status).toBe(422);
     expect(await reply(behind)).toMatchObject({
       code: "AGENT_TOO_OLD",
-      message: expect.stringContaining("0.7.1"),
+      message: expect.stringContaining("0.7.20"),
     });
     const unsigned = await t.call("POST", "/api/actions", {
       action: "create",
@@ -946,7 +949,7 @@ describe("shared networks and admin users of agent 0.7.1", () => {
     expect(behind.status).toBe(422);
   });
 
-  it("gates a stack's offers and reaches on agent 0.7.1 and checks their form", async () => {
+  it("gates a stack's offers and reaches on agent 0.7.21 and checks their form", async () => {
     const t = current();
     t.sqlite.prepare("UPDATE nodes SET docker = 'ready' WHERE id = ?").run(B);
     const stack = { kind: "compose", name: "panel" };
@@ -968,22 +971,9 @@ describe("shared networks and admin users of agent 0.7.1", () => {
     expect(
       (await t.send("create", { ...stack, nodeId: B }, offers)).status,
     ).toBe(422);
-    expect(
-      (
-        await t.send(
-          "create",
-          { ...stack, nodeId: B },
-          {
-            offers: "",
-            peers: "",
-            hostPorts: "3000/tcp",
-          },
-        )
-      ).status,
-    ).toBe(201);
   });
 
-  it("gates a stack's display name and container names on agent 0.7.1 and checks their form", async () => {
+  it("gates a stack's display name and container names on agent 0.7.21 and checks their form", async () => {
     const t = current();
     t.sqlite.prepare("UPDATE nodes SET docker = 'ready' WHERE id = ?").run(B);
     const stack = { kind: "compose", name: "resolver" };
@@ -1048,14 +1038,14 @@ describe("shared networks and admin users of agent 0.7.1", () => {
   });
 });
 
-describe("Exit Node and Tailscale DNS of agent 0.7.4", () => {
+describe("Exit Node and Tailscale DNS of agent 0.7.24", () => {
   function current() {
     const t = setup();
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.4' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.24' WHERE id = ?")
       .run(A);
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.3' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.19' WHERE id = ?")
       .run(B);
     t.sqlite
       .prepare(
@@ -1088,7 +1078,7 @@ describe("Exit Node and Tailscale DNS of agent 0.7.4", () => {
     return { ...t, send };
   }
 
-  it("turns either on or off, signed, on agent 0.7.4 only", async () => {
+  it("turns either on or off, signed, on agent 0.7.24 only", async () => {
     const t = current();
     for (const action of ["exitnode", "dns"]) {
       for (const on of ["1", "0"]) {
@@ -1106,20 +1096,20 @@ describe("Exit Node and Tailscale DNS of agent 0.7.4", () => {
       expect(behind.status).toBe(422);
       expect(await reply(behind)).toMatchObject({
         code: "AGENT_TOO_OLD",
-        message: expect.stringContaining("0.7.4"),
+        message: expect.stringContaining("0.7.20"),
       });
     }
   });
 });
 
-describe("Firewall of agent 0.7.4", () => {
+describe("Firewall of agent 0.7.24", () => {
   function current() {
     const t = setup();
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.4' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.24' WHERE id = ?")
       .run(A);
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.3' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.19' WHERE id = ?")
       .run(B);
     const send = async (
       action: string,
@@ -1149,7 +1139,7 @@ describe("Firewall of agent 0.7.4", () => {
     return { ...t, send };
   }
 
-  it("opens, closes and puts back with exact arguments on agent 0.7.4", async () => {
+  it("opens, closes and puts back with exact arguments on agent 0.7.24", async () => {
     const t = current();
     const fits: [string, Record<string, string>][] = [
       ["open", { port: "443", protocol: "tcp", from: "everyone" }],
@@ -1205,23 +1195,22 @@ describe("Firewall of agent 0.7.4", () => {
     expect(behind.status).toBe(422);
     expect(await reply(behind)).toMatchObject({
       code: "AGENT_TOO_OLD",
-      message: expect.stringContaining("0.7.4"),
+      message: expect.stringContaining("0.7.20"),
     });
     expect((await t.send("apply", B, { closed: "1", ports: "" })).status).toBe(
       422,
     );
-    expect((await t.send("apply", B, { ports: "80/tcp" })).status).toBe(201);
   });
 });
 
-describe("SELinux and AppArmor of agent 0.7.4", () => {
+describe("SELinux and AppArmor of agent 0.7.24", () => {
   function current() {
     const t = setup();
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.4' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.24' WHERE id = ?")
       .run(A);
     t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.3' WHERE id = ?")
+      .prepare("UPDATE nodes SET agent_version = '0.7.19' WHERE id = ?")
       .run(B);
     const send = async (
       action: string,
@@ -1252,7 +1241,7 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     return { ...t, send };
   }
 
-  it("turns on and confines containers on agent 0.7.4 only, and never undoes", async () => {
+  it("turns on and confines containers on agent 0.7.24 only, and never undoes", async () => {
     const t = current();
     expect((await t.send("apply", A)).status).toBe(201);
     expect((await t.send("undo", A)).status).toBe(400);
@@ -1279,7 +1268,7 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
       expect(behind.status, action).toBe(422);
       expect(await reply(behind)).toMatchObject({
         code: "AGENT_TOO_OLD",
-        message: expect.stringContaining("0.7.4"),
+        message: expect.stringContaining("0.7.20"),
       });
     }
   });
@@ -1307,13 +1296,13 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     );
   });
 
-  it("sets an SELinux boolean by name, on or off, on agent 0.7.7 only", async () => {
+  it("sets an SELinux boolean by name, on or off, on agent 0.7.27 only", async () => {
     const t = current();
     const version = (value: string) =>
       t.sqlite
         .prepare("UPDATE nodes SET agent_version = ? WHERE id = ?")
         .run(value, A);
-    version("0.7.7");
+    version("0.7.27");
     for (const on of ["1", "0"]) {
       const sent = await t.send("boolean", A, {
         name: "httpd_can_network_connect",
@@ -1336,7 +1325,7 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     expect(
       (await t.send("boolean", A, { name: "x", on: "1" }, "firewall")).status,
     ).toBe(400);
-    version("0.7.6");
+    version("0.7.19");
     const behind = await t.send("boolean", A, {
       name: "httpd_can_network_connect",
       on: "1",
@@ -1344,7 +1333,7 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
     expect(behind.status).toBe(422);
     expect(await reply(behind)).toMatchObject({
       code: "AGENT_TOO_OLD",
-      message: expect.stringContaining("0.7.7"),
+      message: expect.stringContaining("0.7.20"),
     });
   });
 });

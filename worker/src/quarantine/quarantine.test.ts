@@ -15,7 +15,7 @@ function setup() {
 }
 
 describe("quarantine", () => {
-  it("sends the suspect one Lock Down, drops it from every other member and blocks its Tailscale addresses on every 0.7.0 server", async () => {
+  it("sends the suspect one Lock Down, drops it from every other member and blocks its Tailscale addresses on every 0.7.20 server", async () => {
     const { db, sqlite } = setup();
     const started = await quarantine(db, {
       nodeId: V1,

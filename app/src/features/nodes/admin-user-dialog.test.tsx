@@ -78,8 +78,8 @@ describe("Add Admin User on a server", () => {
   });
 
   it("shows the gate on an older agent with Update Agent", () => {
-    const html = form("Needs agent 0.7.1 · server-2 runs 0.7.0");
-    expect(text(html)).toContain("Needs agent 0.7.1 · server-2 runs 0.7.0");
+    const html = form("Needs agent 0.7.21 · server-2 runs 0.7.20");
+    expect(text(html)).toContain("Needs agent 0.7.21 · server-2 runs 0.7.20");
     expect(text(html)).toContain("Update Agent");
     expect(getButton(html)).toContain('disabled=""');
   });
@@ -87,7 +87,7 @@ describe("Add Admin User on a server", () => {
   it("keeps Get Command off for root", () => {
     const html = form(null, "root");
     expect(text(html)).toContain(
-      "Lowercase letters, digits, dashes and underscores. Not root.",
+      "Lowercase letters, digits, dashes and underscores. Not root or kry.",
     );
     expect(getButton(html)).toContain('disabled=""');
   });

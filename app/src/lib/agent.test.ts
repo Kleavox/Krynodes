@@ -22,44 +22,44 @@ function node(
 
 describe("the agent in one line", () => {
   it("says its version, auto update and what waits", () => {
-    expect(agentLine({ ...node("0.7.0"), auto_update: 1 }, "0.7.0", NOW)).toBe(
-      "0.7.0 · Auto Update",
-    );
-    expect(agentLine({ ...node("0.7.0"), auto_update: 0 }, "0.7.1", NOW)).toBe(
-      "0.7.0 · 0.7.1 available",
-    );
+    expect(
+      agentLine({ ...node("0.7.20"), auto_update: 1 }, "0.7.20", NOW),
+    ).toBe("0.7.20 · Auto Update");
+    expect(
+      agentLine({ ...node("0.7.20"), auto_update: 0 }, "0.7.21", NOW),
+    ).toBe("0.7.20 · 0.7.21 available");
     expect(
       agentLine(
-        { ...node("0.7.0", "0.7.1", ago(1)), auto_update: 1 },
-        "0.7.1",
+        { ...node("0.7.20", "0.7.21", ago(1)), auto_update: 1 },
+        "0.7.21",
         NOW,
       ),
-    ).toBe("0.7.0 · Auto Update · Updating to 0.7.1");
+    ).toBe("0.7.20 · Auto Update · Updating to 0.7.21");
     expect(agentLine({ ...node(null), auto_update: 0 }, null, NOW)).toBe("--");
   });
 });
 
 describe("agentState", () => {
   it("is unknown without a known release or a real agent version", () => {
-    expect(agentState(node("0.7.1"), null, NOW)).toBe("unknown");
-    expect(agentState(node("dev"), "0.7.2", NOW)).toBe("unknown");
-    expect(agentState(node(null), "0.7.2", NOW)).toBe("unknown");
+    expect(agentState(node("0.7.21"), null, NOW)).toBe("unknown");
+    expect(agentState(node("dev"), "0.7.22", NOW)).toBe("unknown");
+    expect(agentState(node(null), "0.7.22", NOW)).toBe("unknown");
   });
 
   it("is current at or past the latest release", () => {
-    expect(agentState(node("0.7.2"), "0.7.2", NOW)).toBe("current");
+    expect(agentState(node("0.7.22"), "0.7.22", NOW)).toBe("current");
   });
 
   it("offers a remote update to agents that can still connect", () => {
-    expect(agentState(node("0.7.1"), "0.7.2", NOW)).toBe("available");
+    expect(agentState(node("0.7.21"), "0.7.22", NOW)).toBe("available");
   });
 
-  it("calls an agent before 0.7.0 unsupported, since it can no longer connect", () => {
-    expect(agentState(node("0.6.14"), "0.7.1", NOW)).toBe("unsupported");
-    expect(agentState(node("0.7.0"), "0.7.1", NOW)).toBe("available");
+  it("calls an agent before 0.7.20 unsupported, since it can no longer connect", () => {
+    expect(agentState(node("0.6.14"), "0.7.21", NOW)).toBe("unsupported");
+    expect(agentState(node("0.7.20"), "0.7.21", NOW)).toBe("available");
     expect(agentState(node("0.4.1"), "0.6.2", NOW)).toBe("unsupported");
-    expect(agentState(node("0.3.0"), "0.7.2", NOW)).toBe("unsupported");
-    expect(agentState(node("0.2.4", "0.7.2", ago(3)), "0.7.2", NOW)).toBe(
+    expect(agentState(node("0.3.0"), "0.7.22", NOW)).toBe("unsupported");
+    expect(agentState(node("0.2.4", "0.7.22", ago(3)), "0.7.22", NOW)).toBe(
       "unsupported",
     );
     expect(agentState(node("0.3.0"), null, NOW)).toBe("unsupported");
@@ -67,7 +67,11 @@ describe("agentState", () => {
 
   it("keeps updating while Krynodes retries, and fails after the last attempt", () => {
     const state = (minutes: number, attempts: number) =>
-      agentState(node("0.7.1", "0.7.2", ago(minutes), attempts), "0.7.2", NOW);
+      agentState(
+        node("0.7.21", "0.7.22", ago(minutes), attempts),
+        "0.7.22",
+        NOW,
+      );
     expect(state(3, 1)).toBe("updating");
     expect(state(16, 1)).toBe("updating");
     expect(state(16, 3)).toBe("failed");
@@ -75,10 +79,10 @@ describe("agentState", () => {
   });
 
   it("ignores a request the agent already passed, as after an update by hand", () => {
-    expect(agentState(node("0.7.3", "0.7.2", ago(60)), "0.7.3", NOW)).toBe(
+    expect(agentState(node("0.7.23", "0.7.22", ago(60)), "0.7.23", NOW)).toBe(
       "current",
     );
-    expect(agentState(node("0.7.2", "0.7.2", ago(60)), "0.7.3", NOW)).toBe(
+    expect(agentState(node("0.7.22", "0.7.22", ago(60)), "0.7.23", NOW)).toBe(
       "available",
     );
   });
@@ -99,20 +103,22 @@ describe("removing Krynodes from a server with Delete node", () => {
   });
   const trust = { version: 1, core: [], access: [laptop.fingerprint] };
 
-  it("needs an online server on agent 0.7.0 or newer that a device can sign for", () => {
-    expect(removalReady(server("0.7.0"), trust, [laptop], NOW)).toBe(true);
-    expect(removalReady(server("0.7.1"), trust, [laptop], NOW)).toBe(true);
+  it("needs an online server on agent 0.7.20 or newer that a device can sign for", () => {
+    expect(removalReady(server("0.7.20"), trust, [laptop], NOW)).toBe(true);
+    expect(removalReady(server("0.7.21"), trust, [laptop], NOW)).toBe(true);
     expect(removalReady(server("0.6.99"), trust, [laptop], NOW)).toBe(false);
     expect(removalReady(server("dev"), trust, [laptop], NOW)).toBe(true);
-    expect(removalReady(server("0.7.0", 10), trust, [laptop], NOW)).toBe(false);
-    expect(removalReady(server("0.7.0"), null, [laptop], NOW)).toBe(false);
+    expect(removalReady(server("0.7.20", 10), trust, [laptop], NOW)).toBe(
+      false,
+    );
+    expect(removalReady(server("0.7.20"), null, [laptop], NOW)).toBe(false);
     expect(
-      removalReady(server("0.7.0"), { ...trust, access: [] }, [laptop], NOW),
+      removalReady(server("0.7.20"), { ...trust, access: [] }, [laptop], NOW),
     ).toBe(false);
   });
 
   it("needs the agent connected now, not just a recent report, since nothing else could take the removal", () => {
-    const { connected_at: _, ...left } = server("0.7.0");
+    const { connected_at: _, ...left } = server("0.7.20");
     expect(removalReady(left, trust, [laptop], NOW)).toBe(false);
   });
 });

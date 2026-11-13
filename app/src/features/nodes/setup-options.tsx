@@ -90,7 +90,7 @@ export function SetupOptions<T extends SetupChoice>({
           >
             {adminLocked
               ? "Set when the command is made."
-              : "Lowercase letters, digits, dashes and underscores. Not root."}
+              : "Lowercase letters, digits, dashes and underscores. Not root or kry."}
           </p>
         </div>
       )}

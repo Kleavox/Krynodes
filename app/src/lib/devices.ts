@@ -7,10 +7,8 @@ import {
 
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
 import {
-  agentHasFeatures,
   agentSupported,
   compareVersions,
-  FEATURE_AGENT,
   MIN_AGENT_VERSION,
 } from "@krynodes/protocol/versions";
 import { b64url, fromB64url } from "./passkeys";
@@ -57,16 +55,9 @@ export const agentCurrent = (node: Pick<NodeRecord, "agent_version">) =>
 
 export const FIRST_REPORT = "Waiting for First Report";
 
-export function agentGap(
-  version: string | null | undefined,
-  floor: typeof MIN_AGENT_VERSION | typeof FEATURE_AGENT = MIN_AGENT_VERSION,
-): string | null {
+export function agentGap(version: string | null | undefined): string | null {
   if (!version) return FIRST_REPORT;
-  const reached =
-    floor === FEATURE_AGENT
-      ? agentHasFeatures(version)
-      : agentSupported(version);
-  return reached ? null : `Needs agent ${floor}`;
+  return agentSupported(version) ? null : `Needs agent ${MIN_AGENT_VERSION}`;
 }
 
 export function canRestartServer(

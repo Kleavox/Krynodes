@@ -46,7 +46,7 @@ import { actionsSchema, heartbeatSchema } from "../schemas";
 import {
   actionResultSchema,
   agentConfigResponseSchema,
-  agentTakesPush,
+  agentSupported,
   setupSchema,
   type Denials,
   type Setup,
@@ -82,7 +82,9 @@ const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_
          update_attempts, update_error, inventory_hash, refresh_requested_at, security,
          boot, reports, release, setup,
          EXISTS (SELECT 1 FROM quarantines q
-                 WHERE q.node_id = nodes.id AND q.released_at IS NULL) AS quarantined
+                 WHERE q.node_id = nodes.id AND q.released_at IS NULL) AS quarantined,
+         EXISTS (SELECT 1 FROM network_members m
+                 WHERE m.node_id = nodes.id AND m.state = 'leaving') AS leaving
   FROM nodes
   WHERE id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
 
@@ -348,7 +350,7 @@ export class FleetHub {
     this.ctx.acceptWebSocket(ws, [nodeId]);
     ws.serializeAttachment({
       ...newState(nodeId, ownerId, interval),
-      ...(agentTakesPush(version) ? { push: true } : {}),
+      ...(agentSupported(version) ? { push: true } : {}),
     });
     this.checks.delete(nodeId);
     const roster = await this.roster();
@@ -1082,6 +1084,15 @@ export class FleetHub {
              AND (release IS NULL OR json_extract(release, '$.released') IS NULL)`,
           )
           .bind(reported, node.id),
+      );
+    }
+    if (!beat.network && known.leaving) {
+      leading.push(
+        db
+          .prepare(
+            "DELETE FROM network_members WHERE node_id = ? AND state = 'leaving'",
+          )
+          .bind(node.id),
       );
     }
     const setup = beat.setup ? JSON.stringify(beat.setup) : null;

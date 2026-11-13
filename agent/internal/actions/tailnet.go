@@ -368,14 +368,14 @@ func (e Executor) quarantined() bool {
 }
 
 func (e Executor) leaveExitNodeWhenQuarantined(ctx context.Context) {
-	if !e.quarantined() {
-		return
-	}
 	if _, err := os.Stat(e.path(exitNodeConf)); err != nil {
 		return
 	}
 	host := filepath.Join(e.StateDir, "host")
 	if _, err := os.Stat(filepath.Join(host, exitNodeOff)); err == nil {
+		return
+	}
+	if !e.held(ctx) {
 		return
 	}
 	if err := tailscale.Set(ctx, tailscale.Runner(e.Run), "--advertise-exit-node=false"); err != nil {
@@ -393,7 +393,7 @@ func (e Executor) finishExitNodeOff(ctx context.Context, dir string) {
 		return
 	}
 	os.Remove(marker)
-	if !e.quarantined() {
+	if !e.heldRecorded() {
 		return
 	}
 	if err := e.dropForwarding(ctx); err != nil {

@@ -90,7 +90,7 @@ describe("a stack's offers and reaches", () => {
     ).toBe(false);
   });
 
-  it("says when a stack uses them, so the 0.7.1 gate applies", () => {
+  it("says when a stack uses them, so the 0.7.21 gate applies", () => {
     expect(hasStackNetworkArgs({ hostPorts: "3000/tcp" })).toBe(false);
     expect(hasStackNetworkArgs({ offers: "", peers: "" })).toBe(false);
     expect(hasStackNetworkArgs({ offers: "apps-inner/web=3001/tcp" })).toBe(
@@ -115,7 +115,7 @@ describe("a stack's display name and container names", () => {
     expect(stackNameArgsValid({ names: "web=same,db=same" })).toBe(false);
   });
 
-  it("says when a stack uses them, so the 0.7.1 gate applies", () => {
+  it("says when a stack uses them, so the 0.7.21 gate applies", () => {
     expect(hasStackNameArgs({ hostPorts: "3000/tcp" })).toBe(false);
     expect(hasStackNameArgs({ names: "" })).toBe(false);
     expect(hasStackNameArgs({ title: "Resolver" })).toBe(true);

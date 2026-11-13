@@ -481,24 +481,24 @@ describe("before a server joins", () => {
 
   it("names each candidate's state", () => {
     const ok = checkRows(inspect(), candidate, plan, null);
-    expect(candidateState("0.7.0", ok)).toEqual({
+    expect(candidateState("0.7.20", ok)).toEqual({
       text: "Ready",
       details: false,
       joinable: true,
     });
     expect(
-      candidateState("0.7.0", [...ok, { mark: "!", text: "wg0" }]),
+      candidateState("0.7.20", [...ok, { mark: "!", text: "wg0" }]),
     ).toEqual({ text: "Ready · 1 note", details: true, joinable: true });
     expect(
-      candidateState("0.7.0", [...ok, { mark: "✕", text: "port" }]),
+      candidateState("0.7.20", [...ok, { mark: "✕", text: "port" }]),
     ).toEqual({ text: "1 to fix", details: true, joinable: true });
     expect(candidateState("0.6.14", ok)).toEqual({
-      text: "Needs agent 0.7.0 or newer",
+      text: "Needs agent 0.7.20 or newer",
       details: false,
       joinable: false,
     });
     expect(candidateState(null, null).text).toBe("Waiting for First Report");
-    expect(candidateState("0.7.0", null)).toEqual({
+    expect(candidateState("0.7.20", null)).toEqual({
       text: "Checking",
       details: false,
       joinable: false,
@@ -1471,6 +1471,31 @@ describe("the network document", () => {
     expect(next.parent).toBe(base!.parent);
     expect(next.members[1]!.cut).toBe(true);
     expect(await baseOf(view())).toBeNull();
+  });
+
+  it("starts the next document from the address a server last reported", async () => {
+    const { keys } = await ends([A, B]);
+    const start = await buildDocument(
+      null,
+      {
+        kind: "create",
+        range: "10.88.0.0/24",
+        port: 51820,
+        mtu: 1420,
+        join: [joiner(vps1), joiner(vps2)],
+      },
+      keys,
+    );
+    const base = await baseOf(
+      view({
+        body: b64url(new TextEncoder().encode(JSON.stringify(start))),
+        members: [{ ...vps1, endpoint: "203.0.113.99:51820" }, vps2],
+      }),
+    );
+    expect(base!.document.members.map((entry) => entry.endpoint)).toEqual([
+      "203.0.113.99:51820",
+      start.members[1]!.endpoint,
+    ]);
   });
 
   it("releases a cut member with its new keys and keeps the old one blocked", async () => {

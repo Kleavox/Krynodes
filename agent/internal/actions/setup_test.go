@@ -421,3 +421,41 @@ func TestTheRestartWindowWaitsWhileSetupRuns(t *testing.T) {
 		t.Fatalf("window %+v", window)
 	}
 }
+
+func TestSetupSkipsTheRestOnceTheServerIsDeleted(t *testing.T) {
+	executor, run := setupServer(t)
+	executor.GoneMark = filepath.Join(t.TempDir(), GoneFile)
+	if err := os.WriteFile(executor.GoneMark, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	got := runSetup(t, executor, SetupOptions{Recommended: true, Docker: true, Restart: true, RebootHour: hour(20)})
+	want := "Detected: Debian GNU/Linux 13 (trixie) (apt, ufw)\n" +
+		"✗ This server was deleted in Krynodes, so the rest of setup is skipped\n"
+	if got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	for _, call := range run.calls {
+		if strings.HasPrefix(call, "ufw ") || strings.Contains(call, "apt-get") {
+			t.Fatalf("a deleted server was still changed: %q", call)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(executor.StateDir, setupFile)); !os.IsNotExist(err) {
+		t.Fatalf("setup left its step behind: %v", err)
+	}
+}
+
+func TestSetupRunningIsTrueOnlyWhileAStepIsFresh(t *testing.T) {
+	dir := t.TempDir()
+	if SetupRunning(dir, executorNow) {
+		t.Fatal("no setup has run")
+	}
+	for phase, want := range map[string]bool{"docker": true, "restart": false} {
+		writeJSON(dir, setupFile, setupProgress{Phase: phase, Step: 1, Of: 2, At: executorNow.Add(-30 * time.Second)}, 0o644)
+		if SetupRunning(dir, executorNow) != want {
+			t.Fatalf("%s: want %v", phase, want)
+		}
+	}
+	if SetupRunning(dir, executorNow.Add(2*time.Minute)) {
+		t.Fatal("a step two minutes old is a stopped setup")
+	}
+}

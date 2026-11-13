@@ -105,11 +105,11 @@ func TestProbeArgsAreLimited(t *testing.T) {
 		}
 		return strings.Join(list, " ")
 	}
-	if port, list, err := ProbeArgs(map[string]string{"port": "51821", "peers": peers(16, 51820)}); err != nil || port != 51821 || len(list) != 16 {
+	if port, list, err := ProbeArgs(map[string]string{"port": "51821", "peers": peers(31, 51820)}); err != nil || port != 51821 || len(list) != 31 {
 		t.Fatalf("port %d peers %d err %v", port, len(list), err)
 	}
 	for name, args := range map[string]map[string]string{
-		"17 peers":        {"port": "51820", "peers": peers(17, 51820)},
+		"32 peers":        {"port": "51820", "peers": peers(32, 51820)},
 		"a peer on 53":    {"port": "51820", "peers": peers(1, 53)},
 		"a port on 52000": {"port": "52000", "peers": peers(1, 51820)},
 		"no peers":        {"port": "51820", "peers": ""},

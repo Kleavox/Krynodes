@@ -470,6 +470,9 @@ export function registerQuarantineRoutes(
           }
         : null,
       release: pending.success ? pending.data : null,
+      releasing:
+        parsed<{ released?: boolean } | null>(node.release, null)?.released ===
+        true,
       stopped: stopped.results.map((stack) => ({
         project: stack.project,
         at: stack.at,
@@ -512,6 +515,15 @@ export function registerQuarantineRoutes(
     const now = Date.now();
     const codeRefusal = (message: string) =>
       context.json({ code: "RELEASE_CODE", message }, 422);
+    if (parsed<{ released?: boolean } | null>(node.release, null)?.released) {
+      return context.json(
+        {
+          code: "ACTION_PENDING",
+          message: `A release of ${node.name} is already running.`,
+        },
+        409,
+      );
+    }
     const pending = releaseSchema.safeParse(parsed(node.release, null));
     if (!pending.success) {
       return codeRefusal(`Run sudo kry release-code on ${node.name} first.`);
@@ -593,21 +605,9 @@ export function registerQuarantineRoutes(
         ...batch.statements,
         db
           .prepare(
-            `UPDATE quarantines SET released_at = ?, released_by = ?
-             WHERE id = ? AND released_at IS NULL`,
-          )
-          .bind(at, device, open.id),
-        db
-          .prepare(
             "UPDATE nodes SET release = json_set(release, '$.released', json('true')) WHERE id = ?",
           )
           .bind(node.id),
-        db
-          .prepare(
-            `UPDATE warnings SET answer = 'released', answered_at = ?, answered_by = ?
-             WHERE node_id = ? AND answer IS NULL`,
-          )
-          .bind(at, identity.email, node.id),
         changeStatement(db, {
           owner: identity.id,
           at,

@@ -275,6 +275,14 @@ func runDaemon(args []string, once bool) error {
 		},
 	}
 	client.Deliver = relay.Enqueue
+	client.Gone = func(gone bool) {
+		mark := filepath.Join(stateDirectory, actions.GoneFile)
+		if gone {
+			_ = os.WriteFile(mark, nil, 0o640)
+		} else {
+			_ = os.Remove(mark)
+		}
+	}
 	connection, closeConnection := context.WithCancel(ctx)
 	closed := make(chan struct{})
 	go func() {
@@ -662,6 +670,7 @@ func execActions() error {
 		Audit:          true,
 		TailscaleLocal: tailscale.Socket,
 		QuarantineMark: filepath.Join(stateDirectory, "quarantined"),
+		Held:           actions.WorkerHeld(actions.StateDir, defaultConfigPath, version, &http.Client{Timeout: 10 * time.Second}),
 	}
 	return executor.Execute(context.Background())
 }
@@ -837,6 +846,9 @@ func uninstallService(args []string) error {
 	}
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("uninstall-service must run as root on Linux")
+	}
+	if actions.SetupRunning(actions.StateDir, time.Now()) {
+		return errors.New("kry setup is still running on this server. Wait for it to finish, or stop it with Ctrl+C in its terminal, then run this again")
 	}
 	commands := uninstallCommands()
 	_ = exec.Command(commands[0][0], commands[0][1:]...).Run()

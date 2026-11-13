@@ -166,15 +166,16 @@ export function Picker({
         ? candidates.filter(eligible).map((node) => node.id)
         : [],
   );
-  const asked = useRef(false);
+  const asked = useRef(new Set<string>());
   const probed = useRef("");
 
   useEffect(() => {
-    if (asked.current) return;
-    asked.current = true;
-    inspect.ask(
-      candidates.filter(eligible).map((node) => ({ nodeId: node.id })),
-    );
+    const fresh = candidates
+      .filter(eligible)
+      .filter((node) => !asked.current.has(node.id));
+    if (fresh.length === 0) return;
+    for (const node of fresh) asked.current.add(node.id);
+    inspect.ask(fresh.map((node) => ({ nodeId: node.id })));
   });
 
   const seats = new Map(

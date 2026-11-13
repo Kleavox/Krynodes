@@ -165,22 +165,38 @@ func firewalld(ctx context.Context, env Env, extra []string) (map[string]string,
 		return "firewall-offline-cmd", []string{"--" + verb + "-port=" + port}
 	}
 	var added []string
+	failed := func(err error) (map[string]string, error) {
+		if !running {
+			env.run(ctx, "systemctl", "disable", "--now", "firewalld")
+		}
+		for _, opened := range added {
+			tool, args := port("remove", opened)
+			env.run(ctx, tool, args...)
+		}
+		if running {
+			env.run(ctx, "firewall-cmd", "--reload")
+		}
+		if packages := strings.Fields(saved["installed"]); len(packages) > 0 {
+			env.purge(ctx, packages...)
+		}
+		return nil, err
+	}
 	for _, wanted := range ports {
 		if tool, args := port("query", wanted); env.run(ctx, tool, args...) == nil {
 			continue
 		}
 		tool, args := port("add", wanted)
 		if err := env.run(ctx, tool, args...); err != nil {
-			return nil, fmt.Errorf("%s could not open %s: %w", tool, wanted, err)
+			return failed(fmt.Errorf("%s could not open %s: %w", tool, wanted, err))
 		}
 		added = append(added, wanted)
 	}
 	if running {
 		if err := env.run(ctx, "firewall-cmd", "--reload"); err != nil {
-			return nil, err
+			return failed(err)
 		}
 	} else if err := env.run(ctx, "systemctl", "enable", "--now", "firewalld"); err != nil {
-		return nil, err
+		return failed(err)
 	}
 	saved["ports"] = strings.Join(added, ",")
 	saved["wasRunning"] = fmt.Sprint(running)

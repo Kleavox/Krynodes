@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -63,6 +64,20 @@ func (e Executor) opened(sealed string, value any) error {
 		return err
 	}
 	plain, err := seal.Open(key, sealed)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(plain))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(value)
+}
+
+func (e Executor) openedFrom(sender, sealed string, value any) error {
+	key, err := e.sealKey()
+	if err != nil {
+		return err
+	}
+	plain, err := seal.OpenFrom(key, sender, sealed)
 	if err != nil {
 		return err
 	}
@@ -419,6 +434,9 @@ func (e Executor) launch(ctx context.Context, request Request, name, directory s
 	meta.Networks = madeNetworks(config, name)
 	if err := writeJSON(directory, "krynodes.json", meta, 0o640); err != nil {
 		return e.failed(request, err, "")
+	}
+	if err := e.dropStalePins(name, uses); err != nil {
+		log.Printf("stale pins of %s: %v", name, err)
 	}
 	return Result{ID: request.ID, OK: true, Output: done, FinishedAt: e.stamp()}
 }

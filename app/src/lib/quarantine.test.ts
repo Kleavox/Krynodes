@@ -920,7 +920,7 @@ describe("quarantine on a connected tailnet", () => {
       vault: { set: "t1", holders: 2 },
       reachable: true,
       online: true,
-      version: "0.7.0",
+      version: "0.7.20",
     });
     const nodes = [node(V1, "vps-1"), node(V2, "vps-2")];
     const reason =

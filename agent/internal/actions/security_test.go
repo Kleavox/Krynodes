@@ -807,7 +807,7 @@ func TestARHELServerIsCheckedWithItsOwnTools(t *testing.T) {
 		run.failing["systemctl is-enabled --quiet "+timer] = ""
 	}
 	run.failing["ufw status"] = ""
-	run.respond["dnf -q updateinfo list --security --cacheonly"] = "RHSA-2026:1 Important/Sec. openssl-3.0.7-1.el9.x86_64\nRHSA-2026:2 Moderate/Sec. vim-9.0-1.el9.x86_64\n"
+	run.respond["dnf -q updateinfo list --security --cacheonly"] = "RHSA-2026:1 Important/Sec. openssl-3.0.7-1.el9.x86_64\nRHSA-2026:2 Moderate/Sec. vim-9.0-1.el9.x86_64\nRHSA-2026:3 Important/Sec. openssl-3.0.7-1.el9.x86_64\n"
 	run.respond["dnf needs-restarting -r"] = "Core libraries or services have been updated since boot-up:\n  * kernel\n\nReboot is required to fully utilize these updates.\n"
 	if err := executor.Execute(context.Background()); err != nil {
 		t.Fatal(err)

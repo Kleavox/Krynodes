@@ -69,7 +69,7 @@ describe("the SELinux or AppArmor row", () => {
     });
     expect(confinementRow(selinux({ mode: "kernel-off" }))).toMatchObject({
       status: "Off",
-      line: "Needs a restart",
+      line: null,
       actions: ["denials", "on"],
     });
     expect(
@@ -101,9 +101,15 @@ describe("the SELinux or AppArmor row", () => {
     expect(
       confinementRow(apparmor({ mode: "off", enforced: 0 })),
     ).toMatchObject({ status: "Off", line: null, actions: ["denials", "on"] });
+    expect(
+      confinementRow(apparmor({ mode: "kernel-off", managed: true })),
+    ).toMatchObject({
+      status: "Off",
+      line: "Needs a restart · Managed by Krynodes",
+    });
     expect(confinementRow(apparmor({ mode: "kernel-off" }))).toMatchObject({
       status: "Off",
-      line: "Needs a restart",
+      line: null,
       actions: ["denials", "on"],
     });
     expect(
@@ -131,7 +137,7 @@ describe("the SELinux or AppArmor row", () => {
     });
     expect(confinementRow(undefined)).toEqual({
       title: "SELinux or AppArmor",
-      status: "Needs agent 0.7.4 or newer",
+      status: "Needs agent 0.7.20 or newer",
       line: null,
       actions: [],
     });

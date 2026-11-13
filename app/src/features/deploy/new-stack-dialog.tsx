@@ -1,4 +1,4 @@
-import { FEATURE_AGENT } from "@krynodes/protocol";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
@@ -120,8 +120,7 @@ function NewStackForm({
   const freeDns = !!security && dnsPortHeld(security) && publishesDns(text);
   const modern = chosen !== undefined && agentCurrent(chosen.node);
   const named =
-    chosen !== undefined &&
-    agentGap(chosen.node.agent_version, FEATURE_AGENT) === null;
+    chosen !== undefined && agentGap(chosen.node.agent_version) === null;
   const title = name.trim();
   const project = stackSlug(title);
   const serverName = chosen?.node.name ?? "This server";

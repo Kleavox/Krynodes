@@ -458,7 +458,7 @@ func closeFirewall(ctx context.Context, env Env, list, networkPort string) (map[
 	ssh := sshPorts(ctx, env)
 	wanted := rules.wanted(ssh, networkPort, open)
 	failed := func(err error) (map[string]string, error) {
-		if back := undoClosed(ctx, env, saved); back != nil {
+		if back := Undo(ctx, env, "firewall", saved); back != nil {
 			return nil, fmt.Errorf("%w; putting the firewall back also failed: %v", err, back)
 		}
 		return nil, err

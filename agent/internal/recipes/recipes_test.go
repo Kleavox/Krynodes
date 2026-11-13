@@ -693,3 +693,18 @@ func TestKeysOnlyAsksTheServicesSSHNotALocalCopy(t *testing.T) {
 		t.Fatalf("asked the copy on PATH: %q", run.calls)
 	}
 }
+
+func TestAFirewallThatFailsHalfwayTakesBackOnlyTheRulesItAdded(t *testing.T) {
+	env, run := newEnv(t)
+	run.respond["sshd -T"] = "port 22\n"
+	run.respond["ufw status"] = "Status: active\n"
+	run.respond["ufw allow 22/tcp comment krynodes"] = "Skipping adding existing rule\n"
+	run.respond["ufw allow 80/tcp comment krynodes"] = "Rule added\n"
+	run.failing["ufw allow 443/tcp comment krynodes"] = true
+	if _, err := Apply(context.Background(), env, "firewall", map[string]string{"ports": "80/tcp,443/tcp"}); err == nil {
+		t.Fatal("the failure was swallowed")
+	}
+	if !slices.Contains(run.calls, "ufw --force delete allow 80/tcp") || slices.Contains(run.calls, "ufw --force delete allow 22/tcp") || slices.Contains(run.calls, "ufw --force disable") {
+		t.Fatalf("calls %q", run.calls)
+	}
+}

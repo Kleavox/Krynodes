@@ -58,7 +58,7 @@ const DAY = 86_400_000;
 const node = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "vps-2",
-  agent_version: "0.7.0",
+  agent_version: "0.7.20",
   disabled_at: null,
   enrolled_at: ago(30 * DAY),
   last_seen_at: ago(10_000),
@@ -196,21 +196,21 @@ const running: TailscaleReport = {
   keyExpiry: "2027-04-24T10:00:00.000Z",
 };
 
-describe("the 0.7.0 gate", () => {
+describe("the 0.7.20 gate", () => {
   it("names the version a server runs", () => {
     expect(agentNeeded({ agent_version: "0.6.14" })).toBe(
-      "Needs agent 0.7.0 or newer · it runs 0.6.14",
+      "Needs agent 0.7.20 or newer · it runs 0.6.14",
     );
     expect(agentNeeded({ agent_version: null })).toBe(
       "Waiting for First Report",
     );
-    expect(agentNeeded({ agent_version: "0.7.0" })).toBeNull();
+    expect(agentNeeded({ agent_version: "0.7.20" })).toBeNull();
   });
 
   it("says why a change waits", () => {
     expect(
       packagesBlocker({ ...node, agent_version: "0.6.14" }, true, NOW),
-    ).toBe("Needs agent 0.7.0");
+    ).toBe("Needs agent 0.7.20");
     expect(
       packagesBlocker({ ...node, last_seen_at: ago(2 * 3_600_000) }, true, NOW),
     ).toBe("Waits until vps-2 is back online");

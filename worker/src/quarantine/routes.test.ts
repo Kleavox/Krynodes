@@ -10,7 +10,7 @@ import { IO, keyOf, queued, seedFleet, V1, V2, V3 } from "../test/fleet";
 import { testPasskey } from "../test/passkeys";
 import { seedCheck } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
-import { quarantine } from "./quarantine";
+import { holdStatement, quarantine } from "./quarantine";
 
 const ORIGIN = "https://kry.example.test";
 const EMAIL = "standalone@localhost";
@@ -609,19 +609,20 @@ describe("Release", () => {
   });
 
   it("releases with one fingerprinted batch and keeps the old key blocked", async () => {
-    const { sqlite, steps, post, code, changes, mail } = await released();
+    const { db, sqlite, steps, post, code, changes, mail, release } =
+      await released();
     sqlite.exec("DELETE FROM network_changes");
     const before = queued(sqlite).length;
     const done = await post({ code, steps: steps() });
     expect(done.status).toBe(201);
     expect(mail).not.toHaveBeenCalled();
-    expect(
+    const held = () =>
       sqlite
         .prepare(
           "SELECT released_at IS NOT NULL AS released, released_by AS device FROM quarantines",
         )
-        .get(),
-    ).toEqual({ released: 1, device: DEVICE });
+        .get();
+    expect(held()).toEqual({ released: 0, device: null });
     expect(
       queued(sqlite)
         .slice(before)
@@ -642,6 +643,101 @@ describe("Release", () => {
       { change: "Release vps-1", requestedBy: EMAIL, deviceId: DEVICE },
     ]);
     expect((await post({ code, steps: steps() })).status).toBe(409);
+    await holdStatement(db, V1, new Date().toISOString()).run();
+    expect(
+      queued(sqlite)
+        .slice(before)
+        .filter((row) => row.nodeId === V1)
+        .map((row) => `${row.action} ${row.status}`),
+    ).toEqual(["release queued", "unlock queued"]);
+    const answer = async (ok: boolean) => {
+      sqlite
+        .prepare(
+          `UPDATE actions SET status = 'sent', sent_at = 'now' WHERE node_id = ? AND action = 'release'`,
+        )
+        .run(V1);
+      const sent = sqlite
+        .prepare(
+          "SELECT id FROM actions WHERE node_id = ? AND action = 'release'",
+        )
+        .get(V1) as { id: string };
+      await db.batch(
+        await actionResultStatements(
+          db,
+          V1,
+          [
+            {
+              id: sent.id,
+              ok,
+              exitCode: ok ? 0 : 1,
+              output: ok ? "released" : "refused: the code does not match",
+              finishedAt: new Date().toISOString(),
+            },
+          ],
+          Date.now(),
+        ),
+      );
+    };
+    sqlite
+      .prepare(
+        "INSERT INTO warnings (id, node_id, kind, detail, at) VALUES ('w1', ?, 'port', '{}', 'now')",
+      )
+      .run(V1);
+    sqlite
+      .prepare("UPDATE nodes SET inventory_hash = 'old' WHERE id = ?")
+      .run(V1);
+    await answer(true);
+    expect(held()).toEqual({ released: 1, device: DEVICE });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT answer, answered_by AS by FROM warnings WHERE id = 'w1'",
+        )
+        .get(),
+    ).toEqual({ answer: "released", by: EMAIL });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT seal_key AS seal, inventory_hash AS hash FROM nodes WHERE id = ?",
+        )
+        .get(V1),
+    ).toEqual({ seal: release.seal, hash: null });
+  });
+
+  it("keeps the server quarantined when the agent refuses the release", async () => {
+    const { db, sqlite, steps, post, code } = await released();
+    expect((await post({ code, steps: steps() })).status).toBe(201);
+    sqlite
+      .prepare(
+        `UPDATE actions SET status = 'sent', sent_at = 'now' WHERE node_id = ? AND action = 'release'`,
+      )
+      .run(V1);
+    const sent = sqlite
+      .prepare(
+        "SELECT id FROM actions WHERE node_id = ? AND action = 'release'",
+      )
+      .get(V1) as { id: string };
+    await db.batch(
+      await actionResultStatements(
+        db,
+        V1,
+        [
+          {
+            id: sent.id,
+            ok: false,
+            exitCode: 1,
+            output: "refused: the code does not match",
+            finishedAt: new Date().toISOString(),
+          },
+        ],
+        Date.now(),
+      ),
+    );
+    expect(
+      sqlite
+        .prepare("SELECT released_at IS NULL AS open FROM quarantines")
+        .get(),
+    ).toEqual({ open: 1 });
   });
 
   it("lets the agent sign in with its new token once released, and only then", async () => {

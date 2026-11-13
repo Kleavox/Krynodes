@@ -1,5 +1,5 @@
 import { SELINUX_BOOLEAN } from "@krynodes/protocol";
-import { SECURITY_AGENT } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 
 import type { ActionRecord, Confinement, DenialsView } from "../types";
 
@@ -19,7 +19,9 @@ const count = (value: number | null) => (value === null ? "--" : value);
 
 function modeText(found: Confinement): [string, string?] {
   if (found.mode === "kernel-off") {
-    return found.restart ? ["Off"] : ["Off", "Needs a restart"];
+    return found.restart || !found.managed
+      ? ["Off"]
+      : ["Off", "Needs a restart"];
   }
   if (found.system === "selinux") {
     return [
@@ -55,7 +57,7 @@ export function confinementRow(
   if (!found) {
     return {
       title: systemName(null),
-      status: `Needs agent ${SECURITY_AGENT} or newer`,
+      status: `Needs agent ${MIN_AGENT_VERSION} or newer`,
       line: null,
       actions: [],
     };

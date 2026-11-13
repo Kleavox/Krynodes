@@ -1,4 +1,4 @@
-import { agentHasFeatures } from "@krynodes/protocol/versions";
+import { agentSupported } from "@krynodes/protocol/versions";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 
@@ -163,7 +163,7 @@ export function AdminUserDialog({
       ? errorMessage(defaults.error)
       : "Loading…";
   const updatable =
-    !agentHasFeatures(node.agent_version) &&
+    !agentSupported(node.agent_version) &&
     release !== null &&
     ["available", "failed"].includes(agentState(node, release, Date.now()));
   const close = (next: boolean) => {

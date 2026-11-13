@@ -111,10 +111,10 @@ const report = (over: Partial<Extract<Packages, { apt: true }>> = {}) =>
 function setup() {
   const { db, sqlite } = createTestDb();
   for (const [id, version, owner] of [
-    [A, "0.7.0", undefined],
+    [A, "0.7.20", undefined],
     [OLD, "0.6.14", undefined],
-    [FEDORA, "0.7.0", undefined],
-    [FOREIGN, "0.7.0", "someone-else"],
+    [FEDORA, "0.7.20", undefined],
+    [FOREIGN, "0.7.20", "someone-else"],
   ] as const) {
     seedNode(sqlite, { id, owner });
     sqlite
@@ -195,13 +195,13 @@ const json = async (response: Response | Promise<Response>) =>
   (await (await response).json()) as Record<string, unknown>;
 
 describe("apt actions", () => {
-  it("are refused below 0.7.0, where apt is missing, and for removing openssh-server", async () => {
+  it("are refused below 0.7.20, where apt is missing, and for removing openssh-server", async () => {
     const { change, inventory, names } = setup();
     const old = await change(OLD, "apt", "nginx", "install");
     expect(old.status).toBe(422);
     expect(await json(old)).toEqual({
       code: "AGENT_TOO_OLD",
-      message: `Update the agent on ${names.get(OLD)} to 0.7.0 or newer.`,
+      message: `Update the agent on ${names.get(OLD)} to 0.7.20 or newer.`,
     });
     expect((await change(OLD, "host", "tailscale", "signin")).status).toBe(422);
     await inventory(FEDORA, {

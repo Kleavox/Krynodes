@@ -63,7 +63,7 @@ describe("ports a Contained stack may reach on its server", () => {
   });
 });
 
-const node = (id: string, name: string, agent = "0.7.0") =>
+const node = (id: string, name: string, agent = "0.7.20") =>
   ({
     id,
     name,
@@ -212,11 +212,11 @@ describe("stacks", () => {
         ...listmonk!.members[0]!,
         node: node("n1", "Server A", "0.4.1"),
       }),
-    ).toBe("Needs agent 0.7.0");
+    ).toBe("Needs agent 0.7.20");
     expect(
       deployBlocker({
         ...listmonk!.members[0]!,
-        node: { ...node("n1", "Server A", "0.7.0"), agent_version: null },
+        node: { ...node("n1", "Server A", "0.7.20"), agent_version: null },
       }),
     ).toBe("Waiting for First Report");
     expect(
@@ -296,7 +296,7 @@ describe("stacks", () => {
 });
 
 describe("stack commands", () => {
-  const member = (running: number, total: number, agent = "0.7.0") => ({
+  const member = (running: number, total: number, agent = "0.7.20") => ({
     node: node("n1", "server-1", agent),
     stack: stack("panel", { running, total }),
     trusted: true,
@@ -334,28 +334,28 @@ describe("stack commands", () => {
       docker,
     });
     expect(
-      newStackBlocker(node("n1", "server-1", "0.7.0"), entry("ready")),
+      newStackBlocker(node("n1", "server-1", "0.7.20"), entry("ready")),
     ).toBeNull();
     expect(
       newStackBlocker(node("n1", "server-1", "0.4.1"), entry("ready")),
-    ).toBe("Needs agent 0.7.0");
+    ).toBe("Needs agent 0.7.20");
     expect(
       newStackBlocker(
-        { ...node("n1", "server-1", "0.7.0"), agent_version: null },
+        { ...node("n1", "server-1", "0.7.20"), agent_version: null },
         entry("ready"),
       ),
     ).toBe("Waiting for First Report");
     expect(
-      newStackBlocker(node("n1", "server-1", "0.7.0"), entry("missing")),
+      newStackBlocker(node("n1", "server-1", "0.7.20"), entry("missing")),
     ).toBe("No Docker");
     expect(
-      newStackBlocker(node("n1", "server-1", "0.7.0"), entry("no-compose")),
+      newStackBlocker(node("n1", "server-1", "0.7.20"), entry("no-compose")),
     ).toBe("Docker without Compose");
-    expect(newStackBlocker(node("n1", "server-1", "0.7.0"), entry(null))).toBe(
+    expect(newStackBlocker(node("n1", "server-1", "0.7.20"), entry(null))).toBe(
       "Docker Not Reported Yet",
     );
     expect(
-      newStackBlocker(node("n1", "server-1", "0.7.0"), {
+      newStackBlocker(node("n1", "server-1", "0.7.20"), {
         ...entry("ready"),
         trust: null,
       }),
@@ -917,9 +917,9 @@ describe("what needs attention on Services", () => {
     since: string | null = null,
   ) => ({ kind: "docker" as const, name, state, since, system: false });
   const servers = [
-    node("pv", "server-1", "0.7.0"),
-    node("server-2", "server-2", "0.7.0"),
-    node("cl", "server-3", "0.7.0"),
+    node("pv", "server-1", "0.7.20"),
+    node("server-2", "server-2", "0.7.20"),
+    node("cl", "server-3", "0.7.20"),
   ];
   const estate: ServicesResponse = {
     nodes: [

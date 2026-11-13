@@ -170,6 +170,9 @@ func (c *conn) readMessage() ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if opcode >= opClose && (!fin || len(payload) > 125) {
+			return nil, errors.New("the server sent a control frame that is split or longer than 125 bytes")
+		}
 		switch opcode {
 		case opPing:
 			if err := c.write(opPong, payload); err != nil {
@@ -186,6 +189,9 @@ func (c *conn) readMessage() ([]byte, error) {
 			}
 			return nil, &closeError{code: code}
 		case opText, opBinary:
+			if reading {
+				return nil, errors.New("the server started a message before finishing the last one")
+			}
 			message = append([]byte(nil), payload...)
 			reading = true
 		case opContinuation:

@@ -81,13 +81,20 @@ func Public(key *ecdh.PrivateKey) string {
 }
 
 func Seal(public string, plaintext []byte) (string, error) {
-	raw, err := encoding.DecodeString(public)
-	if err != nil {
-		return "", fmt.Errorf("seal key: %w", err)
+	return sealWith(nil, public, plaintext)
+}
+
+func SealFrom(sender *ecdh.PrivateKey, public string, plaintext []byte) (string, error) {
+	if sender == nil {
+		return "", errors.New("seal key: no sender")
 	}
-	recipient, err := ecdh.P256().NewPublicKey(raw)
+	return sealWith(sender, public, plaintext)
+}
+
+func sealWith(sender *ecdh.PrivateKey, public string, plaintext []byte) (string, error) {
+	recipient, err := parsePublic(public)
 	if err != nil {
-		return "", fmt.Errorf("seal key: %w", err)
+		return "", err
 	}
 	ephemeral, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
@@ -97,21 +104,57 @@ func Seal(public string, plaintext []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	version := 1
+	if sender != nil {
+		proof, err := sender.ECDH(recipient)
+		if err != nil {
+			return "", err
+		}
+		shared, version = append(shared, proof...), 2
+	}
 	epk := ephemeral.PublicKey().Bytes()
-	aead, err := cipherFor(shared, epk, raw)
+	aead, err := cipherFor(shared, epk, recipient.Bytes())
 	if err != nil {
 		return "", err
 	}
 	iv := make([]byte, aead.NonceSize())
 	rand.Read(iv)
-	body, err := json.Marshal(envelope{V: 1, EPK: encoding.EncodeToString(epk), IV: encoding.EncodeToString(iv), CT: encoding.EncodeToString(aead.Seal(nil, iv, plaintext, nil))})
+	body, err := json.Marshal(envelope{V: version, EPK: encoding.EncodeToString(epk), IV: encoding.EncodeToString(iv), CT: encoding.EncodeToString(aead.Seal(nil, iv, plaintext, nil))})
 	if err != nil {
 		return "", err
 	}
 	return encoding.EncodeToString(body), nil
 }
 
+func parsePublic(public string) (*ecdh.PublicKey, error) {
+	raw, err := encoding.DecodeString(public)
+	if err != nil {
+		return nil, fmt.Errorf("seal key: %w", err)
+	}
+	key, err := ecdh.P256().NewPublicKey(raw)
+	if err != nil {
+		return nil, fmt.Errorf("seal key: %w", err)
+	}
+	return key, nil
+}
+
 func Open(key *ecdh.PrivateKey, sealed string) ([]byte, error) {
+	return openWith(key, nil, sealed)
+}
+
+func OpenFrom(key *ecdh.PrivateKey, sender, sealed string) ([]byte, error) {
+	from, err := parsePublic(sender)
+	if err != nil {
+		return nil, err
+	}
+	return openWith(key, from, sealed)
+}
+
+func openWith(key *ecdh.PrivateKey, sender *ecdh.PublicKey, sealed string) ([]byte, error) {
+	version := 1
+	if sender != nil {
+		version = 2
+	}
 	body, err := encoding.DecodeString(sealed)
 	if err != nil {
 		return nil, errors.New("the sealed message is not valid")
@@ -119,7 +162,7 @@ func Open(key *ecdh.PrivateKey, sealed string) ([]byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	var message envelope
-	if err := decoder.Decode(&message); err != nil || message.V != 1 {
+	if err := decoder.Decode(&message); err != nil || message.V != version {
 		return nil, errors.New("the sealed message is not valid")
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
@@ -136,6 +179,13 @@ func Open(key *ecdh.PrivateKey, sealed string) ([]byte, error) {
 	shared, err := key.ECDH(ephemeral)
 	if err != nil {
 		return nil, err
+	}
+	if sender != nil {
+		proof, err := key.ECDH(sender)
+		if err != nil {
+			return nil, err
+		}
+		shared = append(shared, proof...)
 	}
 	aead, err := cipherFor(shared, epk, key.PublicKey().Bytes())
 	if err != nil {

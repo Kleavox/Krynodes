@@ -18,7 +18,7 @@ const beat = (
   hostname: nodeId,
   operatingSystem: "linux",
   architecture: "amd64",
-  agentVersion: "0.7.0",
+  agentVersion: "0.7.20",
   metrics: {
     cpuPercent: 1,
     memoryUsedBytes: 1,
