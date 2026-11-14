@@ -134,5 +134,80 @@ describe("change summaries", () => {
     expect(
       trustChangeSchema.safeParse({ ...change, requireUv: false }).success,
     ).toBe(false);
+    const owned = (account: string) =>
+      trustChangeSchema.safeParse({
+        ...change,
+        core: [{ id: "YQ", name: "Laptop", alg: -7, publicKey: "YQ", account }],
+      }).success;
+    expect(owned("user1@example.com")).toBe(true);
+    expect(owned("")).toBe(false);
+    expect(owned("user1 @example.com")).toBe(false);
+    expect(owned("user1@example.com\n")).toBe(false);
+    expect(owned("usér1@example.com")).toBe(true);
+    expect(owned(`${"a".repeat(250)}@b.cc`)).toBe(false);
+  });
+});
+
+describe("owners in a change summary", () => {
+  const U1 = "user1@example.com";
+  const U2 = "user2@example.com";
+  const base = {
+    names,
+    servers,
+    currentCore: ["a", "b", "c"],
+    currentAccess: { [N1]: ["a", "b", "c"] },
+  };
+
+  it("names a move by the handle of the account it goes to", () => {
+    const summary = summarizeChange({
+      ...base,
+      currentAccounts: { a: U1, b: U1, c: U2 },
+      change: {
+        core: ["a", "b", "c"],
+        access: { [N1]: ["a", "b", "c"] },
+        accounts: { a: U1, b: U2, c: U2 },
+      },
+    });
+    expect(summary.title).toBe("Move Phone to user2");
+    expect(summary.moved).toEqual([{ id: "b", from: U1, to: U2 }]);
+    expect(summary.recorded).toEqual([]);
+  });
+
+  it("says when a change only records who owns each passkey", () => {
+    const summary = summarizeChange({
+      ...base,
+      change: {
+        core: ["a", "b", "c"],
+        access: { [N1]: ["a", "b", "c"] },
+        accounts: { a: U1, b: U1, c: U2 },
+      },
+    });
+    expect(summary.title).toBe("Record Passkey Owners");
+    expect(summary.recorded).toEqual(["a", "b", "c"]);
+    expect(summary.moved).toEqual([]);
+  });
+
+  it("keeps the title of an admission that also records owners", () => {
+    const summary = summarizeChange({
+      ...base,
+      change: {
+        core: ["a", "b", "c", "d"],
+        access: { [N1]: ["a", "b", "c"] },
+        accounts: { a: U1, b: U1, c: U2, d: U1 },
+      },
+    });
+    expect(summary.title).toBe("Admit Key");
+    expect(summary.recorded).toEqual(["a", "b", "c"]);
+  });
+
+  it("reports no owners when the change names none", () => {
+    const summary = summarizeChange({
+      ...base,
+      currentAccounts: { a: U1, b: U1, c: U2 },
+      change: { core: null, access: { [N1]: ["a", "b", "c"] } },
+    });
+    expect(summary.title).toBe("Refresh servers");
+    expect(summary.moved).toEqual([]);
+    expect(summary.recorded).toEqual([]);
   });
 });

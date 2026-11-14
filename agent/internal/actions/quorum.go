@@ -8,17 +8,22 @@ import (
 
 type quorumInput struct {
 	Current struct {
-		Core   []string `json:"core"`
-		Access []string `json:"access"`
+		Core     []string          `json:"core"`
+		Access   []string          `json:"access"`
+		Accounts map[string]string `json:"accounts"`
 	} `json:"current"`
 	Change struct {
-		Core   []string `json:"core"`
-		Access []string `json:"access"`
+		Core     []string          `json:"core"`
+		Access   []string          `json:"access"`
+		Accounts map[string]string `json:"accounts"`
 	} `json:"change"`
 	Approvals []string `json:"approvals"`
+	Unsynced  []string `json:"unsynced"`
 }
 
 var errWithAccess = errors.New("needs approval from another device that reaches this server")
+
+const otherAccount = "from another account or a passkey that is not synced"
 
 func quorum(devices int) int {
 	if devices > 2 {
@@ -63,14 +68,54 @@ func evaluateQuorum(in quorumInput) error {
 			return errors.New("access names a device the servers do not trust")
 		}
 	}
-	coreChanged := in.Change.Core != nil && !sameSet(in.Change.Core, in.Current.Core)
-	if need := quorum(len(in.Current.Core)); coreChanged && len(approvers) < need {
+	owners, named := in.Current.Accounts, in.Change.Accounts
+	stored := slices.ContainsFunc(in.Current.Core, func(id string) bool { return owners[id] != "" })
+	unnamed := func(id string) bool { return named[id] == "" }
+	if (stored || slices.ContainsFunc(in.Change.Core, func(id string) bool { return named[id] != "" })) && slices.ContainsFunc(in.Change.Core, unnamed) {
+		return errors.New("every passkey needs its account")
+	}
+	var moved []string
+	for _, id := range in.Change.Core {
+		if slices.Contains(in.Current.Core, id) && named[id] != owners[id] {
+			moved = append(moved, id)
+		}
+	}
+	coreChanged := in.Change.Core != nil && (!sameSet(in.Change.Core, in.Current.Core) || len(moved) > 0)
+	need := quorum(len(in.Current.Core))
+	var accounts []string
+	for _, id := range in.Current.Core {
+		if owners[id] != "" && !slices.Contains(accounts, owners[id]) {
+			accounts = append(accounts, owners[id])
+		}
+	}
+	strict := need == 2 && len(accounts) > 1 && !slices.ContainsFunc(approvers, func(id string) bool { return slices.Contains(in.Unsynced, id) })
+	if coreChanged && len(approvers) < need {
 		missing := need - len(approvers)
 		plural := "s"
 		if missing == 1 {
 			plural = ""
 		}
-		return fmt.Errorf("needs %d more approval%s", missing, plural)
+		tail := ""
+		if strict {
+			tail = ", " + otherAccount
+		}
+		return fmt.Errorf("needs %d more approval%s%s", missing, plural, tail)
+	}
+	for _, id := range moved {
+		if owners[id] != "" && !slices.ContainsFunc(approvers, func(approver string) bool { return owners[approver] == owners[id] }) {
+			return errors.New("needs approval from a passkey of the account it leaves")
+		}
+	}
+	if coreChanged && strict {
+		var signing []string
+		for _, id := range approvers {
+			if !slices.Contains(signing, owners[id]) {
+				signing = append(signing, owners[id])
+			}
+		}
+		if len(signing) < 2 {
+			return errors.New("needs approval from another account's passkey, or from one that is not synced")
+		}
 	}
 	for _, id := range in.Change.Access {
 		if slices.Contains(in.Current.Access, id) {

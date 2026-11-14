@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
@@ -19,6 +20,7 @@ const (
 	trustChangeLimit = 24 * time.Hour
 	maxTrustedKeys   = 20
 	trustVersionStep = 1000
+	maxAccount       = 254
 )
 
 var credentialID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -91,7 +93,35 @@ func (t Trust) Report() reporter.TrustReport {
 			access = append(access, Fingerprint(key))
 		}
 	}
-	return reporter.TrustReport{Version: t.Version, Core: core, Access: access, Passphrase: t.Passphrase != nil, RequireUV: t.RequireUV}
+	var accounts []string
+	if len(accountsOf(t.Core)) == len(t.Core) && len(t.Core) > 0 {
+		for _, key := range t.Core {
+			accounts = append(accounts, key.Account)
+		}
+	}
+	return reporter.TrustReport{Version: t.Version, Core: core, Access: access, Passphrase: t.Passphrase != nil, RequireUV: t.RequireUV, Accounts: accounts}
+}
+
+func accountsOf(keys []TrustKey) map[string]string {
+	accounts := map[string]string{}
+	for _, key := range keys {
+		if key.Account != "" {
+			accounts[key.ID] = key.Account
+		}
+	}
+	return accounts
+}
+
+func isAccount(account string) bool {
+	if !utf8.ValidString(account) || utf8.RuneCountInString(account) > maxAccount {
+		return false
+	}
+	for _, letter := range account {
+		if (letter < 0x21 || letter > 0x7e) && letter < 0xa0 {
+			return false
+		}
+	}
+	return account != ""
 }
 
 func originHost(origin string) (string, error) {
@@ -124,6 +154,12 @@ func checkKeys(keys []TrustKey) error {
 		if _, err := parseKey(key); err != nil {
 			return err
 		}
+		if key.Account != "" && !isAccount(key.Account) {
+			return errors.New("an account is not an address")
+		}
+	}
+	if named := len(accountsOf(keys)); named != 0 && named != len(keys) {
+		return errors.New("every passkey needs its account")
 	}
 	return nil
 }
@@ -218,8 +254,10 @@ func ApplyTrustChange(current Trust, request Request, now time.Time) (Trust, err
 	input := quorumInput{}
 	input.Current.Core = current.coreIDs()
 	input.Current.Access = current.Access
+	input.Current.Accounts = accountsOf(current.Core)
 	if change.Core != nil {
 		input.Change.Core = next.coreIDs()
+		input.Change.Accounts = accountsOf(core)
 	}
 	input.Change.Access = access
 	challenge := digest(changeBytes)
@@ -232,6 +270,9 @@ func ApplyTrustChange(current Trust, request Request, now time.Time) (Trust, err
 			return Trust{}, err
 		}
 		input.Approvals = append(input.Approvals, item.CredentialID)
+		if deviceBound(item.Assertion) {
+			input.Unsynced = append(input.Unsynced, item.CredentialID)
+		}
 	}
 	if err := evaluateQuorum(input); err != nil {
 		return Trust{}, err
@@ -268,15 +309,23 @@ func ParseTrustArgs(origin string, tokens []string, grant bool, access string) (
 	}
 	keys := make([]TrustKey, 0, len(tokens))
 	for _, token := range tokens {
-		parts := strings.SplitN(token, ".", 3)
-		if len(parts) != 3 {
+		parts := strings.Split(token, ".")
+		if len(parts) != 3 && len(parts) != 4 {
 			return Trust{}, fmt.Errorf("%q is not <id>.<alg>.<key>", token)
 		}
 		alg, err := strconv.Atoi(parts[1])
 		if err != nil {
 			return Trust{}, fmt.Errorf("%q has no algorithm number", token)
 		}
-		keys = append(keys, TrustKey{ID: parts[0], Alg: alg, PublicKey: parts[2]})
+		key := TrustKey{ID: parts[0], Alg: alg, PublicKey: parts[2]}
+		if len(parts) == 4 {
+			account, err := b64.DecodeString(parts[3])
+			if err != nil || !isAccount(string(account)) {
+				return Trust{}, fmt.Errorf("%q names an account that is not an address", token)
+			}
+			key.Account = string(account)
+		}
+		keys = append(keys, key)
 	}
 	if err := checkKeys(keys); err != nil {
 		return Trust{}, err

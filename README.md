@@ -696,6 +696,23 @@ these:
   a backup.
 - Keep two passkeys or more: with one, losing it needs SSH to recover. With
   two, the other removes a lost one alone.
+- From agent 0.7.22 every server also stores which account owns each passkey.
+  The owner is part of what the approvals sign, so the Worker cannot change it.
+  Once every server runs 0.7.22, the Passkeys page says the servers "do not
+  store who owns each passkey yet" and **Sync** records the owners (one
+  approval with up to two passkeys, two with more).
+- When the trusted passkeys belong to two accounts or more, adding, removing
+  or moving a passkey with more than two trusted needs its two approvals from
+  two different accounts, or one of them from a passkey that is not synced
+  (This Device Only, such as a security key or Windows Hello). Each server
+  reads that from the approval itself. With one account nothing changes.
+  Giving a passkey access to servers is not affected.
+- **Move to Another Account** (a passkey's ⋯ menu, your own trusted passkey)
+  gives it to another account without setting it up again. Only its owner
+  opens the move, a passkey of the account it leaves must approve it, and the
+  usual count applies. Afterwards only the new account signs with it.
+- If the other account cannot be reached, approve with a passkey that is not
+  synced, or start over on each server with `sudo kry trust --reset`.
 
 To start over on a server:
 

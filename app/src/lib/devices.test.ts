@@ -12,12 +12,15 @@ import {
   agentGap,
   appliedOn,
   buildChange,
+  canLabel,
   canRestartServer,
   decodeChange,
   describeChange,
   fingerprint,
   firstTrusts,
   formatPrint,
+  lacksOwners,
+  moveChange,
   networkSigners,
   nextVersion,
   predictMissing,
@@ -26,6 +29,7 @@ import {
   serverState,
   twinOf,
   signersFor,
+  storesOwners,
   syncChange,
   syncText,
   unreached,
@@ -527,5 +531,159 @@ describe("recent changes", () => {
       done: 2,
       total: 2,
     });
+  });
+});
+
+describe("passkey owners", () => {
+  const ME = "user1@example.com";
+  const FRIEND = "user2@example.com";
+  const mine = (id: string, synced = true): DeviceRecord => ({
+    ...device(id),
+    owner: ME,
+    mine: true,
+    synced,
+  });
+  const a = mine("alpha");
+  const b = mine("bravo");
+  const c: DeviceRecord = { ...device("charlie"), owner: FRIEND, mine: false };
+  const d: DeviceRecord = { ...device("delta", false), owner: ME, mine: true };
+  const stored = (core: DeviceRecord[], version = 1): NodeTrust => ({
+    ...trust(version, core, core),
+    accounts: core.map((entry) => entry.owner!),
+  });
+  const shared = (state: NodeTrust = stored([a, b, c])) =>
+    view(
+      [a, b, c, d],
+      [
+        { node: node(N1, "0.7.22"), trust: state },
+        { node: node(N2, "0.7.22"), trust: state },
+      ],
+    );
+  const owners = (text: string) =>
+    (decodeChange(text)!.core ?? []).map((key) => key.account);
+
+  it("names the owners once every server stores them and every passkey has one", () => {
+    expect(canLabel(shared())).toBe(true);
+    expect(owners(buildChange(shared(), admitChange(shared(), d)))).toEqual([
+      ME,
+      ME,
+      FRIEND,
+      ME,
+    ]);
+    const old = view(
+      [a, b, c, d],
+      [
+        { node: node(N1, "0.7.22"), trust: trust(1, [a, b, c], [a, b, c]) },
+        { node: node(N2, "0.7.21"), trust: trust(1, [a, b, c], [a, b, c]) },
+        { node: node(N3, null), trust: null },
+      ],
+    );
+    expect(canLabel(old)).toBe(false);
+    expect(owners(buildChange(old, admitChange(old, d)))).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    const unclaimed = view(
+      [a, { ...b, owner: null }],
+      [{ node: node(N1, "0.7.22"), trust: trust(1, [a, b], [a, b]) }],
+    );
+    expect(canLabel(unclaimed)).toBe(false);
+    expect(owners(buildChange(unclaimed, syncChange(unclaimed)))).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("does not hold the owners back for a server that has not reported yet", () => {
+    const waiting = view(
+      [a, b],
+      [
+        { node: node(N1, "0.7.22"), trust: trust(1, [a, b], [a, b]) },
+        { node: node(N3, null), trust: null },
+      ],
+    );
+    expect(canLabel(waiting)).toBe(true);
+  });
+
+  it("calls a server behind until it stores the owners", () => {
+    const bare = shared(trust(1, [a, b, c], [a, b, c]));
+    expect(serverState(bare, bare.servers[0]!)).toBe("behind");
+    expect(lacksOwners(bare, bare.servers[0]!)).toBe(true);
+    expect(lacksOwners(shared(), shared().servers[0]!)).toBe(false);
+    const fewer = shared(trust(1, [a, b], [a, b]));
+    expect(serverState(fewer, fewer.servers[0]!)).toBe("behind");
+    expect(lacksOwners(fewer, fewer.servers[0]!)).toBe(false);
+    expect(storesOwners(bare)).toBe(false);
+    expect(owners(buildChange(bare, syncChange(bare)))).toEqual([
+      ME,
+      ME,
+      FRIEND,
+    ]);
+    expect(serverState(shared(), shared().servers[0]!)).toBe("current");
+    expect(storesOwners(shared())).toBe(true);
+    const moved = shared({
+      ...stored([a, b, c]),
+      accounts: [ME, FRIEND, FRIEND],
+    });
+    expect(serverState(moved, moved.servers[0]!)).toBe("behind");
+    const older = view(
+      [a, b],
+      [{ node: node(N1), trust: trust(1, [a, b], [a, b]) }],
+    );
+    expect(serverState(older, older.servers[0]!)).toBe("current");
+  });
+
+  it("moves one passkey and leaves the rest as they are", () => {
+    const plan = moveChange(shared(), b, FRIEND);
+    expect(plan.core?.map((key) => key.account)).toEqual([ME, FRIEND, FRIEND]);
+    expect(plan.access).toEqual({
+      [N1]: ["alpha", "bravo", "charlie"],
+      [N2]: ["alpha", "bravo", "charlie"],
+    });
+    const summary = describeChange(
+      shared(),
+      decodeChange(buildChange(shared(), plan))!,
+    );
+    expect(summary.title).toBe("Move Bravo to user2");
+    expect(summary.moved).toEqual([{ id: "bravo", from: ME, to: FRIEND }]);
+  });
+
+  it("predicts the approval two accounts still need from what each passkey is", () => {
+    const change = decodeChange(
+      buildChange(shared(), admitChange(shared(), d)),
+    )!;
+    expect(predictMissing(shared(), change, ["alpha"])).toBe(
+      "needs 1 more approval, from another account or a passkey that is not synced",
+    );
+    expect(predictMissing(shared(), change, ["alpha", "bravo"])).toBe(
+      "needs approval from another account's passkey, or from one that is not synced",
+    );
+    expect(predictMissing(shared(), change, ["alpha", "charlie"])).toBeNull();
+    const key = view([a, mine("bravo", false), c, d], shared().servers);
+    expect(predictMissing(key, change, ["alpha", "bravo"])).toBeNull();
+  });
+
+  it("says a change records the owners when no server stores them", () => {
+    const bare = shared(trust(1, [a, b, c], [a, b, c]));
+    const summary = describeChange(
+      bare,
+      decodeChange(buildChange(bare, syncChange(bare)))!,
+    );
+    expect(summary.title).toBe("Record Passkey Owners");
+    expect(summary.recorded).toEqual(["alpha", "bravo", "charlie"]);
+  });
+
+  it("gives a new server the owners with its first trust", () => {
+    const fresh = view(
+      [a, b, c],
+      [
+        { node: node(N1, "0.7.22"), trust: stored([a, b, c]) },
+        { node: node(N3, "0.7.22"), trust: null },
+      ],
+    );
+    const [text] = firstTrusts(fresh, [N3], "alpha", T);
+    expect(owners(text!)).toEqual([ME, ME, FRIEND]);
   });
 });

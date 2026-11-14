@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { toB64url } from "../lib/b64url";
 import { randomToken, sha256 } from "../lib/crypto";
 import { parseKeyLine } from "../lib/ssh";
 import { liveRange, readNetwork } from "../network/document";
@@ -79,9 +80,15 @@ function installArgs(
     else if (device && fleet.core.includes(device)) {
       args.push("--access", device);
     }
+    const owned = fleet.labelled && core.every((item) => item.account);
+    const owner = (account: string | null) =>
+      owned && account ? `.${toB64url(new TextEncoder().encode(account))}` : "";
     args.push(
       "--",
-      ...core.map((item) => `${item.id}.${item.alg}.${item.publicKey}`),
+      ...core.map(
+        (item) =>
+          `${item.id}.${item.alg}.${item.publicKey}${owner(item.account)}`,
+      ),
     );
   }
   const steps = [

@@ -19,13 +19,14 @@ import (
 )
 
 const (
-	sessionLimit = 15 * time.Minute
-	commandGrace = 60 * time.Minute
-	clockSkew    = time.Minute
-	flagPresent  = 0x01
-	flagVerified = 0x04
-	algES256     = -7
-	algRS256     = -257
+	sessionLimit       = 15 * time.Minute
+	commandGrace       = 60 * time.Minute
+	clockSkew          = time.Minute
+	flagPresent        = 0x01
+	flagVerified       = 0x04
+	flagBackupEligible = 0x08
+	algES256           = -7
+	algRS256           = -257
 )
 
 var b64 = base64.RawURLEncoding
@@ -35,6 +36,7 @@ type TrustKey struct {
 	Name      string `json:"name"`
 	Alg       int    `json:"alg"`
 	PublicKey string `json:"publicKey"`
+	Account   string `json:"account,omitempty"`
 }
 
 type PassphraseKey struct {
@@ -61,6 +63,11 @@ func (t Trust) coreIDs() []string {
 		ids = append(ids, key.ID)
 	}
 	return ids
+}
+
+func deviceBound(assertion Assertion) bool {
+	data, err := b64.DecodeString(assertion.AuthenticatorData)
+	return err == nil && len(data) > 32 && data[32]&flagBackupEligible == 0
 }
 
 func verified(uv bool) error {

@@ -5,11 +5,18 @@ const credential = z.string().min(1).max(1400).regex(b64url);
 
 export const TRUST_VERSION_STEP = 1000;
 
+export const accountSchema = z
+  .string()
+  .min(1)
+  .max(254)
+  .regex(/^[\x21-\x7e\u{a0}-\u{10ffff}]+$/u);
+
 export const trustKeySchema = z.strictObject({
   id: credential,
   name: z.string().min(1).max(40),
   alg: z.union([z.literal(-7), z.literal(-257)]),
   publicKey: z.string().min(1).max(4096).regex(b64url),
+  account: accountSchema.optional(),
 });
 
 export const passphraseKeySchema = z.strictObject({

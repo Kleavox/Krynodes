@@ -298,6 +298,35 @@ describe("dashboard actions that destroy or hide", () => {
     expect(script).toContain(`phone.-7.${t.phone.publicKey}`);
     expect(script).toContain(`laptop.-7.${laptop.publicKey}`);
     expect(script).not.toContain("--grant");
+    expect(script).not.toContain(`${laptop.publicKey}.`);
+  });
+
+  it("put each passkey's owner in the install command once the servers store owners", async () => {
+    const t = await setup(true, false, ["laptop"]);
+    t.sqlite
+      .prepare("UPDATE devices SET account = 'standalone@localhost'")
+      .run();
+    const stored = JSON.parse(
+      (
+        t.sqlite.prepare("SELECT trust_report FROM nodes LIMIT 1").get() as {
+          trust_report: string;
+        }
+      ).trust_report,
+    ) as { core: string[] };
+    t.sqlite.prepare("UPDATE nodes SET trust_report = ?").run(
+      JSON.stringify({
+        ...stored,
+        accounts: stored.core.map(() => "standalone@localhost"),
+      }),
+    );
+    const enroll = await t.enrollment(
+      await proof(t.phone, "enrollment.create", "new"),
+    );
+    expect(enroll.status).toBe(201);
+    const owner = Buffer.from("standalone@localhost").toString("base64url");
+    const script = await t.installer(enroll);
+    expect(script).toContain(`phone.-7.${t.phone.publicKey}.${owner} `);
+    expect(script).toContain(`laptop.-7.${t.others[0]!.publicKey}.${owner} `);
   });
 });
 
