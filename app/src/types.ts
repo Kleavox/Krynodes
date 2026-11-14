@@ -602,6 +602,7 @@ export interface NodeTrust {
   version: number;
   core: string[];
   access: string[];
+  accounts?: string[] | null;
 }
 
 interface ServiceNode {

@@ -337,6 +337,370 @@
       },
       "approvals": ["b"],
       "ok": true
+    },
+    {
+      "name": "recording the owners of three passkeys needs two approvals",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"]
+      },
+      "change": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "approvals": ["a"],
+      "ok": false
+    },
+    {
+      "name": "two approvals record the owners of three passkeys",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"]
+      },
+      "change": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "approvals": ["a", "b"],
+      "ok": true
+    },
+    {
+      "name": "with two passkeys one approval records the owners",
+      "current": {
+        "core": ["a", "b"],
+        "access": ["a", "b"]
+      },
+      "change": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user2@example.com"
+        }
+      },
+      "approvals": ["a"],
+      "ok": true
+    },
+    {
+      "name": "a change that leaves the accounts out is refused once they are stored",
+      "current": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b"]
+      },
+      "approvals": ["a"],
+      "ok": false
+    },
+    {
+      "name": "a change that names only some accounts is refused",
+      "current": {
+        "core": ["a", "b"],
+        "access": ["a", "b"]
+      },
+      "change": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com"
+        }
+      },
+      "approvals": ["a"],
+      "ok": false
+    },
+    {
+      "name": "one account: two of its synced passkeys admit a fourth",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user1@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c", "d"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user1@example.com",
+          "d": "user1@example.com"
+        }
+      },
+      "approvals": ["a", "b"],
+      "ok": true
+    },
+    {
+      "name": "two accounts: two synced passkeys of one account do not admit a fourth",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c", "d"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com",
+          "d": "user1@example.com"
+        }
+      },
+      "approvals": ["a", "b"],
+      "ok": false
+    },
+    {
+      "name": "two accounts: an approval from each admits a fourth",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c", "d"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com",
+          "d": "user1@example.com"
+        }
+      },
+      "approvals": ["a", "c"],
+      "ok": true
+    },
+    {
+      "name": "two accounts: one account passes with a passkey that is not synced",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c", "d"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com",
+          "d": "user1@example.com"
+        }
+      },
+      "approvals": ["a", "b"],
+      "unsynced": ["b"],
+      "ok": true
+    },
+    {
+      "name": "two accounts: a passkey that is not synced does not replace the second approval",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c", "d"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com",
+          "d": "user1@example.com"
+        }
+      },
+      "approvals": ["a"],
+      "unsynced": ["a"],
+      "ok": false
+    },
+    {
+      "name": "two accounts: removing a passkey follows the same rule",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com"
+        }
+      },
+      "approvals": ["a", "b"],
+      "ok": false
+    },
+    {
+      "name": "two accounts with two passkeys: one approval still admits a third",
+      "current": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user2@example.com",
+          "c": "user1@example.com"
+        }
+      },
+      "approvals": ["a"],
+      "ok": true
+    },
+    {
+      "name": "a move without the account it leaves is refused",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user1@example.com"
+        }
+      },
+      "approvals": ["a", "b"],
+      "unsynced": ["a"],
+      "ok": false
+    },
+    {
+      "name": "a move approved by the account it leaves and another account",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user1@example.com"
+        }
+      },
+      "approvals": ["c", "a"],
+      "ok": true
+    },
+    {
+      "name": "with two passkeys a move is not approved by the other account alone",
+      "current": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com"
+        }
+      },
+      "approvals": ["a"],
+      "ok": false
+    },
+    {
+      "name": "with two passkeys a move takes its owner's approval",
+      "current": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b"],
+        "access": ["a", "b"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com"
+        }
+      },
+      "approvals": ["b"],
+      "ok": true
+    },
+    {
+      "name": "the same passkeys and accounts with one approval is a refresh",
+      "current": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "change": {
+        "core": ["a", "b", "c"],
+        "access": ["a", "b", "c"],
+        "accounts": {
+          "a": "user1@example.com",
+          "b": "user1@example.com",
+          "c": "user2@example.com"
+        }
+      },
+      "approvals": ["a"],
+      "ok": true
     }
   ]
 }

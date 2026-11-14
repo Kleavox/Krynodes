@@ -6,6 +6,7 @@ import {
   stackNetworkSchema,
 } from "./network";
 import { bridgesReportSchema } from "./bridges";
+import { accountSchema } from "./change";
 import { eventSchema, releaseSchema } from "./quarantine";
 import { reachSchema } from "./tailscale";
 import {
@@ -83,6 +84,7 @@ export {
 } from "./network";
 export {
   TRUST_VERSION_STEP,
+  accountSchema,
   passphraseKeySchema,
   trustChangeSchema,
   trustKeySchema,
@@ -92,6 +94,8 @@ export {
 } from "./change";
 export { summarizeChange, type ChangeSummary } from "./summary";
 export {
+  ACCOUNTS_AGENT,
+  agentKnowsAccounts,
   agentSealsFromSender,
   agentSupported,
   compareVersions,
@@ -696,6 +700,7 @@ export const trustReportSchema = z.strictObject({
   access: fingerprints,
   passphrase: z.boolean(),
   requireUv: z.boolean().optional(),
+  accounts: z.array(accountSchema).max(20).optional(),
 });
 
 export const removedStackSchema = z

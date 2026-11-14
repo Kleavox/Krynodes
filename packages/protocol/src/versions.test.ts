@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import * as versions from "./versions";
 import {
+  ACCOUNTS_AGENT,
+  agentKnowsAccounts,
   agentSealsFromSender,
   agentSupported,
   compareVersions,
@@ -27,6 +29,14 @@ describe("agent versions", () => {
     expect(agentSupported(null)).toBe(false);
   });
 
+  it("stores passkey owners from agent 0.7.22", () => {
+    expect(ACCOUNTS_AGENT).toBe("0.7.22");
+    expect(agentKnowsAccounts("0.7.22")).toBe(true);
+    expect(agentKnowsAccounts("0.7.21")).toBe(false);
+    expect(agentKnowsAccounts("dev")).toBe(true);
+    expect(agentKnowsAccounts(null)).toBe(false);
+  });
+
   it("binds a piece to its sender from agent 0.7.21", () => {
     expect(SEAL_AGENT).toBe("0.7.21");
     expect(agentSealsFromSender("0.7.21")).toBe(true);
@@ -37,8 +47,10 @@ describe("agent versions", () => {
 
   it("keeps the feature gates above the minimum and none below it", () => {
     expect(Object.keys(versions).sort()).toEqual([
+      "ACCOUNTS_AGENT",
       "MIN_AGENT_VERSION",
       "SEAL_AGENT",
+      "agentKnowsAccounts",
       "agentSealsFromSender",
       "agentSupported",
       "compareVersions",

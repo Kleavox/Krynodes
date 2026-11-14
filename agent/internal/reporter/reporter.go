@@ -182,6 +182,7 @@ type TrustReport struct {
 	Access     []string `json:"access"`
 	Passphrase bool     `json:"passphrase"`
 	RequireUV  bool     `json:"requireUv,omitempty"`
+	Accounts   []string `json:"accounts,omitempty"`
 }
 
 type RemovedStack struct {

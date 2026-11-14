@@ -47,3 +47,35 @@ func TestQuorumSaysWhatIsMissing(t *testing.T) {
 	input.Approvals = nil
 	refused(t, evaluateQuorum(input), "needs an approval")
 }
+
+func TestQuorumSaysWhichApprovalTwoAccountsStillNeed(t *testing.T) {
+	input := quorumInput{Approvals: []string{"a"}}
+	owners := map[string]string{"a": "user1@example.com", "b": "user1@example.com", "c": "user2@example.com"}
+	input.Current.Core = []string{"a", "b", "c"}
+	input.Current.Access = []string{"a", "b", "c"}
+	input.Current.Accounts = owners
+	input.Change.Core = []string{"a", "b", "c", "d"}
+	input.Change.Access = []string{"a", "b", "c"}
+	input.Change.Accounts = map[string]string{"a": "user1@example.com", "b": "user1@example.com", "c": "user2@example.com", "d": "user1@example.com"}
+	exactly(t, evaluateQuorum(input), "needs 1 more approval, from another account or a passkey that is not synced")
+	input.Unsynced = []string{"a"}
+	exactly(t, evaluateQuorum(input), "needs 1 more approval")
+	input.Unsynced = nil
+	input.Approvals = []string{"a", "b"}
+	exactly(t, evaluateQuorum(input), "needs approval from another account's passkey, or from one that is not synced")
+	input.Change.Accounts = nil
+	input.Approvals = []string{"a", "c"}
+	exactly(t, evaluateQuorum(input), "every passkey needs its account")
+	input.Change.Core = []string{"a", "b", "c"}
+	input.Change.Accounts = map[string]string{"a": "user1@example.com", "b": "user1@example.com", "c": "user1@example.com"}
+	input.Approvals = []string{"a", "b"}
+	input.Unsynced = []string{"a"}
+	exactly(t, evaluateQuorum(input), "needs approval from a passkey of the account it leaves")
+}
+
+func exactly(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil || err.Error() != want {
+		t.Fatalf("want %q, got %v", want, err)
+	}
+}

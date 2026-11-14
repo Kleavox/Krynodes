@@ -7,6 +7,7 @@ import {
 
 import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
 import {
+  agentKnowsAccounts,
   agentSupported,
   compareVersions,
   MIN_AGENT_VERSION,
@@ -116,11 +117,49 @@ const keyOf = ({ id, name, alg, publicKey }: DeviceRecord): TrustKeyRecord => ({
   publicKey,
 });
 
+export const canLabel = (view: FleetView) =>
+  view.servers.every(
+    (server) =>
+      !server.node.agent_version ||
+      agentKnowsAccounts(server.node.agent_version),
+  ) && coreOf(view).every((device) => Boolean(device.owner));
+
+function keysOf(view: FleetView, devices: DeviceRecord[]): TrustKeyRecord[] {
+  const owned =
+    canLabel(view) && devices.every((device) => Boolean(device.owner));
+  return devices.map((device) =>
+    owned ? { ...keyOf(device), account: device.owner! } : keyOf(device),
+  );
+}
+
+const ownersOf = (devices: DeviceRecord[], trust: NodeTrust | null) =>
+  Object.fromEntries(
+    devices.flatMap((device) => {
+      const account = trust?.accounts?.[trust.core.indexOf(device.fingerprint)];
+      return account ? [[device.id, account] as const] : [];
+    }),
+  );
+
+const namedIn = (change: TrustChange) =>
+  Object.fromEntries(
+    (change.core ?? []).flatMap((key) =>
+      key.account ? [[key.id, key.account] as const] : [],
+    ),
+  );
+
 const sameSet = (a: string[], b: string[]) =>
   a.length === b.length && a.every((item) => b.includes(item));
 
 export const trustedServers = (view: FleetView) =>
   view.servers.filter((server) => (server.trust?.core.length ?? 0) > 0);
+
+export const storesOwners = (view: FleetView) => {
+  const trusted = trustedServers(view);
+  return (
+    trusted.length > 0 &&
+    trusted.every((server) => (server.trust?.accounts?.length ?? 0) > 0)
+  );
+};
 
 export const unreached = (view: FleetView) =>
   trustedServers(view).filter(
@@ -134,12 +173,32 @@ export function reachText(reached: string[], total: number): string {
   return `${reached.length} of ${total} Servers`;
 }
 
+export const lacksOwners = (view: FleetView, server: FleetServer) =>
+  serverState(view, server) === "behind" &&
+  sameSet(
+    server.trust?.core ?? [],
+    coreOf(view).map((device) => device.fingerprint),
+  );
+
 export function serverState(view: FleetView, server: FleetServer): ServerState {
   if (!server.node.agent_version) return "waiting";
   if (!agentCurrent(server.node)) return "update";
   if (!server.trust || server.trust.core.length === 0) return "empty";
-  const core = coreOf(view).map((device) => device.fingerprint);
-  return sameSet(server.trust.core, core) ? "current" : "behind";
+  const core = coreOf(view);
+  const { trust } = server;
+  if (
+    !sameSet(
+      trust.core,
+      core.map((device) => device.fingerprint),
+    )
+  ) {
+    return "behind";
+  }
+  const stored = ownersOf(core, trust);
+  return canLabel(view) &&
+    core.some((device) => stored[device.id] !== device.owner)
+    ? "behind"
+    : "current";
 }
 
 export function appliedOn(
@@ -222,11 +281,11 @@ export const twinOf = (view: FleetView, device: DeviceRecord) =>
 export function admitChange(view: FleetView, device: DeviceRecord): Plan {
   const core = coreOf(view);
   if (twinOf(view, device)) {
-    return { core: core.map(keyOf), access: currentAccess(view) };
+    return { core: keysOf(view, core), access: currentAccess(view) };
   }
   const founding = core.length < 2;
   return {
-    core: [...core, device].map(keyOf),
+    core: keysOf(view, [...core, device]),
     access: Object.fromEntries(
       Object.entries(currentAccess(view)).map(([nodeId, ids]) => [
         nodeId,
@@ -238,9 +297,10 @@ export function admitChange(view: FleetView, device: DeviceRecord): Plan {
 
 export function removeChange(view: FleetView, device: DeviceRecord): Plan {
   return {
-    core: coreOf(view)
-      .filter((entry) => entry.id !== device.id)
-      .map(keyOf),
+    core: keysOf(
+      view,
+      coreOf(view).filter((entry) => entry.id !== device.id),
+    ),
     access: Object.fromEntries(
       Object.entries(currentAccess(view)).map(([nodeId, ids]) => [
         nodeId,
@@ -266,7 +326,23 @@ export function accessChange(
 }
 
 export function syncChange(view: FleetView): Plan {
-  return { core: coreOf(view).map(keyOf), access: currentAccess(view) };
+  return { core: keysOf(view, coreOf(view)), access: currentAccess(view) };
+}
+
+export function moveChange(
+  view: FleetView,
+  device: DeviceRecord,
+  account: string,
+): Plan {
+  return {
+    core: keysOf(
+      view,
+      coreOf(view).map((entry) =>
+        entry.id === device.id ? { ...entry, owner: account } : entry,
+      ),
+    ),
+    access: currentAccess(view),
+  };
 }
 
 export function firstTrusts(
@@ -283,7 +359,7 @@ export function firstTrusts(
   const access = core.length < 2 ? core.map((device) => device.id) : [];
   return nodeIds.map((nodeId) =>
     buildChange(view, {
-      core: core.map(keyOf),
+      core: keysOf(view, core),
       requireUv: true,
       access: { [nodeId]: access },
       version: 1,
@@ -312,9 +388,14 @@ export function describeChange(
         accessIds(view.devices, server.trust),
       ]),
     ),
+    currentAccounts: Object.assign(
+      {},
+      ...view.servers.map((server) => ownersOf(view.devices, server.trust)),
+    ) as Record<string, string>,
     change: {
       core: change.core?.map((key) => key.id) ?? null,
       access: change.access,
+      accounts: namedIn(change),
     },
   });
 }
@@ -331,12 +412,17 @@ export function predictMissing(
       current: {
         core: coreIds(view.devices, trust),
         access: accessIds(view.devices, trust),
+        accounts: ownersOf(view.devices, trust),
       },
       change: {
         core: change.core?.map((key) => key.id) ?? null,
         access,
+        accounts: namedIn(change),
       },
       approvals: approvers,
+      unsynced: view.devices
+        .filter((device) => device.synced === false)
+        .map((device) => device.id),
     });
     if (!result.ok) return result.reason;
   }

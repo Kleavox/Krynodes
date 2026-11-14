@@ -37,6 +37,7 @@ import {
   approvalLine,
   type Review,
 } from "@/features/devices/approval-dialog";
+import { MoveDialog } from "@/features/devices/move-dialog";
 import { BigPrint, plural, when } from "@/features/devices/parts";
 import { RecentChanges } from "@/features/devices/recent-changes";
 import { failure } from "@/lib/proof";
@@ -62,7 +63,9 @@ import {
   agentCurrent,
   reachText,
   removeChange,
+  lacksOwners,
   serverState,
+  storesOwners,
   syncChange,
   twinOf,
   unreached,
@@ -296,6 +299,7 @@ function DeviceRow({
   fleet,
   device,
   onRename,
+  onMove,
   onServers,
   onRemove,
   onForget,
@@ -303,6 +307,7 @@ function DeviceRow({
   fleet: Fleet;
   device: DeviceRecord;
   onRename: () => void;
+  onMove: () => void;
   onServers: () => void;
   onRemove: () => void;
   onForget: () => void;
@@ -316,6 +321,9 @@ function DeviceRow({
   const opens = device.core && fleet.trusted.length > 0;
   if (opens) items.push({ label: "Servers", onSelect: onServers });
   if (own) items.push({ label: "Rename", onSelect: onRename });
+  if (device.core && device.mine === true && storesOwners(fleet.view)) {
+    items.push({ label: "Move to Another Account", onSelect: onMove });
+  }
   if (device.core) {
     if (fleet.core.length > 1) {
       items.push({ label: "Remove", onSelect: onRemove, destructive: true });
@@ -648,6 +656,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
   const [adding, setAdding] = useState(false);
   const [scope, setScope] = useState<AccessScope | null>(null);
   const [renaming, setRenaming] = useState<DeviceRecord | null>(null);
+  const [moving, setMoving] = useState<DeviceRecord | null>(null);
   const [forgetting, setForgetting] = useState<DeviceRecord | null>(null);
   const [cancelling, setCancelling] = useState<ProposalRecord | null>(null);
   const [trusting, setTrusting] = useState(false);
@@ -806,8 +815,9 @@ function Manage({ fleet }: { fleet: Fleet }) {
             </Button>
           }
         >
-          {names(behind)} {behind.length === 1 ? "has" : "have"} an older list
-          of your passkeys.
+          {behind.every((server) => lacksOwners(fleet.view, server))
+            ? `${names(behind)} ${behind.length === 1 ? "does" : "do"} not store who owns each passkey yet.`
+            : `${names(behind)} ${behind.length === 1 ? "has" : "have"} an older list of your passkeys.`}
         </Notice>,
       );
     }
@@ -913,6 +923,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
               fleet={fleet}
               device={device}
               onRename={() => setRenaming(device)}
+              onMove={() => setMoving(device)}
               onServers={() => setScope({ device })}
               onRemove={() =>
                 openReview(
@@ -943,6 +954,12 @@ function Manage({ fleet }: { fleet: Fleet }) {
         onReview={(text) => openReview(text)}
       />
       <RenameDialog device={renaming} onClose={() => setRenaming(null)} />
+      <MoveDialog
+        fleet={fleet}
+        device={moving}
+        onClose={() => setMoving(null)}
+        onReview={(text) => openReview(text, undefined, () => setMoving(null))}
+      />
       <FirstTrustDialog
         fleet={fleet}
         servers={empty}

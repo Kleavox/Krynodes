@@ -1,5 +1,7 @@
 import {
+  ACCOUNTS_AGENT,
   MIN_AGENT_VERSION,
+  agentKnowsAccounts,
   trustChangeSchema,
   type TrustChange,
 } from "@krynodes/protocol";
@@ -72,10 +74,15 @@ function firstTrustAllowed(fleet: Fleet, change: TrustChange): boolean {
       (device) =>
         device.id === key.id &&
         device.publicKey === key.publicKey &&
-        device.alg === key.alg,
+        device.alg === key.alg &&
+        (key.account === undefined || key.account === device.account),
     ),
   );
   if (!known) return false;
+  const owned = change.core.filter((key) => key.account !== undefined).length;
+  if (owned !== (fleet.labelled || owned > 0 ? change.core.length : 0)) {
+    return false;
+  }
   const expected =
     fleet.core.length > 0 ? fleet.core : core.length === 1 ? core : null;
   if (!expected || !sameIds(core, expected)) return false;
@@ -302,6 +309,20 @@ export function registerDeviceRoutes(
           {
             code: "NEEDS_AGENT",
             message: `${node.name} needs agent ${MIN_AGENT_VERSION} or later.`,
+          },
+          422,
+        );
+      }
+      if (
+        !agentKnowsAccounts(node.agentVersion) &&
+        changes.some(({ change }) =>
+          change!.core?.some((key) => key.account !== undefined),
+        )
+      ) {
+        return context.json(
+          {
+            code: "NEEDS_AGENT",
+            message: `Update ${node.name} to agent ${ACCOUNTS_AGENT} first.`,
           },
           422,
         );

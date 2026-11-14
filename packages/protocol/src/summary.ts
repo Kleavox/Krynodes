@@ -2,6 +2,8 @@ export interface ChangeSummary {
   title: string;
   admitted: string[];
   removed: string[];
+  moved: { id: string; from: string; to: string }[];
+  recorded: string[];
   access: { nodeId: string; added: string[]; removed: string[] }[];
 }
 
@@ -14,6 +16,8 @@ const listed = (items: string[], word: string) =>
     : items.length === 1
       ? items[0]!
       : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
+const accountHandle = (account: string) => account.split("@")[0] || account;
 
 type Pair = { device: string; server: string };
 
@@ -34,9 +38,11 @@ export function summarizeChange(input: {
   servers: Record<string, string>;
   currentCore: string[];
   currentAccess: Record<string, string[]>;
+  currentAccounts?: Record<string, string>;
   change: {
     core: string[] | null;
     access: Record<string, string[]>;
+    accounts?: Record<string, string>;
   };
 }): ChangeSummary {
   const { change } = input;
@@ -53,10 +59,24 @@ export function summarizeChange(input: {
       };
     })
     .filter((entry) => entry.added.length > 0 || entry.removed.length > 0);
+  const owners = input.currentAccounts ?? {};
+  const labels = change.accounts ?? {};
+  const kept = (change.core ?? []).filter((id) =>
+    input.currentCore.includes(id),
+  );
+  const moved = kept.flatMap((id) => {
+    const from = owners[id];
+    const to = labels[id];
+    return from && to && from !== to ? [{ id, from, to }] : [];
+  });
+  const recorded = kept.filter((id) => !owners[id] && labels[id]);
   const name = (id: string) => input.names[id] ?? "an unknown passkey";
   const parts = [
     ...admitted.map((id) => `Admit ${name(id)}`),
     ...removed.map((id) => `Remove ${name(id)}`),
+    ...moved.map(
+      (entry) => `Move ${name(entry.id)} to ${accountHandle(entry.to)}`,
+    ),
   ];
   const server = (id: string) => input.servers[id] ?? "an unknown server";
   const given: Pair[] = [];
@@ -80,9 +100,16 @@ export function summarizeChange(input: {
     parts.push(...named.filter((part): part is string => Boolean(part)));
   }
   return {
-    title: parts.length > 0 ? parts.join(" · ") : "Refresh servers",
+    title:
+      parts.length > 0
+        ? parts.join(" · ")
+        : recorded.length > 0
+          ? "Record Passkey Owners"
+          : "Refresh servers",
     admitted,
     removed,
+    moved,
+    recorded,
     access,
   };
 }

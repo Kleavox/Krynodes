@@ -144,6 +144,7 @@ function setup(agent = "0.7.20") {
     requireUv?: true;
     origin?: string;
     hours?: number;
+    accounts?: Record<string, string>;
   }) => {
     const now = Date.now();
     return encode({
@@ -161,6 +162,9 @@ function setup(agent = "0.7.20") {
               name: key.name,
               alg: key.alg,
               publicKey: key.publicKey,
+              ...(input.accounts?.[key.name]
+                ? { account: input.accounts[key.name] }
+                : {}),
             })),
       passphrase: input.passphrase ?? null,
       ...(input.requireUv ? { requireUv: true } : {}),
@@ -713,6 +717,266 @@ describe("proposals", () => {
       laptop!.id,
       phone!.id,
     ]);
+  });
+});
+
+describe("passkey owners", () => {
+  const ME = "standalone@localhost";
+  const FRIEND = "user2@example.com";
+  const OWNERS = { Laptop: ME, Phone: ME, Tablet: FRIEND, Helper: ME };
+
+  async function shared(nodes = [A, B, C], agent = "0.7.22") {
+    const t = setup(agent);
+    const [laptop, phone, tablet, helper] = await fleet(4);
+    for (const key of [laptop!, phone!, helper!]) await t.register(key);
+    t.sqlite
+      .prepare(
+        "INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at, verifies, account) VALUES (?, 'standalone', ?, -7, ?, ?, 1, ?)",
+      )
+      .run(
+        tablet!.id,
+        tablet!.name,
+        tablet!.publicKey,
+        new Date().toISOString(),
+        FRIEND,
+      );
+    const trusted = [laptop!, phone!, tablet!];
+    const prints = await Promise.all(
+      trusted.map((key) => fingerprint(key.publicKey)),
+    );
+    for (const nodeId of nodes) {
+      t.sqlite.prepare("UPDATE nodes SET trust_report = ? WHERE id = ?").run(
+        JSON.stringify({
+          version: 1,
+          core: prints,
+          access: prints,
+          passphrase: false,
+          requireUv: true,
+          accounts: [ME, ME, FRIEND],
+        }),
+        nodeId,
+      );
+    }
+    const everywhere = (keys: TestPasskey[]) =>
+      Object.fromEntries(nodes.map((nodeId) => [nodeId, keys]));
+    const fourth = (accounts: Record<string, string> | undefined = OWNERS) =>
+      t.change({
+        core: [...trusted, helper!],
+        access: everywhere(trusted),
+        accounts,
+      });
+    const account = (key: TestPasskey) =>
+      (
+        t.sqlite
+          .prepare("SELECT account FROM devices WHERE id = ?")
+          .get(key.id) as { account: string | null }
+      ).account;
+    return {
+      ...t,
+      laptop: laptop!,
+      phone: phone!,
+      tablet: tablet!,
+      helper: helper!,
+      trusted,
+      everywhere,
+      fourth,
+      account,
+    };
+  }
+
+  const approve = (
+    t: Awaited<ReturnType<typeof shared>>,
+    id: string,
+    by: Awaited<ReturnType<typeof t.approval>>,
+  ) => t.call("POST", `/api/proposals/${id}/approvals`, { approval: by });
+
+  it("keeps a fourth passkey waiting when both approvals are synced passkeys of one account", async () => {
+    const t = await shared();
+    const text = t.fourth();
+    const opened = await reply(
+      t.open(text, await t.approval(t.laptop, text, { synced: true })),
+    );
+    expect(opened).toMatchObject({
+      status: "open",
+      missing:
+        "needs 1 more approval, from another account or a passkey that is not synced",
+    });
+    const second = await reply(
+      approve(t, opened.id!, await t.approval(t.phone, text, { synced: true })),
+    );
+    expect(second).toMatchObject({
+      status: "open",
+      missing:
+        "needs approval from another account's passkey, or from one that is not synced",
+    });
+    expect(t.trustActions()).toEqual([]);
+  });
+
+  it("applies when one of the two approvals comes from a passkey that is not synced", async () => {
+    const t = await shared();
+    const text = t.fourth();
+    const opened = await reply(
+      t.open(text, await t.approval(t.laptop, text, { synced: true })),
+    );
+    const second = await reply(
+      approve(t, opened.id!, await t.approval(t.phone, text)),
+    );
+    expect(second).toMatchObject({ status: "applied" });
+    expect(t.trustActions()).toHaveLength(3);
+  });
+
+  it("refuses a change that leaves the owners out, names only some, or names the wrong one", async () => {
+    const t = await shared();
+    const open = async (text: string) => {
+      const response = await t.open(text, await t.approval(t.laptop, text));
+      return { status: response.status, ...(await reply(response)) };
+    };
+    expect(await open(t.fourth({}))).toMatchObject({
+      status: 400,
+      code: "NEEDS_ACCOUNTS",
+    });
+    expect(
+      await open(t.fourth({ Laptop: ME, Phone: ME, Tablet: FRIEND })),
+    ).toMatchObject({ status: 400, code: "NEEDS_ACCOUNTS" });
+    expect(await open(t.fourth({ ...OWNERS, Helper: FRIEND }))).toMatchObject({
+      status: 400,
+      code: "WRONG_ACCOUNT",
+    });
+    expect(t.trustActions()).toEqual([]);
+  });
+
+  it("names the server that must be updated before owners reach it", async () => {
+    const t = await shared();
+    t.sqlite
+      .prepare(
+        "UPDATE nodes SET agent_version = '0.7.21', name = 'server-2' WHERE id = ?",
+      )
+      .run(B);
+    const text = t.fourth();
+    const response = await t.open(text, await t.approval(t.laptop, text));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      code: "NEEDS_AGENT",
+      message: "Update server-2 to agent 0.7.22 first.",
+    });
+  });
+
+  it("moves a passkey to another account when its owner opens the change", async () => {
+    const t = await shared();
+    const text = t.change({
+      core: t.trusted,
+      access: t.everywhere(t.trusted),
+      accounts: { ...OWNERS, Phone: FRIEND },
+    });
+    const opened = await reply(t.open(text, await t.approval(t.laptop, text)));
+    expect(opened).toMatchObject({
+      status: "open",
+      missing: "needs 1 more approval",
+    });
+    expect(t.account(t.phone)).toBe(ME);
+    const second = await reply(
+      approve(t, opened.id!, await t.approval(t.phone, text)),
+    );
+    expect(second).toMatchObject({ status: "applied" });
+    expect(t.account(t.phone)).toBe(FRIEND);
+    const listed = (await (await t.call("GET", "/api/proposals")).json()) as {
+      proposals: { title: string }[];
+    };
+    expect(listed.proposals[0]!.title).toBe("Move Phone to user2");
+  });
+
+  it("lets nobody else move a passkey", async () => {
+    const t = await shared();
+    const text = t.change({
+      core: t.trusted,
+      access: t.everywhere(t.trusted),
+      accounts: { ...OWNERS, Tablet: ME },
+    });
+    const response = await t.open(text, await t.approval(t.laptop, text));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      code: "NOT_YOUR_DEVICE",
+      message: "Only its owner can move Tablet to another account.",
+    });
+    expect(t.account(t.tablet)).toBe(FRIEND);
+  });
+
+  it("records the owners on servers that store none", async () => {
+    const t = setup("0.7.22");
+    const [laptop, phone] = await fleet(2);
+    await t.register(laptop!);
+    await t.register(phone!);
+    for (const nodeId of [A, B, C]) {
+      await t.report(nodeId, [laptop!, phone!], [laptop!, phone!]);
+    }
+    const both = [laptop!, phone!];
+    const text = t.change({
+      core: both,
+      access: { [A]: both, [B]: both, [C]: both },
+      accounts: { Laptop: ME, Phone: ME },
+    });
+    const opened = await reply(
+      t.open(text, await t.approval(laptop!, text, { synced: true })),
+    );
+    expect(opened).toMatchObject({ status: "applied" });
+    const listed = (await (await t.call("GET", "/api/proposals")).json()) as {
+      proposals: { title: string }[];
+    };
+    expect(listed.proposals[0]!.title).toBe("Record Passkey Owners");
+    const signed = JSON.parse(t.trustActions()[0]!.signed) as {
+      change: string;
+    };
+    expect(
+      (
+        JSON.parse(new TextDecoder().decode(fromB64url(signed.change))) as {
+          core: { account: string }[];
+        }
+      ).core.map((key) => key.account),
+    ).toEqual([ME, ME]);
+  });
+
+  it("gives a later server the owners with its first trust, never a list without them", async () => {
+    const t = await shared([A, B]);
+    const first = (accounts?: Record<string, string>) =>
+      t.call("POST", "/api/trust", {
+        changes: [
+          t.change({
+            version: 1,
+            requireUv: true,
+            core: t.trusted,
+            access: { [C]: [] },
+            accounts,
+          }),
+        ],
+      });
+    expect((await first()).status).toBe(400);
+    expect((await first({ ...OWNERS, Tablet: ME })).status).toBe(400);
+    expect((await first(OWNERS)).status).toBe(202);
+  });
+
+  it("does not send owners to a first trust on an older agent", async () => {
+    const t = await shared([A, B]);
+    t.sqlite
+      .prepare(
+        "UPDATE nodes SET agent_version = '0.7.21', name = 'server-3' WHERE id = ?",
+      )
+      .run(C);
+    const response = await t.call("POST", "/api/trust", {
+      changes: [
+        t.change({
+          version: 1,
+          requireUv: true,
+          core: t.trusted,
+          access: { [C]: [] },
+          accounts: OWNERS,
+        }),
+      ],
+    });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      code: "NEEDS_AGENT",
+      message: "Update server-3 to agent 0.7.22 first.",
+    });
   });
 });
 

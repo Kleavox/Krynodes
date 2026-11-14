@@ -8,6 +8,7 @@ export interface TrustReport {
   access: string[];
   passphrase: boolean;
   requireUv: boolean;
+  accounts?: string[];
 }
 
 interface FleetDevice {
@@ -36,7 +37,9 @@ export interface Fleet {
   nodes: FleetNode[];
   core: string[];
   proof: string[];
+  labelled: boolean;
   ids: (prints: string[]) => string[];
+  owners: (report: TrustReport | null) => Record<string, string>;
 }
 
 export function readReport(text: string | null): TrustReport | null {
@@ -49,6 +52,7 @@ export function readReport(text: string | null): TrustReport | null {
       access: parsed.access ?? [],
       passphrase: parsed.passphrase ?? false,
       requireUv: parsed.requireUv ?? false,
+      ...(parsed.accounts?.length ? { accounts: parsed.accounts } : {}),
     };
   } catch {
     return null;
@@ -146,6 +150,14 @@ export async function loadFleet(
     listed
       .filter((device) => prints.includes(device.fingerprint))
       .map((device) => device.id);
+  const owners = (report: TrustReport | null) =>
+    Object.fromEntries(
+      listed.flatMap((device) => {
+        const account =
+          report?.accounts?.[report.core.indexOf(device.fingerprint)];
+        return account ? [[device.id, account] as const] : [];
+      }),
+    );
   const suspect = new Set(
     nodes.results.filter((row) => row.quarantined === 1).map((row) => row.id),
   );
@@ -171,7 +183,11 @@ export async function loadFleet(
                 device.verifies === true && device.lastUsedAt !== null,
             )
             .map((device) => device.id),
+    labelled: listedNodes.some(
+      (node) => !suspect.has(node.id) && node.report?.accounts != null,
+    ),
     ids,
+    owners,
   };
 }
 

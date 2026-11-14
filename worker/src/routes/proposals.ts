@@ -1,6 +1,8 @@
 import {
+  ACCOUNTS_AGENT,
   MIN_AGENT_VERSION,
   TRUST_VERSION_STEP,
+  agentKnowsAccounts,
   evaluateQuorum,
   summarizeChange,
   trustChangeSchema,
@@ -14,6 +16,7 @@ import { pokeNodes } from "../fleet/client";
 import type { Env } from "../env";
 import { fromB64url } from "../lib/b64url";
 import { sendProposalEmail } from "../lib/mail";
+import { assertionSynced } from "../lib/webauthn";
 import { Refusal, verifyApproval } from "../trust/approval";
 import {
   agentCurrent,
@@ -84,6 +87,13 @@ function decodeChange(text: string): TrustChange | null {
   }
 }
 
+const named = (change: TrustChange) =>
+  Object.fromEntries(
+    (change.core ?? []).flatMap((key) =>
+      key.account ? [[key.id, key.account] as const] : [],
+    ),
+  );
+
 function describe(fleet: Fleet, change: TrustChange) {
   const names = Object.fromEntries(
     fleet.devices.map((device) => [device.id, device.name]),
@@ -101,9 +111,14 @@ function describe(fleet: Fleet, change: TrustChange) {
         fleet.ids(node.report?.access ?? []),
       ]),
     ),
+    currentAccounts: Object.assign(
+      {},
+      ...fleet.nodes.map((node) => fleet.owners(node.report)),
+    ) as Record<string, string>,
     change: {
       core: change.core?.map((key) => key.id) ?? null,
       access: change.access,
+      accounts: named(change),
     },
   }).title;
 }
@@ -119,16 +134,91 @@ function missing(
       current: {
         core: fleet.ids(node?.report?.core ?? []),
         access: fleet.ids(node?.report?.access ?? []),
+        accounts: fleet.owners(node?.report ?? null),
       },
-      change: { core: change.core?.map((key) => key.id) ?? null, access },
+      change: {
+        core: change.core?.map((key) => key.id) ?? null,
+        access,
+        accounts: named(change),
+      },
       approvals: approvals.map((approval) => approval.credentialId),
+      unsynced: approvals
+        .filter((approval) => !assertionSynced(approval.authenticatorData))
+        .map((approval) => approval.credentialId),
     });
     if (!result.ok) return result.reason;
   }
   return null;
 }
 
-function checkChange(env: Env, fleet: Fleet, change: TrustChange, now: number) {
+function movedKeys(fleet: Fleet, change: TrustChange) {
+  return (change.core ?? []).flatMap((key) => {
+    const device = fleet.devices.find((entry) => entry.id === key.id);
+    return device && key.account && device.account !== key.account
+      ? [{ device, account: key.account }]
+      : [];
+  });
+}
+
+function checkAccounts(
+  fleet: Fleet,
+  change: TrustChange,
+  opener: string | null,
+) {
+  const keys = change.core ?? [];
+  const owned = keys.filter((key) => key.account !== undefined);
+  if (owned.length === 0) {
+    if (keys.length > 0 && fleet.labelled) {
+      throw new Refusal(
+        400,
+        "NEEDS_ACCOUNTS",
+        "Your servers store who owns each passkey, so a change names every owner. Start again.",
+      );
+    }
+    return;
+  }
+  if (owned.length !== keys.length) {
+    throw new Refusal(
+      400,
+      "NEEDS_ACCOUNTS",
+      "A change names the owner of every passkey or of none.",
+    );
+  }
+  for (const nodeId of Object.keys(change.access)) {
+    const node = fleet.nodes.find((entry) => entry.id === nodeId);
+    if (node && !agentKnowsAccounts(node.agentVersion)) {
+      throw new Refusal(
+        422,
+        "NEEDS_AGENT",
+        `Update ${node.name} to agent ${ACCOUNTS_AGENT} first.`,
+      );
+    }
+  }
+  for (const { device } of movedKeys(fleet, change)) {
+    if (!fleet.core.includes(device.id) || device.account === null) {
+      throw new Refusal(
+        400,
+        "WRONG_ACCOUNT",
+        `${device.name} was registered by another account than the change names.`,
+      );
+    }
+    if (opener !== null && device.account !== opener) {
+      throw new Refusal(
+        403,
+        "NOT_YOUR_DEVICE",
+        `Only its owner can move ${device.name} to another account.`,
+      );
+    }
+  }
+}
+
+function checkChange(
+  env: Env,
+  fleet: Fleet,
+  change: TrustChange,
+  now: number,
+  opener: string | null,
+) {
   const origin = new URL(env.PUBLIC_ORIGIN);
   if (change.origin !== origin.origin || change.rpId !== origin.hostname) {
     throw new Refusal(400, "WRONG_ORIGIN", "The change is for another origin.");
@@ -171,6 +261,7 @@ function checkChange(env: Env, fleet: Fleet, change: TrustChange, now: number) {
     }
   }
   checkFingerprints(fleet, change);
+  checkAccounts(fleet, change, opener);
   if (devicesOrRule) {
     const trusted = fleet.nodes.filter(
       (node) => (node.report?.core.length ?? 0) > 0,
@@ -341,6 +432,16 @@ async function apply(
       ),
     ...syncedUpdates(db, input.ownerId, input.approvals),
   ];
+  for (const { device, account } of movedKeys(input.fleet, input.change)) {
+    statements.push(
+      db
+        .prepare(
+          `UPDATE devices SET account = ?1
+           WHERE id = ?2 AND owner_user_id = ?3 AND ${open(4)}`,
+        )
+        .bind(account, device.id, input.ownerId, guard),
+    );
+  }
   if (input.change.core) {
     statements.push(
       db
@@ -499,7 +600,7 @@ export function registerProposalRoutes(
     try {
       await sweepExpired(context.env, identity.id, now);
       const fleet = await loadFleet(context.env.DB, identity.id);
-      checkChange(context.env, fleet, change, now);
+      checkChange(context.env, fleet, change, now, identity.email);
       const open = await context.env.DB.prepare(
         "SELECT COUNT(*) AS n FROM proposals WHERE owner_user_id = ? AND status = 'open'",
       )
@@ -599,7 +700,7 @@ export function registerProposalRoutes(
         );
       }
       const fleet = await loadFleet(context.env.DB, identity.id);
-      checkChange(context.env, fleet, change, now);
+      checkChange(context.env, fleet, change, now, null);
       await verifyApproval(
         context.env,
         fleet,
