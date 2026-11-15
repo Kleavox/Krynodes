@@ -240,6 +240,7 @@ export function displayName(kind: ActionKind, name: string): string {
   }
   if (kind === "network") return "the private network";
   if (kind === "host" && name === "docker") return "Docker";
+  if (kind === "host" && name === "tailscale") return "Tailscale";
   if (kind === "host") return RECIPE_TITLES[name]?.toLowerCase() ?? "server";
   return kind === "systemd" ? name.replace(/\.service$/u, "") : name;
 }

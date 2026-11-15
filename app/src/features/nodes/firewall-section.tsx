@@ -28,7 +28,9 @@ import { useNetwork } from "@/lib/api";
 import {
   addressesOf,
   firewallState,
+  firewallBlocker,
   fromArg,
+  fromLine,
   fromText,
   listensText,
   MAX_ADDRESSES,
@@ -51,9 +53,8 @@ const sectionTitle = "text-xs font-medium text-muted-foreground";
 const AREA =
   "w-full resize-y rounded-md border bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
 
-const FROM: { value: FirewallOpening["from"]; label: string }[] = [
+export const FROM: { value: FirewallOpening["from"]; label: string }[] = [
   { value: "everyone", label: "Everyone" },
-  { value: "tailscale", label: "Tailscale" },
   { value: "addresses", label: "Addresses" },
 ];
 
@@ -200,9 +201,7 @@ function FirewallDialog({
           ? [
               opening.from === "everyone"
                 ? `Anyone on the internet can reach ${key}.`
-                : opening.from === "tailscale"
-                  ? `Only devices on your tailnet can reach ${key}.`
-                  : `Only ${fromText(opening)} can reach ${key}.`,
+                : `Only ${fromText(opening)} can reach ${key}.`,
             ]
           : [
               `Opens a port in ${tool}. SSH and the private network stay open as they are.`,
@@ -286,11 +285,9 @@ function FirewallDialog({
                 />
               )}
               <p className="text-xs text-muted-foreground">
-                {from === "tailscale"
-                  ? "Only from devices on your tailnet, through tailscale0."
-                  : from === "addresses"
-                    ? `IPv4 or IPv6 addresses or ranges, one per line, up to ${MAX_ADDRESSES}.`
-                    : "From anywhere on the internet."}
+                {from === "addresses"
+                  ? `IPv4 or IPv6 addresses or ranges, one per line, up to ${MAX_ADDRESSES}.`
+                  : "From anywhere on the internet."}
               </p>
             </fieldset>
             {problem && (port !== "" || from === "addresses") && (
@@ -388,6 +385,7 @@ export function FirewallSection({
   const locked = member ? firewallRow(member) : null;
   const tool = firewallName(report);
   const state = firewallState(report, choice);
+  const blocker = firewallBlocker(report);
   const act = state.action;
   return (
     <section aria-labelledby="node-firewall">
@@ -403,6 +401,8 @@ export function FirewallSection({
             variant={act === "open" ? "ghost" : "outline"}
             size="sm"
             className="ml-auto h-9 md:h-8"
+            disabled={blocker !== null}
+            title={blocker ?? undefined}
             onClick={() =>
               act === "open"
                 ? setStep({ step: "open" })
@@ -413,6 +413,7 @@ export function FirewallSection({
           </Button>
         )}
       </div>
+      {blocker && <p className="mb-2 text-xs text-warning">{blocker}</p>}
       {!wall?.closed ? (
         <p className="rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground">
           {state.line ?? `${tool} is on.`}
@@ -440,27 +441,29 @@ export function FirewallSection({
                 title={
                   <>
                     <span className="font-mono">{key}</span> ·{" "}
-                    {fromText(opening)}
+                    {fromLine(opening)}
                   </>
                 }
                 line={listens.text}
                 tone={listens.idle ? "idle" : "plain"}
                 menu={
-                  <RowMenu
-                    label={`${key} actions`}
-                    items={[
-                      {
-                        label: "Change From",
-                        onSelect: () => setStep({ step: "from", opening }),
-                      },
-                      {
-                        label: "Close Port",
-                        destructive: true,
-                        onSelect: () =>
-                          setStep({ step: "close", opening, listens }),
-                      },
-                    ]}
-                  />
+                  blocker ? undefined : (
+                    <RowMenu
+                      label={`${key} actions`}
+                      items={[
+                        {
+                          label: "Change From",
+                          onSelect: () => setStep({ step: "from", opening }),
+                        },
+                        {
+                          label: "Close Port",
+                          destructive: true,
+                          onSelect: () =>
+                            setStep({ step: "close", opening, listens }),
+                        },
+                      ]}
+                    />
+                  )
                 }
               />
             );

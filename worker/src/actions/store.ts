@@ -7,7 +7,6 @@ import {
 } from "@krynodes/protocol";
 
 import { fromB64url } from "../lib/b64url";
-import { tailscaleResults } from "../tailscale/results";
 import { loadEstate } from "./attention";
 
 const ACTION_TTL_MS = 10 * 60_000;
@@ -71,7 +70,6 @@ export type ActionVerb =
   | "forget"
   | "install"
   | "uninstall"
-  | "signin"
   | "refresh"
   | "find"
   | "preview"
@@ -87,17 +85,9 @@ export type ActionVerb =
   | "unprepare"
   | "rekey"
   | "accept"
-  | "block"
-  | "unblock"
   | "drop"
   | "tighten"
-  | "policy"
-  | "save"
-  | "key"
-  | "join"
   | "admin"
-  | "exitnode"
-  | "dns"
   | "open"
   | "close"
   | "putback"
@@ -544,6 +534,7 @@ function followUp(
   at: string,
   output: string,
 ): D1PreparedStatement[] {
+  if (action.kind === "vault" && action.name !== "cloudflare") return [];
   if (
     action.kind === "host" &&
     action.name === "server" &&
@@ -595,9 +586,6 @@ function followUp(
             .bind(cleanup, nodeId),
         ]
       : [attach];
-  }
-  if (action.name === "tailscale" && action.kind !== "compose") {
-    return tailscaleResults(db, nodeId, action, argsOf(action), at, output);
   }
   if (action.action === "store") {
     const { set, holders } = argsOf(action);

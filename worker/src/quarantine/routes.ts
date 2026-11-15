@@ -56,8 +56,8 @@ const stepSchema = z.object({
   id: z.string().uuid(),
   nodeId: z.string().uuid(),
   kind: z.literal("host"),
-  name: z.enum(["server", "tailscale"]),
-  action: z.enum(["accept", "release", "unlock", "unblock"]),
+  name: z.literal("server"),
+  action: z.enum(["accept", "release", "unlock"]),
   signed: signedCommandSchema,
 });
 
@@ -155,14 +155,13 @@ async function verified(
 
 const ownedNode = (context: KrynodesContext, id: string) =>
   context.env.DB.prepare(
-    "SELECT id, name, vault, tailscale_vault, release FROM nodes WHERE id = ? AND owner_user_id = ?",
+    "SELECT id, name, vault, release FROM nodes WHERE id = ? AND owner_user_id = ?",
   )
     .bind(id, context.get("identity").id)
     .first<{
       id: string;
       name: string;
       vault: string | null;
-      tailscale_vault: string | null;
       release: string | null;
     }>();
 
@@ -402,7 +401,6 @@ export function registerQuarantineRoutes(
     ]);
     const timeline = parsed<Timeline>(row?.timeline ?? null, {
       batches: [],
-      tailnet: [],
       dropped: [],
     });
     const knocks = row
@@ -456,8 +454,6 @@ export function registerQuarantineRoutes(
             at: row.at,
             releasedAt: row.released_at,
             releasedBy: row.released_by,
-            tailnet: timeline.tailnet,
-            removed: timeline.removed ?? null,
             address: address ?? null,
             knocks,
             steps: steps.map((step) => ({
@@ -483,7 +479,6 @@ export function registerQuarantineRoutes(
       changeThese: {
         stacks: stacks.results.map((stack) => stack.project),
         vault: parsed<unknown>(node.vault, null),
-        tailscaleVault: parsed<unknown>(node.tailscale_vault, null),
         webAddresses: web.results,
         trusted: others,
       },
@@ -499,10 +494,10 @@ export function registerQuarantineRoutes(
     if (!node) return notFound(context);
     const open = await db
       .prepare(
-        "SELECT id, timeline FROM quarantines WHERE node_id = ? AND released_at IS NULL",
+        "SELECT id FROM quarantines WHERE node_id = ? AND released_at IS NULL",
       )
       .bind(node.id)
-      .first<{ id: string; timeline: string }>();
+      .first<{ id: string }>();
     if (!open) {
       return context.json(
         {
@@ -547,23 +542,7 @@ export function registerQuarantineRoutes(
     }
     const steps = await verified(context, body.data.steps);
     if (steps instanceof Response) return steps;
-    const timeline = parsed<Timeline>(open.timeline, {
-      batches: [],
-      tailnet: [],
-      dropped: [],
-    });
-    const blocked = (
-      await db
-        .prepare(
-          `SELECT node_id FROM actions
-           WHERE batch_id IN (SELECT value FROM json_each(?)) AND action = 'block'`,
-        )
-        .bind(JSON.stringify(timeline.batches))
-        .all<{ node_id: string }>()
-    ).results.map((row) => row.node_id);
     const unlocks = is(steps[1], node.id, "server", "unlock", {}) ? 1 : 0;
-    const unblocks = steps.slice(1 + unlocks);
-    const addresses = { addresses: timeline.tailnet.join(" ") };
     if (
       !is(steps[0], node.id, "server", "release", {
         key: release.key,
@@ -572,13 +551,7 @@ export function registerQuarantineRoutes(
         token: release.token,
         code: body.data.code,
       }) ||
-      unblocks.length !== blocked.length ||
-      new Set(unblocks.map((step) => step.nodeId)).size !== unblocks.length ||
-      !unblocks.every(
-        (step) =>
-          blocked.includes(step.nodeId) &&
-          is(step, step.nodeId, "tailscale", "unblock", addresses),
-      )
+      steps.length !== 1 + unlocks
     ) {
       return invalidRequest(context);
     }
@@ -615,7 +588,7 @@ export function registerQuarantineRoutes(
           detail: null,
           requestedBy: identity.email,
           deviceId: device,
-          nodes: [node.id, ...blocked],
+          nodes: [node.id],
           joins: [],
           leaves: [],
         }),
@@ -636,7 +609,7 @@ export function registerQuarantineRoutes(
         409,
       );
     }
-    pokeSoon(context, identity.id, [node.id, ...blocked]);
+    pokeSoon(context, identity.id, [node.id]);
     return context.json(
       { batchId: batch.batchId, actions: batch.actions },
       201,

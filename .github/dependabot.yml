@@ -7,6 +7,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
       actions-security:
         applies-to: security-updates
         patterns: ["*"]
@@ -15,9 +16,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
       npm-security:
         applies-to: security-updates
         patterns: ["*"]
@@ -28,6 +33,7 @@ updates:
     groups:
       go:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
       go-security:
         applies-to: security-updates
         patterns: ["*"]

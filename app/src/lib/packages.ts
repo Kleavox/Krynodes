@@ -1,5 +1,3 @@
-import { TAILSCALE, type TailscaleReport } from "@krynodes/protocol";
-
 import type {
   ActionRecord,
   AptReport,
@@ -14,20 +12,11 @@ import {
   formatBytes,
   nodeState,
   parseTimestamp,
-  shortDate,
   stampTime,
   timeAgo,
 } from "./format";
 import { fromUtcHour } from "./security";
 import { isPending, RECIPE_TITLES } from "./services";
-
-const DAY_MS = 86_400_000;
-const EXPIRY_WARN_DAYS = 14;
-const MONTHS = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
 
 type Mark = "+" | "!" | "✓" | "−" | "↑" | "·" | "✕";
 
@@ -394,12 +383,11 @@ export function onTheirOwn(
 }
 
 export function packageAttention(
-  node: Pick<NodeRecord, "updates" | "tailscale">,
+  node: Pick<NodeRecord, "updates">,
   security:
     | Pick<SecurityReport, "recipes" | "rebootHour" | "findings">
     | null
     | undefined,
-  now: number,
   offsetMinutes = new Date().getTimezoneOffset(),
 ): { reasons: string[]; notes: string[] } {
   const reasons: string[] = [];
@@ -419,24 +407,13 @@ export function packageAttention(
   ) {
     reasons.push(`${count(updates.security, "security update")} waiting`);
   }
-  const expiry =
-    node.tailscale?.keyExpiry && !tagged(node.tailscale)
-      ? parseTimestamp(node.tailscale.keyExpiry)
-      : null;
-  if (expiry !== null && expiry <= now) {
-    reasons.push("Tailscale key expired");
-  } else if (expiry !== null && expiry - now <= EXPIRY_WARN_DAYS * DAY_MS) {
-    notes.push(
-      `Tailscale key expires in ${count(Math.ceil((expiry - now) / DAY_MS), "day")}`,
-    );
-  }
   return { reasons, notes };
 }
 
 export function busyText(
   action: Pick<ActionRecord, "kind" | "name" | "action" | "progress">,
 ): string | null {
-  if (action.kind !== "apt" && !namesServer(action)) return null;
+  if (action.kind !== "apt") return null;
   const doing: Partial<Record<ActionRecord["action"], string>> = {
     upgrade: "Upgrading packages",
     install: `Installing ${action.name}`,
@@ -447,7 +424,6 @@ export function busyText(
     droprepo: `Removing the ${action.name} repository`,
     hold: `Holding ${action.name}`,
     unhold: `Releasing the hold on ${action.name}`,
-    signin: "Signing in to Tailscale",
   };
   const step = action.progress;
   return (
@@ -458,119 +434,6 @@ export function busyText(
       .filter(Boolean)
       .join(" · ") || null
   );
-}
-
-export interface TailscaleLine {
-  lines: string[];
-  warn: boolean;
-  action: "Sign In" | "Sign In Again" | null;
-  after: string | null;
-}
-
-const tagged = (report: TailscaleReport) =>
-  report.tags?.includes(TAILSCALE.tag) ?? false;
-
-export function tailscaleLine(
-  report: TailscaleReport,
-  name: string,
-  now: number,
-): TailscaleLine {
-  if (report.state === "stopped") {
-    return {
-      lines: [
-        "tailscaled is not running",
-        "Start it from Services. Signing in waits until it runs.",
-      ],
-      warn: true,
-      action: null,
-      after: null,
-    };
-  }
-  if (report.state === "running" && tagged(report)) {
-    return {
-      lines: [
-        report.addresses[0] ?? "--",
-        ...(report.name ? [report.name] : []),
-        `${TAILSCALE.tag} · key never expires`,
-      ],
-      warn: false,
-      action: null,
-      after: null,
-    };
-  }
-  const expiry = report.keyExpiry ? parseTimestamp(report.keyExpiry) : null;
-  if (expiry !== null && expiry <= now) {
-    return {
-      lines: [`Key expired ${shortDate(expiry)} · ${name} left your tailnet`],
-      warn: true,
-      action: "Sign In Again",
-      after: null,
-    };
-  }
-  if (report.state === "needs-login") {
-    return {
-      lines: ["Installed, not signed in"],
-      warn: false,
-      action: "Sign In",
-      after: null,
-    };
-  }
-  if (expiry !== null && expiry - now <= EXPIRY_WARN_DAYS * DAY_MS) {
-    return {
-      lines: [
-        `Key expires in ${count(Math.ceil((expiry - now) / DAY_MS), "day")}`,
-      ],
-      warn: true,
-      action: "Sign In Again",
-      after: `, or turn off key expiry for ${name} in Tailscale's admin console`,
-    };
-  }
-  return {
-    lines: [
-      report.addresses[0] ?? "--",
-      ...(report.name ? [report.name] : []),
-      expiry === null
-        ? "Key does not expire"
-        : `Key expires ${MONTHS.format(expiry)}`,
-    ],
-    warn: false,
-    action: null,
-    after: null,
-  };
-}
-
-export const signedIn = (
-  start: TailscaleReport,
-  current: TailscaleReport | null | undefined,
-) =>
-  current?.state === "running" &&
-  (start.state !== "running" || current.keyExpiry !== start.keyExpiry);
-
-export const signInRows = (name: string, again: boolean) =>
-  again
-    ? [`${name} keeps its other Tailscale settings`]
-    : [`${name} keeps its own DNS`, "Tailscale SSH stays off"];
-
-export function signedInLines(report: TailscaleReport, name: string): Line[] {
-  const expiry = report.keyExpiry ? parseTimestamp(report.keyExpiry) : null;
-  return [
-    {
-      mark: "✓",
-      title: `${name} is on your tailnet`,
-      detail: [
-        [report.addresses[0] ?? "--", report.name].filter(Boolean).join(" · "),
-      ],
-    },
-    expiry === null
-      ? { mark: "·", title: "Its Tailscale key does not expire", detail: [] }
-      : {
-          mark: "·",
-          title: `Its Tailscale key expires on ${MONTHS.format(expiry)}`,
-          detail: [
-            `Krynodes tells you ${EXPIRY_WARN_DAYS} days before. Or turn off key expiry for ${name} in Tailscale's admin console.`,
-          ],
-        },
-  ];
 }
 
 function portsDetail(
@@ -671,23 +534,12 @@ export function removeChoices(
 
 export function removeLines(
   preview: RemovePreview,
-  context: {
-    nodeName: string;
-    repository: boolean;
-    tailscale?: TailscaleReport | null;
-    publicAddress?: string | null;
-  },
+  context: { repository: boolean },
 ): Line[] {
   if (preview.refused) {
     return [{ mark: "!", title: preview.refused, detail: [] }];
   }
-  const tailnet =
-    preview.removes.includes("tailscale") &&
-    context.tailscale?.state === "running";
-  const address = context.tailscale?.addresses[0];
-  const stops = preview.stops
-    .filter((unit) => !(tailnet && unit === "tailscaled.service"))
-    .map(unitName);
+  const stops = preview.stops.map(unitName);
   return [
     {
       mark: "−",
@@ -698,24 +550,6 @@ export function removeLines(
     },
     ...(stops.length > 0
       ? [{ mark: "!" as const, title: `Stops ${list(stops)}`, detail: [] }]
-      : []),
-    ...(tailnet
-      ? [
-          {
-            mark: "!" as const,
-            title: `${context.nodeName} leaves your tailnet`,
-            detail: [
-              [
-                address
-                  ? `SSH to ${address} stops working${context.publicAddress ? `; use the public address ${context.publicAddress} instead.` : "."}`
-                  : null,
-                "Krynodes keeps its own connection.",
-              ]
-                .filter(Boolean)
-                .join(" "),
-            ],
-          },
-        ]
       : []),
   ];
 }
@@ -860,7 +694,6 @@ export function finishedLines(
   context: {
     nodeName: string;
     stacks?: { project: string; running: number; total: number }[];
-    tailscale?: TailscaleReport | null;
   },
 ): Line[] {
   const outcome = outcomeOf(action);
@@ -965,26 +798,6 @@ export function finishedLines(
       title: `${listener.process || "A new program"} listens on port ${listener.port}/${listener.protocol}`,
       detail: [],
     });
-  }
-  if (
-    action.action === "install" &&
-    action.name === "tailscale" &&
-    !outcome.failed
-  ) {
-    if (context.tailscale && context.tailscale.state !== "stopped") {
-      lines.push({
-        mark: "✓",
-        title: "tailscaled is running, and starts at every boot",
-        detail: [],
-      });
-    }
-    if (context.tailscale?.state !== "running") {
-      lines.push({
-        mark: "!",
-        title: `${context.nodeName} is not on your tailnet yet`,
-        detail: ["Sign it in from here. No terminal needed."],
-      });
-    }
   }
   if (old.length > 0) {
     lines.push({
@@ -1095,7 +908,6 @@ export function jobLines(
   const said: Partial<Record<ActionRecord["action"], string>> = {
     droprepo: `Removed the ${action.name} repository`,
     refresh: "Checked for updates",
-    signin: "Asked tailscaled to sign in",
   };
   return [{ mark: "✓", title: said[action.action] ?? "Done", detail: [] }];
 }
@@ -1165,7 +977,6 @@ export function jobTitle(
     refresh: `Checking for updates on ${nodeName}`,
     addrepo: `Adding the ${action.name} repository on ${nodeName}`,
     droprepo: `Removing the ${action.name} repository from ${nodeName}`,
-    signin: `Signing ${nodeName} in to Tailscale`,
   };
   return titles[action.action] ?? nodeName;
 }
@@ -1194,9 +1005,6 @@ export function packageText(
   action: Pick<ActionRecord, "kind" | "name" | "action" | "output">,
   nodeName?: string,
 ): string | null {
-  if (action.kind === "host" && action.action === "signin") {
-    return `Sign in ${nodeName ?? "the server"} to Tailscale`;
-  }
   if (action.kind !== "apt") return null;
   const name = action.name;
   switch (action.action) {
@@ -1236,9 +1044,6 @@ export function packageText(
   }
 }
 
-export const namesServer = (action: Pick<ActionRecord, "kind" | "action">) =>
-  action.kind === "host" && action.action === "signin";
-
 export const repoName = (file: string) =>
   (file.split("/").at(-1) ?? file).replace(/\.(?:sources|list)$/u, "");
 
@@ -1249,7 +1054,7 @@ export const runningPackages = (actions: ActionRecord[], nodeId: string) =>
     (action) =>
       action.nodeId === nodeId &&
       isPending(action) &&
-      (action.kind === "apt" || namesServer(action)) &&
+      action.kind === "apt" &&
       !QUESTION.has(action.action),
   );
 

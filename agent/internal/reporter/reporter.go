@@ -340,36 +340,6 @@ func (r PackagesReport) MarshalJSON() ([]byte, error) {
 	return json.Marshal(plain(r))
 }
 
-type TailscaleReport struct {
-	State     string            `json:"state"`
-	Addresses []string          `json:"addresses"`
-	Name      *string           `json:"name"`
-	KeyExpiry *string           `json:"keyExpiry"`
-	ID        *string           `json:"id"`
-	Tailnet   *string           `json:"tailnet"`
-	Tags      []string          `json:"tags"`
-	Peers     int               `json:"peers"`
-	Reach     *[]TailscaleReach `json:"reach"`
-	Names     map[string]string `json:"names"`
-	ExitNode  *ExitNode         `json:"exitNode,omitempty"`
-	AcceptDNS *bool             `json:"acceptDNS,omitempty"`
-}
-
-type ExitNode struct {
-	Advertised bool `json:"advertised"`
-	Approved   bool `json:"approved"`
-}
-
-type TailscaleReach struct {
-	From  []string `json:"from"`
-	Ports []string `json:"ports"`
-}
-
-type TailscaleUse struct {
-	From string `json:"from"`
-	Port string `json:"port"`
-}
-
 type InventoryReport struct {
 	Hash      string            `json:"hash"`
 	Docker    string            `json:"docker,omitempty"`
@@ -382,11 +352,8 @@ type InventoryReport struct {
 	Stacks    *[]StackEntry     `json:"stacks,omitempty"`
 	Trust     *TrustReport      `json:"trust,omitempty"`
 	Packages  *PackagesReport   `json:"packages,omitempty"`
-	Tailscale *TailscaleReport  `json:"tailscale,omitempty"`
 	Network   *NetworkInventory `json:"network,omitempty"`
-
-	TailscaleVault *VaultSlot   `json:"tailscaleVault,omitempty"`
-	Bridges        *BridgesSlot `json:"bridges,omitempty"`
+	Bridges   *BridgesSlot      `json:"bridges,omitempty"`
 }
 
 type Bridges struct {

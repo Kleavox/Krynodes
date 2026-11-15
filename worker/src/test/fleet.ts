@@ -5,8 +5,8 @@ import { OWNER } from "./seed";
 export const V1 = "a1111111-1111-4111-8111-111111111111";
 export const V2 = "a2222222-2222-4222-8222-222222222222";
 export const V3 = "a3333333-3333-4333-8333-333333333333";
-export const IO = "a4444444-4444-4444-8444-444444444444";
-export const OLD = "a5555555-5555-4555-8555-555555555555";
+const IO = "a4444444-4444-4444-8444-444444444444";
+const OLD = "a5555555-5555-4555-8555-555555555555";
 
 export const keyOf = (n: number) =>
   btoa(String.fromCharCode(...new Array<number>(32).fill(n)));
@@ -26,22 +26,10 @@ export function seedFleet(
     sqlite
       .prepare(
         `INSERT INTO nodes (id, owner_user_id, name, agent_token_hash, interval_seconds,
-           enrolled_at, agent_version, tailscale)
-         VALUES (?, ?, ?, ?, 60, '2026-09-01 00:00:00', ?, ?)`,
+           enrolled_at, agent_version)
+         VALUES (?, ?, ?, ?, 60, '2026-09-01 00:00:00', ?)`,
       )
-      .run(
-        id,
-        OWNER,
-        name,
-        `hash-${id}`,
-        id === OLD ? "0.6.14" : "0.7.20",
-        id === V1
-          ? JSON.stringify({
-              installed: true,
-              addresses: ["100.101.7.10", "fd7a:115c:a1e0::7"],
-            })
-          : null,
-      );
+      .run(id, OWNER, name, `hash-${id}`, id === OLD ? "0.6.14" : "0.7.20");
   }
   sqlite
     .prepare(

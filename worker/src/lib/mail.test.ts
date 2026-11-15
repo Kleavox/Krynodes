@@ -278,7 +278,6 @@ describe("quarantine mail", () => {
       stacks: 2,
       pieces: 1,
       trusted: 1,
-      tailnet: true,
     });
     const { subject, text, html } = sent();
     expect(subject).toBe("[Krynodes] vps-1 is quarantined");
@@ -288,7 +287,7 @@ describe("quarantine mail", () => {
       "Why: vps-2 and vps-3 saw it knock on 41 closed ports in one minute",
       "Cut off: 2026-10-27 21:18 UTC",
       "Dropped by: vps-2 and vps-3",
-      "Change: The secrets of 2 stacks, 1 Cloudflare token piece and 1 service that trusted it, and its place on your tailnet, listed on the server page",
+      "Change: The secrets of 2 stacks, 1 Cloudflare token piece and 1 service that trusted it, listed on the server page",
       "Reinstall vps-1 if it was broken into. If it was a false alarm, release it from the server itself: run sudo kry release-code there, then type its code with your passkey.",
     ]) {
       expect(text).toContain(line);
@@ -309,7 +308,6 @@ describe("quarantine mail", () => {
       stacks: 0,
       pieces: 0,
       trusted: 0,
-      tailnet: false,
     });
     expect(sent().text).toContain("Dropped by: --");
     expect(sent().text).toContain(

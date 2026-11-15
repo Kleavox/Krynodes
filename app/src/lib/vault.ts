@@ -1,4 +1,4 @@
-import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
+import { MIN_AGENT_VERSION } from "@krynodes/protocol/versions";
 import type {
   ActionRecord,
   ActionVerb,
@@ -25,23 +25,8 @@ export interface OperationTarget extends CommandTarget {
 
 const encoder = new TextEncoder();
 
-export type VaultName = "cloudflare" | "tailscale";
-
-const WORDS = {
-  cloudflare: {
-    thing: "the token",
-    again: "Paste the token again.",
-    agent: MIN_AGENT_VERSION,
-  },
-  tailscale: {
-    thing: "the credential",
-    again: "Change the credential to share it again.",
-    agent: MIN_AGENT_VERSION,
-  },
-} as const;
-
-const vault = (nodeId: string, name: VaultName = "cloudflare") =>
-  ({ nodeId, kind: "vault", name }) as const;
+const vault = (nodeId: string) =>
+  ({ nodeId, kind: "vault", name: "cloudflare" }) as const;
 
 export function pieceJson(set: string, piece: Uint8Array): string {
   return JSON.stringify({ set, piece: btoa(String.fromCharCode(...piece)) });
@@ -52,12 +37,11 @@ export async function splitSteps(
   holders: Holder[],
   set: string,
   source: string | null,
-  name: VaultName = "cloudflare",
 ): Promise<OperationTarget[]> {
   const pieces = split(encoder.encode(token.trim()), holders.length);
   return Promise.all(
     holders.map(async (holder, index) => ({
-      ...vault(holder.nodeId, name),
+      ...vault(holder.nodeId),
       action: "store" as const,
       piece: await seal(holder.sealKey, pieceJson(set, pieces[index]!)),
       args: {
@@ -69,15 +53,14 @@ export async function splitSteps(
   );
 }
 
-export const release = (
+const release = (
   releaser: string,
   to: string,
   key: string,
   set: string,
   sender: string,
-  name: VaultName = "cloudflare",
 ): OperationTarget => ({
-  ...vault(releaser, name),
+  ...vault(releaser),
   action: "release",
   args: { to, key, set, sender },
 });
@@ -92,9 +75,7 @@ export function reshareSteps(input: {
   cleanup?: string;
   zone: string;
   forgets: string[];
-  name?: VaultName;
 }): OperationTarget[] {
-  const name = input.name ?? "cloudflare";
   const steps: OperationTarget[] = input.releaser
     ? [
         release(
@@ -103,13 +84,12 @@ export function reshareSteps(input: {
           input.keyOf[input.assembler] ?? "",
           input.source,
           input.keyOf[input.releaser] ?? "",
-          name,
         ),
       ]
     : [];
   const index = steps.length;
   steps.push({
-    ...vault(input.assembler, name),
+    ...vault(input.assembler),
     action: "reshare",
     args: {
       holders: input.holders
@@ -125,7 +105,7 @@ export function reshareSteps(input: {
   });
   for (const holder of input.holders) {
     steps.push({
-      ...vault(holder.nodeId, name),
+      ...vault(holder.nodeId),
       action: "store",
       args: {
         set: input.set,
@@ -146,12 +126,11 @@ export function reshareSteps(input: {
           input.keyOf[input.assembler] ?? "",
           input.source,
           input.keyOf[input.releaser] ?? "",
-          name,
         ),
       );
     }
     steps.push({
-      ...vault(input.assembler, name),
+      ...vault(input.assembler),
       action: "reshare",
       args: {
         only: "cleanup",
@@ -164,7 +143,7 @@ export function reshareSteps(input: {
     });
   }
   for (const nodeId of input.forgets) {
-    steps.push({ ...vault(nodeId, name), action: "forget" });
+    steps.push({ ...vault(nodeId), action: "forget" });
   }
   return steps;
 }
@@ -377,7 +356,6 @@ export interface VaultNode {
   reachable: boolean;
   online: boolean;
   quarantined?: boolean;
-  version?: string | null;
 }
 
 type Plan<T> = ({ ok: true } & T) | { ok: false; reason: string };
@@ -397,23 +375,14 @@ const usable = (node: VaultNode) =>
 const twoOnline = (count: number, without?: string) =>
   `Two servers ${without ? `other than ${without} ` : ""}holding a piece must be online; ${count} is.`;
 
-export const splitHolders = (
-  nodes: VaultNode[],
-  name: VaultName = "cloudflare",
-): Holder[] =>
+export const splitHolders = (nodes: VaultNode[]): Holder[] =>
   nodes
-    .filter(
-      (node) =>
-        usable(node) &&
-        node.sealKey &&
-        (name === "cloudflare" || agentSupported(node.version)),
-    )
+    .filter((node) => usable(node) && node.sealKey)
     .map((node) => ({ nodeId: node.id, sealKey: node.sealKey! }));
 
 export function planSpread(
   nodes: VaultNode[],
   setId: string | null,
-  name: VaultName = "cloudflare",
   without?: string,
 ): Plan<{
   assembler: string;
@@ -421,19 +390,18 @@ export function planSpread(
   holders: Holder[];
   forgets: string[];
 }> {
-  const words = WORDS[name];
-  const holders = splitHolders(nodes, name);
+  const holders = splitHolders(nodes);
   const current = nodes.filter((node) => pieceOf(node, setId) !== null);
   if (current.length === 0) {
     return {
       ok: false,
-      reason: `No server holds a piece any more. ${words.again}`,
+      reason: "No server holds a piece any more. Paste the token again.",
     };
   }
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `Your passkey reaches no online server with agent ${words.agent}.`,
+      reason: `Your passkey reaches no online server with agent ${MIN_AGENT_VERSION}.`,
     };
   }
   const online = current.filter(usable);
@@ -443,7 +411,7 @@ export function planSpread(
     return {
       ok: false,
       reason: whole
-        ? `${current[0]!.name} holds ${words.thing} and must be online.`
+        ? `${current[0]!.name} holds the token and must be online.`
         : twoOnline(online.length, without),
     };
   }
@@ -459,33 +427,11 @@ export function planSpread(
   };
 }
 
-export function planUse(
-  nodes: VaultNode[],
-  setId: string | null,
-  without?: string,
-): Plan<{ assembler: string; releaser: string }> {
-  const online = nodes.filter(
-    (node) =>
-      node.id !== without && usable(node) && pieceOf(node, setId) !== null,
-  );
-  if (online.length < 2) {
-    return {
-      ok: false,
-      reason: twoOnline(
-        online.length,
-        nodes.find((node) => node.id === without)?.name,
-      ),
-    };
-  }
-  return { ok: true, assembler: online[0]!.id, releaser: online[1]!.id };
-}
-
 export function planRemoval(
   nodes: VaultNode[],
   removed: string,
   setId: string | null,
   addresses = false,
-  name: VaultName = "cloudflare",
   suspect = false,
 ): Plan<
   | { needed: false }
@@ -504,7 +450,6 @@ export function planRemoval(
   const plan = planSpread(
     [...nodes.filter((node) => node.id !== removed), gone],
     setId,
-    name,
     suspect ? gone.name : undefined,
   );
   if (!plan.ok) return plan;
@@ -512,13 +457,7 @@ export function planRemoval(
   if (holders.length === 0) {
     return {
       ok: false,
-      reason: `No other server with agent ${WORDS[name].agent} that your passkey reaches can take ${WORDS[name].thing}.`,
-    };
-  }
-  if (name === "tailscale" && holders.length < 2) {
-    return {
-      ok: false,
-      reason: `Only one other server with agent ${WORDS[name].agent} that your passkey reaches can take ${WORDS[name].thing}, and it needs two.`,
+      reason: `No other server with agent ${MIN_AGENT_VERSION} that your passkey reaches can take the token.`,
     };
   }
   return {
@@ -563,7 +502,6 @@ export function vaultNodes(
   nodes: NodeRecord[],
   fingerprint: string | null,
   seen: number,
-  name: VaultName = "cloudflare",
 ): VaultNode[] {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   return data.nodes.flatMap((entry) => {
@@ -574,15 +512,13 @@ export function vaultNodes(
         id: entry.id,
         name: node.name,
         sealKey: entry.sealKey ?? null,
-        vault:
-          (name === "tailscale" ? entry.tailscaleVault : entry.vault) ?? null,
+        vault: entry.vault ?? null,
         reachable:
           fingerprint === null
             ? (entry.trust?.access.length ?? 0) > 0
             : (entry.trust?.access.includes(fingerprint) ?? false),
         online: nodeState(node, seen) === "online",
         quarantined: Boolean(node.quarantine),
-        version: node.agent_version,
       },
     ];
   });

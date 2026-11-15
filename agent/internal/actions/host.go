@@ -110,12 +110,6 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		return e.accept(request), false
 	case server && request.Action == "admin":
 		return e.adminExpect(request), false
-	case request.Name == "tailscale" && request.Action == "block":
-		return e.blockTailnet(ctx, request), false
-	case request.Name == "tailscale" && request.Action == "unblock":
-		return e.unblockTailnet(ctx, request), false
-	case request.Name == "tailscale" && request.Action == "inspect":
-		return e.inspectTailnet(ctx, request), false
 	case server && request.Action == "lockdown":
 		if err := writeJSON(filepath.Join(e.StateDir, "host"), request.ID+".json", request, 0o600); err != nil {
 			return e.failed(request, err, ""), false
@@ -123,7 +117,6 @@ func (e Executor) host(ctx context.Context, request Request) (Result, bool) {
 		return Result{}, true
 	case (server && (request.Action == "unlock" || request.Action == "release")) ||
 		(request.Name == "docker" && request.Action == "install") ||
-		(request.Name == "tailscale" && slices.Contains([]string{"signin", "join", "exitnode", "dns"}, request.Action)) ||
 		(request.Name == "firewall" && slices.Contains([]string{"open", "close", "putback"}, request.Action)) ||
 		(request.Name == "confinement" && (request.Action == "containers" || request.Action == "boolean")) ||
 		(!server && slices.Contains(Recipes, request.Name) && (request.Action == "apply" || request.Action == "undo")):
@@ -206,7 +199,6 @@ func (e Executor) HostApply(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.finishExitNodeOff(ctx, dir)
 	e.followSSH(ctx, dir)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -378,14 +370,6 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		return e.release(ctx, request, command)
 	case "unlock":
 		return e.unlock(ctx, request, env)
-	case "signin":
-		return e.signIn(ctx, request, command)
-	case "join":
-		return e.joinTailnet(ctx, request, command)
-	case "exitnode":
-		return e.exitNode(ctx, request, command)
-	case "dns":
-		return e.tailscaleDNS(ctx, request, command)
 	case "open", "close", "putback":
 		return e.changeFirewall(ctx, request, command)
 	case "containers":

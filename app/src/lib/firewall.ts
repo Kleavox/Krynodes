@@ -63,6 +63,8 @@ export function closedText(name: string, step: "on" | "close") {
   return `Krynodes takes over ${name}. The open ports below stay open; untick one to close it. Everything else closes, ports Docker publishes too.`;
 }
 
+const TAILSCALE_FREE_AGENT = "0.7.23";
+
 export function fromText(
   opening: Pick<FirewallOpening, "from" | "addresses">,
 ): string {
@@ -70,6 +72,20 @@ export function fromText(
   if (opening.from === "tailscale") return "Tailscale";
   return opening.addresses?.join(", ") || "--";
 }
+
+export const fromLine = (
+  opening: Pick<FirewallOpening, "from" | "addresses">,
+) =>
+  opening.from === "tailscale"
+    ? "From Tailscale · Set up outside Krynodes"
+    : fromText(opening);
+
+export const firewallBlocker = (
+  report: Pick<SecurityReport, "firewall">,
+): string | null =>
+  report.firewall?.open.some((opening) => opening.from === "tailscale")
+    ? `Update this server to agent ${TAILSCALE_FREE_AGENT} first`
+    : null;
 
 const published = (stacks: Stack[]) =>
   stacks.flatMap((stack) =>

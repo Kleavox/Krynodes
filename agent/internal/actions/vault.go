@@ -68,29 +68,21 @@ type webAddress struct {
 	Port      int    `json:"port,omitempty"`
 }
 
-func vaultName(name string) string {
-	if name == "tailscale" {
-		return "vault-tailscale.json"
-	}
-	return "vault.json"
-}
+const vaultName = "vault.json"
 
-func (e Executor) readVault(name string) (vaultFile, error) {
-	file, err := readState[vaultFile](e.StateDir, vaultName(name))
+func (e Executor) readVault() (vaultFile, error) {
+	file, err := readState[vaultFile](e.StateDir, vaultName)
 	if err != nil {
 		return file, err
 	}
 	if file.Set == "" || len(file.Piece) == 0 {
-		if name == "tailscale" {
-			return file, errors.New("this server holds no piece of the Tailscale credential")
-		}
 		return file, errors.New("this server holds no piece of the Cloudflare token")
 	}
 	return file, nil
 }
 
-func (e Executor) vaultReport(name string) *reporter.VaultReport {
-	file, err := e.readVault(name)
+func (e Executor) vaultReport() *reporter.VaultReport {
+	file, err := e.readVault()
 	if err != nil {
 		return nil
 	}
@@ -105,8 +97,8 @@ func (e Executor) cloudflare(token []byte) *cloudflare.Client {
 	return &cloudflare.Client{Token: string(token), Base: e.CloudflareBase, HTTP: e.CloudflareHTTP}
 }
 
-func (e Executor) secret(request Request, command Command, name string) ([]byte, error) {
-	file, err := e.readVault(name)
+func (e Executor) secret(request Request, command Command) ([]byte, error) {
+	file, err := e.readVault()
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +128,9 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
 	}
+	if !ValidTarget(request.Kind, request.Name) {
+		return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action))
+	}
 	command, err := e.authorize(request)
 	if err != nil {
 		return e.refuse(request.ID, err)
@@ -163,18 +158,18 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 		}
 		next := vaultFile{Set: piece.Set, Holders: holders, Piece: piece.Piece}
 		if source := command.Args["source"]; source != "" && source != piece.Set {
-			if current, err := e.readVault(request.Name); err == nil {
+			if current, err := e.readVault(); err == nil {
 				if kept, err := current.pieceFor(source); err == nil {
 					next.Previous = &kept
 				}
 			}
 		}
-		if err := writeJSON(e.StateDir, vaultName(request.Name), next, 0o600); err != nil {
+		if err := writeJSON(e.StateDir, vaultName, next, 0o600); err != nil {
 			return e.failed(request, err, "")
 		}
 		return ok("stored")
 	case "release":
-		file, err := e.readVault(request.Name)
+		file, err := e.readVault()
 		if err != nil {
 			return e.refuse(request.ID, err)
 		}
@@ -202,10 +197,8 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 		return ok(sealed)
 	case "reshare":
 		return e.reshare(ctx, request, command)
-	case "policy", "save", "key", "remove":
-		return e.tailnetJob(ctx, request, command)
 	case "forget":
-		if err := os.Remove(filepath.Join(e.StateDir, vaultName(request.Name))); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(filepath.Join(e.StateDir, vaultName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return e.failed(request, err, "")
 		}
 		return ok("forgotten")
@@ -215,10 +208,10 @@ func (e Executor) vault(ctx context.Context, request Request) Result {
 
 func (e Executor) cleanAfter(ctx context.Context, request Request, command Command) Result {
 	gone := command.Args["cleanup"]
-	if gone == "" || request.Name == "tailscale" {
+	if gone == "" {
 		return e.refuse(request.ID, errors.New("the cleanup names no server"))
 	}
-	token, err := e.secret(request, command, request.Name)
+	token, err := e.secret(request, command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -249,7 +242,7 @@ func (e Executor) reshare(ctx context.Context, request Request, command Command)
 		}
 		holders = append(holders, holder{node, key})
 	}
-	token, err := e.secret(request, command, request.Name)
+	token, err := e.secret(request, command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -278,7 +271,7 @@ func (e Executor) reshare(ctx context.Context, request Request, command Command)
 			return e.refuse(request.ID, fmt.Errorf("the key of %s: %w", entry.node, err))
 		}
 	}
-	if gone := command.Args["cleanup"]; gone != "" && request.Name != "tailscale" {
+	if gone := command.Args["cleanup"]; gone != "" {
 		cf := e.cloudflare(token)
 		zone, err := cf.Zone(ctx, command.Args["zone"])
 		if err != nil {
@@ -319,7 +312,7 @@ func (e Executor) expose(ctx context.Context, request Request, command Command, 
 	case mode == "path" && !pathPattern.MatchString(args["path"]):
 		return e.refuse(request.ID, errors.New("the path must start with /"))
 	}
-	token, err := e.secret(request, command, "cloudflare")
+	token, err := e.secret(request, command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -459,7 +452,7 @@ func (e Executor) unexpose(ctx context.Context, request Request, command Command
 	if !strings.HasSuffix(hostname, "."+command.Args["zone"]) {
 		return e.refuse(request.ID, fmt.Errorf("%s is not in %s; set the domain back to close this web address", hostname, command.Args["zone"]))
 	}
-	token, err := e.secret(request, command, "cloudflare")
+	token, err := e.secret(request, command)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}

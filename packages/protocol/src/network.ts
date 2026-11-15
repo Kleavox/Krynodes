@@ -7,7 +7,6 @@ export const NETWORK = {
   port: 51820,
   lastPort: 51919,
   pool: "10.88.0.0/16",
-  tailscale: "100.64.0.0/10",
   keepalive: 25,
   answerSeconds: 180,
   readSeconds: 120,

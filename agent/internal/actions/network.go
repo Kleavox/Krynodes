@@ -793,7 +793,6 @@ func (e Executor) WatchLinks(ctx context.Context, every time.Duration) {
 		e.watchKnocks(ctx)
 		e.watchDenials(ctx)
 		e.watchServer(ctx)
-		e.syncTailnet(ctx)
 		select {
 		case <-ctx.Done():
 			return

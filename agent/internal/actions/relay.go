@@ -188,7 +188,6 @@ func (r *Relay) Poll(ctx context.Context) error {
 				report.Inventory.SealKey = inventory.SealKey
 				report.Inventory.Security = inventory.Security
 				report.Inventory.Vault = &reporter.VaultSlot{Report: inventory.Vault}
-				report.Inventory.TailscaleVault = &reporter.VaultSlot{Report: inventory.TailscaleVault}
 				report.Inventory.Bridges = &reporter.BridgesSlot{Report: inventory.Bridges}
 				removed := inventory.Removed
 				report.Inventory.Removed = &removed
@@ -197,7 +196,6 @@ func (r *Relay) Poll(ctx context.Context) error {
 				report.Inventory.Services = &services
 				report.Inventory.Stacks = &stacks
 				report.Inventory.Trust = &trust
-				report.Inventory.Tailscale = inventory.Tailscale
 				report.Inventory.Network = inventory.Network
 				if inventory.Packages != nil && inventory.PackagesHash != sentList {
 					report.Inventory.Packages = inventory.Packages

@@ -6,7 +6,7 @@ import { app } from "../app";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { fingerprint } from "../lib/webauthn";
-import { IO, keyOf, queued, seedFleet, V1, V2, V3 } from "../test/fleet";
+import { keyOf, queued, seedFleet, V1, V2, V3 } from "../test/fleet";
 import { testPasskey } from "../test/passkeys";
 import { seedCheck } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
@@ -15,7 +15,6 @@ import { holdStatement, quarantine } from "./quarantine";
 const ORIGIN = "https://kry.example.test";
 const EMAIL = "standalone@localhost";
 const DEVICE = "ZGV2aWNlLTE";
-const TAILNET = "100.101.7.10 fd7a:115c:a1e0::7";
 
 const b64 = (value: unknown) =>
   Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -318,29 +317,6 @@ describe("a quarantined server", () => {
     expect(await json(reading)).toMatchObject({ code: "UNKNOWN_TARGET" });
   });
 
-  it("lets a fingerprinted unblock reach the other servers, for a quarantined server being deleted", async () => {
-    const { db, sqlite, call } = setup();
-    await quarantine(db, { nodeId: V1, why: "why", now: Date.now() });
-    sqlite.exec(
-      `UPDATE actions SET status = 'done' WHERE action = 'block' AND node_id = '${V2}'`,
-    );
-    const lifted = await call("POST", "/api/actions", {
-      action: "unblock",
-      mode: "parallel",
-      targets: [
-        step(V2, "host", "tailscale", "unblock", { addresses: TAILNET }),
-        step(V3, "host", "tailscale", "unblock", { addresses: TAILNET }),
-      ],
-    });
-    expect(await json(lifted)).toMatchObject({ batchId: expect.any(String) });
-    expect(lifted.status).toBe(201);
-    expect(
-      queued(sqlite)
-        .filter((row) => row.action === "unblock")
-        .map((row) => row.nodeId),
-    ).toEqual([V2, V3]);
-  });
-
   it("reads as quarantined in the overview, with open warnings and Not Trusted checks", async () => {
     const { db, sqlite, call, warn } = setup();
     seedCheck(sqlite, {
@@ -360,10 +336,7 @@ describe("a quarantined server", () => {
     };
     const node = (id: string) =>
       overview.nodes.find((entry) => entry.id === id)!;
-    expect(node(V1).quarantine).toMatchObject({
-      why: "why",
-      tailnet: TAILNET.split(" "),
-    });
+    expect(node(V1).quarantine).toEqual({ at: expect.any(String), why: "why" });
     expect(node(V1).warnings).toEqual([
       expect.objectContaining({ id: "w1", kind: "ssh-key", detail: sshKey }),
     ]);
@@ -374,7 +347,7 @@ describe("a quarantined server", () => {
     expect(status(V2)).not.toBe("UNTRUSTED");
   });
 
-  it("shows why, the blocks it caused and what to change", async () => {
+  it("shows why, the drops it caused and what to change, with nothing of Tailscale", async () => {
     const { db, sqlite, call } = setup();
     sqlite.exec(
       `INSERT INTO stacks (node_id, project, directory, running, total, compose, rollback, updated_at)
@@ -397,24 +370,17 @@ describe("a quarantined server", () => {
     expect(read.quarantine).toMatchObject({
       why: "why",
       releasedAt: null,
-      tailnet: ["100.101.7.10", "fd7a:115c:a1e0::7"],
     });
+    expect(read.quarantine).not.toHaveProperty("tailnet");
+    expect(read.quarantine).not.toHaveProperty("removed");
     expect(
       (
         read.quarantine as { steps: { nodeName: string; action: string }[] }
       ).steps.map((entry) => `${entry.action} ${entry.nodeName}`),
-    ).toEqual([
-      "lockdown vps-1",
-      "drop vps-2",
-      "drop vps-3",
-      "block vps-2",
-      "block vps-3",
-      "block server-2",
-    ]);
+    ).toEqual(["lockdown vps-1", "drop vps-2", "drop vps-3"]);
     expect(read.changeThese).toEqual({
       stacks: ["app"],
       vault: null,
-      tailscaleVault: null,
       webAddresses: [{ hostname: "app.example.com", project: "app" }],
       trusted: [
         { nodeId: V2, nodeName: "vps-2", project: "db", port: "5432/tcp" },
@@ -423,26 +389,6 @@ describe("a quarantined server", () => {
     expect(
       (await json(await call("GET", `/api/nodes/${V3}/quarantine`))).quarantine,
     ).toBeNull();
-  });
-
-  it("names the Tailscale credential's pieces and when it left the tailnet", async () => {
-    const { db, sqlite, call } = setup();
-    sqlite
-      .prepare("UPDATE nodes SET tailscale_vault = ? WHERE id = ?")
-      .run(JSON.stringify({ set: "t1", holders: 3 }), V1);
-    await quarantine(db, { nodeId: V1, why: "why", now: Date.now() });
-    sqlite
-      .prepare(
-        `UPDATE quarantines SET timeline = json_set(timeline, '$.removed', json(?)) WHERE node_id = ?`,
-      )
-      .run(JSON.stringify({ at: "2026-10-27T14:40:12Z", by: "dev-1" }), V1);
-    const read = await json(await call("GET", `/api/nodes/${V1}/quarantine`));
-    expect(read.quarantine).toMatchObject({
-      removed: { at: "2026-10-27T14:40:12Z", by: "dev-1" },
-    });
-    expect(read.changeThese).toMatchObject({
-      tailscaleVault: { set: "t1", holders: 3 },
-    });
   });
 
   it("names the knocks that led to it, the address they came from and a stopped stack's count", async () => {
@@ -570,16 +516,13 @@ describe("Release", () => {
         code: typed,
       }),
       step(V1, "host", "server", "unlock"),
-      ...[V2, V3, IO].map((nodeId) =>
-        step(nodeId, "host", "tailscale", "unblock", { addresses: TAILNET }),
-      ),
     ];
     const post = (body: unknown) =>
       t.call("POST", `/api/nodes/${V1}/release`, body);
     return { ...t, release, code, steps, post };
   }
 
-  it("refuses a wrong code, an ended one and a batch that leaves a block", async () => {
+  it("refuses a wrong code, an ended one and a batch with anything past the unlock", async () => {
     const { sqlite, steps, post, code } = await released();
     const wrong = await post({
       code: "AAAAA-AAAAA",
@@ -590,9 +533,14 @@ describe("Release", () => {
       code: "RELEASE_CODE",
       message: "That is not the code vps-1 showed. Type it again.",
     });
-    expect((await post({ code, steps: steps().slice(0, -1) })).status).toBe(
-      400,
-    );
+    for (const extra of [
+      step(V2, "host", "tailscale", "unblock", { addresses: "100.101.7.10" }),
+      step(V2, "host", "server", "unlock"),
+    ]) {
+      expect((await post({ code, steps: [...steps(), extra] })).status).toBe(
+        400,
+      );
+    }
     const ended = pending(Date.now() - 1000);
     sqlite
       .prepare("UPDATE nodes SET release = ? WHERE id = ?")
@@ -629,13 +577,7 @@ describe("Release", () => {
         .map(
           (row) => `${row.action} ${row.nodeId === V1 ? "vps-1" : row.name}`,
         ),
-    ).toEqual([
-      "release vps-1",
-      "unlock vps-1",
-      "unblock tailscale",
-      "unblock tailscale",
-      "unblock tailscale",
-    ]);
+    ).toEqual(["release vps-1", "unlock vps-1"]);
     expect(sqlite.prepare("SELECT key FROM network_blocked").all()).toEqual([
       { key: keyOf(1) },
     ]);

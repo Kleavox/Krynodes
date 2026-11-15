@@ -900,3 +900,46 @@ describe("migration 0043", () => {
     ]);
   });
 });
+
+describe("migration 0045", () => {
+  it("drops the Tailscale tables and columns with rows in them, and keeps the server", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0045");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1')",
+    );
+    sqlite.exec(
+      `UPDATE nodes SET tailscale = '{"state":"running"}', tailscale_vault = '{"set":"t1","holders":3}', vault = '{"set":"c1","holders":3}' WHERE id = 'n1'`,
+    );
+    sqlite.exec(
+      `INSERT INTO tailscale (owner_user_id, tailnet, client_id, webhook_secret, connected_at) VALUES ('standalone', 'tail0000.ts.net', 'kQ1', 's', 'now')`,
+    );
+    sqlite.exec(
+      "INSERT INTO tailscale_nodes (node_id, device, joined_at) VALUES ('n1', 'nA', 'now')",
+    );
+    sqlite.exec(
+      `INSERT INTO tailscale_alarms (id, owner_user_id, kind, detail, at) VALUES ('t1', 'standalone', 'device', '{}', 'now')`,
+    );
+    sqlite.exec(action("a1", "host", "tailscale", "block", "done"));
+    apply(sqlite, (name) => name.startsWith("0045"));
+    expect(
+      sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name LIKE '%tailscale%' ORDER BY name",
+        )
+        .all(),
+    ).toEqual([]);
+    expect(
+      (sqlite.prepare("PRAGMA table_info(nodes)").all() as { name: string }[])
+        .map((column) => column.name)
+        .filter((name) => name.startsWith("tailscale")),
+    ).toEqual([]);
+    expect(sqlite.prepare("SELECT id, vault FROM nodes").all()).toEqual([
+      { id: "n1", vault: '{"set":"c1","holders":3}' },
+    ]);
+    expect(sqlite.prepare("SELECT id FROM actions").all()).toEqual([
+      { id: "a1" },
+    ]);
+  });
+});

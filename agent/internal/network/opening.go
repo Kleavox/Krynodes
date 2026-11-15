@@ -49,7 +49,7 @@ func ParseOpening(port, protocol, from string) (Opening, error) {
 		return Opening{}, errors.New("the protocol is tcp or udp")
 	}
 	opening := Opening{Port: number, Protocol: protocol, From: from}
-	if from == FromEveryone || from == FromTailscale {
+	if from == FromEveryone {
 		return opening, nil
 	}
 	opening.From = FromAddresses
@@ -67,7 +67,7 @@ func ParseOpening(port, protocol, from string) (Opening, error) {
 		}
 	}
 	if len(opening.Addresses) == 0 || len(opening.Addresses) > maxAddresses {
-		return Opening{}, fmt.Errorf("a port opens to everyone, to Tailscale, or to 1 to %d addresses", maxAddresses)
+		return Opening{}, fmt.Errorf("a port opens to everyone or to 1 to %d addresses", maxAddresses)
 	}
 	return opening, nil
 }
@@ -95,23 +95,10 @@ func ParseOpenings(list string) ([]Opening, error) {
 	return openings, nil
 }
 
-func (o Opening) sources() []string {
-	switch o.From {
-	case FromTailscale:
-		return TailscaleRanges
-	case FromAddresses:
-		return o.Addresses
-	}
-	return nil
-}
-
 func (o Opening) UfwRules() []string {
 	port := strconv.Itoa(o.Port)
-	switch o.From {
-	case FromEveryone:
+	if o.From == FromEveryone {
 		return []string{"allow " + o.Key()}
-	case FromTailscale:
-		return []string{"allow in on " + TailscaleInterface + " to any port " + port + " proto " + o.Protocol}
 	}
 	rules := []string{}
 	for _, source := range o.Addresses {
@@ -125,7 +112,7 @@ func (o Opening) FirewalldRules() []string {
 		return []string{"port:" + o.Key()}
 	}
 	rules := []string{}
-	for _, source := range o.sources() {
+	for _, source := range o.Addresses {
 		family := "ipv4"
 		if strings.Contains(source, ":") {
 			family = "ipv6"
@@ -133,22 +120,6 @@ func (o Opening) FirewalldRules() []string {
 		rules = append(rules, fmt.Sprintf(`rich:rule family="%s" source address="%s" port port="%d" protocol="%s" accept`, family, source, o.Port, o.Protocol))
 	}
 	return rules
-}
-
-func TailscaleGuard(open []Opening, ipv6 bool) []string {
-	prefix := "-A " + TailscaleChain + " "
-	var drops []string
-	for _, opening := range open {
-		for _, source := range TailscaleRanges {
-			if opening.From == FromTailscale && strings.Contains(source, ":") == ipv6 {
-				drops = append(drops, fmt.Sprintf("%s-s %s -p %s -m %s --dport %d -j DROP", prefix, source, opening.Protocol, opening.Protocol, opening.Port))
-			}
-		}
-	}
-	if drops == nil {
-		return nil
-	}
-	return append([]string{prefix + "-i " + TailscaleInterface + " -j RETURN", prefix + "-m conntrack ! --ctstate NEW -j RETURN"}, drops...)
 }
 
 func Publish(open []Opening, ipv6 bool) []string {

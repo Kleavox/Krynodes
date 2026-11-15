@@ -64,7 +64,7 @@ const protocolFits = (protocol: string) =>
   protocol === "tcp" || protocol === "udp";
 
 const fromFits = (from: string) => {
-  if (from === "everyone" || from === "tailscale") return true;
+  if (from === "everyone") return true;
   const addresses = from.split("+");
   return (
     addresses.length <= MAX_FIREWALL_ADDRESSES &&

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
+import { toB64url } from "../lib/b64url";
 import { OWNER, seedNode } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
 import {
@@ -237,6 +238,41 @@ describe("action batches", () => {
     expect(await ids(A, NOW + 2 * MINUTE)).toEqual([]);
     await finish(C, storeC!.id, true, NOW + 2 * MINUTE);
     expect(await ids(A, NOW + 2 * MINUTE)).toEqual([forget!.id]);
+  });
+
+  it("leaves the Cloudflare token alone when an old agent stores a Tailscale piece", async () => {
+    const { db, sqlite, finish, status } = setup();
+    sqlite
+      .prepare(
+        "INSERT INTO cloudflare (owner_user_id, zone, set_id, updated_at) VALUES (?, 'example.org', 'cf-set', 'then')",
+      )
+      .run(OWNER);
+    sqlite
+      .prepare(
+        `INSERT INTO web_addresses (hostname, node_id, project, service, port, mode, created_by, created_at, expires_at)
+         VALUES ('app.example.org', ?, 'app', 'web', 80, 'allow', 'owner', 'then', '2027-01-01T00:00:00.000Z')`,
+      )
+      .run(A);
+    const command = toB64url(
+      new TextEncoder().encode(
+        JSON.stringify({ args: { set: "ts-set", holders: "1" } }),
+      ),
+    );
+    sqlite
+      .prepare(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+           status, requested_by, requested_at, deliverable_at, sent_at, signed)
+         VALUES ('ts1', 'tsb', 0, 'rolling', ?, 'vault', 'tailscale', 'store', 'sent', 'owner', ?, ?, ?, ?)`,
+      )
+      .run(A, iso(NOW), iso(NOW), iso(NOW), JSON.stringify({ command }));
+    await finish(A, "ts1", true, NOW + MINUTE);
+    expect(status("ts1")).toBe("done");
+    expect(
+      sqlite.prepare("SELECT set_id, updated_at FROM cloudflare").get(),
+    ).toEqual({ set_id: "cf-set", updated_at: "then" });
+    expect(
+      sqlite.prepare("SELECT expires_at FROM web_addresses").get(),
+    ).toEqual({ expires_at: "2027-01-01T00:00:00.000Z" });
   });
 
   it("skips a step whose source step went away with a deleted server", async () => {

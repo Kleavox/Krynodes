@@ -1038,70 +1038,6 @@ describe("shared networks and admin users of agent 0.7.21", () => {
   });
 });
 
-describe("Exit Node and Tailscale DNS of agent 0.7.24", () => {
-  function current() {
-    const t = setup();
-    t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.24' WHERE id = ?")
-      .run(A);
-    t.sqlite
-      .prepare("UPDATE nodes SET agent_version = '0.7.19' WHERE id = ?")
-      .run(B);
-    t.sqlite
-      .prepare(
-        `UPDATE nodes SET tailscale = '{"state":"running","addresses":[],"name":null,"keyExpiry":null}'`,
-      )
-      .run();
-    const send = (
-      action: string,
-      nodeId: string,
-      args?: Record<string, string>,
-    ) => {
-      const id = crypto.randomUUID();
-      const target = { nodeId, kind: "host", name: "tailscale" };
-      return t.call("POST", "/api/actions", {
-        action,
-        targets: [
-          {
-            ...target,
-            id,
-            signed: signedFor({
-              ...target,
-              id,
-              action,
-              ...(args ? { args } : {}),
-            }),
-          },
-        ],
-      });
-    };
-    return { ...t, send };
-  }
-
-  it("turns either on or off, signed, on agent 0.7.24 only", async () => {
-    const t = current();
-    for (const action of ["exitnode", "dns"]) {
-      for (const on of ["1", "0"]) {
-        expect((await t.send(action, A, { on })).status, action).toBe(201);
-        t.sqlite.prepare("UPDATE actions SET status = 'done'").run();
-      }
-      for (const args of [{ on: "yes" }, {}, { on: "1", more: "1" }] as Record<
-        string,
-        string
-      >[]) {
-        expect((await t.send(action, A, args)).status, action).toBe(400);
-      }
-      expect((await t.send(action, A)).status, action).toBe(400);
-      const behind = await t.send(action, B, { on: "1" });
-      expect(behind.status).toBe(422);
-      expect(await reply(behind)).toMatchObject({
-        code: "AGENT_TOO_OLD",
-        message: expect.stringContaining("0.7.20"),
-      });
-    }
-  });
-});
-
 describe("Firewall of agent 0.7.24", () => {
   function current() {
     const t = setup();
@@ -1143,14 +1079,16 @@ describe("Firewall of agent 0.7.24", () => {
     const t = current();
     const fits: [string, Record<string, string>][] = [
       ["open", { port: "443", protocol: "tcp", from: "everyone" }],
-      ["open", { port: "8443", protocol: "udp", from: "tailscale" }],
       [
         "open",
         { port: "53", protocol: "udp", from: "203.0.113.0/24+2001:db8::/32" },
       ],
       ["close", { port: "443", protocol: "tcp" }],
       ["putback", { rule: "allow 9999/tcp" }],
-      ["apply", { closed: "1", ports: "443/tcp@everyone,8443/tcp@tailscale" }],
+      [
+        "apply",
+        { closed: "1", ports: "443/tcp@everyone,8443/tcp@203.0.113.0/24" },
+      ],
       ["apply", { closed: "1", ports: "" }],
     ];
     for (const [action, args] of fits) {
@@ -1164,6 +1102,7 @@ describe("Firewall of agent 0.7.24", () => {
       ["open", { port: "65536", protocol: "tcp", from: "everyone" }],
       ["open", { port: "443", protocol: "icmp", from: "everyone" }],
       ["open", { port: "443", protocol: "tcp", from: "nobody" }],
+      ["open", { port: "8443", protocol: "udp", from: "tailscale" }],
       [
         "open",
         {
@@ -1177,7 +1116,8 @@ describe("Firewall of agent 0.7.24", () => {
       ["putback", { rule: "" }],
       ["putback", { rule: "x".repeat(301) }],
       ["putback", { rule: "allow 1/tcp\nallow 2/tcp" }],
-      ["apply", { closed: "1", ports: "443/tcp@everyone,443/tcp@tailscale" }],
+      ["apply", { closed: "1", ports: "443/tcp@everyone,443/tcp@203.0.113.7" }],
+      ["apply", { closed: "1", ports: "443/tcp@everyone,8443/tcp@tailscale" }],
       ["apply", { closed: "1", ports: "443/tcp" }],
       ["apply", { closed: "1" }],
     ];

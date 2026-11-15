@@ -71,7 +71,7 @@ import {
   workSpans,
   type ServerOperation,
 } from "@/lib/operations";
-import { busyText, namesServer, packageAttention } from "@/lib/packages";
+import { busyText, packageAttention } from "@/lib/packages";
 import { fleetQuarantine } from "@/lib/quarantine";
 import { opensServer, setupView, type SetupView } from "@/lib/setup";
 import { isPending, runningText } from "@/lib/services";
@@ -236,7 +236,6 @@ export function FleetPage() {
       const own = packageAttention(
         node,
         services.data?.nodes.find((entry) => entry.id === node.id)?.security,
-        now,
       );
       const health = nodeHealth(node, checksFor(node.id), seen, own.reasons);
       return {
@@ -257,7 +256,7 @@ export function FleetPage() {
           services.data?.actions.find(
             (action) =>
               action.nodeId === node.id &&
-              (action.kind !== "host" || namesServer(action)) &&
+              action.kind !== "host" &&
               !["logs", "find", "preview", "inspect", "probe"].includes(
                 action.action,
               ) &&

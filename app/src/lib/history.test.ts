@@ -375,17 +375,17 @@ describe("what an action says", () => {
     ).toBe("Turn on SELinux or AppArmor");
   });
 
-  it("names the Tailscale steps, and the credential they use", () => {
+  it("keeps old Tailscale steps readable as plain text", () => {
     expect(
       historyText(action({ kind: "vault", name: "tailscale", action: "save" })),
-    ).toBe("Save Tailscale rules");
+    ).toBe("Save the Tailscale credential");
     expect(
       historyText(
         action({ kind: "host", name: "tailscale", action: "join" }),
         [],
-        "vps-2",
+        "server-2",
       ),
-    ).toBe("Sign in vps-2 to Tailscale");
+    ).toBe("Sign In Tailscale");
     expect(
       historyText(
         action({ kind: "vault", name: "tailscale", action: "forget" }),

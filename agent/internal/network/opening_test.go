@@ -22,6 +22,7 @@ func TestAnOpeningIsAPortAndWhoMayReachIt(t *testing.T) {
 		{"65536", "tcp", "everyone"},
 		{"443", "icmp", "everyone"},
 		{"443", "tcp", "nobody"},
+		{"443", "tcp", "tailscale"},
 		{"443", "tcp", ""},
 		{"443", "tcp", "203.0.113.0/33"},
 		{"443", "tcp", "203.0.113.1,203.0.113.2,203.0.113.3,203.0.113.4,203.0.113.5,203.0.113.6,203.0.113.7,203.0.113.8,203.0.113.9"},
@@ -30,14 +31,14 @@ func TestAnOpeningIsAPortAndWhoMayReachIt(t *testing.T) {
 			t.Fatalf("%v must be refused", c)
 		}
 	}
-	list, err := ParseOpenings("443/tcp@everyone, 8443/tcp@tailscale,9000/udp@203.0.113.0/24+198.51.100.9")
-	if err != nil || len(list) != 3 || list[1].From != FromTailscale || list[2].Addresses[1] != "198.51.100.9/32" {
+	list, err := ParseOpenings("443/tcp@everyone, 8443/tcp@198.51.100.7,9000/udp@203.0.113.0/24+198.51.100.9")
+	if err != nil || len(list) != 3 || list[1].From != FromAddresses || list[2].Addresses[1] != "198.51.100.9/32" {
 		t.Fatalf("%+v %v", list, err)
 	}
 	if empty, err := ParseOpenings(""); err != nil || len(empty) != 0 {
 		t.Fatalf("%+v %v", empty, err)
 	}
-	for _, broken := range []string{"443/tcp", "443/tcp@everyone,443/tcp@tailscale", "a/tcp@everyone"} {
+	for _, broken := range []string{"443/tcp", "443/tcp@everyone,443/tcp@203.0.113.7", "a/tcp@everyone"} {
 		if _, err := ParseOpenings(broken); err == nil {
 			t.Fatalf("%q must be refused", broken)
 		}
@@ -51,10 +52,6 @@ func TestAnOpeningBecomesUfwAndFirewalldRules(t *testing.T) {
 		firewalld []string
 	}{
 		{"443/tcp@everyone", []string{"allow 443/tcp"}, []string{"port:443/tcp"}},
-		{"8443/tcp@tailscale", []string{"allow in on tailscale0 to any port 8443 proto tcp"}, []string{
-			`rich:rule family="ipv4" source address="100.64.0.0/10" port port="8443" protocol="tcp" accept`,
-			`rich:rule family="ipv6" source address="fd7a:115c:a1e0::/48" port port="8443" protocol="tcp" accept`,
-		}},
 		{"53/udp@203.0.113.0/24+2001:db8::/32", []string{
 			"allow from 203.0.113.0/24 to any port 53 proto udp",
 			"allow from 2001:db8::/32 to any port 53 proto udp",
@@ -78,7 +75,7 @@ func TestAnOpeningBecomesUfwAndFirewalldRules(t *testing.T) {
 }
 
 func TestPublishedPortsCloseExceptWhatIsOpen(t *testing.T) {
-	open, _ := ParseOpenings("443/tcp@everyone,8443/tcp@tailscale,9000/tcp@203.0.113.0/24+2001:db8::/32")
+	open, _ := ParseOpenings("443/tcp@everyone,9000/tcp@203.0.113.0/24+2001:db8::/32")
 	head := []string{
 		"-A KRY-PUBLISH -m conntrack ! --ctstate NEW -j RETURN",
 		"-A KRY-PUBLISH -m conntrack ! --ctstate DNAT -j RETURN",
@@ -89,7 +86,6 @@ func TestPublishedPortsCloseExceptWhatIsOpen(t *testing.T) {
 	}
 	v4 := append(slices.Clone(head),
 		"-A KRY-PUBLISH -p tcp -m conntrack --ctorigdstport 443 -j RETURN",
-		"-A KRY-PUBLISH -i tailscale0 -p tcp -m conntrack --ctorigdstport 8443 -j RETURN",
 		"-A KRY-PUBLISH -s 203.0.113.0/24 -p tcp -m conntrack --ctorigdstport 9000 -j RETURN",
 		"-A KRY-PUBLISH -j DROP",
 	)
@@ -98,7 +94,6 @@ func TestPublishedPortsCloseExceptWhatIsOpen(t *testing.T) {
 	}
 	v6 := append(slices.Clone(head),
 		"-A KRY-PUBLISH -p tcp -m conntrack --ctorigdstport 443 -j RETURN",
-		"-A KRY-PUBLISH -i tailscale0 -p tcp -m conntrack --ctorigdstport 8443 -j RETURN",
 		"-A KRY-PUBLISH -s 2001:db8::/32 -p tcp -m conntrack --ctorigdstport 9000 -j RETURN",
 		"-A KRY-PUBLISH -j DROP",
 	)
@@ -107,5 +102,11 @@ func TestPublishedPortsCloseExceptWhatIsOpen(t *testing.T) {
 	}
 	if got := Publish(nil, false); len(got) != len(head)+1 || got[len(got)-1] != "-A KRY-PUBLISH -j DROP" {
 		t.Fatalf("nothing open %q", got)
+	}
+	for _, ipv6 := range []bool{false, true} {
+		got := Publish([]Opening{{Port: 8443, Protocol: "tcp", From: FromTailscale}}, ipv6)
+		if !slices.Equal(got[len(head):], []string{"-A KRY-PUBLISH -i tailscale0 -p tcp -m conntrack --ctorigdstport 8443 -j RETURN", "-A KRY-PUBLISH -j DROP"}) {
+			t.Fatalf("a leftover Tailscale opening %q", got)
+		}
 	}
 }

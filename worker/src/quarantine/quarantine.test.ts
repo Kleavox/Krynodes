@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createBatch, deliverActions } from "../actions/store";
 import { decodeJson } from "../lib/b64url";
-import { IO, keyOf, OLD, queued, seedFleet, V1, V2, V3 } from "../test/fleet";
+import { keyOf, queued, seedFleet, V1, V2, V3 } from "../test/fleet";
 import { createTestDb } from "../test/sqlite-d1";
 import { quarantine, quarantineRefusal } from "./quarantine";
 
@@ -15,14 +15,14 @@ function setup() {
 }
 
 describe("quarantine", () => {
-  it("sends the suspect one Lock Down, drops it from every other member and blocks its Tailscale addresses on every 0.7.20 server", async () => {
+  it("sends the suspect one Lock Down, drops it from every other member and queues no Tailscale step", async () => {
     const { db, sqlite } = setup();
     const started = await quarantine(db, {
       nodeId: V1,
       why: "vps-2 and vps-3 saw it knock on 41 closed ports in one minute",
       now: NOW,
     });
-    expect(started.started).toBe(true);
+    expect(started).toEqual({ started: true, nodes: [V1, V2, V3] });
     const rows = queued(sqlite);
     expect(
       rows.map((row) => [row.nodeId, row.kind, row.name, row.action]),
@@ -30,9 +30,6 @@ describe("quarantine", () => {
       [V1, "host", "server", "lockdown"],
       [V2, "network", "kry0", "drop"],
       [V3, "network", "kry0", "drop"],
-      [V2, "host", "tailscale", "block"],
-      [V3, "host", "tailscale", "block"],
-      [IO, "host", "tailscale", "block"],
     ]);
     expect(rows.every((row) => row.signed === null)).toBe(true);
     expect(rows.every((row) => row.requestedBy === "Quarantine")).toBe(true);
@@ -42,10 +39,6 @@ describe("quarantine", () => {
       key: keyOf(1),
       address: "10.88.0.1",
     });
-    expect(decodeJson(rows[3]!.attachment!)).toEqual({
-      addresses: "100.101.7.10 fd7a:115c:a1e0::7",
-    });
-    expect(rows.some((row) => row.nodeId === OLD)).toBe(false);
     expect(
       sqlite.prepare("SELECT key, node_id AS node FROM network_blocked").all(),
     ).toEqual([{ key: keyOf(1), node: V1 }]);
@@ -54,26 +47,6 @@ describe("quarantine", () => {
         .prepare("SELECT change, requested_by AS by FROM network_changes")
         .all(),
     ).toEqual([{ change: "Quarantine vps-1", by: "Quarantine" }]);
-  });
-
-  it("blocks only Tailscale addresses, whatever else the suspect reported", async () => {
-    const { db, sqlite } = setup();
-    sqlite.prepare("UPDATE nodes SET tailscale = ? WHERE id = ?").run(
-      JSON.stringify({
-        installed: true,
-        addresses: ["100.101.7.10", "10.88.0.2", "8.8.8.8", "not an address"],
-      }),
-      V1,
-    );
-    await quarantine(db, { nodeId: V1, why: "test", now: NOW });
-    const timeline = JSON.parse(
-      (
-        sqlite.prepare("SELECT timeline FROM quarantines").get() as {
-          timeline: string;
-        }
-      ).timeline,
-    ) as { tailnet: string[] };
-    expect(timeline.tailnet).toEqual(["100.101.7.10"]);
   });
 
   it("starts once for a server already quarantined", async () => {

@@ -131,10 +131,10 @@ describe("nodeHealth", () => {
       reasons: ["Restart Needed"],
     });
     expect(
-      nodeHealth(node(), [check("DOWN")], NOW, ["Tailscale key expired"]),
+      nodeHealth(node(), [check("DOWN")], NOW, ["2 security updates waiting"]),
     ).toEqual({
       severity: "critical",
-      reasons: ["1 check down", "Tailscale key expired"],
+      reasons: ["1 check down", "2 security updates waiting"],
     });
   });
 

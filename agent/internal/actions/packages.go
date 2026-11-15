@@ -14,7 +14,6 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/apt"
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
-	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 )
 
 const packagesTimeout = 2 * time.Minute
@@ -90,13 +89,5 @@ func (e Executor) packages(ctx context.Context) *reporter.PackagesReport {
 		report.Security.LastRan = &ran
 	}
 	report.Restart = apt.Restart(e.Root, cache.Kernels)
-	return &report
-}
-
-func (e Executor) tailnet(ctx context.Context) *reporter.TailscaleReport {
-	if _, err := os.Stat(e.path(tailscale.Binary)); err != nil {
-		return nil
-	}
-	report := tailscale.Report(ctx, tailscale.Runner(e.Run), e.TailscaleLocal)
 	return &report
 }

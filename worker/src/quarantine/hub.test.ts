@@ -167,7 +167,7 @@ describe("the hub and quarantine", () => {
     expect(subjects().slice(1)).toEqual(["[Krynodes] vps-1 is quarantined"]);
     expect(texts()[1]).toContain("Why: Reported from two machines at once");
     expect(texts()[1]).toContain(
-      "Change: Its place on your tailnet, listed on the server page",
+      "Change: Nothing Krynodes knows of; see the server page",
     );
   });
 

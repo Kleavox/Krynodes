@@ -32,7 +32,6 @@ const NODE_KEYS = [
   "deleting",
   "addresses",
   "updates",
-  "tailscale",
   "setup",
   "network",
   "quarantine",

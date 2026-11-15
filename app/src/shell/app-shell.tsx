@@ -26,7 +26,6 @@ import {
   useOverview,
   useProposals,
   useServices,
-  useTailscale,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { accountLinks } from "@/lib/account";
@@ -38,7 +37,7 @@ import type { Identity, SessionVia } from "@/types";
 
 import { ActivityMenu } from "./activity-menu";
 import { CommandPalette } from "./command-palette";
-import { alsoActive, navCounts, networkWarns, SECTIONS } from "./nav";
+import { alsoActive, navCounts, SECTIONS } from "./nav";
 import { FaultScreen, Mark } from "./screens";
 
 function ageOf(updatedAt: number, now: number): string {
@@ -56,7 +55,6 @@ export function AppShell({
   const overview = useOverview();
   const services = useServices();
   const network = useNetwork();
-  const alarms = useTailscale().data?.alarms.length ?? 0;
   const now = useNow(30_000);
   const runAction = useSignedAction();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -93,7 +91,6 @@ export function AppShell({
     network.data && overview.data
       ? navNetworkCount(network.data, presenceOf(overview.data.nodes, now), now)
       : 0,
-    alarms,
   );
 
   return (
@@ -126,7 +123,7 @@ export function AppShell({
               {section.label}
               <Count
                 value={counts[section.to]}
-                warn={section.to === "/network" && networkWarns(alarms)}
+                warn={section.to === "/network"}
               />
             </NavLink>
           ))}
@@ -175,7 +172,7 @@ export function AppShell({
             {section.label}
             <Count
               value={counts[section.to]}
-              warn={section.to === "/network" && networkWarns(alarms)}
+              warn={section.to === "/network"}
               className="absolute top-1.5 right-[calc(50%-22px)] ml-0"
             />
           </NavLink>

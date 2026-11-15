@@ -346,7 +346,6 @@ export interface QuarantineMail {
   stacks: number;
   pieces: number;
   trusted: number;
-  tailnet: boolean;
 }
 
 export interface StoppedMail {
@@ -541,10 +540,8 @@ export async function sendQuarantineEmail(
   const reached = listed(reach);
   const change =
     reach.length > 0
-      ? `${reached[0]!.toUpperCase()}${reached.slice(1)}${mail.tailnet ? ", and its place on your tailnet" : ""}, listed on the server page`
-      : mail.tailnet
-        ? "Its place on your tailnet, listed on the server page"
-        : "Nothing Krynodes knows of; see the server page";
+      ? `${reached[0]!.toUpperCase()}${reached.slice(1)}, listed on the server page`
+      : "Nothing Krynodes knows of; see the server page";
   await deliver(env, {
     title: `[Krynodes] ${heading}`,
     preheader: intro,
@@ -596,84 +593,5 @@ export async function sendStoppedEmail(
     action: serverLink(env, mail.nodeId, mail.nodeName),
     after:
       "Change its secrets before you start it again. Start asks for your passkey.",
-  });
-}
-
-export interface TailnetDeviceMail {
-  kind: "device";
-  name: string;
-  tag: string;
-  at: string;
-}
-
-export interface TailnetPolicyMail {
-  kind: "policy";
-  at: string;
-  block: boolean;
-  added: number;
-  removed: number;
-}
-
-export type TailnetMail = TailnetDeviceMail | TailnetPolicyMail;
-
-const networkLink = (env: Env) => ({
-  label: "Open Network",
-  href: new URL("/network", env.PUBLIC_ORIGIN).toString(),
-});
-
-export async function sendTailnetDeviceEmail(
-  env: Env,
-  mail: TailnetDeviceMail,
-): Promise<void> {
-  const heading = `${mail.name.split(".")[0]} joined your tailnet with your servers' tag`;
-  const intro =
-    "Krynodes did not sign it in. Your rules give it nothing, but someone may have your Tailscale credential.";
-  await deliver(env, {
-    title: `[Krynodes] ${heading}`,
-    preheader: intro,
-    badge: { label: "Tailscale", color: COLOR.destructive },
-    heading,
-    intro,
-    rows: [
-      ["Device", mail.name],
-      ["Tag", mail.tag],
-      ["Joined", utcTime(mail.at)],
-    ],
-    action: networkLink(env),
-    after:
-      "If you signed it in yourself, enroll it in Krynodes. If not, remove it and delete Krynodes' credential in Tailscale's admin console, then connect a new one.",
-  });
-}
-
-export async function sendTailnetPolicyEmail(
-  env: Env,
-  mail: TailnetPolicyMail,
-): Promise<void> {
-  const heading = "Your Tailscale policy was changed without your passkey";
-  const intro =
-    "The change was made with Krynodes' credential, and you signed no change in Krynodes. Someone else has the credential.";
-  const word = mail.block ? "rule" : "line";
-  const parts = [
-    ...(mail.added > 0 ? [`${plural(mail.added, word)} added`] : []),
-    ...(mail.removed > 0 ? [`${plural(mail.removed, word)} removed`] : []),
-  ];
-  await deliver(env, {
-    title: `[Krynodes] ${heading}`,
-    preheader: intro,
-    badge: { label: "Tailscale", color: COLOR.destructive },
-    heading,
-    intro,
-    rows: [
-      ["Changed", utcTime(mail.at)],
-      [
-        "Change",
-        parts.length === 0
-          ? "Only spacing changed"
-          : `${listed(parts)}, shown on the Network page`,
-      ],
-    ],
-    action: networkLink(env),
-    after:
-      "Delete Krynodes' credential in Tailscale's admin console, put the policy back there, then connect a new credential.",
   });
 }

@@ -525,7 +525,7 @@ func TestAStoreThatNamesItsSenderRefusesAPieceFromAnyoneElse(t *testing.T) {
 	if result := store(idA, forged); result.OK || !strings.Contains(result.Output, "did not come from the server your passkey named") {
 		t.Fatalf("a forged piece %#v", result)
 	}
-	if _, err := executor.readVault("cloudflare"); err == nil {
+	if _, err := executor.readVault(); err == nil {
 		t.Fatal("the forged piece was stored")
 	}
 	genuine, _ := seal.SealFrom(sender, seal.Public(mustKey(t, executor)), encoded)
@@ -592,13 +592,13 @@ func TestTheCleanupStepRebuildsTheTokenAndOnlyCleansUp(t *testing.T) {
 	ctx := context.Background()
 	gone, _ := cf.Tunnel(ctx, "acc-1", "krynodes-node-gone")
 	cf.Point(ctx, "zone-1", "panel-gone.example.org", gone)
-	before, _ := os.ReadFile(filepath.Join(executor.StateDir, vaultName("cloudflare")))
+	before, _ := os.ReadFile(filepath.Join(executor.StateDir, vaultName))
 	request := vaultRequest(t, idB, "reshare", func(c *Command) {
 		c.Args = map[string]string{"only": "cleanup", "cleanup": "node-gone", "zone": "example.org", "source": splitSet}
 	})
 	request.Attachment = sealedPiece(t, executor, splitSet, split[2])
 	result := runRequest(t, executor, request)
-	after, _ := os.ReadFile(filepath.Join(executor.StateDir, vaultName("cloudflare")))
+	after, _ := os.ReadFile(filepath.Join(executor.StateDir, vaultName))
 	if !result.OK || result.Output != "cleaned" || len(fake.Tunnels) != 0 || len(fake.Records) != 0 || string(before) != string(after) {
 		t.Fatalf("result %#v tunnels %v records %v", result, fake.Tunnels, fake.Records)
 	}

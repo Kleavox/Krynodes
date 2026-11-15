@@ -347,10 +347,8 @@ export async function applyInventory(
            security = COALESCE(?5, security),
            vault = CASE WHEN ?6 = 1 THEN ?7 ELSE vault END,
            updates = CASE WHEN ?9 = 1 THEN ?10 ELSE updates END,
-           tailscale = ?11,
-           tailscale_vault = CASE WHEN ?12 = 1 THEN ?13 ELSE tailscale_vault END,
-           bridges = CASE WHEN ?14 = 1 THEN ?15 ELSE bridges END,
-           leftovers = CASE WHEN ?16 = 1 THEN ?17 ELSE leftovers END
+           bridges = CASE WHEN ?11 = 1 THEN ?12 ELSE bridges END,
+           leftovers = CASE WHEN ?13 = 1 THEN ?14 ELSE leftovers END
          WHERE id = ?8`,
       )
       .bind(
@@ -364,11 +362,6 @@ export async function applyInventory(
         node.id,
         inventory.packages === undefined ? 0 : 1,
         inventory.packages ? summaryOf(inventory.packages) : null,
-        inventory.tailscale ? JSON.stringify(inventory.tailscale) : null,
-        inventory.tailscaleVault === undefined ? 0 : 1,
-        inventory.tailscaleVault
-          ? JSON.stringify(inventory.tailscaleVault)
-          : null,
         inventory.bridges === undefined ? 0 : 1,
         inventory.bridges ? JSON.stringify(inventory.bridges) : null,
         inventory.leftovers === undefined ? 0 : 1,

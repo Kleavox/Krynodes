@@ -1,4 +1,3 @@
-import type { TailscaleReport } from "@krynodes/protocol";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -38,10 +37,6 @@ import {
   runningJob,
   runningPackages,
   shownPackages,
-  signedIn,
-  signedInLines,
-  signInRows,
-  tailscaleLine,
   tookText,
   updateRow,
   updatesHeader,
@@ -188,13 +183,6 @@ const action = (over: Partial<ActionRecord>): ActionRecord => ({
   deviceId: null,
   ...over,
 });
-
-const running: TailscaleReport = {
-  state: "running",
-  addresses: ["100.101.7.12"],
-  name: "vps-2.tail0000.ts.net",
-  keyExpiry: "2027-04-24T10:00:00.000Z",
-};
 
 describe("the 0.7.20 gate", () => {
   it("names the version a server runs", () => {
@@ -389,100 +377,6 @@ describe("Restart Needed", () => {
   });
 });
 
-describe("the Tailscale row", () => {
-  it("has the five states of the mockup", () => {
-    expect(tailscaleLine(running, "vps-2", NOW)).toEqual({
-      lines: [
-        "100.101.7.12",
-        "vps-2.tail0000.ts.net",
-        "Key expires 24 Apr 2027",
-      ],
-      warn: false,
-      action: null,
-      after: null,
-    });
-    expect(
-      tailscaleLine({ ...running, keyExpiry: null }, "server-1", NOW).lines.at(
-        -1,
-      ),
-    ).toBe("Key does not expire");
-    expect(
-      tailscaleLine(
-        { ...running, keyExpiry: ahead(3 * DAY), tags: ["tag:kry"] },
-        "server-1",
-        NOW,
-      ),
-    ).toEqual({
-      lines: [
-        "100.101.7.12",
-        "vps-2.tail0000.ts.net",
-        "tag:kry · key never expires",
-      ],
-      warn: false,
-      action: null,
-      after: null,
-    });
-    expect(
-      tailscaleLine(
-        {
-          ...running,
-          state: "needs-login",
-          addresses: [],
-          name: null,
-          keyExpiry: null,
-        },
-        "vps-2",
-        NOW,
-      ),
-    ).toEqual({
-      lines: ["Installed, not signed in"],
-      warn: false,
-      action: "Sign In",
-      after: null,
-    });
-    expect(
-      tailscaleLine(
-        { ...running, keyExpiry: ahead(11.5 * DAY) },
-        "server-2",
-        NOW,
-      ),
-    ).toEqual({
-      lines: ["Key expires in 12 days"],
-      warn: true,
-      action: "Sign In Again",
-      after:
-        ", or turn off key expiry for server-2 in Tailscale's admin console",
-    });
-    expect(
-      tailscaleLine(
-        {
-          ...running,
-          state: "needs-login",
-          keyExpiry: "2026-04-02T10:00:00.000Z",
-        },
-        "server-2",
-        NOW,
-      ),
-    ).toEqual({
-      lines: ["Key expired 2 Apr · server-2 left your tailnet"],
-      warn: true,
-      action: "Sign In Again",
-      after: null,
-    });
-    expect(
-      tailscaleLine({ ...running, state: "stopped" }, "vps-2", NOW),
-    ).toEqual({
-      lines: [
-        "tailscaled is not running",
-        "Start it from Services. Signing in waits until it runs.",
-      ],
-      warn: true,
-      action: null,
-      after: null,
-    });
-  });
-});
-
 describe("the dialogs", () => {
   const nginx: InstallPreview = {
     what: "install",
@@ -577,12 +471,7 @@ describe("the dialogs", () => {
           stops: ["tailscaled.service"],
           refused: null,
         },
-        {
-          nodeName: "vps-2",
-          repository: true,
-          tailscale: running,
-          publicAddress: "198.51.100.11",
-        },
+        { repository: true },
       ),
     ).toEqual([
       {
@@ -592,13 +481,7 @@ describe("the dialogs", () => {
           "Its repository stays under Sources until you remove it there",
         ],
       },
-      {
-        mark: "!",
-        title: "vps-2 leaves your tailnet",
-        detail: [
-          "SSH to 100.101.7.12 stops working; use the public address 198.51.100.11 instead. Krynodes keeps its own connection.",
-        ],
-      },
+      { mark: "!", title: "Stops tailscaled", detail: [] },
     ]);
   });
 
@@ -733,47 +616,6 @@ describe("the dialogs", () => {
         detail: [
           "sshd still uses old libraries. Restart Server, or restart just sshd from Services.",
         ],
-      },
-    ]);
-    const tailscale = action({
-      action: "install",
-      name: "tailscale",
-      output: JSON.stringify({
-        upgraded: [],
-        moved: [],
-        added: ["tailscale", "tailscale-archive-keyring"],
-        removed: [],
-        took: 14,
-        waited: 0,
-        repaired: false,
-        kept: [],
-      }),
-    });
-    expect(
-      finishedLines(tailscale, {
-        nodeName: "vps-2",
-        tailscale: {
-          state: "needs-login",
-          addresses: [],
-          name: null,
-          keyExpiry: null,
-        },
-      }),
-    ).toEqual([
-      {
-        mark: "✓",
-        title: "Installed 2 packages",
-        detail: ["tailscale, tailscale-archive-keyring", "14s"],
-      },
-      {
-        mark: "✓",
-        title: "tailscaled is running, and starts at every boot",
-        detail: [],
-      },
-      {
-        mark: "!",
-        title: "vps-2 is not on your tailnet yet",
-        detail: ["Sign it in from here. No terminal needed."],
       },
     ]);
     const failed = action({
@@ -911,10 +753,10 @@ describe("History and the hourglass", () => {
       name: "tailscale",
       action: "signin",
     });
-    expect(historyText(signin, [], "vps-2")).toBe("Sign in vps-2 to Tailscale");
+    expect(historyText(signin, [], "server-2")).toBe("Sign In Tailscale");
     expect(
-      actionLine(signin, { nodeName: "vps-2", showServer: true }).server,
-    ).toBeNull();
+      actionLine(signin, { nodeName: "server-2", showServer: true }).server,
+    ).toBe("server-2");
     expect(
       actionLine(action({ action: "install", name: "nginx" }), {
         nodeName: "vps-2",
@@ -1187,7 +1029,6 @@ describe("jobs on the page", () => {
     ];
     expect(runningPackages(actions, node.id).map((entry) => entry.id)).toEqual([
       "1",
-      "4",
     ]);
   });
 });
@@ -1197,56 +1038,6 @@ describe("a source's own name", () => {
       "tailscale",
     );
     expect(repoName("/etc/apt/sources.list.d/docker.list")).toBe("docker");
-  });
-});
-describe("Sign In", () => {
-  const waiting: TailscaleReport = {
-    ...running,
-    state: "needs-login",
-    keyExpiry: null,
-  };
-
-  it("is approved once tailscaled runs on a key it did not have before", () => {
-    expect(signedIn(waiting, waiting)).toBe(false);
-    expect(signedIn(waiting, running)).toBe(true);
-    expect(signedIn(waiting, { ...running, keyExpiry: null })).toBe(true);
-    expect(signedIn(running, running)).toBe(false);
-    expect(
-      signedIn(running, { ...running, keyExpiry: "2027-10-26T10:00:00.000Z" }),
-    ).toBe(true);
-    expect(signedIn(running, null)).toBe(false);
-  });
-
-  it("names what signing in leaves alone", () => {
-    expect(signInRows("vps-2", false)).toEqual([
-      "vps-2 keeps its own DNS",
-      "Tailscale SSH stays off",
-    ]);
-    expect(signInRows("vps-2", true)).toEqual([
-      "vps-2 keeps its other Tailscale settings",
-    ]);
-  });
-
-  it("says where it is on the tailnet and when its key ends", () => {
-    expect(signedInLines(running, "vps-2")).toEqual([
-      {
-        mark: "✓",
-        title: "vps-2 is on your tailnet",
-        detail: ["100.101.7.12 · vps-2.tail0000.ts.net"],
-      },
-      {
-        mark: "·",
-        title: "Its Tailscale key expires on 24 Apr 2027",
-        detail: [
-          "Krynodes tells you 14 days before. Or turn off key expiry for vps-2 in Tailscale's admin console.",
-        ],
-      },
-    ]);
-    expect(signedInLines({ ...running, keyExpiry: null }, "vps-2")[1]).toEqual({
-      mark: "·",
-      title: "Its Tailscale key does not expire",
-      detail: [],
-    });
   });
 });
 describe("a finished job", () => {
@@ -1342,27 +1133,17 @@ describe("Fleet", () => {
   } as unknown as SecurityReport;
 
   it("raises what nothing will fix on its own", () => {
-    expect(
-      packageAttention(
-        { ...node, updates: summary, tailscale: null },
-        off,
-        NOW,
-      ),
-    ).toEqual({
+    expect(packageAttention({ ...node, updates: summary }, off)).toEqual({
       reasons: ["Restart Needed", "2 security updates waiting"],
       notes: [],
     });
   });
 
   it("leaves a grey line for what fixes itself", () => {
-    expect(
-      packageAttention(
-        { ...node, updates: summary, tailscale: null },
-        on,
-        NOW,
-        -420,
-      ),
-    ).toEqual({ reasons: [], notes: [restartLine(on, -420)] });
+    expect(packageAttention({ ...node, updates: summary }, on, -420)).toEqual({
+      reasons: [],
+      notes: [restartLine(on, -420)],
+    });
     expect(restartLine(on, -420)).toBe(
       "Restarts at 03:00 by Restart When Needed",
     );
@@ -1371,44 +1152,16 @@ describe("Fleet", () => {
     expect(restartOnYou(null)).toBe(true);
   });
 
-  it("raises an expired Tailscale key and notes one about to expire", () => {
-    expect(
-      packageAttention(
-        {
-          ...node,
-          updates: null,
-          tailscale: { ...running, keyExpiry: ago(DAY) },
-        },
-        on,
-        NOW,
-      ),
-    ).toEqual({ reasons: ["Tailscale key expired"], notes: [] });
-    expect(
-      packageAttention(
-        {
-          ...node,
-          updates: null,
-          tailscale: { ...running, keyExpiry: ahead(12 * DAY) },
-        },
-        on,
-        NOW,
-      ),
-    ).toEqual({ reasons: [], notes: ["Tailscale key expires in 12 days"] });
-    expect(
-      packageAttention(
-        {
-          ...node,
-          updates: null,
-          tailscale: {
-            ...running,
-            keyExpiry: ahead(12 * DAY),
-            tags: ["tag:kry"],
-          },
-        },
-        on,
-        NOW,
-      ),
-    ).toEqual({ reasons: [], notes: [] });
+  it("raises no Tailscale key reason", () => {
+    const stale = {
+      ...node,
+      updates: null,
+      tailscale: { state: "running", keyExpiry: ago(DAY) },
+    };
+    const attention = packageAttention(stale, on);
+    expect(attention).toEqual({ reasons: [], notes: [] });
+    expect(attention.reasons.join(" ")).not.toMatch(/Tailscale/u);
+    expect(attention.notes.join(" ")).not.toMatch(/Tailscale/u);
   });
 
   it("says on the card what a package job is doing", () => {
@@ -1425,7 +1178,7 @@ describe("Fleet", () => {
     ).toBe("Installing nginx");
     expect(
       busyText(action({ kind: "host", name: "tailscale", action: "signin" })),
-    ).toBe("Signing in to Tailscale");
+    ).toBeNull();
     expect(busyText(action({ kind: "docker", action: "restart" }))).toBeNull();
   });
 });

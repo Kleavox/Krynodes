@@ -6,7 +6,9 @@ import {
   closedText,
   closingPorts,
   firewallActionText,
+  firewallBlocker,
   firewallState,
+  fromLine,
   fromText,
   listensText,
   openPortProblem,
@@ -206,7 +208,12 @@ describe("the firewall dialogs", () => {
     expect(
       portsArg([
         { port: 443, protocol: "tcp", from: "everyone" },
-        { port: 8443, protocol: "udp", from: "tailscale" },
+        {
+          port: 8443,
+          protocol: "udp",
+          from: "addresses",
+          addresses: ["198.51.100.7"],
+        },
         {
           port: 9000,
           protocol: "tcp",
@@ -215,7 +222,7 @@ describe("the firewall dialogs", () => {
         },
       ]),
     ).toBe(
-      "443/tcp@everyone,8443/udp@tailscale,9000/tcp@203.0.113.0/24+2001:db8::/32",
+      "443/tcp@everyone,8443/udp@198.51.100.7,9000/tcp@203.0.113.0/24+2001:db8::/32",
     );
     expect(portsArg([])).toBe("");
   });
@@ -258,5 +265,37 @@ describe("the firewall dialogs", () => {
         ),
       ).problem,
     ).toBe("Up to 8 addresses or ranges.");
+  });
+});
+
+describe("an opening reported from Tailscale", () => {
+  const closed = (open: NonNullable<SecurityReport["firewall"]>["open"]) =>
+    report({ firewall: { closed: true, open, other: [] } });
+
+  it("reads as set up outside Krynodes", () => {
+    expect(fromLine({ from: "tailscale" })).toBe(
+      "From Tailscale · Set up outside Krynodes",
+    );
+    expect(fromLine({ from: "everyone" })).toBe("Everyone");
+    expect(fromLine({ from: "addresses", addresses: ["203.0.113.0/24"] })).toBe(
+      "203.0.113.0/24",
+    );
+  });
+
+  it("holds every firewall edit until the server runs the agent that files it", () => {
+    expect(
+      firewallBlocker(
+        closed([
+          { port: 443, protocol: "tcp", from: "everyone" },
+          { port: 22, protocol: "tcp", from: "tailscale" },
+        ]),
+      ),
+    ).toBe("Update this server to agent 0.7.23 first");
+    expect(
+      firewallBlocker(
+        closed([{ port: 443, protocol: "tcp", from: "everyone" }]),
+      ),
+    ).toBeNull();
+    expect(firewallBlocker(report())).toBeNull();
   });
 });
