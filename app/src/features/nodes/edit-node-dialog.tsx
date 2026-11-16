@@ -17,6 +17,7 @@ import {
   useNetworkKeys,
   useSignChange,
 } from "@/features/network/use-network-sign";
+import { NotFollowing } from "@/features/packages/lines";
 import { useNetwork, useUpdateNode } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import { networkText } from "@/lib/network";
@@ -91,6 +92,7 @@ export function EditNodeDialog({
               required
             />
           </Field>
+          {member && <NotFollowing lines={keys.unfollowed} />}
           {(save.error ?? told.error) && (
             <p role="alert" className="text-sm text-destructive">
               {errorMessage(save.error ?? told.error)}

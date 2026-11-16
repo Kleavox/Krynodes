@@ -19,6 +19,7 @@ const (
 	Keepalive     = 25
 	AnswerSeconds = 180
 	maxMembers    = 32
+	laptopKind    = "laptop"
 )
 
 var (
@@ -39,6 +40,8 @@ type Member struct {
 	Endpoint *string           `json:"endpoint"`
 	NAT      bool              `json:"nat"`
 	PSK      map[string]string `json:"psk"`
+	Kind     string            `json:"kind,omitempty"`
+	Exit     bool              `json:"exit,omitempty"`
 	Rekey    bool              `json:"rekey,omitempty"`
 	Cut      bool              `json:"cut,omitempty"`
 }
@@ -57,6 +60,7 @@ type Document struct {
 	Deleted bool     `json:"deleted,omitempty"`
 	Parent  string   `json:"parent,omitempty"`
 	Knocks  *Knocks  `json:"knocks,omitempty"`
+	DNS     []string `json:"dns,omitempty"`
 	Members []Member `json:"members"`
 	Blocked []string `json:"blocked"`
 }
@@ -103,6 +107,60 @@ func validMTU(mtu int) bool {
 	return mtu >= 1280 && mtu <= 1500
 }
 
+func (m Member) IsLaptop() bool {
+	return m.Kind == laptopKind
+}
+
+func Links(a, b Member) bool {
+	switch {
+	case a.IsLaptop() && b.IsLaptop():
+		return false
+	case a.IsLaptop():
+		return !b.NAT
+	case b.IsLaptop():
+		return !a.NAT
+	}
+	return true
+}
+
+func Laptops(members []Member) []Member {
+	var laptops []Member
+	for _, member := range members {
+		if member.IsLaptop() && !member.Cut {
+			laptops = append(laptops, member)
+		}
+	}
+	return laptops
+}
+
+func Address6(address string) string {
+	parsed, err := netip.ParseAddr(address)
+	if err != nil || !parsed.Is4() || !pool.Contains(parsed) {
+		return ""
+	}
+	octets := parsed.As4()
+	return netip.AddrFrom16([16]byte{0xfd, 0x88, 0, 0x88, 13: octets[2], 15: octets[3]}).String()
+}
+
+func MeetingPoint(member Member) bool {
+	return !member.IsLaptop() && !member.NAT && member.Endpoint != nil && !member.Cut
+}
+
+func DefaultMeeting(document Document) string {
+	found := ""
+	for _, member := range document.Members {
+		if MeetingPoint(member) && (found == "" || member.Node < found) {
+			found = member.Node
+		}
+	}
+	return found
+}
+
+func validIPv4(text string) bool {
+	address, err := netip.ParseAddr(text)
+	return err == nil && address.Is4() && address.String() == text
+}
+
 func Parse(raw []byte) (Document, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -120,6 +178,9 @@ func Parse(raw []byte) (Document, error) {
 	if (document.Parent != "" && !hash.MatchString(document.Parent)) || (document.Knocks != nil && !slices.Contains(scans, document.Knocks.Scan)) {
 		return Document{}, errors.New("the network document is malformed")
 	}
+	if document.DNS != nil && (len(document.DNS) < 1 || len(document.DNS) > 2 || slices.ContainsFunc(document.DNS, func(text string) bool { return !validIPv4(text) })) {
+		return Document{}, errors.New("the DNS for laptops is not one or two IPv4 addresses")
+	}
 	for _, key := range document.Blocked {
 		if !validKey(key) {
 			return Document{}, errors.New("a blocked key is not a WireGuard key")
@@ -135,6 +196,12 @@ func Parse(raw []byte) (Document, error) {
 		address, err := netip.ParseAddr(member.Address)
 		if err != nil || !address.Is4() || address.String() != member.Address || !network.Contains(address) || address.As4()[3] == 0 || address.As4()[3] == 255 {
 			return Document{}, fmt.Errorf("%s's address %q is not one address inside %s", member.Name, member.Address, document.Range)
+		}
+		if member.Kind != "" && member.Kind != laptopKind {
+			return Document{}, fmt.Errorf("%s's kind %q is not known", member.Name, member.Kind)
+		}
+		if member.Exit && (member.IsLaptop() || member.NAT) {
+			return Document{}, fmt.Errorf("%s cannot be an exit node", member.Name)
 		}
 		if !validKey(member.Key) || !validKey(member.Signer) {
 			return Document{}, fmt.Errorf("%s's keys are not 32 bytes", member.Name)
@@ -156,12 +223,21 @@ func Parse(raw []byte) (Document, error) {
 		}
 	}
 	for _, member := range document.Members {
-		if len(member.PSK) != len(document.Members)-1 {
-			return Document{}, fmt.Errorf("%s needs one preshared key for each other member", member.Name)
+		linked := 0
+		for _, other := range document.Members {
+			if other.Node != member.Node && Links(member, other) {
+				linked++
+				if _, ok := member.PSK[other.Node]; !ok {
+					return Document{}, fmt.Errorf("%s needs a preshared key for %s", member.Name, other.Name)
+				}
+			}
 		}
-		for peer, sealed := range member.PSK {
-			if peer == member.Node || !nodes[peer] || len(sealed) > 4096 || !blob.MatchString(sealed) {
-				return Document{}, fmt.Errorf("%s has a preshared key for someone who is not a member", member.Name)
+		if len(member.PSK) != linked {
+			return Document{}, fmt.Errorf("%s has a preshared key for someone it does not link with", member.Name)
+		}
+		for _, sealed := range member.PSK {
+			if len(sealed) > 4096 || !blob.MatchString(sealed) {
+				return Document{}, fmt.Errorf("%s has a preshared key that is not sealed", member.Name)
 			}
 		}
 	}

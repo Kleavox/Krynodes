@@ -9,10 +9,20 @@ import {
   agentActionsRequestSchema,
   agentActionsResponseSchema,
   agentConfigResponseSchema,
+  agentEnrollSchema,
   agentHeartbeatSchema,
+  agentHostSchema,
+  agentKnowsMemberKinds,
+  laptopAddress6,
+  laptopEnrollSchema,
+  links,
+  MEMBER_KINDS_AGENT,
+  NETWORK,
+  networkReplySchema,
   progressSchema,
   checkResultSchema,
   denialsSchema,
+  enrollmentResponseSchema,
   heartbeatResponseSchema,
   isProtectedTarget,
   COMMAND_GRACE_MS,
@@ -1570,5 +1580,117 @@ describe("SELinux and AppArmor of agent 0.7.4", () => {
       "restart",
     ]);
     expect("setup" in agentHeartbeatSchema.shape).toBe(true);
+  });
+});
+
+describe("laptops of agent 0.7.24", () => {
+  const A = "11111111-1111-4111-8111-111111111111";
+  const B = "22222222-2222-4222-8222-222222222222";
+  const key = `${"A".repeat(42)}A=`;
+  const seal = "s".repeat(87);
+  const laptop = { key, signer: key, port: 51820, sealKey: seal };
+  const host = {
+    hostname: "laptop-1",
+    operatingSystem: "windows",
+    architecture: "amd64",
+    agentVersion: "0.7.24",
+  };
+  const reply = (network: unknown) =>
+    heartbeatResponseSchema.safeParse({
+      ok: true,
+      intervalSeconds: 30,
+      configVersion: "a",
+      network,
+    }).success;
+
+  it("reaches the app and the Worker by the package's name", () => {
+    expect(MEMBER_KINDS_AGENT).toBe("0.7.24");
+    expect(agentKnowsMemberKinds("0.7.24")).toBe(true);
+    expect(agentKnowsMemberKinds("0.7.23")).toBe(false);
+    expect(NETWORK.pool6).toBe("fd88:88::/64");
+    expect(laptopAddress6("10.88.3.9")).toBe("fd88:88::3:9");
+    expect(typeof links).toBe("function");
+  });
+
+  it("an enroll body may carry a laptop's keys, and one without still parses", () => {
+    expect(agentEnrollSchema.safeParse(host).success).toBe(true);
+    expect(agentEnrollSchema.safeParse({ ...host, laptop }).success).toBe(true);
+    expect(laptopEnrollSchema.safeParse(laptop).success).toBe(true);
+    expect(agentEnrollSchema.parse({ ...host, laptop }).laptop?.sealKey).toBe(
+      seal,
+    );
+    expect("laptop" in agentHostSchema.shape).toBe(false);
+  });
+
+  it("refuses a heartbeat that carries a laptop's keys", () => {
+    const heartbeat = {
+      ...host,
+      nodeId: A,
+      metrics: {
+        cpuPercent: null,
+        memoryUsedBytes: null,
+        memoryTotalBytes: null,
+        diskUsedBytes: null,
+        diskTotalBytes: null,
+        load1: null,
+        load5: null,
+        load15: null,
+        uptimeSeconds: null,
+      },
+    };
+    expect(agentHeartbeatSchema.safeParse(heartbeat).success).toBe(true);
+    expect(
+      agentHeartbeatSchema.safeParse({ ...heartbeat, laptop }).success,
+    ).toBe(false);
+  });
+
+  it("an enroll answer may carry the trust tokens", () => {
+    const answer = { nodeId: A, token: "t", intervalSeconds: 60 };
+    expect(enrollmentResponseSchema.safeParse(answer).success).toBe(true);
+    expect(
+      enrollmentResponseSchema.parse({ ...answer, trust: ["a.-7.b"] }).trust,
+    ).toEqual(["a.-7.b"]);
+  });
+
+  it("refuses a laptop whose keys or port are wrong, or that carries more", () => {
+    const refused = (change: Record<string, unknown>) =>
+      laptopEnrollSchema.safeParse({ ...laptop, ...change }).success;
+    expect(refused({ key: "abc" })).toBe(false);
+    expect(refused({ signer: "abc" })).toBe(false);
+    expect(refused({ port: 80 })).toBe(false);
+    expect(refused({ sealKey: "short" })).toBe(false);
+    expect(refused({ extra: 1 })).toBe(false);
+    expect(
+      laptopEnrollSchema.safeParse({ key, signer: key, port: 51820 }).success,
+    ).toBe(false);
+  });
+
+  it("a reply names meetings for NAT members and held servers for laptops", () => {
+    expect(reply({ meetings: [{ laptop: A, via: B }] })).toBe(true);
+    expect(reply({ held: [A, B] })).toBe(true);
+    expect(reply({ meetings: [], held: [] })).toBe(true);
+    expect(reply({})).toBe(true);
+    expect(reply({ meetings: [{ laptop: A }] })).toBe(false);
+    expect(reply({ meetings: [{ laptop: A, via: "b" }] })).toBe(false);
+    expect(reply({ meetings: [{ laptop: A, via: B, extra: 1 }] })).toBe(false);
+    expect(reply({ held: ["a"] })).toBe(false);
+  });
+
+  it("limits meetings and held to 32", () => {
+    const meeting = { laptop: A, via: B };
+    expect(
+      networkReplySchema.safeParse({ meetings: Array(32).fill(meeting) })
+        .success,
+    ).toBe(true);
+    expect(
+      networkReplySchema.safeParse({ meetings: Array(33).fill(meeting) })
+        .success,
+    ).toBe(false);
+    expect(
+      networkReplySchema.safeParse({ held: Array(32).fill(A) }).success,
+    ).toBe(true);
+    expect(
+      networkReplySchema.safeParse({ held: Array(33).fill(A) }).success,
+    ).toBe(false);
   });
 });

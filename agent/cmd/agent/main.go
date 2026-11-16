@@ -30,6 +30,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/metrics"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/stream"
+	"github.com/Kleavox/krynodes/agent/internal/trust"
 	"github.com/Kleavox/krynodes/agent/internal/update"
 )
 
@@ -155,7 +156,7 @@ func trustDevices(args []string) error {
 		return fmt.Errorf("trust must run as root on Linux")
 	}
 	if options.reset {
-		if err := actions.SaveTrust(actions.StateDir, actions.Trust{}); err != nil {
+		if err := trust.Save(actions.StateDir, trust.Trust{}); err != nil {
 			return err
 		}
 		fmt.Println("This server trusts no device now.")
@@ -164,7 +165,7 @@ func trustDevices(args []string) error {
 	if !options.initial {
 		return fmt.Errorf("use --initial --origin <origin> -- <device>... or --reset")
 	}
-	current, err := actions.LoadTrust(actions.StateDir)
+	current, err := trust.Load(actions.StateDir)
 	if err != nil {
 		return err
 	}
@@ -175,15 +176,15 @@ func trustDevices(args []string) error {
 	if err != nil {
 		return err
 	}
-	trust, err := actions.ParseTrustArgs(options.origin, options.keys, options.grant, options.access)
+	first, err := trust.ParseTrustArgs(options.origin, options.keys, options.grant, options.access)
 	if err != nil {
 		return err
 	}
-	trust.NodeID = cfg.NodeID
-	if err := actions.SaveTrust(actions.StateDir, trust); err != nil {
+	first.NodeID = cfg.NodeID
+	if err := trust.Save(actions.StateDir, first); err != nil {
 		return err
 	}
-	fmt.Printf("This server trusts %d devices; %d reach it.\n", len(trust.Core), len(trust.Access))
+	fmt.Printf("This server trusts %d devices; %d reach it.\n", len(first.Core), len(first.Access))
 	return nil
 }
 
@@ -621,7 +622,7 @@ func watchContainers() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}.WatchLinks(ctx, linksEvery)
+	go actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, QuarantineMark: filepath.Join(stateDirectory, "quarantined")}.WatchLinks(ctx, linksEvery)
 	actions.NewWatcher().Watch(ctx)
 	return nil
 }
@@ -666,7 +667,9 @@ func execActions() error {
 		Collect: func(ctx context.Context, remembered []string) (actions.Snapshot, error) {
 			return actions.Collect(ctx, actions.RunCommand, remembered)
 		},
-		Audit: true,
+		Audit:          true,
+		QuarantineMark: filepath.Join(stateDirectory, "quarantined"),
+		Held:           actions.WorkerHeld(actions.StateDir, defaultConfigPath, version, &http.Client{Timeout: 10 * time.Second}),
 	}
 	return executor.Execute(context.Background())
 }
@@ -675,7 +678,7 @@ func guardCommand() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("guard must run as root on Linux")
 	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, QuarantineMark: filepath.Join(stateDirectory, "quarantined")}
 	executor.Contain(context.Background())
 	return nil
 }
@@ -684,7 +687,7 @@ func hostApply() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("host-apply must run as root on Linux")
 	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand, ConfigPath: defaultConfigPath}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand, ConfigPath: defaultConfigPath, QuarantineMark: filepath.Join(stateDirectory, "quarantined")}
 	return executor.HostApply(context.Background())
 }
 

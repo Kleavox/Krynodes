@@ -8,7 +8,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Said, SHEET, SignButton } from "@/features/packages/lines";
+import {
+  NotFollowing,
+  Said,
+  SHEET,
+  SignButton,
+} from "@/features/packages/lines";
 import { useServices } from "@/lib/api";
 import { hostingOf, networkText, removeLines, seatOf } from "@/lib/network";
 import { cn } from "@/lib/utils";
@@ -59,6 +64,7 @@ export function RemoveDialog({
           </DialogDescription>
         </DialogHeader>
         <MarkRows rows={rows} />
+        <NotFollowing lines={keys.unfollowed} />
         <Said text={remove.error?.message ?? null} />
         <DialogFooter>
           <DialogClose asChild>

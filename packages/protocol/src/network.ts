@@ -7,6 +7,7 @@ export const NETWORK = {
   port: 51820,
   lastPort: 51919,
   pool: "10.88.0.0/16",
+  pool6: "fd88:88::/64",
   keepalive: 25,
   answerSeconds: 180,
   readSeconds: 120,
@@ -20,6 +21,7 @@ const OCTET = "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 const HOST = "(25[0-4]|2[0-4]\\d|1\\d\\d|[1-9]\\d?)";
 const RANGE = new RegExp(`^10\\.88\\.${OCTET}\\.0/24$`, "u");
 const POOL_HOST = new RegExp(`^10\\.88\\.${OCTET}\\.${HOST}$`, "u");
+export const IPV4 = new RegExp(`^${OCTET}(\\.${OCTET}){3}$`, "u");
 const ENDPOINT = new RegExp(
   `^(${OCTET}(\\.${OCTET}){3}|\\[[0-9A-Fa-f:.]{2,45}\\]):(\\d{1,5})$`,
   "u",
@@ -42,6 +44,14 @@ function inRange(range: string, address: string): boolean {
 function endpointPort(endpoint: string): number | null {
   const parts = ENDPOINT.exec(endpoint);
   return parts ? Number(parts.at(-1)) : null;
+}
+
+export function laptopAddress6(address: string): string {
+  if (!POOL_HOST.test(address)) {
+    throw new RangeError(`${address} is not an address of ${NETWORK.pool}`);
+  }
+  const [third, fourth] = address.split(".").slice(2).map(Number);
+  return `${NETWORK.pool6.slice(0, -3)}${third!.toString(16)}:${fourth!.toString(16)}`;
 }
 
 const wireguardKey = z
@@ -73,9 +83,24 @@ const memberSchema = z.strictObject({
   endpoint: endpoint.nullable(),
   nat: z.boolean(),
   psk: z.record(z.string().uuid(), b64url),
+  kind: z.enum(["laptop"]).optional(),
+  exit: z.literal(true).optional(),
   rekey: z.literal(true).optional(),
   cut: z.literal(true).optional(),
 });
+
+type Member = z.infer<typeof memberSchema>;
+
+const isLaptop = (member: Member) => member.kind === "laptop";
+
+export function links(a: Member, b: Member): boolean {
+  if (isLaptop(a) && isLaptop(b)) return false;
+  if (isLaptop(a)) return !b.nat;
+  if (isLaptop(b)) return !a.nat;
+  return true;
+}
+
+const ipv4 = z.string().regex(IPV4);
 
 const distinct = (values: string[]) => new Set(values).size === values.length;
 
@@ -97,6 +122,7 @@ export const networkDocumentSchema = z
         stop: z.boolean(),
       })
       .optional(),
+    dns: z.array(ipv4).min(1).max(2).optional(),
     members: z.array(memberSchema).max(32),
     blocked: z.array(wireguardKey).max(1000),
   })
@@ -106,15 +132,19 @@ export const networkDocumentSchema = z
       nodes.size === document.members.length &&
       distinct(document.members.map((member) => member.address)) &&
       distinct(document.members.map((member) => member.key)) &&
-      document.members.every(
-        (member) =>
+      document.members.every((member) => {
+        const linked = document.members
+          .filter((other) => other !== member && links(member, other))
+          .map((other) => other.node);
+        const held = Object.keys(member.psk);
+        return (
           inRange(document.range, member.address) &&
           !document.blocked.includes(member.key) &&
-          Object.keys(member.psk).length === nodes.size - 1 &&
-          Object.keys(member.psk).every(
-            (peer) => peer !== member.node && nodes.has(peer),
-          ),
-      )
+          (member.exit === undefined || (!isLaptop(member) && !member.nat)) &&
+          held.length === linked.length &&
+          linked.every((peer) => Object.hasOwn(member.psk, peer))
+        );
+      })
     );
   });
 
@@ -194,6 +224,16 @@ export const networkBeatSchema = z.strictObject({
   key: wireguardKey.nullable(),
   links: z.array(networkLinkSchema).max(32),
   announce: z.strictObject({ key: wireguardKey, signature: b64url }).optional(),
+  meet: z.string().uuid().optional(),
+});
+
+export const sealKeySchema = z.string().regex(/^[A-Za-z0-9_-]{87}$/u);
+
+export const laptopEnrollSchema = z.strictObject({
+  key: wireguardKey,
+  signer: wireguardKey,
+  port,
+  sealKey: sealKeySchema,
 });
 
 const cidr = z.string().max(64);

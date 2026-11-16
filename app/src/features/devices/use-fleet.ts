@@ -1,6 +1,13 @@
-import { useDevices, useOverview, useProposals, useServices } from "@/lib/api";
+import {
+  useDevices,
+  useNetwork,
+  useOverview,
+  useProposals,
+  useServices,
+} from "@/lib/api";
 import {
   decodeChange,
+  laptopServers,
   trustedServers,
   type FleetServer,
   type FleetView,
@@ -27,15 +34,25 @@ export function useFleet(poll = false): Fleet | null {
   const overview = useOverview();
   const services = useServices();
   const proposals = useProposals();
-  if (!devices.data || !overview.data || !services.data || !proposals.data) {
+  const network = useNetwork();
+  if (
+    !devices.data ||
+    !overview.data ||
+    !services.data ||
+    !proposals.data ||
+    network.isPending
+  ) {
     return null;
   }
   const trust = new Map(
     services.data.nodes.map((node) => [node.id, node.trust]),
   );
-  const servers = overview.data.nodes
-    .filter((node) => node.enrolled_at !== null && node.disabled_at === null)
-    .map((node) => ({ node, trust: trust.get(node.id) ?? null }));
+  const servers = [
+    ...overview.data.nodes
+      .filter((node) => node.enrolled_at !== null && node.disabled_at === null)
+      .map((node) => ({ node, trust: trust.get(node.id) ?? null })),
+    ...laptopServers(network.data?.laptops ?? []),
+  ];
   const view: FleetView = {
     origin: window.location.origin,
     devices: devices.data.devices,

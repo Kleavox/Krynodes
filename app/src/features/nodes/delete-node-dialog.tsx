@@ -23,6 +23,7 @@ import {
   useNetworkKeys,
   useSignChange,
 } from "@/features/network/use-network-sign";
+import { NotFollowing } from "@/features/packages/lines";
 import { removalReady } from "@/lib/agent";
 import {
   useCloudflare,
@@ -287,6 +288,7 @@ export function DeleteNodeDialog({
             Remove Krynodes from the server
           </label>
         )}
+        {member && <NotFollowing lines={keys.unfollowed} />}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(error)}

@@ -943,3 +943,58 @@ describe("migration 0045", () => {
     ]);
   });
 });
+
+describe("migration 0046", () => {
+  it("the migration adds kind with every existing node a server", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0046");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'server-1', 'h1'), ('n2', 'standalone', 'server-2', 'h2')",
+    );
+    sqlite.exec(
+      "INSERT INTO network_changes (id, owner_user_id, at, change, requested_by) VALUES ('c1', 'standalone', 'now', 'Create the network', 'user1@example.com')",
+    );
+    apply(sqlite, (name) => name.startsWith("0046"));
+    expect(
+      sqlite.prepare("SELECT id, kind FROM nodes ORDER BY id").all(),
+    ).toEqual([
+      { id: "n1", kind: "server" },
+      { id: "n2", kind: "server" },
+    ]);
+    expect(sqlite.prepare("SELECT kind FROM network_changes").all()).toEqual([
+      { kind: null },
+    ]);
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash, kind) VALUES ('n3', 'standalone', 'laptop-1', 'h3', 'laptop')",
+    );
+    expect(() =>
+      sqlite.exec(
+        "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash, kind) VALUES ('n4', 'standalone', 'phone-1', 'h4', 'phone')",
+      ),
+    ).toThrow();
+    expect(() =>
+      sqlite.exec(
+        "UPDATE network_changes SET kind = 'laptop.rename' WHERE id = 'c1'",
+      ),
+    ).toThrow();
+  });
+});
+
+describe("migration 0047", () => {
+  it("a member's applied version starts unknown", () => {
+    const sqlite = new DatabaseSync(":memory:");
+    sqlite.exec("PRAGMA foreign_keys = ON");
+    apply(sqlite, (name) => name < "0047");
+    sqlite.exec(
+      "INSERT INTO nodes (id, owner_user_id, name, agent_token_hash) VALUES ('n1', 'standalone', 'laptop-1', 'h1')",
+    );
+    sqlite.exec(
+      "INSERT INTO network_members (node_id, state, port, key, signer, since) VALUES ('n1', 'waiting', 51820, 'k', 's', 'now')",
+    );
+    apply(sqlite, (name) => name.startsWith("0047"));
+    expect(sqlite.prepare("SELECT applied FROM network_members").all()).toEqual(
+      [{ applied: null }],
+    );
+  });
+});

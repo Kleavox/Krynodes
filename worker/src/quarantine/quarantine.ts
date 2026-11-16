@@ -85,7 +85,7 @@ export async function quarantine(
     .prepare(
       `SELECT n.id, n.owner_user_id, n.name, m.key, m.address, m.state AS member
        FROM nodes n LEFT JOIN network_members m ON m.node_id = n.id
-       WHERE n.id = ? AND NOT EXISTS (
+       WHERE n.id = ? AND n.kind = 'server' AND NOT EXISTS (
          SELECT 1 FROM quarantines WHERE node_id = n.id AND released_at IS NULL)`,
     )
     .bind(input.nodeId)
@@ -96,8 +96,8 @@ export async function quarantine(
       .prepare(
         `SELECT n.id, m.state AS member FROM nodes n
          LEFT JOIN network_members m ON m.node_id = n.id
-         WHERE n.owner_user_id = ? AND n.id <> ? AND n.enrolled_at IS NOT NULL
-           AND n.disabled_at IS NULL
+         WHERE n.owner_user_id = ? AND n.id <> ? AND n.kind = 'server'
+           AND n.enrolled_at IS NOT NULL AND n.disabled_at IS NULL
          ORDER BY m.address IS NULL, m.address, n.name`,
       )
       .bind(suspect.owner_user_id, suspect.id)

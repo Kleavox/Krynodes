@@ -3,11 +3,10 @@ import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import type { Env } from "../env";
-import { toB64url } from "../lib/b64url";
 import { randomToken, sha256 } from "../lib/crypto";
 import { parseKeyLine } from "../lib/ssh";
 import { liveRange, readNetwork } from "../network/document";
-import { loadFleet, type Fleet } from "../trust/fleet";
+import { loadFleet, trustTokens, type Fleet } from "../trust/fleet";
 import { confirmed, confirmingDevice } from "../trust/intent";
 import { agentRateLimit } from "./agent";
 import { readEnrollDefaults } from "./settings";
@@ -73,23 +72,14 @@ function installArgs(
   range: string | null,
 ): string[] {
   const args = [agentOrigin(env), token];
-  const core = fleet.devices.filter((item) => fleet.core.includes(item.id));
-  if (core.length > 0) {
+  const trust = trustTokens(fleet);
+  if (trust.length > 0) {
     args.push("--trust", env.PUBLIC_ORIGIN);
-    if (core.length < 2) args.push("--grant");
+    if (trust.length < 2) args.push("--grant");
     else if (device && fleet.core.includes(device)) {
       args.push("--access", device);
     }
-    const owned = fleet.labelled && core.every((item) => item.account);
-    const owner = (account: string | null) =>
-      owned && account ? `.${toB64url(new TextEncoder().encode(account))}` : "";
-    args.push(
-      "--",
-      ...core.map(
-        (item) =>
-          `${item.id}.${item.alg}.${item.publicKey}${owner(item.account)}`,
-      ),
-    );
+    args.push("--", ...trust);
   }
   const steps = [
     "recommended",
@@ -179,7 +169,8 @@ export function registerEnrollmentRoutes(
       .prepare(
         `UPDATE enrollment_tokens
          SET setup = json_set(?, '$.admin', json(json_extract(setup, '$.admin')))
-         WHERE id = ? AND owner_user_id = ? AND used_at IS NULL AND expires_at > ?`,
+         WHERE id = ? AND owner_user_id = ? AND used_at IS NULL AND expires_at > ?
+           AND json_extract(setup, '$.laptop') IS NULL`,
       )
       .bind(
         JSON.stringify(setup.data),
@@ -213,7 +204,8 @@ export function registerEnrollmentRoutes(
     const row = await db
       .prepare(
         `SELECT owner_user_id, setup, device_id FROM enrollment_tokens
-         WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+         WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
+           AND json_extract(setup, '$.laptop') IS NULL`,
       )
       .bind(await sha256(token), new Date().toISOString())
       .first<{

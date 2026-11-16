@@ -19,6 +19,8 @@ export interface AgentNode {
   id: string;
   interval_seconds: number;
   owner_user_id?: string;
+  kind?: string;
+  agent_version?: string | null;
   update_requested_version?: string | null;
   update_requested_at?: string | null;
   update_attempts?: number;

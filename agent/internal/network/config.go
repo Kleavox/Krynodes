@@ -3,6 +3,7 @@ package network
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -28,7 +29,7 @@ func DNSName(name string) string {
 	return label
 }
 
-func Render(document Document, self Member, private string, psk map[string]string) string {
+func Render(document Document, self Member, private string, psk map[string]string, meetings map[string]string, exit6 bool) string {
 	mtu := document.MTU
 	if self.MTU != nil {
 		mtu = *self.MTU
@@ -39,17 +40,37 @@ func Render(document Document, self Member, private string, psk map[string]strin
 		clamp := fmt.Sprintf("-t mangle %%s POSTROUTING -o %s -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss %d", Interface, mtu-40)
 		fmt.Fprintf(&config, "PostUp = iptables -w "+clamp+"\nPostDown = iptables -w "+clamp+"\n", "-A", "-D")
 	}
+	carried := map[string][]string{}
+	if self.NAT {
+		carried = Carried(document, meetings)
+	}
 	for _, peer := range document.Members {
-		if peer.Node == self.Node || peer.Cut {
+		if peer.Node == self.Node || peer.Cut || !Links(self, peer) {
 			continue
 		}
-		fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s/32\n", peer.Key, psk[peer.Node], peer.Address)
-		if !peer.NAT && peer.Endpoint != nil {
+		allowed := append([]string{peer.Address + "/32"}, carried[peer.Node]...)
+		if peer.IsLaptop() && exit6 {
+			allowed = append(allowed, Address6(peer.Address)+"/128")
+		}
+		fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s\n", peer.Key, psk[peer.Node], strings.Join(allowed, ", "))
+		if !peer.IsLaptop() && !peer.NAT && peer.Endpoint != nil {
 			fmt.Fprintf(&config, "Endpoint = %s\n", *peer.Endpoint)
 		}
 		fmt.Fprintf(&config, "PersistentKeepalive = %d\n", Keepalive)
 	}
 	return config.String()
+}
+
+func Carried(document Document, meetings map[string]string) map[string][]string {
+	carried := map[string][]string{}
+	for _, laptop := range Laptops(document.Members) {
+		meeting := meetings[laptop.Node]
+		if !slices.ContainsFunc(document.Members, func(member Member) bool { return member.Node == meeting && MeetingPoint(member) }) {
+			meeting = DefaultMeeting(document)
+		}
+		carried[meeting] = append(carried[meeting], laptop.Address+"/32")
+	}
+	return carried
 }
 
 func quickOnly(line string) bool {

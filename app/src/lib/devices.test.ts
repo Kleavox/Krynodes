@@ -20,9 +20,11 @@ import {
   firstTrusts,
   formatPrint,
   lacksOwners,
+  laptopServers,
   moveChange,
   networkSigners,
   nextVersion,
+  preferFollowed,
   predictMissing,
   reachText,
   removeChange,
@@ -31,6 +33,7 @@ import {
   signersFor,
   storesOwners,
   syncChange,
+  syncTarget,
   syncText,
   unreached,
   type FleetView,
@@ -79,7 +82,7 @@ const tablet = device("tablet", false);
 
 function view(
   devices: DeviceRecord[],
-  servers: { node: NodeRecord; trust: NodeTrust | null }[],
+  servers: FleetView["servers"],
 ): FleetView {
   return { devices, servers, origin: ORIGIN };
 }
@@ -119,6 +122,41 @@ describe("where a passkey acts", () => {
     expect(reachText(["server-2", "server-1", "server-3"], 5)).toBe(
       "3 of 5 Servers",
     );
+  });
+
+  it("says what to sync by what is listed", () => {
+    const fleet = [
+      {
+        node: { id: "a", name: "vps-1", agent_version: "0.7.24" },
+        trust: null,
+      },
+      {
+        node: { id: "b", name: "laptop-1", agent_version: "0.7.24" },
+        trust: null,
+        laptop: true as const,
+      },
+      {
+        node: { id: "c", name: "laptop-2", agent_version: "0.7.24" },
+        trust: null,
+        laptop: true as const,
+      },
+    ];
+    expect(syncTarget(fleet, ["vps-1"])).toBe("that server");
+    expect(syncTarget(fleet, ["vps-1", "gone"])).toBe("those servers");
+    expect(syncTarget(fleet, ["laptop-1"])).toBe("that laptop");
+    expect(syncTarget(fleet, ["laptop-1", "laptop-2"])).toBe("those laptops");
+    expect(syncTarget(fleet, ["vps-1", "laptop-1"])).toBe(
+      "those servers and laptops",
+    );
+  });
+
+  it("says servers and laptops where laptops are counted too", () => {
+    expect(reachText(["a", "b", "c"], 3, true)).toBe("All Servers and Laptops");
+    expect(reachText([], 3, true)).toBe("No Servers or Laptops");
+    expect(reachText(["a", "b", "c"], 5, true)).toBe(
+      "3 of 5 Servers and Laptops",
+    );
+    expect(reachText(["a"], 3, true)).toBe("a");
   });
 
   it("finds trusted servers no passkey reaches", () => {
@@ -182,6 +220,56 @@ describe("access", () => {
       "tablet",
     ]);
     expect(networkSigners(devices, [null])).toEqual([]);
+  });
+
+  it("prefers a passkey every member laptop trusts, and never lets a laptop veto", () => {
+    const devices = [laptop, phone, tablet];
+    const all = ["laptop", "phone", "tablet"];
+    const own = { name: "laptop-1", trust: trust(4, [laptop], [laptop]) };
+    const wide = {
+      name: "laptop-2",
+      trust: trust(4, [laptop], [laptop, phone]),
+    };
+    expect(preferFollowed(devices, all, [])).toEqual({
+      signers: all,
+      unfollowed: [],
+    });
+    expect(preferFollowed(devices, all, [own, wide])).toEqual({
+      signers: ["laptop", "phone", "tablet"],
+      unfollowed: [
+        "laptop-1 follows this change only when it is signed with a passkey it trusts.",
+        "laptop-2 follows this change only when it is signed with a passkey it trusts.",
+      ],
+    });
+    expect(preferFollowed(devices, ["phone", "laptop"], [own, wide])).toEqual({
+      signers: ["laptop", "phone"],
+      unfollowed: [
+        "laptop-1 follows this change only when it is signed with a passkey it trusts.",
+      ],
+    });
+    expect(preferFollowed(devices, ["phone"], [own, wide])).toEqual({
+      signers: ["phone"],
+      unfollowed: [
+        "laptop-1 does not trust this passkey and will not follow this change.",
+      ],
+    });
+    expect(
+      preferFollowed(
+        devices,
+        ["phone", "tablet"],
+        [own, { name: "laptop-3", trust: null }],
+      ),
+    ).toEqual({
+      signers: ["phone", "tablet"],
+      unfollowed: [
+        "laptop-1 does not trust this passkey and will not follow this change.",
+        "laptop-3 does not trust this passkey and will not follow this change.",
+      ],
+    });
+    expect(preferFollowed(devices, [], [own])).toEqual({
+      signers: [],
+      unfollowed: [],
+    });
   });
 
   it("offers a server restart to a current agent with access", () => {
@@ -376,6 +464,84 @@ describe("changes", () => {
     const change = removeChange(two, phone);
     expect(change.core?.map((key) => key.id)).toEqual(["laptop"]);
     expect(change.access).toEqual({ [N1]: ["laptop"], [N2]: ["laptop"] });
+  });
+
+  it("a passkey change is signed for laptops too", () => {
+    const L1 = "66666666-6666-4666-8666-666666666666";
+    const L2 = "77777777-7777-4777-8777-777777777777";
+    const fleet = view(
+      [laptop, phone, tablet],
+      [
+        { node: node(N1), trust: trust(4, [laptop, phone], [laptop, phone]) },
+        ...laptopServers([
+          {
+            nodeId: L1,
+            name: "laptop-1",
+            address: "10.88.0.9",
+            state: "in",
+            version: "0.7.24",
+            lastSeen: null,
+            sealKey: null,
+            trust: trust(5, [laptop, phone], [laptop]),
+            applied: null,
+          },
+          {
+            nodeId: L2,
+            name: "laptop-2",
+            address: null,
+            state: "waiting",
+            version: "0.7.24",
+            lastSeen: null,
+            sealKey: null,
+            trust: null,
+            applied: null,
+          },
+        ]),
+      ],
+    );
+    expect(fleet.servers).toHaveLength(2);
+    expect(fleet.servers[1]).toEqual({
+      node: { id: L1, name: "laptop-1", agent_version: "0.7.24" },
+      trust: trust(5, [laptop, phone], [laptop]),
+      laptop: true,
+    });
+    expect(removeChange(fleet, phone).access).toEqual({
+      [N1]: ["laptop"],
+      [L1]: ["laptop"],
+    });
+    expect(admitChange(fleet, tablet).access).toEqual({
+      [N1]: ["laptop", "phone"],
+      [L1]: ["laptop"],
+    });
+    expect(nextVersion(fleet)).toBe(6);
+  });
+
+  it("a passkey change reaches only the laptops that are in the network and trust a passkey", () => {
+    const seat = (
+      id: string,
+      state: "waiting" | "in" | "leaving" | null,
+      held: NodeTrust | null = trust(5, [laptop], [laptop]),
+    ) => ({
+      nodeId: id,
+      name: id,
+      address: null,
+      state,
+      version: "0.7.0",
+      lastSeen: null,
+      sealKey: null,
+      trust: held,
+      applied: null,
+    });
+    expect(
+      laptopServers([
+        seat("in", "in"),
+        seat("waiting", "waiting"),
+        seat("leaving", "leaving"),
+        seat("none", null),
+        seat("empty", "in", trust(5, [], [])),
+        seat("silent", "in", null),
+      ]).map((server) => server.node.id),
+    ).toEqual(["in"]);
   });
 
   it("changes access only on the servers that differ", () => {

@@ -80,6 +80,7 @@ type NetworkBeat struct {
 	Key      *string          `json:"key"`
 	Links    []network.Link   `json:"links"`
 	Announce *NetworkAnnounce `json:"announce,omitempty"`
+	Meet     string           `json:"meet,omitempty"`
 }
 
 type NetworkAnnounce struct {
@@ -91,6 +92,13 @@ type NetworkReply struct {
 	Document  json.RawMessage    `json:"document,omitempty"`
 	Endpoints []NetworkEndpoint  `json:"endpoints,omitempty"`
 	Announced []NetworkAnnounced `json:"announced,omitempty"`
+	Meetings  []NetworkMeeting   `json:"meetings,omitempty"`
+	Held      []string           `json:"held,omitempty"`
+}
+
+type NetworkMeeting struct {
+	Laptop string `json:"laptop"`
+	Via    string `json:"via"`
 }
 
 type NetworkEndpoint struct {

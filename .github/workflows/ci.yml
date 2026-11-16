@@ -38,6 +38,7 @@ jobs:
             agent:
               - "agent/**"
               - "tooling/lint/go-deadcode.mjs"
+              - "tooling/lint/go-windows.mjs"
               - ".github/workflows/ci.yml"
               - ".github/workflows/agent-release.yml"
 
@@ -82,7 +83,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
-          cache-dependency-path: agent/go.mod
+          cache-dependency-path: |
+            agent/go.mod
+            agent/windows/go.sum
 
       - run: go test ./...
         working-directory: agent
@@ -95,6 +98,9 @@ jobs:
 
       - name: Dead-code check
         run: node tooling/lint/go-deadcode.mjs
+
+      - name: Windows module
+        run: node tooling/lint/go-windows.mjs
 
   validate:
     name: validate

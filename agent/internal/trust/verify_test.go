@@ -1,4 +1,4 @@
-package actions
+package trust
 
 import (
 	"crypto"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
 const (
@@ -158,7 +160,7 @@ func (c *deployCase) document(t *testing.T, body []byte) []byte {
 	return raw
 }
 
-func (c *deployCase) request(t *testing.T) Request {
+func (c *deployCase) request(t *testing.T) reporter.ActionRequest {
 	t.Helper()
 	commandBytes, err := json.Marshal(c.command)
 	if err != nil {
@@ -176,7 +178,7 @@ func (c *deployCase) request(t *testing.T) Request {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Request{ID: testID, Kind: "compose", Name: "listmonk", Action: "deploy", ExpiresAt: testNow.Add(10 * time.Minute).Format(time.RFC3339Nano), Signed: raw}
+	return reporter.ActionRequest{ID: testID, Kind: "compose", Name: "listmonk", Action: "deploy", ExpiresAt: testNow.Add(10 * time.Minute).Format(time.RFC3339Nano), Signed: raw}
 }
 
 func (c *deployCase) verify(t *testing.T, now time.Time) error {

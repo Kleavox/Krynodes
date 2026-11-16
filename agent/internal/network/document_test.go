@@ -1,6 +1,8 @@
 package network
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -101,6 +103,133 @@ func TestADocumentThatBreaksItsOwnRulesIsRefused(t *testing.T) {
 	}
 }
 
+const nodeL = "99999999-9999-4999-8999-999999999999"
+
+func withLaptop(document map[string]any) {
+	laptop := map[string]any{
+		"node": nodeL, "name": "laptop-1", "address": "10.88.0.9",
+		"key":    base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)),
+		"signer": base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{10}, 32)),
+		"port":   51822, "mtu": nil, "endpoint": nil, "nat": true, "kind": "laptop",
+		"psk": map[string]any{nodeA: "eyJ2IjozfQ"},
+	}
+	document["members"] = append(document["members"].([]any), laptop)
+	member(document, 0)["psk"].(map[string]any)[nodeL] = "eyJ2Ijo0fQ"
+}
+
+func TestTheSharedFixtureMarshalsBackByteForByte(t *testing.T) {
+	var want bytes.Buffer
+	if err := json.Compact(&want, fixtureBytes(t)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(fixture(t))
+	if err != nil || !bytes.Equal(got, want.Bytes()) {
+		t.Fatalf("got\n%s\nwant\n%s", got, want.Bytes())
+	}
+}
+
+func TestParseAcceptsPskOnlyForLinkedPairs(t *testing.T) {
+	document, err := Parse(edited(t, withLaptop))
+	if err != nil {
+		t.Fatal(err)
+	}
+	laptop := document.Members[2]
+	if !laptop.IsLaptop() || !Links(document.Members[0], laptop) || Links(document.Members[1], laptop) || !Links(document.Members[0], document.Members[1]) || Links(laptop, laptop) {
+		t.Fatalf("laptop %+v", laptop)
+	}
+	refused := map[string]func(map[string]any){
+		"a laptop without its public peer's key": func(document map[string]any) {
+			withLaptop(document)
+			member(document, 2)["psk"] = map[string]any{}
+		},
+		"a public member without the laptop's key": func(document map[string]any) {
+			withLaptop(document)
+			delete(member(document, 0)["psk"].(map[string]any), nodeL)
+		},
+		"a laptop holding a NAT member's key": func(document map[string]any) {
+			withLaptop(document)
+			member(document, 2)["psk"].(map[string]any)[nodeB] = "eyJ2Ijo1fQ"
+		},
+	}
+	for name, change := range refused {
+		if _, err := Parse(edited(t, change)); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
+func TestParseRefusesALaptopPskForANATMember(t *testing.T) {
+	raw := edited(t, func(document map[string]any) {
+		withLaptop(document)
+		member(document, 1)["psk"].(map[string]any)[nodeL] = "eyJ2Ijo1fQ"
+	})
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("a NAT member's key for a laptop was accepted")
+	}
+}
+
+func TestParseRefusesAPskBetweenTwoLaptops(t *testing.T) {
+	const nodeM = "88888888-8888-4888-8888-888888888888"
+	twoLaptops := func(document map[string]any) {
+		withLaptop(document)
+		second := map[string]any{}
+		for key, value := range member(document, 2) {
+			second[key] = value
+		}
+		second["node"], second["name"], second["address"] = nodeM, "laptop-2", "10.88.0.10"
+		second["key"] = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{11}, 32))
+		second["signer"] = base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{12}, 32))
+		second["psk"] = map[string]any{nodeA: "eyJ2Ijo2fQ"}
+		document["members"] = append(document["members"].([]any), second)
+		member(document, 0)["psk"].(map[string]any)[nodeM] = "eyJ2Ijo3fQ"
+	}
+	if _, err := Parse(edited(t, twoLaptops)); err != nil {
+		t.Fatalf("two laptops: %v", err)
+	}
+	raw := edited(t, func(document map[string]any) {
+		twoLaptops(document)
+		member(document, 2)["psk"].(map[string]any)[nodeM] = "eyJ2Ijo4fQ"
+		member(document, 3)["psk"].(map[string]any)[nodeL] = "eyJ2Ijo5fQ"
+	})
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("a psk between two laptops was accepted")
+	}
+}
+
+func TestExitAndDNSAreReadOnlyWhereTheyMayBe(t *testing.T) {
+	document, err := Parse(edited(t, func(document map[string]any) {
+		withLaptop(document)
+		member(document, 0)["exit"] = true
+		document["dns"] = []any{"1.1.1.1", "10.88.0.1"}
+	}))
+	if err != nil || !document.Members[0].Exit || !slices.Equal(document.DNS, []string{"1.1.1.1", "10.88.0.1"}) {
+		t.Fatalf("document %+v err %v", document, err)
+	}
+	refused := map[string]func(map[string]any){
+		"an exit on a laptop":     func(document map[string]any) { withLaptop(document); member(document, 2)["exit"] = true },
+		"an exit behind NAT":      func(document map[string]any) { member(document, 1)["exit"] = true },
+		"a kind that is not one":  func(document map[string]any) { member(document, 1)["kind"] = "lite" },
+		"no DNS address":          func(document map[string]any) { document["dns"] = []any{} },
+		"three DNS addresses":     func(document map[string]any) { document["dns"] = []any{"1.1.1.1", "1.0.0.1", "9.9.9.9"} },
+		"an IPv6 DNS address":     func(document map[string]any) { document["dns"] = []any{"2606:4700:4700::1111"} },
+		"a DNS address with zero": func(document map[string]any) { document["dns"] = []any{"01.1.1.1"} },
+		"a DNS name":              func(document map[string]any) { document["dns"] = []any{"dns.example.com"} },
+	}
+	for name, change := range refused {
+		if _, err := Parse(edited(t, change)); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
+func TestALaptopsSixAddressIsItsLastTwoOctetsInHex(t *testing.T) {
+	for address, want := range map[string]string{"10.88.3.9": "fd88:88::3:9", "10.88.0.254": "fd88:88::fe", "10.88.255.10": "fd88:88::ff:a", "192.168.0.9": ""} {
+		if got := Address6(address); got != want {
+			t.Errorf("%s: %q", address, got)
+		}
+	}
+}
+
 func TestOnlyANewerVersionIsApplied(t *testing.T) {
 	document := fixture(t)
 	for _, applied := range []int{3, 4, 9} {
@@ -173,7 +302,7 @@ func TestACutMemberRendersNoPeerAndItsKeyCountsAsBlocked(t *testing.T) {
 	document := fixture(t)
 	cut := document.Members[1].Key
 	document.Members[1].Cut = true
-	if config := Render(document, document.Members[0], "private", map[string]string{}); strings.Contains(config, cut) {
+	if config := Render(document, document.Members[0], "private", map[string]string{}, nil, false); strings.Contains(config, cut) {
 		t.Fatalf("config %s", config)
 	}
 	applied := Applied{}.After(document, "h")

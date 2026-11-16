@@ -98,7 +98,7 @@ func ReadStatus(path, current string) (Status, bool) {
 	if json.Unmarshal(raw, &status) != nil || status.Message == "" || !versionPattern.MatchString(status.Version) {
 		return Status{}, false
 	}
-	newer, err := isNewer(status.Version, current)
+	newer, err := IsNewer(status.Version, current)
 	if err != nil || !newer {
 		return Status{}, false
 	}
@@ -116,7 +116,7 @@ func Apply(options Options) error {
 	if !versionPattern.MatchString(target) {
 		return fmt.Errorf("invalid version %q", target)
 	}
-	newer, err := isNewer(target, options.CurrentVersion)
+	newer, err := IsNewer(target, options.CurrentVersion)
 	if err != nil {
 		return err
 	}
@@ -171,7 +171,7 @@ func (o Options) apply(target string) error {
 	if err != nil {
 		return err
 	}
-	if err := verify(binary, checksum, signature, o.PublicKey); err != nil {
+	if err := Verify(binary, checksum, signature, o.PublicKey); err != nil {
 		o.clearDownloads("")
 		return err
 	}
@@ -373,7 +373,7 @@ func gunzip(path string) ([]byte, error) {
 	return data, nil
 }
 
-func verify(binary, checksum, signature []byte, key ed25519.PublicKey) error {
+func Verify(binary, checksum, signature []byte, key ed25519.PublicKey) error {
 	fields := strings.Fields(string(checksum))
 	sum := sha256.Sum256(binary)
 	if len(fields) == 0 || !strings.EqualFold(fields[0], hex.EncodeToString(sum[:])) {
@@ -467,7 +467,7 @@ func (o Options) writeStatus(version, message string) {
 	_ = safefile.Write(o.StatusPath, raw, 0o644)
 }
 
-func isNewer(target, current string) (bool, error) {
+func IsNewer(target, current string) (bool, error) {
 	if !versionPattern.MatchString(current) {
 		return false, fmt.Errorf("the running agent has no release version (%q)", current)
 	}

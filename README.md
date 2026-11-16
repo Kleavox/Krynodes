@@ -205,9 +205,9 @@ passkey. Other systems (Fedora among them) run the agent, the
 checks and the Security check, but not Protections or Docker setup.
 
 Releases are cut by `.github/workflows/agent-release.yml` whenever
-`agent/VERSION` changes on `main`, as `agent-v<version>` with `krynodes-linux-amd64`
-and `krynodes-linux-arm64`, their checksums, ed25519 signatures and build
-provenance. The workflow signs with the secret `AGENT_SIGNING_KEY` and refuses
+`agent/VERSION` changes on `main`, as `agent-v<version>` with `krynodes-linux-amd64`,
+`krynodes-linux-arm64` and `krynodes-windows-amd64.exe`, their checksums, ed25519
+signatures and build provenance. The workflow signs with the secret `AGENT_SIGNING_KEY` and refuses
 to publish if it does not match `agent/internal/update/release.pub`. The key is
 a secret of the GitHub environment `release`, not of the repository: only the
 signing job runs there, and it waits for the owner's approval. A push that does
@@ -1221,6 +1221,68 @@ Stacks on the network:
   one (the same passkey signs them) and turns red when the new server is
   outside the network. Checks suggests a TCP check for each place a Contained
   stack reaches; **Not now** hides it until that list changes.
+
+### Laptops
+
+A Windows 10 or 11 laptop (64-bit) joins the private network as a member and
+reaches every server on its private address, from home or away. From agent
+0.7.24; every server in the network needs 0.7.24 or newer first, and the
+Network page names the one to update.
+
+- **Add Laptop** (Network page) shows the download link and the install
+  command, with a code that works once for 10 minutes. On the laptop, download
+  `krynodes-windows-amd64.exe` to Downloads (delete any older copy there
+  first) and paste the command into PowerShell opened as Administrator.
+  Krynodes has no code-signing certificate yet, so the browser may warn that
+  the file is not commonly downloaded (in Edge: **⋯**, **Keep**, then **Keep
+  anyway**); opened from Explorer instead, Windows shows **Windows protected
+  your PC** (**More info**, then **Run anyway**). Windows 11 with Smart App
+  Control on blocks the unsigned agent outright; it has to be off. The agent
+  still checks every update against the Krynodes release signature. A second
+  install over a running agent swaps the file and starts the service again.
+  Install copies
+  the agent to `C:\Program Files\Krynodes` with `wintun.dll` and the licences
+  of what it is built from, starts the **Krynodes** service and adds the tray
+  to every sign-in. The laptop makes its WireGuard and signing keys itself;
+  only the public halves leave it, and the private ones are kept where only
+  SYSTEM and Administrators can read them. It trusts the passkeys Krynodes
+  sends with the code, as a server does at install.
+- **Approve** (passkey) on the waiting laptop signs it into the network; the
+  code alone never lets a laptop in. **Dismiss** forgets a laptop that is
+  waiting.
+- **The tray** shows Connected, this laptop's name and address, **Exit Node**,
+  **Servers** (each with a dot, its address and, behind NAT, the server that
+  relays it; click to copy), Open Dashboard and **Settings**: Start with
+  Windows, Notify When a Server Goes Offline (off by default) and **Update
+  Agent**. Quit only disconnects; the laptop stays a member. Nothing in the
+  tray needs a passkey.
+- **Exit Node for Laptops** (a server's ⋯ menu, passkey) lets laptops send all
+  their internet traffic out through that server; pick it in the tray under
+  Exit Node. IPv6 goes through the exit too, or nowhere when the exit has no
+  IPv6. While an exit is on, every DNS question goes to **DNS for Laptops on
+  an Exit Node** (Settings, Laptop DNS, passkey) through the tunnel.
+  **Allow Local Network** keeps printers and other devices on the laptop's own
+  network reachable.
+- An exit server that is quarantined, or does not answer for 30 seconds,
+  leaves the tray: the laptop goes back to None on its own and shows one
+  notification.
+- **Update Agent** (tray, Settings) fetches the newest release, refuses it
+  unless its checksum and Krynodes release signature match and it is newer,
+  swaps it in and restarts the service; the tray restarts itself to match.
+  No UAC prompt: the service does it.
+- **Remove Laptop** (⋯, passkey) signs a document without it and blocks its
+  key, so every server drops it at once and a lost laptop gets nothing.
+- **Uninstall**: in PowerShell as Administrator, run
+  `& "C:\Program Files\Krynodes\krynodes.exe" uninstall | Out-Host`. It
+  removes the service, the tray, the network adapter, the firewall rule, the
+  exit's DNS rule, the keys and the trust store; the program folder goes at
+  the next restart. The laptop stays a member until **Remove Laptop**.
+  Installing again afterwards adds a new laptop with new keys; remove the old
+  entry with **Remove Laptop**. The Wintun driver stays in Windows' driver
+  store, unused, as other WireGuard programs leave it.
+- The agent's command line prints into the PowerShell window it was started
+  from; `| Out-Host` makes PowerShell wait for it. The service log is
+  `C:\ProgramData\Krynodes\service.log`.
 
 ### Quarantine
 

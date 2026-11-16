@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Said, SignButton } from "@/features/packages/lines";
+import { NotFollowing, Said, SignButton } from "@/features/packages/lines";
 import { missingSeals, rekeyNote, type Presence } from "@/lib/network";
 import type { NetworkView } from "@/types";
 
@@ -25,6 +25,7 @@ export function KeysDialog({
   onClose: () => void;
 }) {
   const members = view.members.filter((member) => member.state === "in");
+  const laptops = view.laptops.some((laptop) => laptop.state === "in");
   const keys = useNetworkKeys(members);
   const make = useMakeNewKeys();
   const note = rekeyNote(view, presence);
@@ -35,9 +36,7 @@ export function KeysDialog({
         <DialogHeader>
           <DialogTitle>Make new keys for the network?</DialogTitle>
           <DialogDescription>
-            Every server makes a new WireGuard key and the others learn it.
-            Links drop for a few seconds while they switch, and the old keys
-            stop working at once.
+            {`Every server makes a new WireGuard key and the others learn it${laptops ? "; laptops get new keys when they next connect" : ""}. Links drop for a few seconds while they switch, and the old keys stop working at once.`}
           </DialogDescription>
         </DialogHeader>
         {note && <p className="text-sm text-muted-foreground">{note}</p>}
@@ -46,6 +45,7 @@ export function KeysDialog({
             Making new keys… The servers finish this even if you close it.
           </p>
         )}
+        <NotFollowing lines={keys.unfollowed} />
         <Said text={missing ?? make.error?.message ?? null} />
         <DialogFooter>
           <DialogClose asChild>

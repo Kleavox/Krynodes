@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
 var listmonk = Stack{Project: "listmonk", Directory: "/opt/listmonk", Files: []string{"/opt/listmonk/docker-compose.yml"}, Running: 2, Total: 2}
@@ -28,11 +30,11 @@ const (
 func deployExecutor(t *testing.T, action string) (Executor, *fakeRun, Request) {
 	t.Helper()
 	executor, run := newExecutor(t)
-	c := newDeployCase(t, algES256)
+	c := newDeployCase(t)
 	c.command.Action = action
 	request := c.request(t)
 	request.Action = action
-	if err := SaveTrust(executor.StateDir, c.trust); err != nil {
+	if err := trust.Save(executor.StateDir, c.trust); err != nil {
 		t.Fatal(err)
 	}
 	executor.Collect = func(context.Context, []string) (Snapshot, error) {
@@ -209,7 +211,7 @@ func TestAnUnsignedComposeRequestIsRefused(t *testing.T) {
 
 func TestAComposeRequestWithoutTrustIsRefused(t *testing.T) {
 	executor, run, _ := deployExecutor(t, "deploy")
-	if err := SaveTrust(executor.StateDir, Trust{}); err != nil {
+	if err := trust.Save(executor.StateDir, trust.Trust{}); err != nil {
 		t.Fatal(err)
 	}
 	result := execute(t, executor)

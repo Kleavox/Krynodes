@@ -42,6 +42,16 @@ export function Said({ text }: { text: string | null }) {
   ) : null;
 }
 
+export function NotFollowing({ lines }: { lines: string[] }) {
+  return lines.length > 0 ? (
+    <ul role="status" className="space-y-1 text-sm text-warning">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  ) : null;
+}
+
 export type PackagesDialog =
   | { kind: "install"; name?: string }
   | { kind: "repo" }

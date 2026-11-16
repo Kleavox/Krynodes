@@ -14,7 +14,7 @@ import {
 import { openSession } from "@/lib/deploy-session";
 import { signersFor } from "@/lib/devices";
 import { apiFetch, errorMessage } from "@/lib/http";
-import { baseOf, buildDocument } from "@/lib/network";
+import { baseOf, buildDocument, inside, laptopSeals } from "@/lib/network";
 import { signCommand, signTargets, type CommandTarget } from "@/lib/passkeys";
 import { failure } from "@/lib/proof";
 import { acceptsWarning, planWithout, releaseInputs } from "@/lib/quarantine";
@@ -124,11 +124,7 @@ export function useRelease(node: NodeRecord) {
         );
         const everyone = [
           node.id,
-          ...(member
-            ? network.members
-                .filter((entry) => entry.state === "in")
-                .map((entry) => entry.nodeId)
-            : []),
+          ...(member ? inside(network).map((entry) => entry.nodeId) : []),
         ];
         const { session, steps } = await signed(
           signers([...new Set(everyone)]),
@@ -169,7 +165,7 @@ export function useRelease(node: NodeRecord) {
             key: release.key,
             signer: release.signer,
           },
-          inputs.sealKeys,
+          { ...laptopSeals(network.laptops), ...inputs.sealKeys },
           base?.parent,
           await savedKnocks(),
         );

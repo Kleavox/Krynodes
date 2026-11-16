@@ -100,7 +100,8 @@ export async function applyNetworkInventory(
   const row = await db
     .prepare(
       `SELECT n.owner_user_id, m.state, m.key, m.signer, m.port, m.uplink, m.points
-       FROM nodes n LEFT JOIN network_members m ON m.node_id = n.id WHERE n.id = ?`,
+       FROM nodes n LEFT JOIN network_members m ON m.node_id = n.id
+       WHERE n.id = ? AND n.kind = 'server'`,
     )
     .bind(nodeId)
     .first<{

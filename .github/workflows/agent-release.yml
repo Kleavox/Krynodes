@@ -84,7 +84,9 @@ jobs:
         if: steps.version.outputs.released == 'false'
         with:
           go-version-file: agent/go.mod
-          cache-dependency-path: agent/go.mod
+          cache-dependency-path: |
+            agent/go.mod
+            agent/windows/go.sum
 
       - name: Test
         if: steps.version.outputs.released == 'false'
@@ -100,6 +102,17 @@ jobs:
           GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o krynodes-linux-arm64 ./cmd/agent
           sha256sum krynodes-linux-amd64 > krynodes-linux-amd64.sha256
           sha256sum krynodes-linux-arm64 > krynodes-linux-arm64.sha256
+
+      - name: Build the Windows agent
+        if: steps.version.outputs.released == 'false'
+        env:
+          CGO_ENABLED: "0"
+          GOWORK: "off"
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sh ../tooling/windows-bundle.sh
+          GOOS=windows GOARCH=amd64 go -C windows build -trimpath -ldflags="-s -w -H windowsgui -X main.version=${VERSION}" -o ../krynodes-windows-amd64.exe ./cmd/krynodes
+          sha256sum krynodes-windows-amd64.exe > krynodes-windows-amd64.exe.sha256
 
       - name: Verify the binary reports its version
         if: steps.version.outputs.released == 'false'
@@ -129,7 +142,7 @@ jobs:
             echo "AGENT_SIGNING_KEY does not match agent/internal/update/release.pub." >&2
             exit 1
           fi
-          for file in krynodes-linux-amd64 krynodes-linux-arm64; do
+          for file in krynodes-linux-amd64 krynodes-linux-arm64 krynodes-windows-amd64.exe; do
             openssl pkeyutl -sign -inkey "$key" -rawin -in "$file" -out "$file.sig"
           done
           rm -f "$key"
@@ -150,6 +163,12 @@ jobs:
         with:
           subject-path: agent/krynodes-linux-arm64
 
+      - name: Attest Windows binary
+        if: steps.version.outputs.released == 'false'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: agent/krynodes-windows-amd64.exe
+
       - name: Publish release
         if: steps.version.outputs.released == 'false'
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
@@ -167,6 +186,9 @@ jobs:
             agent/krynodes-linux-arm64
             agent/krynodes-linux-arm64.sha256
             agent/krynodes-linux-arm64.sig
+            agent/krynodes-windows-amd64.exe
+            agent/krynodes-windows-amd64.exe.sha256
+            agent/krynodes-windows-amd64.exe.sig
 
       - name: Publish the release, which makes its tag, once every file is uploaded
         if: steps.version.outputs.released == 'false'

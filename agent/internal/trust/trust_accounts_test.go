@@ -1,4 +1,4 @@
-package actions
+package trust
 
 import (
 	"encoding/json"
@@ -93,10 +93,10 @@ func TestRecordingTheOwnersStoresAndReportsThem(t *testing.T) {
 		t.Fatalf("report %+v", report)
 	}
 	dir := t.TempDir()
-	if err := SaveTrust(dir, next); err != nil {
+	if err := Save(dir, next); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadTrust(dir)
+	loaded, err := Load(dir)
 	if err != nil || loaded.Core[1].Account != userTwo {
 		t.Fatalf("loaded %+v err %v", loaded.Core, err)
 	}

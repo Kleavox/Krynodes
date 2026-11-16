@@ -4,10 +4,12 @@ import { app } from "../app";
 import type { Env } from "../env";
 import { toB64url } from "../lib/b64url";
 import { fingerprint } from "../lib/webauthn";
+import { hubHarness } from "../test/hub";
 import { LAPTOP, PHONE } from "../test/keys";
 import { testPasskey, type TestPasskey } from "../test/passkeys";
-import { seedCheck, seedNode } from "../test/seed";
+import { OWNER, seedCheck, seedNode } from "../test/seed";
 import { createTestDb } from "../test/sqlite-d1";
+import { loadFleet, trustTokens } from "../trust/fleet";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -151,7 +153,7 @@ async function setup(core = true, requireUv = false, more: string[] = []) {
     };
     return (await call("GET", `/i/${enrollmentToken}`)).text();
   };
-  return { call, phone, others, code, enrollment, installer, sqlite };
+  return { call, phone, others, code, enrollment, installer, sqlite, db, env };
 }
 
 describe("dashboard actions that destroy or hide", () => {
@@ -391,5 +393,98 @@ describe("the SSH keys in enroll defaults", () => {
       target:
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     });
+  });
+});
+
+describe("a laptop among the passkeys", () => {
+  it("a laptop's trust report cannot add a passkey to core", async () => {
+    const t = await setup();
+    const other = await testPasskey("other");
+    await t.call("POST", "/api/devices", {
+      id: other.id,
+      name: other.name,
+      alg: other.alg,
+      publicKey: other.publicKey,
+      verifies: true,
+    });
+    t.sqlite
+      .prepare(
+        `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+         VALUES (?, '10.88.0.0/24', 51820, 1420, 1, '{}', 's1', 'now', 'user1@example.com')`,
+      )
+      .run(OWNER);
+    const { code } = (await (await t.call("POST", "/api/laptops")).json()) as {
+      code: string;
+    };
+    const enrolled = await app.request(
+      `${ORIGIN}/api/agent/enroll`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${code}`,
+        },
+        body: JSON.stringify({
+          hostname: "laptop-1",
+          operatingSystem: "windows",
+          architecture: "amd64",
+          agentVersion: "0.7.24",
+          laptop: {
+            key: Buffer.alloc(32, 7).toString("base64"),
+            signer: Buffer.alloc(32, 107).toString("base64"),
+            port: 51820,
+            sealKey: "s".repeat(87),
+          },
+        }),
+      },
+      t.env,
+    );
+    const { nodeId } = (await enrolled.json()) as { nodeId: string };
+    const prints = [
+      await fingerprint(t.phone.publicKey),
+      await fingerprint(other.publicKey),
+    ];
+    const harness = hubHarness({ DB: t.db });
+    const ws = await harness.connect(nodeId, OWNER, 60, true);
+    expect(
+      await harness.request(ws, "actions", {
+        report: {
+          nodeId,
+          inventory: {
+            hash: "1".repeat(64),
+            trust: {
+              version: 2,
+              core: prints,
+              access: prints,
+              passphrase: false,
+            },
+          },
+        },
+      }),
+    ).toMatchObject({ type: "actions" });
+    expect(
+      t.sqlite
+        .prepare("SELECT trust_report FROM nodes WHERE id = ?")
+        .get(nodeId),
+    ).toEqual({
+      trust_report: JSON.stringify({
+        version: 2,
+        core: prints,
+        access: prints,
+        passphrase: false,
+      }),
+    });
+    const fleet = await loadFleet(t.db, OWNER);
+    expect(fleet.core).toEqual(["phone"]);
+    expect(trustTokens(fleet)).toEqual([`phone.-7.${t.phone.publicKey}`]);
+    expect(
+      await t.code(
+        await t.enrollment(await proof(other, "enrollment.create", "new")),
+      ),
+    ).toBe("NOT_CORE");
+    expect(
+      (await t.enrollment(await proof(t.phone, "enrollment.create", "new")))
+        .status,
+    ).toBe(201);
   });
 });

@@ -256,7 +256,11 @@ func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) 
 	}
 	serve, reach := network.Rules(own, document.Members, e.diskRules(pending))
 	tcp, udp := e.openPorts(ctx, own)
-	drop, knock := network.Watch(e.droppedAddresses(document), tcp, udp)
+	var laptops []string
+	for _, laptop := range network.Laptops(document.Members) {
+		laptops = append(laptops, laptop.Address)
+	}
+	drop, knock := network.Watch(e.droppedAddresses(document), tcp, udp, laptops)
 	wanted := func(name string, rules []string) string {
 		return strings.Join(append([]string{"-N " + name}, rules...), "\n")
 	}
@@ -287,6 +291,9 @@ func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) 
 		if err := e.ensure(ctx, "iptables", []string{"-I", "INPUT", "1"}, "INPUT", jump); err != nil {
 			return fmt.Errorf("send the private network through its rules: %w", err)
 		}
+	}
+	if plan, joined := e.exitState(ctx, e.heldRecorded); joined {
+		return errors.Join(peers, e.syncRelayExit(ctx, plan))
 	}
 	return peers
 }

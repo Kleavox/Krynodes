@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -629,5 +630,142 @@ func TestUninstallTakesTheServerOutOfTheNetwork(t *testing.T) {
 	}
 	if _, err := os.Stat(executor.path(network.ConfigPath)); !os.IsNotExist(err) {
 		t.Fatal("kry0.conf stays")
+	}
+}
+
+func waiting(t *testing.T, executor Executor) []Request {
+	t.Helper()
+	entries, _ := os.ReadDir(executor.RequestDir)
+	var requests []Request
+	for _, entry := range entries {
+		var request Request
+		if err := readJSON(filepath.Join(executor.RequestDir, entry.Name()), &request); err != nil {
+			t.Fatal(err)
+		}
+		requests = append(requests, request)
+	}
+	return requests
+}
+
+func TestAHintNamingANATMemberOrAStrangerIsIgnored(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, asIs)
+	relay := &Relay{RequestDir: net.executor.RequestDir, StateDir: net.executor.StateDir, Now: net.executor.Now, NodeID: testNode}
+	if err := relay.NetworkReply(&reporter.NetworkReply{Meetings: []reporter.NetworkMeeting{{Laptop: laptopNode, Via: thirdNode}}}); err != nil {
+		t.Fatal(err)
+	}
+	if requests := waiting(t, net.executor); len(requests) != 0 {
+		t.Fatalf("a public server follows no meeting point: %+v", requests)
+	}
+	net.apply(t, behindNAT)
+	hints := []reporter.NetworkMeeting{
+		{Laptop: laptopNode, Via: behindNode},
+		{Laptop: laptopNode, Via: strangeNode},
+		{Laptop: laptopNode, Via: laptopNode},
+		{Laptop: peerNode, Via: thirdNode},
+		{Laptop: strangeNode, Via: thirdNode},
+	}
+	if err := relay.NetworkReply(&reporter.NetworkReply{Meetings: hints}); err != nil {
+		t.Fatal(err)
+	}
+	if requests := waiting(t, net.executor); len(requests) != 0 {
+		t.Fatalf("queued %+v", requests)
+	}
+	run.calls = nil
+	for index, hint := range hints {
+		id := fmt.Sprintf("0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1c%02d", index)
+		if result := hostRun(t, net.executor, askNetwork(t, id, "meet", map[string]string{"laptop": hint.Laptop, "via": hint.Via})); result.OK {
+			t.Fatalf("the root unit took %+v: %+v", hint, result)
+		}
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "wg set") }) {
+		t.Fatalf("a refused hint moved a peer: %v", run.calls)
+	}
+}
+
+func TestAHintMovesTheLaptopToTheNamedPeer(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, behindNAT)
+	config := readRoot(t, net.executor, network.ConfigPath)
+	if !strings.Contains(config, "AllowedIPs = 10.88.0.1/32, 10.88.0.9/32\n") || !strings.Contains(config, "AllowedIPs = 10.88.0.3/32\n") {
+		t.Fatalf("the laptop starts on the default meeting point:\n%s", config)
+	}
+	relay := &Relay{RequestDir: net.executor.RequestDir, StateDir: net.executor.StateDir, Now: net.executor.Now, NodeID: testNode}
+	hint := &reporter.NetworkReply{Meetings: []reporter.NetworkMeeting{{Laptop: laptopNode, Via: thirdNode}}}
+	if err := relay.NetworkReply(hint); err != nil {
+		t.Fatal(err)
+	}
+	requests := waiting(t, net.executor)
+	if len(requests) != 1 || requests[0].Action != "meet" {
+		t.Fatalf("queued %+v", requests)
+	}
+	os.Remove(filepath.Join(net.executor.RequestDir, requests[0].ID+".json"))
+	if _, forwarded := net.executor.network(context.Background(), requests[0]); !forwarded {
+		t.Fatal("the hint is not left to the host unit")
+	}
+	run.calls = nil
+	if err := net.executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, net.executor, requests[0].ID); !result.OK {
+		t.Fatalf("%+v", result)
+	}
+	if want := "wg set kry0 peer " + net.third.Public + " allowed-ips 10.88.0.3/32,10.88.0.9/32"; !slices.Contains(run.calls, want) {
+		t.Fatalf("want %q in %v", want, run.calls)
+	}
+	config = readRoot(t, net.executor, network.ConfigPath)
+	if !strings.Contains(config, "AllowedIPs = 10.88.0.1/32\n") || !strings.Contains(config, "AllowedIPs = 10.88.0.3/32, 10.88.0.9/32\n") {
+		t.Fatalf("kry0.conf does not follow the hint:\n%s", config)
+	}
+	if err := relay.NetworkReply(hint); err != nil {
+		t.Fatal(err)
+	}
+	if requests := waiting(t, net.executor); len(requests) != 0 {
+		t.Fatalf("a hint already followed was queued again: %+v", requests)
+	}
+	net.apply(t, behindNAT)
+	if config := readRoot(t, net.executor, network.ConfigPath); !strings.Contains(config, "AllowedIPs = 10.88.0.3/32, 10.88.0.9/32\n") {
+		t.Fatalf("a newer document forgot the meeting point:\n%s", config)
+	}
+}
+
+func TestTheRootUnitRefusesAMeetingPointItMayNotFollow(t *testing.T) {
+	cutLaptop := func(self *network.Member, members []network.Member) []network.Member {
+		behindNAT(self, members)
+		members[3].Cut = true
+		return members
+	}
+	cutVia := func(self *network.Member, members []network.Member) []network.Member {
+		behindNAT(self, members)
+		members[1].Cut = true
+		return members
+	}
+	names := "refused: a meeting point names a laptop and a public server of the network"
+	for _, refusal := range []struct {
+		name   string
+		change func(*network.Member, []network.Member) []network.Member
+		args   map[string]string
+		output string
+	}{
+		{"cut laptop", cutLaptop, map[string]string{"laptop": laptopNode, "via": thirdNode}, names},
+		{"cut via", cutVia, map[string]string{"laptop": laptopNode, "via": thirdNode}, names},
+		{"extra argument", behindNAT, map[string]string{"laptop": laptopNode, "via": thirdNode, "endpoint": "203.0.113.9:51820"}, names},
+		{"public self", asIs, map[string]string{"laptop": laptopNode, "via": thirdNode}, "refused: only a server behind NAT follows a meeting point"},
+	} {
+		t.Run(refusal.name, func(t *testing.T) {
+			net, run, _ := newLaptopNet(t)
+			net.apply(t, refusal.change)
+			run.calls = nil
+			result := hostRun(t, net.executor, askNetwork(t, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1d01", "meet", refusal.args))
+			if result.OK || result.Output != refusal.output {
+				t.Fatalf("%+v", result)
+			}
+			if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "wg set") }) {
+				t.Fatalf("a refused meeting point moved a peer: %v", run.calls)
+			}
+			if net.executor.readNetwork().Meetings != nil {
+				t.Fatal("a refused meeting point was recorded")
+			}
+		})
 	}
 }

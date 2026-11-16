@@ -382,7 +382,8 @@ export async function requestRefresh(
   const rows = await db
     .prepare(
       `SELECT id, last_seen_at, interval_seconds FROM nodes
-       WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
+       WHERE owner_user_id = ? AND kind = 'server'
+         AND enrolled_at IS NOT NULL AND disabled_at IS NULL
        ORDER BY id`,
     )
     .bind(ownerId)

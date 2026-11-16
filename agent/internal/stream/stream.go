@@ -33,6 +33,8 @@ type envelope struct {
 type Client struct {
 	Deliver func([]reporter.ActionRequest) error
 	Gone    func(bool)
+	Unknown string
+	Noun    string
 
 	endpoint string
 	token    string
@@ -59,6 +61,8 @@ type Client struct {
 
 func New(endpoint, token, version string) *Client {
 	return &Client{
+		Noun:          "server",
+		Unknown:       "Krynodes does not know this server any more (it was deleted or its token replaced); remove the agent with: sudo kry uninstall-service",
 		endpoint:      endpoint,
 		token:         token,
 		version:       version,
@@ -133,7 +137,7 @@ func (c *Client) Run(ctx context.Context) {
 				if c.Gone != nil {
 					c.Gone(true)
 				}
-				log.Printf("Krynodes does not know this server any more (it was deleted or its token replaced); remove the agent with: sudo kry uninstall-service")
+				log.Print(c.Unknown)
 			}
 			log.Printf("live connection to Krynodes failed: %v; retrying in %s", err, wait.Round(time.Second))
 			if !pause(ctx, wait) {
@@ -161,21 +165,21 @@ func (c *Client) Run(ctx context.Context) {
 		case codeRefused:
 			wait = max(wait, c.refusedDelay)
 		}
-		log.Printf("live connection to Krynodes closed (%s); reconnecting in %s", describe(code), wait.Round(time.Second))
+		log.Printf("live connection to Krynodes closed (%s); reconnecting in %s", c.describe(code), wait.Round(time.Second))
 		if !pause(ctx, wait) {
 			return
 		}
 	}
 }
 
-func describe(code int) string {
+func (c *Client) describe(code int) string {
 	switch code {
 	case 0:
 		return "connection lost"
 	case codeReplaced:
 		return "another agent with this token connected"
 	case codeRefused:
-		return "the server is unknown or disabled"
+		return "the " + c.Noun + " is unknown or disabled"
 	default:
 		return fmt.Sprintf("code %d", code)
 	}

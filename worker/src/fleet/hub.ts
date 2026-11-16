@@ -74,7 +74,7 @@ import {
 } from "../quarantine/quarantine";
 import { readSettings } from "../quarantine/settings";
 
-const NODE_SQL = `SELECT id, interval_seconds, update_requested_version, update_requested_at,
+const NODE_SQL = `SELECT id, interval_seconds, agent_version, update_requested_version, update_requested_at,
          update_attempts, update_error, inventory_hash, refresh_requested_at, security,
          boot, reports, release, setup,
          EXISTS (SELECT 1 FROM quarantines q
@@ -212,6 +212,7 @@ export class FleetHub {
         ownerId,
         interval,
         request.headers.get("x-kry-version"),
+        request.headers.get("x-kry-kind") === "laptop",
       );
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -258,7 +259,9 @@ export class FleetHub {
       const nodeIds = Array.isArray(body?.nodeIds)
         ? body.nodeIds.filter((id): id is string => typeof id === "string")
         : [];
-      return Response.json({ poked: await this.poke(nodeIds) });
+      const poked = await this.poke(nodeIds);
+      await this.heldMoved();
+      return Response.json({ poked });
     }
     return new Response(null, { status: 404 });
   }
@@ -306,12 +309,25 @@ export class FleetHub {
     return poked;
   }
 
+  private async heldMoved(): Promise<void> {
+    const laptops = this.ctx
+      .getWebSockets()
+      .filter((ws) => !watching(ws))
+      .map((ws) => ws.deserializeAttachment() as StreamState)
+      .filter((state) => state.laptop);
+    const owner = laptops[0]?.ownerId;
+    if (owner && (await this.network.heldMoved(owner))) {
+      await this.poke(laptops.map((state) => state.nodeId));
+    }
+  }
+
   async accept(
     ws: WebSocket,
     nodeId: string,
     ownerId: string,
     interval: number,
     version: string | null = null,
+    laptop = false,
   ): Promise<void> {
     for (const old of this.ctx.getWebSockets(nodeId)) {
       await this.leave(old);
@@ -325,8 +341,11 @@ export class FleetHub {
     ws.serializeAttachment({
       ...newState(nodeId, ownerId, interval),
       ...(agentSupported(version) ? { push: true } : {}),
+      ...(laptop ? { laptop: true } : {}),
     });
     this.checks.delete(nodeId);
+    this.network.forget(nodeId);
+    if (laptop) return;
     const roster = await this.roster();
     roster[nodeId] = {
       interval,
@@ -410,10 +429,14 @@ export class FleetHub {
           invalid();
           return;
         }
-        await this.heartbeat(ws, state, parsed.data, reply);
+        if (state.laptop) {
+          await this.laptopBeat(ws, state, parsed.data, reply);
+        } else {
+          await this.heartbeat(ws, state, parsed.data, reply);
+        }
       } else if (envelope.type === "setup") {
         const parsed = setupSchema.safeParse(envelope.setup);
-        if (!parsed.success) {
+        if (!parsed.success || state.laptop) {
           invalid();
           return;
         }
@@ -463,14 +486,28 @@ export class FleetHub {
         if (!node) return;
         this.stopped.delete(node.id);
         this.checks.delete(node.id);
+        const { nodeId, results, progress, inventory } = parsed.data;
         const { alerts, next, deleted, ...response } = await receiveReport(
           this.env.DB,
           node,
-          parsed.data,
+          state.laptop ? { nodeId, results, progress } : parsed.data,
           Date.now(),
         );
+        if (state.laptop && inventory) {
+          if (inventory.trust) {
+            await this.env.DB.prepare(
+              "UPDATE nodes SET trust_report = ?1 WHERE id = ?2 AND trust_report IS NOT ?1",
+            )
+              .bind(JSON.stringify(inventory.trust), node.id)
+              .run();
+          }
+          response.inventoryHash = inventory.hash;
+        }
         reply({ type: "actions", response });
         await this.poke(next);
+        if (!state.laptop && parsed.data.results?.length) {
+          await this.heldMoved();
+        }
         this.announce(
           deleted
             ? ["all"]
@@ -586,6 +623,7 @@ export class FleetHub {
     for (const [key, at] of done) if (kept[key] === at) delete kept[key];
     await this.ctx.storage.put(CUTOFFS, kept);
     await this.poke(poke);
+    await this.heldMoved();
     this.announce(["all"]);
     await this.tell({ quarantined });
   }
@@ -620,7 +658,7 @@ export class FleetHub {
           `SELECT m.node_id, m.key, n.owner_user_id AS owner, n.name, EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL) AS quarantined
            FROM network_members m
            JOIN nodes n ON n.id = m.node_id
-           WHERE m.state = 'in' AND n.owner_user_id IN (
+           WHERE m.state = 'in' AND n.kind = 'server' AND n.owner_user_id IN (
              SELECT owner_user_id FROM nodes WHERE id IN (SELECT value FROM json_each(?)))`,
         )
         .bind(JSON.stringify(silent.map((item) => item.nodeId)))
@@ -1154,6 +1192,7 @@ export class FleetHub {
       if (network) await this.poke(network.poke);
       if (poked.length > 0) {
         await this.poke(poked.filter((id) => id !== node.id));
+        await this.heldMoved();
         this.announce(["all"]);
       }
       const topics = [
@@ -1172,6 +1211,68 @@ export class FleetHub {
         quarantined: [...cloned, ...(taken?.quarantined ?? [])],
       });
     }
+  }
+
+  private async laptopBeat(
+    ws: WebSocket,
+    current: StreamState,
+    beat: Parameters<typeof fold>[1],
+    reply: Reply,
+  ) {
+    const now = Date.now();
+    const node = await this.node(ws, current);
+    if (!node) return;
+    if (node.agent_version !== beat.agentVersion) {
+      const at = new Date(now).toISOString().replace("T", " ").slice(0, 19);
+      await this.env.DB.prepare(
+        `UPDATE nodes SET agent_version = ?, hostname = ?, operating_system = ?,
+           architecture = ?, last_seen_at = ?, updated_at = ? WHERE id = ?`,
+      )
+        .bind(
+          beat.agentVersion,
+          beat.hostname,
+          beat.operatingSystem,
+          beat.architecture,
+          at,
+          at,
+          node.id,
+        )
+        .run();
+      this.announce(["nodes"]);
+    }
+    const network = beat.network
+      ? await this.network.beat(
+          node.id,
+          current.ownerId,
+          current.networkStamp,
+          beat.network,
+          now,
+          true,
+        )
+      : null;
+    if (network?.changed) this.version.count += 1;
+    const agent = await this.agentConfig(node, now);
+    const actions = await heartbeatActions(this.env.DB, node.id, now);
+    ws.serializeAttachment({
+      ...current,
+      lastSeen: now,
+      away: false,
+      networkStamp: network?.stamp ?? current.networkStamp,
+    });
+    reply({
+      type: "heartbeat",
+      response: {
+        ...heartbeatResponse(
+          node,
+          agent.configVersion,
+          beat.agentVersion,
+          actions,
+        ),
+        ...(network?.reply ? { network: network.reply } : {}),
+      },
+    });
+    if (network) await this.poke(network.poke);
+    if (actions.length > 0) this.announce(["actions"]);
   }
 
   private async agentConfig(node: AgentNode, now: number) {
@@ -1281,6 +1382,26 @@ export class FleetHub {
   private async leave(ws: WebSocket) {
     const state = ws.deserializeAttachment() as StreamState | null;
     if (!state || state.left) return;
+    if (state.laptop) {
+      ws.serializeAttachment({ ...state, left: true });
+      if (state.lastSeen === null) return;
+      try {
+        await this.env.DB.prepare(
+          "UPDATE nodes SET last_seen_at = ? WHERE id = ?",
+        )
+          .bind(
+            new Date(state.lastSeen)
+              .toISOString()
+              .replace("T", " ")
+              .slice(0, 19),
+            state.nodeId,
+          )
+          .run();
+      } catch (error) {
+        console.error("[kry fleet]", error);
+      }
+      return;
+    }
     const drained = drain(state);
     ws.serializeAttachment({ ...drained.state, left: true });
     const statements: D1PreparedStatement[] = [];

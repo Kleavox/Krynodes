@@ -18,7 +18,7 @@ export function registerAgentUpdateRoutes(
   app.post("/api/nodes/:id/update", requireOperator, async (context) => {
     const node = await context.env.DB.prepare(
       `SELECT id, agent_version FROM nodes
-       WHERE id = ? AND owner_user_id = ? AND enrolled_at IS NOT NULL`,
+       WHERE id = ? AND owner_user_id = ? AND kind = 'server' AND enrolled_at IS NOT NULL`,
     )
       .bind(context.req.param("id"), context.get("identity").id)
       .first<{ id: string; agent_version: string | null }>();

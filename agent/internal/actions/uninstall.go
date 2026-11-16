@@ -88,6 +88,7 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	if err := os.Remove(e.path(exitNodeConf)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		problem("remove "+exitNodeConf, err)
 	}
+	problem("remove the laptop relay and exit", e.dropExit(ctx))
 	if _, err := os.Stat(filepath.Join(e.StateDir, "docker.json")); err == nil {
 		remove := "sudo apt-get purge "
 		if recipes.Detect(env).Family == recipes.RHEL {

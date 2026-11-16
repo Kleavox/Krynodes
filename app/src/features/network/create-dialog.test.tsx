@@ -35,6 +35,7 @@ const view = {
   wrongPorts: [],
   members: [],
   waiting: [],
+  laptops: [],
   links: [],
   live: {},
   held: [],

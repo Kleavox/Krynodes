@@ -1,4 +1,4 @@
-package actions
+package trust
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
 func requireUvCase(core []TrustKey, access []string) *changeCase {
@@ -63,22 +65,22 @@ func TestTheFingerprintRuleRoundTripsThroughTheStateDirectory(t *testing.T) {
 	found := devices(t, "a")
 	current := storeOf(found, []string{"a"}, []string{"a"})
 	current.RequireUV = true
-	if err := SaveTrust(dir, current); err != nil {
+	if err := Save(dir, current); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadTrust(dir)
+	loaded, err := Load(dir)
 	if err != nil || !loaded.RequireUV {
 		t.Fatalf("loaded %+v err %v", loaded, err)
 	}
 }
 
 type browserUVFixture struct {
-	NodeID string  `json:"nodeId"`
-	Now    string  `json:"now"`
-	First  Request `json:"first"`
-	Admit  Request `json:"admit"`
-	Enable Request `json:"enable"`
-	Deploy Request `json:"deploy"`
+	NodeID string                 `json:"nodeId"`
+	Now    string                 `json:"now"`
+	First  reporter.ActionRequest `json:"first"`
+	Admit  reporter.ActionRequest `json:"admit"`
+	Enable reporter.ActionRequest `json:"enable"`
+	Deploy reporter.ActionRequest `json:"deploy"`
 }
 
 func loadBrowserUVFixture(t *testing.T) browserUVFixture {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"net/netip"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
+	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
 const (
@@ -71,6 +73,7 @@ type networkRecord struct {
 	Tools     bool                      `json:"tools,omitempty"`
 	Dropped   []string                  `json:"dropped,omitempty"`
 	Tightened *network.Knocks           `json:"tightened,omitempty"`
+	Meetings  map[string]string         `json:"meetings,omitempty"`
 }
 
 type networkLinks struct {
@@ -109,7 +112,7 @@ func (e Executor) network(ctx context.Context, request Request) (Result, bool) {
 		if _, err := e.authorize(request); err != nil {
 			return e.refuse(request.ID, err), false
 		}
-	case "apply", "announce", "drop", "tighten":
+	case "apply", "announce", "drop", "tighten", "meet":
 	default:
 		return e.refuse(request.ID, fmt.Errorf("unknown action %q", request.Action)), false
 	}
@@ -147,7 +150,7 @@ func (e Executor) applyNetwork(ctx context.Context, request Request) Result {
 	switch request.Action {
 	case "apply":
 		return e.applyDocument(ctx, request)
-	case "announce", "drop", "tighten":
+	case "announce", "drop", "tighten", "meet":
 		args, err := asked(request)
 		if err != nil {
 			return e.refuse(request.ID, err)
@@ -157,6 +160,8 @@ func (e Executor) applyNetwork(ctx context.Context, request Request) Result {
 			return e.dropMember(ctx, request, args)
 		case "tighten":
 			return e.tighten(request, args)
+		case "meet":
+			return e.meet(ctx, request, args)
 		}
 		return e.takeAnnouncement(ctx, request, args)
 	}
@@ -257,6 +262,7 @@ func (e Executor) takeDown(ctx context.Context, record networkRecord) []string {
 			step("firewall", e.networkCommand(ctx, command[0], command[1:]...))
 		}
 		e.dropRules(ctx)
+		step("laptop relay and exit", e.dropExit(ctx))
 		step("remove the Docker drop-in", os.Remove(e.path(network.DropInPath)))
 		step("reload systemd", e.networkCommand(ctx, "systemctl", "daemon-reload"))
 		step("hosts", e.writeHosts(nil))
@@ -294,14 +300,14 @@ func (e Executor) writeHosts(members []network.Member) error {
 }
 
 func (e Executor) selfNode() (string, error) {
-	trust, err := LoadTrust(e.StateDir)
+	current, err := trust.Load(e.StateDir)
 	if err != nil {
 		return "", err
 	}
-	if trust.NodeID == "" {
+	if current.NodeID == "" {
 		return "", errors.New("no trusted devices")
 	}
-	return trust.NodeID, nil
+	return current.NodeID, nil
 }
 
 func member(document network.Document, node string) (network.Member, bool) {
@@ -340,11 +346,11 @@ func withAnnounced(document network.Document, announced map[string]string) netwo
 }
 
 func (e Executor) applyDocument(ctx context.Context, request Request) Result {
-	trust, err := LoadTrust(e.StateDir)
+	current, err := trust.Load(e.StateDir)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	body, err := VerifyDocument(trust, request.Signed, e.Now())
+	body, err := trust.VerifyDocument(current, request.Signed, e.Now())
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
@@ -354,7 +360,7 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 	}
 	record := e.readNetwork()
 	hash := network.BodyHash(body)
-	self, err := network.Accept(document, record.Applied, trust.NodeID, record.Joined)
+	self, err := network.Accept(document, record.Applied, current.NodeID, record.Joined)
 	if errors.Is(err, network.ErrLeave) {
 		return e.leaveNetwork(ctx, request, document, hash, record)
 	}
@@ -380,7 +386,7 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 		if keys, err = network.Rekey(e.networkDir()); err != nil {
 			return e.failed(request, err, "")
 		}
-		record.Key, record.Announce = keys.Public, &reporter.NetworkAnnounce{Key: keys.Public, Signature: keys.Announce(trust.NodeID)}
+		record.Key, record.Announce = keys.Public, &reporter.NetworkAnnounce{Key: keys.Public, Signature: keys.Announce(current.NodeID)}
 		if err := e.saveNetwork(record); err != nil {
 			return e.failed(request, err, "")
 		}
@@ -407,12 +413,15 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 		return e.failed(request, err, "")
 	}
 	e.syncRules(ctx)
+	if err := e.syncForwarding(ctx, e.planExit(ctx, document, self, e.heldRecorded).sysctl); err != nil {
+		return e.failed(request, fmt.Errorf("applied version %d, but forwarding for laptops: %w", document.Version, err), "")
+	}
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("applied version %d", document.Version), FinishedAt: e.stamp()}
 }
 
 func (e Executor) writeNetwork(ctx context.Context, record *networkRecord, document network.Document, self network.Member, keys network.Keys, psk map[string]string) error {
 	rendered := withAnnounced(document, record.Announced)
-	config := network.Render(rendered, self, keys.Private, psk)
+	config := network.Render(rendered, self, keys.Private, psk, record.Meetings, e.planExit(ctx, document, self, e.heldRecorded).exit6())
 	path := e.path(network.ConfigPath)
 	previous, _ := os.ReadFile(path)
 	if err := writeWhole(filepath.Dir(path), filepath.Base(path), []byte(config), 0o600); err != nil {
@@ -889,12 +898,12 @@ func (r *Relay) NetworkReply(reply *reporter.NetworkReply) error {
 		requests = append(requests, Request{ID: networkID(append([]string{action, bucket}, parts...)...), Kind: "network", Name: network.Interface, Action: action, ExpiresAt: expires, Attachment: base64.RawURLEncoding.EncodeToString(encoded)})
 	}
 	if len(reply.Document) > 0 {
-		var signed SignedDocument
+		var signed trust.SignedDocument
 		var head struct {
 			Version int `json:"version"`
 		}
 		if json.Unmarshal(reply.Document, &signed) == nil {
-			if body, err := decode("document", signed.Document); err == nil && json.Unmarshal(body, &head) == nil && head.Version > record.Applied.Version {
+			if body, err := base64.RawURLEncoding.DecodeString(signed.Document); err == nil && json.Unmarshal(body, &head) == nil && head.Version > record.Applied.Version {
 				requests = append(requests, Request{ID: networkID("apply", bucket, signed.Document), Kind: "network", Name: network.Interface, Action: "apply", ExpiresAt: expires, Signed: reply.Document})
 			}
 		}
@@ -902,6 +911,25 @@ func (r *Relay) NetworkReply(reply *reporter.NetworkReply) error {
 	for _, announced := range reply.Announced {
 		if record.Announced[announced.Node] != announced.Key {
 			asking("announce", map[string]string{"node": announced.Node, "key": announced.Key, "signature": announced.Signature}, announced.Node, announced.Key)
+		}
+	}
+	behind := false
+	if record.Document != nil {
+		self, ok := member(*record.Document, r.NodeID)
+		behind = ok && self.NAT
+	}
+	for _, hint := range reply.Meetings {
+		if !behind {
+			break
+		}
+		laptop, isLaptop := member(*record.Document, hint.Laptop)
+		via, isVia := member(*record.Document, hint.Via)
+		if !isLaptop || !laptop.IsLaptop() || laptop.Cut || !isVia || !network.MeetingPoint(via) {
+			log.Printf("ignoring a meeting point for %q through %q: not a laptop and a public server of the network", hint.Laptop, hint.Via)
+			continue
+		}
+		if record.Meetings[hint.Laptop] != hint.Via {
+			asking("meet", map[string]string{"laptop": hint.Laptop, "via": hint.Via}, hint.Laptop, hint.Via)
 		}
 	}
 	if len(reply.Endpoints) > 0 {

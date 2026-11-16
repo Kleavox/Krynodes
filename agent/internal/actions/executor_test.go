@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
 const (
@@ -95,7 +96,7 @@ var serviceSigner *deployCase
 func testSigner(t *testing.T) *deployCase {
 	t.Helper()
 	if serviceSigner == nil {
-		serviceSigner = newDeployCase(t, algES256)
+		serviceSigner = newDeployCase(t)
 	}
 	return serviceSigner
 }
@@ -103,7 +104,7 @@ func testSigner(t *testing.T) *deployCase {
 func newTrustedExecutor(t *testing.T) (Executor, *fakeRun) {
 	t.Helper()
 	executor, run := newExecutor(t)
-	if err := SaveTrust(executor.StateDir, testSigner(t).trust); err != nil {
+	if err := trust.Save(executor.StateDir, testSigner(t).trust); err != nil {
 		t.Fatal(err)
 	}
 	return executor, run

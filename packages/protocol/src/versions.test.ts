@@ -4,9 +4,11 @@ import * as versions from "./versions";
 import {
   ACCOUNTS_AGENT,
   agentKnowsAccounts,
+  agentKnowsMemberKinds,
   agentSealsFromSender,
   agentSupported,
   compareVersions,
+  MEMBER_KINDS_AGENT,
   MIN_AGENT_VERSION,
   SEAL_AGENT,
 } from "./versions";
@@ -37,6 +39,15 @@ describe("agent versions", () => {
     expect(agentKnowsAccounts(null)).toBe(false);
   });
 
+  it("knows laptops and exit nodes from agent 0.7.24", () => {
+    expect(MEMBER_KINDS_AGENT).toBe("0.7.24");
+    expect(agentKnowsMemberKinds("0.7.23")).toBe(false);
+    expect(agentKnowsMemberKinds("0.7.24")).toBe(true);
+    expect(agentKnowsMemberKinds("0.8.0")).toBe(true);
+    expect(agentKnowsMemberKinds("dev")).toBe(true);
+    expect(agentKnowsMemberKinds(null)).toBe(false);
+  });
+
   it("binds a piece to its sender from agent 0.7.21", () => {
     expect(SEAL_AGENT).toBe("0.7.21");
     expect(agentSealsFromSender("0.7.21")).toBe(true);
@@ -48,9 +59,11 @@ describe("agent versions", () => {
   it("keeps the feature gates above the minimum and none below it", () => {
     expect(Object.keys(versions).sort()).toEqual([
       "ACCOUNTS_AGENT",
+      "MEMBER_KINDS_AGENT",
       "MIN_AGENT_VERSION",
       "SEAL_AGENT",
       "agentKnowsAccounts",
+      "agentKnowsMemberKinds",
       "agentSealsFromSender",
       "agentSupported",
       "compareVersions",

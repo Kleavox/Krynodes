@@ -13,18 +13,21 @@ import {
   savedKnocks,
   useApiMutation,
   useDevices,
+  useNetwork,
   useServices,
 } from "@/lib/api";
 import { activeSession, openSession } from "@/lib/deploy-session";
-import { networkSigners } from "@/lib/devices";
+import { networkSigners, preferFollowed } from "@/lib/devices";
 import { apiFetch, errorMessage } from "@/lib/http";
 import {
   baseOf,
   buildDocument,
   joinerOf,
+  laptopSeals,
   missingSeals,
   networkText,
   preparedOf,
+  serverIds,
   type DocumentChange,
   type Seat,
 } from "@/lib/network";
@@ -467,22 +470,35 @@ export function useAsk<T>(action: "inspect" | "probe") {
 
 export function useNetworkKeys(
   members: Pick<NetworkView["members"][number], "nodeId" | "state">[],
+  joining: string[] = [],
 ) {
   const devices = useDevices().data?.devices ?? [];
   const reports = useServices().data?.nodes ?? [];
+  const laptops = useNetwork().data?.laptops ?? [];
   const trust = new Map(reports.map((entry) => [entry.id, entry.trust]));
+  const ids = [
+    ...members
+      .filter((member) => member.state === "in")
+      .map((member) => member.nodeId),
+    ...joining,
+  ];
   return {
-    signers: networkSigners(
+    ...preferFollowed(
       devices,
-      members
-        .filter((member) => member.state === "in")
-        .map((member) => trust.get(member.nodeId) ?? null),
-    ),
-    sealKeys: Object.fromEntries(
-      reports.flatMap((entry) =>
-        entry.sealKey ? [[entry.id, entry.sealKey]] : [],
+      networkSigners(
+        devices,
+        serverIds(ids, laptops).map((id) => trust.get(id) ?? null),
       ),
+      laptops.filter((laptop) => ids.includes(laptop.nodeId)),
     ),
+    sealKeys: {
+      ...Object.fromEntries(
+        reports.flatMap((entry) =>
+          entry.sealKey ? [[entry.id, entry.sealKey]] : [],
+        ),
+      ),
+      ...laptopSeals(laptops),
+    },
   };
 }
 

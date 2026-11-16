@@ -19,6 +19,7 @@ import {
   useNetworkKeys,
   useSignChange,
 } from "@/features/network/use-network-sign";
+import { NotFollowing } from "@/features/packages/lines";
 import { errorMessage } from "@/lib/http";
 import { networkText } from "@/lib/network";
 import { QUARANTINE_INTRO, settingsRows } from "@/lib/quarantine";
@@ -140,6 +141,7 @@ function QuarantineForm({
           {errorMessage(save.error)}
         </p>
       )}
+      {member && <NotFollowing lines={keys.unfollowed} />}
       {send.error && (
         <p role="alert" className="text-sm text-destructive">
           Saved, but the servers have not been told yet:{" "}

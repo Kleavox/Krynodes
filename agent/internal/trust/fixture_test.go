@@ -1,4 +1,4 @@
-package actions
+package trust
 
 import (
 	"encoding/json"
@@ -6,16 +6,18 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
 type browserFixture struct {
-	Origin     string  `json:"origin"`
-	RPID       string  `json:"rpId"`
-	NodeID     string  `json:"nodeId"`
-	Now        string  `json:"now"`
-	First      Request `json:"first"`
-	Admit      Request `json:"admit"`
-	Passphrase Request `json:"passphrase"`
+	Origin     string                 `json:"origin"`
+	RPID       string                 `json:"rpId"`
+	NodeID     string                 `json:"nodeId"`
+	Now        string                 `json:"now"`
+	First      reporter.ActionRequest `json:"first"`
+	Admit      reporter.ActionRequest `json:"admit"`
+	Passphrase reporter.ActionRequest `json:"passphrase"`
 }
 
 func loadBrowserFixture(t *testing.T) browserFixture {
@@ -31,7 +33,7 @@ func loadBrowserFixture(t *testing.T) browserFixture {
 	return fixture
 }
 
-func issuedAt(t *testing.T, request Request) time.Time {
+func issuedAt(t *testing.T, request reporter.ActionRequest) time.Time {
 	t.Helper()
 	var signed signedTrust
 	if err := json.Unmarshal(request.Signed, &signed); err != nil {

@@ -10,12 +10,14 @@ import { storedDocument } from "../network/document";
 
 interface Member {
   node_id: string;
+  kind: string;
   state: "waiting" | "in" | "leaving";
   key: string;
   endpoint: string | null;
   nat: number;
   announce_key: string | null;
   announce_signature: string | null;
+  applied: number | null;
 }
 
 type Pairs = Record<string, 0 | 1>;
@@ -31,7 +33,11 @@ export interface NetworkTurn {
 
 export class HubNetwork {
   readonly latest = new Map<string, { at: number; links: NetworkLink[] }>();
-  private cache: { stamp: string; members: Member[] } | null = null;
+  private readonly meets = new Map<string, string>();
+  private readonly told = new Map<string, string>();
+  private heldNow: string | null = null;
+  private cache: { stamp: string; members: Member[]; cut: Set<string> } | null =
+    null;
   private readonly db: D1Database;
   private readonly storage: DurableObjectStorage;
 
@@ -46,6 +52,7 @@ export class HubNetwork {
     sent: string | undefined,
     beat: NetworkBeat,
     now: number,
+    laptop = false,
   ): Promise<NetworkTurn> {
     this.latest.set(nodeId, { at: now, links: beat.links });
     const row = await this.db
@@ -56,8 +63,26 @@ export class HubNetwork {
       .bind(ownerId, beat.version)
       .first<{ stamp: string; version: number; document: string | null }>();
     if (!row) return { reply: null, stamp: null, poke: [] };
-    const members = await this.members(ownerId, row.stamp);
+    const { members, cut } = await this.members(ownerId, row.stamp);
     const self = members.find((member) => member.node_id === nodeId);
+    const usable = (member: Member) =>
+      member.state === "in" && !cut.has(member.node_id);
+    const laptops = members.filter(
+      (member) => member.kind === "laptop" && usable(member),
+    );
+    const behind = members.filter(
+      (member) =>
+        member.kind !== "laptop" && member.nat === 1 && usable(member),
+    );
+    const meetingPoint = (id: string | undefined) =>
+      members.find(
+        (member) =>
+          member.node_id === id &&
+          member.kind !== "laptop" &&
+          member.nat === 0 &&
+          member.endpoint !== null &&
+          usable(member),
+      );
     const peers = members.filter(
       (member) => member.state === "in" && member.node_id !== nodeId,
     );
@@ -93,11 +118,36 @@ export class HubNetwork {
         );
         poke.push(...peers.map((peer) => peer.node_id));
       }
-      const flipped = await this.flips(nodeId, peers, beat.links, now);
+      const flipped = laptop
+        ? null
+        : await this.flips(
+            nodeId,
+            peers.filter((peer) => peer.kind !== "laptop"),
+            beat.links,
+            now,
+          );
       if (flipped) {
         pairs = flipped.pairs;
         statements.push(...flipped.statements);
       }
+    }
+    if (laptop && self?.kind === "laptop" && self.applied !== beat.version) {
+      statements.push(
+        this.db
+          .prepare("UPDATE network_members SET applied = ? WHERE node_id = ?")
+          .bind(beat.version, nodeId),
+      );
+    }
+    if (
+      laptop &&
+      self?.kind === "laptop" &&
+      usable(self) &&
+      beat.meet !== undefined &&
+      beat.meet !== this.meets.get(nodeId) &&
+      meetingPoint(beat.meet)
+    ) {
+      this.meets.set(nodeId, beat.meet);
+      poke.push(...behind.map((member) => member.node_id));
     }
     if (statements.length > 0) {
       await this.db.batch(statements);
@@ -127,12 +177,56 @@ export class HubNetwork {
       if (endpoints.length > 0) reply.endpoints = endpoints;
       if (announced.length > 0) reply.announced = announced;
     }
+    if (!laptop && self && behind.includes(self)) {
+      const meetings = laptops.flatMap((member) => {
+        const via = meetingPoint(this.meets.get(member.node_id));
+        return via ? [{ laptop: member.node_id, via: via.node_id }] : [];
+      });
+      if (meetings.length > 0 && this.tell(nodeId, meetings)) {
+        reply.meetings = meetings;
+      }
+    }
+    if (laptop && self?.kind === "laptop") {
+      const held = await this.held(ownerId);
+      if (this.tell(nodeId, held)) reply.held = held;
+    }
     return {
       reply: Object.keys(reply).length > 0 ? reply : null,
       stamp: row.stamp,
       poke,
       ...(statements.length > 0 ? { changed: true } : {}),
     };
+  }
+
+  async heldMoved(ownerId: string): Promise<boolean> {
+    const held = JSON.stringify(await this.held(ownerId));
+    if (held === this.heldNow) return false;
+    this.heldNow = held;
+    return true;
+  }
+
+  private async held(ownerId: string): Promise<string[]> {
+    return (
+      await this.db
+        .prepare(
+          `SELECT q.node_id FROM quarantines q JOIN nodes n ON n.id = q.node_id
+           WHERE n.owner_user_id = ? AND q.released_at IS NULL
+           ORDER BY q.node_id LIMIT 32`,
+        )
+        .bind(ownerId)
+        .all<{ node_id: string }>()
+    ).results.map((entry) => entry.node_id);
+  }
+
+  forget(nodeId: string): void {
+    this.told.delete(nodeId);
+  }
+
+  private tell(nodeId: string, value: unknown): boolean {
+    const text = JSON.stringify(value);
+    if (this.told.get(nodeId) === text) return false;
+    this.told.set(nodeId, text);
+    return true;
   }
 
   private async nextFor(
@@ -161,19 +255,29 @@ export class HubNetwork {
     return next && member ? next.document : row.document;
   }
 
-  private async members(ownerId: string, stamp: string): Promise<Member[]> {
-    if (this.cache?.stamp === stamp) return this.cache.members;
-    const rows = (
-      await this.db
+  private async members(ownerId: string, stamp: string) {
+    if (this.cache?.stamp === stamp) return this.cache;
+    const [rows, current] = await Promise.all([
+      this.db
         .prepare(
-          `SELECT m.node_id, m.state, m.key, m.endpoint, m.nat, m.announce_key,
-                  m.announce_signature
+          `SELECT m.node_id, n.kind, m.state, m.key, m.endpoint, m.nat, m.announce_key,
+                  m.announce_signature, m.applied
            FROM network_members m JOIN nodes n ON n.id = m.node_id
            WHERE n.owner_user_id = ?`,
         )
         .bind(ownerId)
         .all<Member>()
-    ).results;
+        .then((result) => result.results),
+      this.db
+        .prepare("SELECT document FROM network WHERE owner_user_id = ?")
+        .bind(ownerId)
+        .first<{ document: string }>(),
+    ]);
+    const cut = new Set(
+      (storedDocument(current?.document ?? "")?.document.members ?? [])
+        .filter((member) => member.cut)
+        .map((member) => member.node),
+    );
     const inside = new Set(
       rows.filter((row) => row.state === "in").map((row) => row.node_id),
     );
@@ -188,8 +292,8 @@ export class HubNetwork {
         await this.storage.put(PAIRS, kept);
       }
     }
-    this.cache = { stamp, members: rows };
-    return rows;
+    this.cache = { stamp, members: rows, cut };
+    return this.cache;
   }
 
   private async flips(

@@ -10,12 +10,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Said, SHEET, SignButton } from "@/features/packages/lines";
+import {
+  NotFollowing,
+  Said,
+  SHEET,
+  SignButton,
+} from "@/features/packages/lines";
 import { useServices, useUpdateCheck } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import {
   deleteLines,
   hostingOf,
+  inside,
   leavingText,
   networkChecks,
   networkText,
@@ -90,7 +96,12 @@ export function DeleteDialog({
         <DialogHeader>
           <DialogTitle>Delete the Private Network?</DialogTitle>
           <DialogDescription>
-            {leavingText(members.map((member) => member.name))}
+            {leavingText(
+              inside(view).map((member) => member.name),
+              view.laptops
+                .filter((laptop) => laptop.state === "in")
+                .map((laptop) => laptop.name),
+            )}
           </DialogDescription>
         </DialogHeader>
         <MarkRows rows={rows.filter((row) => row !== turnOff)} />
@@ -111,6 +122,7 @@ export function DeleteDialog({
             </span>
           </label>
         )}
+        <NotFollowing lines={keys.unfollowed} />
         <Said text={left ?? remove.error?.message ?? null} />
         <DialogFooter>
           <DialogClose asChild>

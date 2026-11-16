@@ -1,5 +1,6 @@
 import { agentSupported } from "@krynodes/protocol";
 
+import { toB64url } from "../lib/b64url";
 import { assertionSynced, fingerprint } from "../lib/webauthn";
 
 export interface TrustReport {
@@ -28,6 +29,7 @@ interface FleetDevice {
 export interface FleetNode {
   id: string;
   name: string;
+  kind: string;
   agentVersion: string | null;
   report: TrustReport | null;
 }
@@ -109,17 +111,21 @@ export async function loadFleet(
       }>(),
     db
       .prepare(
-        `SELECT id, name, agent_version, trust_report, EXISTS (
+        `SELECT id, name, kind, agent_version, trust_report, EXISTS (
            SELECT 1 FROM quarantines q
            WHERE q.node_id = nodes.id AND q.released_at IS NULL) AS quarantined
          FROM nodes
          WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
+           AND (kind <> 'laptop' OR EXISTS (
+             SELECT 1 FROM network_members m
+             WHERE m.node_id = nodes.id AND m.state = 'in'))
          ORDER BY name, id`,
       )
       .bind(ownerId)
       .all<{
         id: string;
         name: string;
+        kind: string;
         agent_version: string | null;
         trust_report: string | null;
         quarantined: number;
@@ -143,6 +149,7 @@ export async function loadFleet(
   const listedNodes = nodes.results.map((row) => ({
     id: row.id,
     name: row.name,
+    kind: row.kind,
     agentVersion: row.agent_version,
     report: readReport(row.trust_report),
   }));
@@ -159,7 +166,9 @@ export async function loadFleet(
       }),
     );
   const suspect = new Set(
-    nodes.results.filter((row) => row.quarantined === 1).map((row) => row.id),
+    nodes.results
+      .filter((row) => row.quarantined === 1 || row.kind !== "server")
+      .map((row) => row.id),
   );
   const union = new Set(
     listedNodes.flatMap((node) =>
@@ -189,6 +198,16 @@ export async function loadFleet(
     ids,
     owners,
   };
+}
+
+export function trustTokens(fleet: Fleet): string[] {
+  const core = fleet.devices.filter((item) => fleet.core.includes(item.id));
+  const owned = fleet.labelled && core.every((item) => item.account);
+  const owner = (account: string | null) =>
+    owned && account ? `.${toB64url(new TextEncoder().encode(account))}` : "";
+  return core.map(
+    (item) => `${item.id}.${item.alg}.${item.publicKey}${owner(item.account)}`,
+  );
 }
 
 export function syncedUpdates(

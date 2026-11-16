@@ -7,6 +7,7 @@ const SECTIONS = [
   { path: "cloudflare", label: "Cloudflare" },
   { path: "private-addresses", label: "Private Addresses" },
   { path: "quarantine", label: "Quarantine" },
+  { path: "laptop-dns", label: "Laptop DNS" },
   { path: "enroll", label: "Enroll Defaults" },
   { path: "usage", label: "Usage" },
 ];

@@ -1,8 +1,10 @@
 import { z } from "zod";
 
 import {
+  laptopEnrollSchema,
   networkBeatSchema,
   networkInventorySchema,
+  sealKeySchema,
   stackNetworkSchema,
 } from "./network";
 import { bridgesReportSchema } from "./bridges";
@@ -50,7 +52,11 @@ export {
 } from "./quarantine";
 export {
   dnsName,
+  laptopAddress6,
+  laptopEnrollSchema,
+  links,
   NETWORK,
+  IPV4,
   networkArgsValid,
   networkBeatSchema,
   networkDocumentSchema,
@@ -86,9 +92,11 @@ export { summarizeChange, type ChangeSummary } from "./summary";
 export {
   ACCOUNTS_AGENT,
   agentKnowsAccounts,
+  agentKnowsMemberKinds,
   agentSealsFromSender,
   agentSupported,
   compareVersions,
+  MEMBER_KINDS_AGENT,
   MIN_AGENT_VERSION,
   SEAL_AGENT,
 } from "./versions";
@@ -108,6 +116,10 @@ export const agentHostSchema = z.object({
   operatingSystem: z.string().min(1).max(64),
   architecture: z.string().min(1).max(64),
   agentVersion: z.string().min(1).max(64),
+});
+
+export const agentEnrollSchema = agentHostSchema.extend({
+  laptop: laptopEnrollSchema.optional(),
 });
 
 export const metricSnapshotSchema = z.object({
@@ -190,12 +202,14 @@ export const agentHeartbeatSchema = agentHostSchema.extend({
   release: releaseSchema.optional(),
   denials: denialsSchema.optional(),
   setup: setupSchema.optional(),
+  laptop: z.never().optional(),
 });
 
 export const enrollmentResponseSchema = z.object({
   nodeId: z.string().uuid(),
   token: z.string().min(1),
   intervalSeconds: z.number().int().positive(),
+  trust: z.array(z.string()).optional(),
 });
 
 const serviceKindSchema = z.enum(["systemd", "docker"]);
@@ -260,6 +274,13 @@ export const networkReplySchema = z.strictObject({
     )
     .max(32)
     .optional(),
+  meetings: z
+    .array(
+      z.strictObject({ laptop: z.string().uuid(), via: z.string().uuid() }),
+    )
+    .max(32)
+    .optional(),
+  held: z.array(z.string().uuid()).max(32).optional(),
 });
 
 export const UNSIGNED_VERBS = [
@@ -752,10 +773,7 @@ export const agentActionsRequestSchema = z
           .array(z.string().refine((name) => isValidTarget("compose", name)))
           .max(50)
           .optional(),
-        sealKey: z
-          .string()
-          .regex(/^[A-Za-z0-9_-]{87}$/u)
-          .optional(),
+        sealKey: sealKeySchema.optional(),
         security: securityReportSchema.optional(),
         vault: vaultReportSchema.optional(),
         tailscaleVault: z.unknown().optional(),

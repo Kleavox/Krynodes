@@ -200,6 +200,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 		return err
 	}
 	e.followSSH(ctx, dir)
+	e.followExit(ctx, dir)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err

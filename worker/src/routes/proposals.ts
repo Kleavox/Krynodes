@@ -113,7 +113,9 @@ function describe(fleet: Fleet, change: TrustChange) {
     ),
     currentAccounts: Object.assign(
       {},
-      ...fleet.nodes.map((node) => fleet.owners(node.report)),
+      ...fleet.nodes
+        .filter((node) => node.kind === "server")
+        .map((node) => fleet.owners(node.report)),
     ) as Record<string, string>,
     change: {
       core: change.core?.map((key) => key.id) ?? null,

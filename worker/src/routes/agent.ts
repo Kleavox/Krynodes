@@ -5,7 +5,8 @@ import type { AgentNode } from "../agent/ingest";
 import { hubFor, pokeSoon, streamsOn } from "../fleet/client";
 import { familyOf, readInterfaces, type Interface } from "../lib/addresses";
 import { randomToken, readBearerToken, sha256 } from "../lib/crypto";
-import { hostSchema } from "../schemas";
+import { enrollSchema } from "../schemas";
+import { loadFleet, trustTokens } from "../trust/fleet";
 import { changeStatement } from "./network";
 import {
   readJson,
@@ -37,7 +38,7 @@ export function registerAgentRoutes(app: KrynodesApp): void {
 
   app.post("/api/agent/enroll", async (context) => {
     const token = readBearerToken(context.req.header("authorization"));
-    const host = hostSchema.safeParse(await readJson(context));
+    const host = enrollSchema.safeParse(await readJson(context));
     if (!token || !host.success) {
       return context.json({ code: "INVALID_ENROLLMENT" }, 400);
     }
@@ -45,24 +46,36 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     const db = context.env.DB;
     const invite = await db
       .prepare(
-        `SELECT id, owner_user_id, interval_seconds FROM enrollment_tokens
-       WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+        `SELECT id, owner_user_id, interval_seconds,
+                json_extract(setup, '$.laptop') IS 1 AS laptop
+         FROM enrollment_tokens
+         WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
       )
       .bind(await sha256(token), new Date().toISOString())
-      .first<{ id: string; owner_user_id: string; interval_seconds: number }>();
+      .first<{
+        id: string;
+        owner_user_id: string;
+        interval_seconds: number;
+        laptop: number;
+      }>();
     if (!invite) return context.json({ code: "INVALID_ENROLLMENT" }, 401);
+    const laptop = host.data.laptop;
+    if ((invite.laptop === 1) !== (laptop !== undefined)) {
+      return context.json({ code: "INVALID_ENROLLMENT" }, 400);
+    }
 
     const nodeId = crypto.randomUUID();
     const agentToken = randomToken();
+    const now = new Date().toISOString();
     const [created] = await db.batch([
       db
         .prepare(
           `INSERT INTO nodes (
            id, owner_user_id, name, agent_token_hash, interval_seconds,
            enrolled_at, hostname, operating_system, architecture,
-           agent_version
+           agent_version, kind, seal_key
          )
-         SELECT ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?
+         SELECT ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?
          WHERE EXISTS (
            SELECT 1 FROM enrollment_tokens WHERE id = ? AND used_at IS NULL
          )`,
@@ -77,14 +90,27 @@ export function registerAgentRoutes(app: KrynodesApp): void {
           host.data.operatingSystem,
           host.data.architecture,
           host.data.agentVersion,
+          laptop ? "laptop" : "server",
+          laptop?.sealKey ?? null,
           invite.id,
         ),
+      ...(laptop
+        ? [
+            db
+              .prepare(
+                `INSERT INTO network_members (node_id, state, port, key, signer, since)
+                 SELECT ?1, 'waiting', ?2, ?3, ?4, ?5
+                 WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?1)`,
+              )
+              .bind(nodeId, laptop.port, laptop.key, laptop.signer, now),
+          ]
+        : []),
       db
         .prepare(
           `UPDATE enrollment_tokens SET used_at = ?, node_id = ?
          WHERE id = ? AND used_at IS NULL`,
         )
-        .bind(new Date().toISOString(), nodeId, invite.id),
+        .bind(now, nodeId, invite.id),
     ]);
     if (!created?.meta.changes) {
       return context.json({ code: "INVALID_ENROLLMENT" }, 401);
@@ -94,6 +120,11 @@ export function registerAgentRoutes(app: KrynodesApp): void {
       nodeId,
       token: agentToken,
       intervalSeconds: invite.interval_seconds,
+      ...(laptop
+        ? {
+            trust: trustTokens(await loadFleet(db, invite.owner_user_id)),
+          }
+        : {}),
     });
   });
 
@@ -148,6 +179,7 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     headers.set("x-kry-owner", node.owner_user_id);
     headers.set("x-kry-interval", String(node.interval_seconds));
     headers.set("x-kry-version", announced ?? "");
+    headers.set("x-kry-kind", node.kind ?? "server");
     return hubFor(context.env, node.owner_user_id).fetch(
       new Request("https://fleet/connect", { headers }),
     );
@@ -159,7 +191,9 @@ async function seenAddress(
   interfaces: Interface[] | null,
 ) {
   const node = await authenticateAgent(context);
-  if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
+  if (!node || node.kind === "laptop") {
+    return context.json({ code: "UNAUTHORIZED" }, 401);
+  }
   const address = context.req.header("cf-connecting-ip") ?? "";
   const family = familyOf(address);
   if (!family) return context.json({ address: null });
@@ -254,7 +288,7 @@ async function authenticateAgent(
   const hash = await sha256(token);
   const node = await db
     .prepare(
-      `SELECT id, owner_user_id, interval_seconds
+      `SELECT id, owner_user_id, interval_seconds, kind
        FROM nodes
        WHERE agent_token_hash = ? AND enrolled_at IS NOT NULL
          AND disabled_at IS NULL LIMIT 1`,
@@ -268,7 +302,7 @@ async function authenticateAgent(
        WHERE json_extract(release, '$.released') = 1
          AND json_extract(release, '$.token') = ?1
          AND enrolled_at IS NOT NULL AND disabled_at IS NULL
-       RETURNING id, owner_user_id, interval_seconds`,
+       RETURNING id, owner_user_id, interval_seconds, kind`,
     )
     .bind(hash)
     .first<AgentNode>();
