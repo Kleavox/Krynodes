@@ -6,8 +6,6 @@ import type {
   PendingRelease,
   Setup,
   StackNetwork,
-  TailnetRule,
-  TailscaleReport,
 } from "@krynodes/protocol";
 
 export interface Identity {
@@ -64,14 +62,13 @@ export interface NodeRecord {
   connected_at?: string;
   grace_seconds?: number;
   updates?: UpdatesSummary | null;
-  tailscale?: TailscaleReport | null;
   setup?: Setup | null;
   network?: {
     state: "waiting" | "in" | "leaving";
     address: string | null;
     port: number;
   } | null;
-  quarantine?: { at: string; why: string; tailnet?: string[] } | null;
+  quarantine?: { at: string; why: string } | null;
   warnings?: NodeWarning[];
 }
 
@@ -97,11 +94,9 @@ export interface QuarantineRecord {
   at: string;
   releasedAt: string | null;
   releasedBy: string | null;
-  tailnet: string[];
   address: string | null;
   knocks: { reporter: string; at: string; count: number }[];
   steps: QuarantineStep[];
-  removed?: { at: string; by: string | null } | null;
 }
 
 export interface StoppedStack {
@@ -120,7 +115,6 @@ export interface QuarantineView {
   changeThese: {
     stacks: string[];
     vault: VaultReport | null;
-    tailscaleVault?: VaultReport | null;
     webAddresses: { hostname: string; project: string }[];
     trusted: {
       nodeId: string;
@@ -617,7 +611,6 @@ interface ServiceNode {
   sealKey?: string | null;
   security?: SecurityReport | null;
   vault?: VaultReport | null;
-  tailscaleVault?: VaultReport | null;
   webAddresses?: WebAddress[];
   bridges?: BridgesReport | null;
   leftovers?: string[];
@@ -758,57 +751,4 @@ export interface UsageResponse {
   storage: { bytes: number | null; limit: number };
   quotas: UsageShare & { objects: number };
   resetAt: string;
-}
-
-export interface TailnetServer {
-  nodeId: string;
-  name: string;
-  report: TailscaleReport | null;
-  vault: VaultReport | null;
-  signedIn: boolean;
-  listeners?: {
-    address: string;
-    port: number;
-    protocol: "tcp" | "udp";
-    process: string;
-  }[];
-}
-
-export interface TailnetConnected {
-  tailnet: string;
-  clientId: string;
-  setId: string | null;
-  rules: TailnetRule[];
-  block: string | null;
-  lines: string[];
-  members: string[];
-  savedAt: string | null;
-  savedBy: string | null;
-  connectedAt: string;
-}
-
-export type TailnetAlarm =
-  | {
-      id: string;
-      kind: "device";
-      at: string;
-      device: { name: string; tag: string };
-    }
-  | {
-      id: string;
-      kind: "policy";
-      at: string;
-      change: {
-        block: boolean;
-        added: number;
-        removed: number;
-        lines: string[];
-      };
-    };
-
-export interface TailscaleResponse {
-  hook: string;
-  connected: TailnetConnected | null;
-  servers: TailnetServer[];
-  alarms: TailnetAlarm[];
 }

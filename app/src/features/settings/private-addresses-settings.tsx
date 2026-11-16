@@ -17,7 +17,7 @@ export function PrivateAddressesSettings() {
   return (
     <SettingsSection
       title="Private Addresses"
-      description="Listeners on addresses in these ranges, such as a VPN's, are not counted as public on any server. A server's addresses in these ranges show on Fleet under their interface name, such as tailscale0. One range per line, such as 10.8.0.0/24."
+      description="Listeners on addresses in these ranges, such as a VPN's, are not counted as public on any server. A server's addresses in these ranges show on Fleet under their interface name, such as wg0. One range per line, such as 10.8.0.0/24."
     >
       {current.data?.network && (
         <p className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs">

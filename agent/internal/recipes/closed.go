@@ -28,13 +28,12 @@ type Adopted struct {
 }
 
 var (
-	ufwComment   = regexp.MustCompile(`\s+comment\s+'[^']*'\s*$`)
-	ufwEveryone  = regexp.MustCompile(`^allow (\d{1,5})(?:/(tcp|udp))?$`)
-	ufwTailscale = regexp.MustCompile(`^allow in on ` + network.TailscaleInterface + ` to any port (\d{1,5}) proto (tcp|udp)$`)
-	ufwFrom      = regexp.MustCompile(`^allow from (\S+) to any port (\d{1,5}) proto (tcp|udp)$`)
-	richAccept   = regexp.MustCompile(`^rule (?:family="ipv[46]" )?source address="([^"]+)" port port="(\d{1,5})" protocol="(tcp|udp)" accept$`)
-	zoneName     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
-	ufwFiles     = []string{"/etc/ufw/user.rules", "/etc/ufw/user6.rules", "/etc/default/ufw"}
+	ufwComment  = regexp.MustCompile(`\s+comment\s+'[^']*'\s*$`)
+	ufwEveryone = regexp.MustCompile(`^allow (\d{1,5})(?:/(tcp|udp))?$`)
+	ufwFrom     = regexp.MustCompile(`^allow from (\S+) to any port (\d{1,5}) proto (tcp|udp)$`)
+	richAccept  = regexp.MustCompile(`^rule (?:family="ipv[46]" )?source address="([^"]+)" port port="(\d{1,5})" protocol="(tcp|udp)" accept$`)
+	zoneName    = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+	ufwFiles    = []string{"/etc/ufw/user.rules", "/etc/ufw/user6.rules", "/etc/default/ufw"}
 )
 
 func RouteInterfaces(env Env) []string {
@@ -176,9 +175,6 @@ func (r Rules) openings(ctx context.Context, env Env, line string) []network.Ope
 			}
 			return append(parse(match[1], "tcp", network.FromEveryone), parse(match[1], "udp", network.FromEveryone)...)
 		}
-		if match := ufwTailscale.FindStringSubmatch(line); match != nil {
-			return parse(match[1], match[2], network.FromTailscale)
-		}
 		if match := ufwFrom.FindStringSubmatch(line); match != nil {
 			return parse(match[2], match[3], match[1])
 		}
@@ -213,9 +209,6 @@ func (r Rules) openings(ctx context.Context, env Env, line string) []network.Ope
 		match := richAccept.FindStringSubmatch(value)
 		if match == nil {
 			return nil
-		}
-		if slices.Contains(network.TailscaleRanges, match[1]) {
-			return parse(match[2], match[3], network.FromTailscale)
 		}
 		return parse(match[2], match[3], match[1])
 	}
@@ -295,7 +288,7 @@ func merge(open []network.Opening, add network.Opening) ([]network.Opening, bool
 	switch {
 	case at < 0:
 		return append(open, add), true
-	case open[at].From == network.FromEveryone || open[at].From == add.From && add.From == network.FromTailscale:
+	case open[at].From == network.FromEveryone:
 		return open, true
 	case add.From == network.FromEveryone:
 		open[at] = add

@@ -128,55 +128,6 @@ func TestTightenTakesTheStricterValueUntilASignedDocument(t *testing.T) {
 	}
 }
 
-func TestATailnetBlockWritesBothFamiliesAndOnlyASignedUnblockLiftsIt(t *testing.T) {
-	executor, run := securityExecutor(t)
-	for _, tool := range []string{"iptables", "ip6tables"} {
-		for _, parent := range []string{"INPUT", "FORWARD"} {
-			run.failing[tool+" -C "+parent+" -i tailscale0 -j KRY-TAILNET"] = "Bad rule"
-		}
-	}
-	block := attached(t, hostRequest(t, idA, "tailscale", "block", nil), map[string]string{"addresses": "100.101.7.10 fd7a:115c:a1e0::7"})
-	if result := runRequest(t, executor, block); !result.OK {
-		t.Fatalf("block %+v", result)
-	}
-	for _, call := range []string{
-		"iptables -A KRY-TAILNET -s 100.101.7.10/32 -j DROP",
-		"ip6tables -A KRY-TAILNET -s fd7a:115c:a1e0::7/128 -j DROP",
-		"iptables -I INPUT 1 -i tailscale0 -j KRY-TAILNET",
-		"iptables -I FORWARD 1 -i tailscale0 -j KRY-TAILNET",
-		"ip6tables -I INPUT 1 -i tailscale0 -j KRY-TAILNET",
-		"ip6tables -I FORWARD 1 -i tailscale0 -j KRY-TAILNET",
-	} {
-		if !slices.Contains(run.calls, call) {
-			t.Fatalf("missing %q in %q", call, run.calls)
-		}
-	}
-	unsigned := hostRequest(t, idB, "tailscale", "unblock", map[string]string{"addresses": "100.101.7.10"})
-	unsigned.Signed = nil
-	if result := runRequest(t, executor, unsigned); result.OK {
-		t.Fatalf("unblocked unsigned %+v", result)
-	}
-	if result := runRequest(t, executor, hostRequest(t, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a03", "tailscale", "unblock", map[string]string{"addresses": "100.101.7.10"})); !result.OK {
-		t.Fatalf("unblock %+v", result)
-	}
-	state, _ := readState[tailnetBlock](executor.StateDir, tailnetFile)
-	if !slices.Equal(state.Addresses, []string{"fd7a:115c:a1e0::7"}) {
-		t.Fatalf("kept %v", state.Addresses)
-	}
-	run.calls = nil
-	if result := runRequest(t, executor, hostRequest(t, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a04", "tailscale", "unblock", map[string]string{"addresses": "fd7a:115c:a1e0::7"})); !result.OK {
-		t.Fatalf("unblock the last %+v", result)
-	}
-	for _, call := range []string{"iptables -D INPUT -i tailscale0 -j KRY-TAILNET", "ip6tables -X KRY-TAILNET"} {
-		if !slices.Contains(run.calls, call) {
-			t.Fatalf("missing %q in %q", call, run.calls)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(executor.StateDir, tailnetFile)); !os.IsNotExist(err) {
-		t.Fatalf("the block file is kept: %v", err)
-	}
-}
-
 func TestADocumentWithoutKnockSettingsKeepsTheTightenedOnes(t *testing.T) {
 	executor, _, keys, peer, _ := joinedServer(t)
 	if result := throughBoth(t, executor, askNetwork(t, fresh(1), "tighten", map[string]string{"scan": "5", "stop": "true"})); !result.OK {

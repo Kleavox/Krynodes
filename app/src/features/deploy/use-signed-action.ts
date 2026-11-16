@@ -22,7 +22,7 @@ import type { ActionVerb, BatchMode } from "@/types";
 
 import { useDeploySession } from "./use-deploy-session";
 
-export const NO_SIGNER =
+const NO_SIGNER =
   "None of your passkeys has access to every server here. Change access in Passkeys.";
 
 export function useSignedAction(toastErrors = true) {
@@ -67,22 +67,15 @@ export function useSignedAction(toastErrors = true) {
 }
 
 export type OperationKind =
-  | "move"
-  | "expose"
-  | "unexpose"
-  | "split"
-  | "reshare"
-  | "tailnet"
-  | "disconnect";
+  "move" | "expose" | "unexpose" | "split" | "reshare";
 
 export interface OperationInput {
   kind: OperationKind;
   zone?: string;
-  tailscale?: { tailnet: string; clientId: string; webhookSecret?: string };
   deleteNode?: string;
 }
 
-export async function sendOperation(
+async function sendOperation(
   session: Session,
   input: OperationInput,
   steps: OperationTarget[],
@@ -109,7 +102,6 @@ export async function sendOperation(
     kind: input.kind,
     steps: signed,
     ...(input.zone ? { zone: input.zone } : {}),
-    ...(input.tailscale ? { tailscale: input.tailscale } : {}),
     ...(input.deleteNode ? { deleteNode: input.deleteNode } : {}),
   });
 }
@@ -162,7 +154,7 @@ export function useSignedOperation(toastErrors = true) {
           : error;
       }
     },
-    [...ACTION_QUERIES, ["cloudflare"], queryKeys.tailscale, ["quarantine"]],
+    [...ACTION_QUERIES, ["cloudflare"], ["quarantine"]],
     toastErrors,
   );
 }

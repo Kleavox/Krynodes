@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Kleavox/krynodes/agent/internal/network"
@@ -21,22 +23,47 @@ func (e Executor) syncPublish(ctx context.Context) error {
 	var failed []error
 	for _, tool := range containTools {
 		ipv6 := tool == "ip6tables"
-		var publish, tailscale []string
+		var publish []string
 		if state.Closed {
-			publish = network.Publish(state.Open, ipv6)
+			publish = network.Publish(slices.Concat(state.Open, state.Filed), ipv6)
 			e.firewall(ctx, tool, "-N", dockerUser)
-		}
-		if state.Closed && state.Tool == "firewalld" {
-			tailscale = network.TailscaleGuard(state.Open, ipv6)
 		}
 		if err := e.syncChain(ctx, tool, network.PublishChain, dockerUser, publishFiles[tool], publish); err != nil {
 			failed = append(failed, fmt.Errorf("close Docker's published ports with %s: %w", tool, err))
 		}
-		if err := e.syncChain(ctx, tool, network.TailscaleChain, "INPUT", tailscaleFiles[tool], tailscale); err != nil {
+		if err := e.keepTailscaleGuard(ctx, tool); err != nil {
 			failed = append(failed, fmt.Errorf("keep Tailscale ports to Tailscale with %s: %w", tool, err))
 		}
 	}
 	return errors.Join(failed...)
+}
+
+func (e Executor) keepTailscaleGuard(ctx context.Context, tool string) error {
+	file := filepath.Join(e.StateDir, tailscaleFiles[tool])
+	raw, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	wanted := []string{"-N " + network.TailscaleChain}
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		switch line = strings.TrimSpace(line); {
+		case line == "", line == "*filter", line == ":"+network.TailscaleChain+" - [0:0]", line == "COMMIT":
+		case strings.HasPrefix(line, "-A "+network.TailscaleChain+" "):
+			wanted = append(wanted, line)
+		default:
+			log.Printf("leave %s alone: it holds more than the Tailscale guard", file)
+			return nil
+		}
+	}
+	if e.listed(ctx, tool, network.TailscaleChain) != strings.Join(wanted, "\n") {
+		if err := e.firewall(ctx, tool+"-restore", "--noflush", file); err != nil {
+			return err
+		}
+	}
+	return e.ensure(ctx, tool, []string{"-I", "INPUT", "1"}, "INPUT", []string{"-j", network.TailscaleChain})
 }
 
 func (e Executor) syncChain(ctx context.Context, tool, chain, parent, name string, wanted []string) error {

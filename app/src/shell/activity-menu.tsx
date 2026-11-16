@@ -18,7 +18,7 @@ import {
 } from "@/lib/api";
 import { failedLine } from "@/lib/history";
 import { activity, hourglassLabel, type ActivityItem } from "@/lib/operations";
-import { jobTitle, namesServer, runningJob } from "@/lib/packages";
+import { jobTitle, runningJob } from "@/lib/packages";
 import { runningText } from "@/lib/services";
 import { useNow } from "@/lib/use-now";
 import { cn } from "@/lib/utils";
@@ -39,9 +39,7 @@ function Running({
   onPick: () => void;
 }) {
   const job =
-    item.kind === "apt" || namesServer(item.action)
-      ? runningJob(item.action, item.nodeName, now)
-      : null;
+    item.kind === "apt" ? runningJob(item.action, item.nodeName, now) : null;
   return (
     <li>
       <Link

@@ -8,7 +8,6 @@ import {
 import { bridgesReportSchema } from "./bridges";
 import { accountSchema } from "./change";
 import { eventSchema, releaseSchema } from "./quarantine";
-import { reachSchema } from "./tailscale";
 import {
   isValidTarget,
   RECIPES,
@@ -36,15 +35,6 @@ export {
   PEER_ENTRY,
   type BridgesReport,
 } from "./bridges";
-export {
-  portSchema,
-  reachSchema,
-  ruleSchema,
-  TAILSCALE,
-  webhookBodySchema,
-  type TailnetRule,
-  type WebhookEvent,
-} from "./tailscale";
 export {
   EVENT_KINDS,
   eventSchema,
@@ -282,7 +272,6 @@ export const UNSIGNED_VERBS = [
   "inspect",
   "probe",
   "test",
-  "block",
   "drop",
   "tighten",
 ] as const;
@@ -326,16 +315,9 @@ export const KIND_VERBS = {
     "scan",
     "install",
     "uninstall",
-    "signin",
     "accept",
     "release",
-    "block",
-    "unblock",
-    "join",
-    "inspect",
     "admin",
-    "exitnode",
-    "dns",
     "open",
     "close",
     "putback",
@@ -343,16 +325,7 @@ export const KIND_VERBS = {
     "boolean",
   ],
   trust: ["trust"],
-  vault: [
-    "store",
-    "release",
-    "reshare",
-    "forget",
-    "policy",
-    "save",
-    "key",
-    "remove",
-  ],
+  vault: ["store", "release", "reshare", "forget"],
   apt: [
     "refresh",
     "find",
@@ -383,26 +356,7 @@ const RECIPE_VERBS: readonly string[] = ["apply", "undo"];
 
 export const FIREWALL_VERBS: readonly string[] = ["open", "close", "putback"];
 
-const TOKEN_VERBS: readonly string[] = [
-  "store",
-  "release",
-  "reshare",
-  "forget",
-];
-
 export function hostVerbFits(name: string, action: string): boolean {
-  const tailnet = [
-    "signin",
-    "block",
-    "unblock",
-    "join",
-    "inspect",
-    "exitnode",
-    "dns",
-  ];
-  if (name === "tailscale" || tailnet.includes(action)) {
-    return name === "tailscale" && tailnet.includes(action);
-  }
   if (FIREWALL_VERBS.includes(action)) return name === "firewall";
   if (action === "containers" || action === "boolean") {
     return name === "confinement";
@@ -472,7 +426,6 @@ export const agentActionSchema = z
       "forget",
       "install",
       "uninstall",
-      "signin",
       "refresh",
       "find",
       "preview",
@@ -488,17 +441,9 @@ export const agentActionSchema = z
       "unprepare",
       "rekey",
       "accept",
-      "block",
-      "unblock",
       "drop",
       "tighten",
-      "policy",
-      "save",
-      "key",
-      "join",
       "admin",
-      "exitnode",
-      "dns",
       "open",
       "close",
       "putback",
@@ -525,13 +470,6 @@ export const agentActionSchema = z
     const allowed: readonly string[] = KIND_VERBS[action.kind];
     if (!allowed.includes(action.action)) return false;
     if (action.kind === "host" && !hostVerbFits(action.name, action.action)) {
-      return false;
-    }
-    if (
-      action.kind === "vault" &&
-      action.name === "cloudflare" &&
-      !TOKEN_VERBS.includes(action.action)
-    ) {
       return false;
     }
     if (action.action === "lockdown" && action.signed === undefined) {
@@ -600,14 +538,18 @@ export const stackEntrySchema = z
   })
   .refine((stack) => isValidTarget("compose", stack.project));
 
-export const FIREWALL_FROM = ["everyone", "tailscale", "addresses"] as const;
+export const FIREWALL_FROM_REPORTED = [
+  "everyone",
+  "tailscale",
+  "addresses",
+] as const;
 
 export const MAX_FIREWALL_ADDRESSES = 8;
 
 export const firewallOpeningSchema = z.strictObject({
   port: z.number().int().min(1).max(65_535),
   protocol: z.enum(["tcp", "udp"]),
-  from: z.enum(FIREWALL_FROM),
+  from: z.enum(FIREWALL_FROM_REPORTED),
   addresses: z
     .array(z.string().min(1).max(49))
     .min(1)
@@ -781,27 +723,6 @@ export const packagesReportSchema = z.union([
   }),
 ]);
 
-export const tailscaleReportSchema = z.strictObject({
-  state: z.enum(["running", "needs-login", "stopped"]),
-  addresses: z.array(z.string().max(64)).max(8),
-  name: z.string().max(253).nullable(),
-  keyExpiry: stamp.nullable(),
-  id: z.string().max(64).nullable().optional(),
-  tailnet: z.string().max(253).nullable().optional(),
-  tags: z.array(z.string().max(64)).max(8).optional(),
-  peers: z.number().int().nonnegative().optional(),
-  reach: z.array(reachSchema).max(64).nullable().optional(),
-  names: z
-    .record(z.string().max(64), z.string().max(63))
-    .refine((names) => Object.keys(names).length <= 64)
-    .optional(),
-  exitNode: z
-    .strictObject({ advertised: z.boolean(), approved: z.boolean() })
-    .nullable()
-    .optional(),
-  acceptDNS: z.boolean().nullable().optional(),
-});
-
 export const progressSchema = z.strictObject({
   id: z.guid(),
   at: stamp,
@@ -837,12 +758,12 @@ export const agentActionsRequestSchema = z
           .optional(),
         security: securityReportSchema.optional(),
         vault: vaultReportSchema.optional(),
-        tailscaleVault: vaultReportSchema.optional(),
+        tailscaleVault: z.unknown().optional(),
         services: z.array(serviceEntrySchema).max(500).optional(),
         stacks: z.array(stackEntrySchema).max(50).optional(),
         trust: trustReportSchema.optional(),
         packages: packagesReportSchema.optional(),
-        tailscale: tailscaleReportSchema.optional(),
+        tailscale: z.unknown().optional(),
         network: networkInventorySchema.optional(),
         bridges: bridgesReportSchema.nullable().optional(),
       })
@@ -895,5 +816,4 @@ export type NetworkReply = z.infer<typeof networkReplySchema>;
 export type StackEntry = z.infer<typeof stackEntrySchema>;
 export type TrustReport = z.infer<typeof trustReportSchema>;
 export type PackagesReport = z.infer<typeof packagesReportSchema>;
-export type TailscaleReport = z.infer<typeof tailscaleReportSchema>;
 export type ActionProgress = z.infer<typeof progressSchema>;

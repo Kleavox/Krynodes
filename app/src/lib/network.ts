@@ -311,7 +311,7 @@ export function checkRows(
         }
       : {
           mark: "✓",
-          text: `${plan.range} is not used here · interfaces, Docker networks and Tailscale checked`,
+          text: `${plan.range} is not used here · interfaces and Docker networks checked`,
         },
     server.nat
       ? {

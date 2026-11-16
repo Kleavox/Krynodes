@@ -14,8 +14,7 @@ func TestThePackagesReportMatchesTheSharedFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var typed struct {
-		Packages  PackagesReport  `json:"packages"`
-		Tailscale TailscaleReport `json:"tailscale"`
+		Packages PackagesReport `json:"packages"`
 	}
 	if err := json.Unmarshal(raw, &typed); err != nil {
 		t.Fatal(err)

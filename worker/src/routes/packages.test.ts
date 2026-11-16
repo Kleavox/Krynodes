@@ -1,4 +1,7 @@
-import type { AgentActionsRequest } from "@krynodes/protocol";
+import {
+  agentActionsRequestSchema,
+  type AgentActionsRequest,
+} from "@krynodes/protocol";
 import { describe, expect, it } from "vitest";
 
 import { receiveReport } from "../actions/report";
@@ -203,7 +206,6 @@ describe("apt actions", () => {
       code: "AGENT_TOO_OLD",
       message: `Update the agent on ${names.get(OLD)} to 0.7.20 or newer.`,
     });
-    expect((await change(OLD, "host", "tailscale", "signin")).status).toBe(422);
     await inventory(FEDORA, {
       packages: { apt: false, system: "Fedora Linux 41" },
     });
@@ -245,20 +247,6 @@ describe("apt actions", () => {
     expect((await ask(A, "system", "refresh")).status).toBe(201);
     expect((await change(A, "apt", "nginx", "install")).status).toBe(201);
     expect((await change(A, "apt", "nginx", "remove")).status).toBe(409);
-  });
-
-  it("sign in only where tailscale is installed", async () => {
-    const { change, inventory } = setup();
-    expect((await change(A, "host", "tailscale", "signin")).status).toBe(422);
-    await inventory(A, {
-      tailscale: {
-        state: "needs-login",
-        addresses: [],
-        name: null,
-        keyExpiry: null,
-      },
-    });
-    expect((await change(A, "host", "tailscale", "signin")).status).toBe(201);
   });
 });
 
@@ -305,34 +293,30 @@ describe("the packages report", () => {
     });
   });
 
-  it("keeps Tailscale until a full inventory says it is gone", async () => {
-    const { db, inventory, sqlite, agent } = setup();
-    const running = {
-      state: "running" as const,
-      addresses: ["100.101.7.12"],
-      name: "vps-2.tail0000.ts.net",
-      keyExpiry: null,
-    };
-    await inventory(A, { tailscale: running });
-    await receiveReport(
-      db,
-      agent(A),
-      { nodeId: A, inventory: { hash: "b".repeat(64) } },
-      NOW,
-    );
+  it("an inventory with tailscale fields from an old agent is stored without them", async () => {
+    const { db, sqlite, agent } = setup();
+    const report = agentActionsRequestSchema.parse({
+      nodeId: A,
+      inventory: {
+        hash: "d".repeat(64),
+        services: [],
+        tailscale: {
+          state: "running",
+          addresses: ["100.101.7.12"],
+          name: "server-2.tail0000.ts.net",
+          keyExpiry: null,
+        },
+        tailscaleVault: { set: "t1", holders: 3 },
+      },
+    });
+    await receiveReport(db, agent(A), report, NOW);
     expect(
-      JSON.parse(
-        (
-          sqlite.prepare("SELECT tailscale FROM nodes WHERE id = ?").get(A) as {
-            tailscale: string;
-          }
-        ).tailscale,
-      ),
-    ).toEqual(running);
-    await inventory(A, {}, "c");
-    expect(
-      sqlite.prepare("SELECT tailscale FROM nodes WHERE id = ?").get(A),
-    ).toEqual({ tailscale: null });
+      sqlite.prepare("SELECT inventory_hash FROM nodes WHERE id = ?").get(A),
+    ).toEqual({ inventory_hash: "d".repeat(64) });
+    const columns = (
+      sqlite.prepare("PRAGMA table_info(nodes)").all() as { name: string }[]
+    ).map((column) => column.name);
+    expect(columns.filter((name) => name.startsWith("tailscale"))).toEqual([]);
   });
 });
 

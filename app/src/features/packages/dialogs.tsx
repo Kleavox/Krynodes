@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
@@ -23,7 +22,6 @@ import { InstallDialog } from "./install-dialog";
 import { Lines, SHEET, type PackagesDialog } from "./lines";
 import { RemoveDialog } from "./remove-dialog";
 import { DropRepoDialog, RepoDialog } from "./repo-dialog";
-import { SignInDialog } from "./sign-in-dialog";
 import { UpgradeDialog } from "./upgrade-dialog";
 
 function JobDialog({
@@ -37,32 +35,19 @@ function JobDialog({
   known: ActionRecord | undefined;
   onClose: () => void;
 }) {
-  const [signIn, setSignIn] = useState(false);
   const services = useServices();
   const now = useNow(1_000);
   const action = useAction(id).data?.action ?? known;
   const entry = services.data?.nodes.find((item) => item.id === node.id);
-  if (signIn) {
-    return (
-      <SignInDialog node={node} again={false} open onOpenChange={onClose} />
-    );
-  }
   const running = !action || isPending(action);
   const job = action ? runningJob(action, node.name, now) : null;
   const lines = action
     ? jobLines(action, {
         nodeName: node.name,
         stacks: entry?.stacks ?? [],
-        tailscale: node.tailscale,
       })
     : [];
   const old = action ? (outcomeOf(action)?.old ?? []) : [];
-  const tailnet =
-    !running &&
-    action?.action === "install" &&
-    action.name === "tailscale" &&
-    action.status === "done" &&
-    node.tailscale?.state !== "running";
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className={SHEET}>
@@ -90,7 +75,6 @@ function JobDialog({
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          {tailnet && <Button onClick={() => setSignIn(true)}>Sign In</Button>}
           {old.length > 0 && canRestartServer(node, entry?.trust ?? null) && (
             <Button asChild variant="destructive">
               <Link to={`/nodes/${node.id}?restart=1`}>Restart Server</Link>

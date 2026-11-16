@@ -24,7 +24,6 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
-	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 )
 
 const (
@@ -56,16 +55,10 @@ type Executor struct {
 	Audit      bool
 	ConfigPath string
 
-	QuarantineMark string
-	GoneMark       string
-	Held           func(context.Context) (bool, error)
+	GoneMark string
 
 	CloudflareBase string
 	CloudflareHTTP *http.Client
-
-	TailscaleLocal tailscale.Local
-	TailscaleBase  string
-	TailscaleHTTP  *http.Client
 
 	HealthTimeout time.Duration
 	HealthEvery   time.Duration
@@ -173,7 +166,9 @@ run:
 			return err
 		}
 	}
-	e.leaveExitNodeWhenQuarantined(ctx)
+	if err := e.fileTailscaleOpenings(ctx); err != nil {
+		log.Printf("file the openings from Tailscale: %v", err)
+	}
 	e.firewallDrift(ctx)
 	if snapshot.Docker == "ready" && e.hasContained() {
 		e.guard(ctx)
@@ -192,19 +187,17 @@ run:
 	}
 	var security *reporter.SecurityReport
 	var packages *reporter.PackagesReport
-	var tailnet *reporter.TailscaleReport
 	var bridges *reporter.Bridges
 	var leftovers []string
 	if e.Audit {
 		leftovers = e.leftovers(ctx, snapshot)
 		security = e.security(ctx, scanned)
 		packages = e.packages(ctx)
-		tailnet = e.tailnet(ctx)
 		if snapshot.Docker != "missing" {
 			bridges = e.bridgesReport(ctx)
 		}
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, Leftovers: leftovers, SealKey: sealKey, Security: security, Vault: e.vaultReport("cloudflare"), TailscaleVault: e.vaultReport("tailscale"), Packages: packages, Tailscale: tailnet, Network: e.networkInventory(snapshot), Bridges: bridges}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, Leftovers: leftovers, SealKey: sealKey, Security: security, Vault: e.vaultReport(), Packages: packages, Network: e.networkInventory(snapshot), Bridges: bridges}, e.Now())
 	if err != nil {
 		return err
 	}

@@ -75,7 +75,7 @@ import {
   wrongPortRows,
 } from "./network";
 import { b64url } from "./passkeys";
-import { openSealed, sealPair } from "./seal";
+import { open, recipient } from "./seal-test-utils";
 
 const NOW = Date.parse("2026-10-26T12:00:00Z");
 const SEC = NOW / 1000;
@@ -390,7 +390,7 @@ describe("before a server joins", () => {
       },
       {
         mark: "✓",
-        text: "10.88.0.0/24 is not used here · interfaces, Docker networks and Tailscale checked",
+        text: "10.88.0.0/24 is not used here · interfaces and Docker networks checked",
       },
       { mark: "✓", text: "Public address 203.0.113.7, not behind NAT" },
       {
@@ -433,7 +433,7 @@ describe("before a server joins", () => {
       { mark: "✓", text: "WireGuard tools are installed" },
       {
         mark: "✓",
-        text: "10.88.0.0/24 is not used here · interfaces, Docker networks and Tailscale checked",
+        text: "10.88.0.0/24 is not used here · interfaces and Docker networks checked",
       },
       {
         mark: "✓",
@@ -1295,7 +1295,7 @@ describe("Test Link", () => {
 
 describe("the network document", () => {
   const ends = async (names: string[]) => {
-    const pairs = await Promise.all(names.map(() => sealPair()));
+    const pairs = await Promise.all(names.map(() => recipient()));
     return {
       pairs: Object.fromEntries(names.map((id, index) => [id, pairs[index]!])),
       keys: Object.fromEntries(
@@ -1314,9 +1314,9 @@ describe("the network document", () => {
     nat: member.nat,
   });
   const opened = async (
-    pair: Awaited<ReturnType<typeof sealPair>>,
+    to: Awaited<ReturnType<typeof recipient>>,
     sealed: string,
-  ) => b64url(new TextEncoder().encode(await openSealed(pair, sealed)));
+  ) => (await open(to, sealed)).text;
 
   it("seals each pair's key twice, to its two ends only, and keeps every other member", async () => {
     const { pairs, keys } = await ends([A, B, C]);
@@ -1343,7 +1343,7 @@ describe("the network document", () => {
     expect(await opened(pairs[A]!, one!.psk[B]!)).toBe(
       await opened(pairs[B]!, two!.psk[A]!),
     );
-    await expect(openSealed(pairs[C]!, one!.psk[B]!)).rejects.toThrow();
+    await expect(open(pairs[C]!, one!.psk[B]!)).rejects.toThrow();
     const next = await buildDocument(
       first,
       { kind: "add", join: [joiner(vps3)] },

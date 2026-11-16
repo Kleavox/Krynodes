@@ -19,6 +19,33 @@ describe("Krynodes without Kleavox", () => {
   });
 });
 
+describe("Krynodes without Tailscale", () => {
+  it("answers 404 for the Tailscale routes and the webhook", async () => {
+    const assets: string[] = [];
+    const env = {
+      ENVIRONMENT: "development",
+      ASSETS: {
+        fetch: (request: Request) => {
+          assets.push(new URL(request.url).pathname);
+          return new Response(null, { status: 404 });
+        },
+      },
+    } as unknown as Env;
+    for (const [method, path] of [
+      ["GET", "/api/tailscale"],
+      ["POST", "/hooks/tailscale"],
+    ] as const) {
+      const response = await app.request(
+        `https://kry.example.test${path}`,
+        { method, body: method === "POST" ? "[]" : undefined },
+        env,
+      );
+      expect(response.status, path).toBe(404);
+    }
+    expect(assets).toEqual(["/hooks/tailscale"]);
+  });
+});
+
 describe("changes from another site", () => {
   const ORIGIN = "https://kry.example.test";
   const env = () => {

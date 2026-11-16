@@ -139,18 +139,18 @@ func TestCloseEverythingElseKeepsARuleTheDialogNeverShowed(t *testing.T) {
 
 func TestOpenAndCloseChangeTheFirewallAndItsState(t *testing.T) {
 	executor, run := closedUfwServer(t)
-	handAdds(run, "ufw allow in on tailscale0 to any port 8443 proto tcp comment krynodes", "allow in on tailscale0 to any port 8443 proto tcp comment 'krynodes'")
-	if result := hostRun(t, executor, hostRequest(t, idB, "firewall", "open", map[string]string{"port": "8443", "protocol": "tcp", "from": "tailscale"})); !result.OK || result.Output != "8443/tcp is open to Tailscale" {
+	handAdds(run, "ufw allow from 198.51.100.0/24 to any port 8443 proto tcp comment krynodes", "allow from 198.51.100.0/24 to any port 8443 proto tcp comment 'krynodes'")
+	if result := hostRun(t, executor, hostRequest(t, idB, "firewall", "open", map[string]string{"port": "8443", "protocol": "tcp", "from": "198.51.100.0/24"})); !result.OK || result.Output != "8443/tcp is open to 198.51.100.0/24" {
 		t.Fatalf("open %#v", result)
 	}
-	if state := executor.readFirewall(); len(state.Open) != 2 || state.Open[1].From != "tailscale" || !slices.Contains(state.Known, "allow in on tailscale0 to any port 8443 proto tcp") {
+	if state := executor.readFirewall(); len(state.Open) != 2 || state.Open[1].From != "addresses" || !slices.Contains(state.Known, "allow from 198.51.100.0/24 to any port 8443 proto tcp") {
 		t.Fatalf("state %+v", state)
 	}
 	run.calls = nil
 	if result := hostRun(t, executor, hostRequest(t, idC, "firewall", "open", map[string]string{"port": "8443", "protocol": "tcp", "from": "203.0.113.0/24"})); !result.OK || result.Output != "8443/tcp is open to 203.0.113.0/24" {
 		t.Fatalf("change from %#v", result)
 	}
-	if !ranInOrder(run.calls, "ufw allow from 203.0.113.0/24 to any port 8443 proto tcp comment krynodes", "ufw --force delete allow in on tailscale0 to any port 8443 proto tcp") {
+	if !ranInOrder(run.calls, "ufw allow from 203.0.113.0/24 to any port 8443 proto tcp comment krynodes", "ufw --force delete allow from 198.51.100.0/24 to any port 8443 proto tcp") {
 		t.Fatalf("calls %q", run.calls)
 	}
 	if result := hostRun(t, executor, hostRequest(t, idD, "firewall", "close", map[string]string{"port": "8443", "protocol": "tcp"})); !result.OK || result.Output != "8443/tcp is closed" {
@@ -168,7 +168,7 @@ func TestOpenAndCloseChangeTheFirewallAndItsState(t *testing.T) {
 			t.Fatalf("%v must be refused: %#v", args, result)
 		}
 	}
-	if result := hostRun(t, executor, hostRequest(t, idD, "firewall", "open", map[string]string{"port": "22", "protocol": "tcp", "from": "tailscale"})); result.OK || !strings.Contains(result.Output, "SSH stays open") {
+	if result := hostRun(t, executor, hostRequest(t, idD, "firewall", "open", map[string]string{"port": "22", "protocol": "tcp", "from": "198.51.100.0/24"})); result.OK || !strings.Contains(result.Output, "SSH stays open") {
 		t.Fatalf("ssh %#v", result)
 	}
 }
@@ -318,39 +318,16 @@ func TestAFirewallThatIsOnButNotClosedReportsWhatWouldBeAdopted(t *testing.T) {
 	}
 }
 
-func TestAnExitNodeBehindFirewalldMasqueradesUntilItStops(t *testing.T) {
-	executor, run := tailnetServer(t)
-	rootFile(t, executor, "/etc/os-release", "ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.4\"\n")
-	rootFile(t, executor, "/proc/net/route", "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\nens3\t00000000\t0100000A\t0003\t0\t0\t0\t00000000\n")
-	run.respond["firewall-cmd --state"] = "running\n"
-	run.respond["firewall-cmd --get-zone-of-interface=ens3"] = "public\n"
-	run.failing["firewall-cmd --permanent --zone=public --query-masquerade"] = "no\n"
-	if result := hostRun(t, executor, hostRequest(t, idA, "tailscale", "exitnode", map[string]string{"on": "1"})); !result.OK {
-		t.Fatalf("on %#v", result)
-	}
-	if !ranInOrder(run.calls, "firewall-cmd --permanent --zone=public --add-masquerade", "firewall-cmd --reload", "tailscale set --advertise-exit-node=true") {
-		t.Fatalf("calls %q", run.calls)
-	}
-	run.calls = nil
-	if result := hostRun(t, executor, hostRequest(t, idB, "tailscale", "exitnode", map[string]string{"on": "0"})); !result.OK {
-		t.Fatalf("off %#v", result)
-	}
-	if !ranInOrder(run.calls, "tailscale set --advertise-exit-node=false", "firewall-cmd --permanent --zone=public --remove-masquerade", "firewall-cmd --reload") {
-		t.Fatalf("calls %q", run.calls)
-	}
-	already, run := tailnetServer(t)
-	rootFile(t, already, "/etc/os-release", "ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.4\"\n")
-	run.respond["firewall-cmd --state"] = "running\n"
-	for i, on := range []string{"1", "0"} {
-		if result := hostRun(t, already, hostRequest(t, []string{idA, idB}[i], "tailscale", "exitnode", map[string]string{"on": on})); !result.OK {
-			t.Fatalf("%s %#v", on, result)
+func ranInOrder(calls []string, want ...string) bool {
+	at := -1
+	for _, call := range want {
+		next := slices.Index(calls[at+1:], call)
+		if next < 0 {
+			return false
 		}
+		at += next + 1
 	}
-	if slices.ContainsFunc(run.calls, func(call string) bool {
-		return strings.Contains(call, "-masquerade") && !strings.Contains(call, "--query")
-	}) {
-		t.Fatalf("a masquerade the owner set is left alone: %q", run.calls)
-	}
+	return true
 }
 
 func TestTheFirewallReportStaysWithinWhatTheDashboardTakes(t *testing.T) {

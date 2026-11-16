@@ -15,8 +15,6 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/apt"
 	"github.com/Kleavox/krynodes/agent/internal/recipes"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
-	"github.com/Kleavox/krynodes/agent/internal/seal"
-	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 )
 
 const (
@@ -334,26 +332,4 @@ func (e Executor) applyApt(ctx context.Context, request Request) Result {
 		return e.failed(request, record, "")
 	}
 	return e.answer(request, outcome, err == nil)
-}
-
-func (e Executor) signIn(ctx context.Context, request Request, command Command) Result {
-	if _, err := os.Stat(e.path(tailscale.Binary)); err != nil {
-		return e.refuse(request.ID, errors.New("tailscale is not installed"))
-	}
-	login, err := tailscale.SignIn(ctx, tailscale.Runner(e.Run), e.Stream)
-	if err != nil {
-		return e.refuse(request.ID, err)
-	}
-	if login.Running {
-		return e.answer(request, map[string]bool{"running": true}, true)
-	}
-	plain, err := json.Marshal(map[string]string{"url": login.URL})
-	if err != nil {
-		return e.failed(request, err, "")
-	}
-	sealed, err := seal.Seal(command.Args["key"], plain)
-	if err != nil {
-		return e.refuse(request.ID, errors.New("the browser's key is not usable; open Sign In again"))
-	}
-	return e.answer(request, map[string]string{"sealed": sealed}, true)
 }

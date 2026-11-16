@@ -61,19 +61,20 @@ func TestTheRulesOfAFirewallAreReadAsOpenPortsAndKeptLines(t *testing.T) {
 
 func TestAClosedFirewallKeepsOnlySSHThePrivateNetworkAndTheChosenPorts(t *testing.T) {
 	env, run := closedUfw(t, false)
-	saved, err := Apply(context.Background(), env, "firewall", map[string]string{"closed": "1", "ports": "80/tcp@everyone,8443/tcp@tailscale", NetworkPort: "51821"})
+	run.respond["ufw show added"] = ufwAdded + "ufw allow in on tailscale0 to any port 8443 proto tcp comment 'krynodes'\n"
+	saved, err := Apply(context.Background(), env, "firewall", map[string]string{"closed": "1", "ports": "80/tcp@everyone,8443/tcp@198.51.100.0/24", NetworkPort: "51821"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	mustCall(t, run,
-		"ufw allow in on tailscale0 to any port 8443 proto tcp comment krynodes",
+		"ufw allow from 198.51.100.0/24 to any port 8443 proto tcp comment krynodes",
 		"ufw --force delete allow 80",
 		"ufw allow 80/tcp comment krynodes",
 		"ufw --force delete allow from 203.0.113.0/24 to any port 9000 proto tcp",
 		"ufw default deny incoming",
 		"ufw --force enable",
 	)
-	for _, kept := range []string{"ufw --force delete allow OpenSSH", "ufw --force delete allow 22/tcp", "ufw --force delete deny 25/tcp", "ufw --force delete allow in on kry0", "ufw allow 22/tcp comment krynodes"} {
+	for _, kept := range []string{"ufw --force delete allow OpenSSH", "ufw --force delete allow 22/tcp", "ufw --force delete deny 25/tcp", "ufw --force delete allow in on kry0", "ufw allow 22/tcp comment krynodes", "ufw --force delete allow in on tailscale0 to any port 8443 proto tcp"} {
 		if slices.Contains(run.calls, kept) {
 			t.Fatalf("%q must stay: %q", kept, run.calls)
 		}
@@ -147,7 +148,7 @@ func closedFirewalld(t *testing.T) (Env, *fakeRun) {
 func TestFirewalldClosesInTheZoneOfTheDefaultRoute(t *testing.T) {
 	env, run := closedFirewalld(t)
 	adopted := Adopt(context.Background(), env, ReadRules(context.Background(), env), "51821")
-	if got := fmtOpenings(adopted.Open); got != "3000/tcp@everyone,9090/tcp@everyone,8443/tcp@tailscale" || !reflect.DeepEqual(adopted.Other, []string{"port:6000-6010/tcp"}) {
+	if got := fmtOpenings(adopted.Open); got != "3000/tcp@everyone,9090/tcp@everyone,8443/tcp@100.64.0.0/10" || !reflect.DeepEqual(adopted.Other, []string{"port:6000-6010/tcp"}) {
 		t.Fatalf("adopted %s %q", got, adopted.Other)
 	}
 	saved, err := Apply(context.Background(), env, "firewall", map[string]string{"closed": "1", "ports": "9090/tcp@everyone,443/tcp@203.0.113.0/24", NetworkPort: "51821"})
@@ -198,20 +199,20 @@ func TestStoppedFirewalldRemovesAServiceWithTheOfflineZoneFlag(t *testing.T) {
 func TestOneOpenPortChangesAlone(t *testing.T) {
 	env, run := closedUfw(t, true)
 	before, _ := network.ParseOpening("8443", "tcp", "everyone")
-	after, _ := network.ParseOpening("8443", "tcp", "tailscale")
+	after, _ := network.ParseOpening("8443", "tcp", "198.51.100.0/24")
 	if err := OpenPort(context.Background(), env, &before, after, "51821"); err != nil {
 		t.Fatal(err)
 	}
-	add, remove := slices.Index(run.calls, "ufw allow in on tailscale0 to any port 8443 proto tcp comment krynodes"), slices.Index(run.calls, "ufw --force delete allow 8443/tcp")
+	add, remove := slices.Index(run.calls, "ufw allow from 198.51.100.0/24 to any port 8443 proto tcp comment krynodes"), slices.Index(run.calls, "ufw --force delete allow 8443/tcp")
 	if add < 0 || remove < add {
 		t.Fatalf("calls %q", run.calls)
 	}
 	run.calls = nil
-	if err := ClosePort(context.Background(), env, after, "51821"); err != nil || !slices.Contains(run.calls, "ufw --force delete allow in on tailscale0 to any port 8443 proto tcp") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw allow") }) {
+	if err := ClosePort(context.Background(), env, after, "51821"); err != nil || !slices.Contains(run.calls, "ufw --force delete allow from 198.51.100.0/24 to any port 8443 proto tcp") || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw allow") }) {
 		t.Fatalf("close %v calls %q", err, run.calls)
 	}
-	ssh, _ := network.ParseOpening("22", "tcp", "tailscale")
-	private, _ := network.ParseOpening("51821", "udp", "tailscale")
+	ssh, _ := network.ParseOpening("22", "tcp", "203.0.113.7")
+	private, _ := network.ParseOpening("51821", "udp", "203.0.113.7")
 	for _, kept := range []network.Opening{ssh, private} {
 		run.calls = nil
 		if OpenPort(context.Background(), env, nil, kept, "51821") == nil || ClosePort(context.Background(), env, kept, "51821") == nil || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw ") }) {
@@ -245,7 +246,7 @@ func TestDriftOnFirewalldReadsTheRunningRules(t *testing.T) {
 func TestOnlyACanonicalLineIsAnOpenPort(t *testing.T) {
 	for line, want := range map[string]string{
 		"allow 9999/tcp": "9999/tcp@everyone",
-		"allow in on tailscale0 to any port 8443 proto tcp":  "8443/tcp@tailscale",
+		"allow in on tailscale0 to any port 8443 proto tcp":  "",
 		"allow from 203.0.113.0/24 to any port 53 proto udp": "53/udp@203.0.113.0/24",
 		"allow 80":            "",
 		"allow 6000:6010/tcp": "",
@@ -256,8 +257,8 @@ func TestOnlyACanonicalLineIsAnOpenPort(t *testing.T) {
 			t.Fatalf("%q: %v %s", line, ok, opening)
 		}
 	}
-	if _, ok := OpeningOf("firewalld", `rich:rule family="ipv4" source address="100.64.0.0/10" port port="8443" protocol="tcp" accept`); ok {
-		t.Fatal("half of a Tailscale row is not a row")
+	if opening, ok := OpeningOf("firewalld", `rich:rule family="ipv4" source address="100.64.0.0/10" port port="8443" protocol="tcp" accept`); !ok || opening.String() != "8443/tcp@100.64.0.0/10" {
+		t.Fatalf("a Tailscale range is an address like any other: %v %s", ok, opening)
 	}
 	if opening, ok := OpeningOf("firewalld", "port:3000/tcp"); !ok || opening.String() != "3000/tcp@everyone" {
 		t.Fatalf("port %v %s", ok, opening)

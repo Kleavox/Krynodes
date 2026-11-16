@@ -72,12 +72,10 @@ type Inventory struct {
 	Security  *reporter.SecurityReport `json:"security,omitempty"`
 	Vault     *reporter.VaultReport    `json:"vault,omitempty"`
 
-	TailscaleVault *reporter.VaultReport      `json:"tailscaleVault,omitempty"`
-	Packages       *reporter.PackagesReport   `json:"packages,omitempty"`
-	PackagesHash   string                     `json:"packagesHash,omitempty"`
-	Tailscale      *reporter.TailscaleReport  `json:"tailscale,omitempty"`
-	Network        *reporter.NetworkInventory `json:"network,omitempty"`
-	Bridges        *reporter.Bridges          `json:"bridges,omitempty"`
+	Packages     *reporter.PackagesReport   `json:"packages,omitempty"`
+	PackagesHash string                     `json:"packagesHash,omitempty"`
+	Network      *reporter.NetworkInventory `json:"network,omitempty"`
+	Bridges      *reporter.Bridges          `json:"bridges,omitempty"`
 }
 
 type Parts struct {
@@ -91,11 +89,8 @@ type Parts struct {
 	Security  *reporter.SecurityReport
 	Vault     *reporter.VaultReport
 	Packages  *reporter.PackagesReport
-	Tailscale *reporter.TailscaleReport
 	Network   *reporter.NetworkInventory
 	Bridges   *reporter.Bridges
-
-	TailscaleVault *reporter.VaultReport
 }
 
 var unitStates = map[string]string{
@@ -388,17 +383,14 @@ func NewInventory(parts Parts, now time.Time) (Inventory, error) {
 		Security  *reporter.SecurityReport   `json:"security"`
 		Vault     *reporter.VaultReport      `json:"vault"`
 		Packages  string                     `json:"packages"`
-		Tailscale *reporter.TailscaleReport  `json:"tailscale"`
 		Network   *reporter.NetworkInventory `json:"network"`
-
-		TailscaleVault *reporter.VaultReport `json:"tailscaleVault,omitempty"`
-		Bridges        *reporter.Bridges     `json:"bridges"`
-	}{sorted, listed, trust, docker, removed, leftovers, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Tailscale, parts.Network, parts.TailscaleVault, parts.Bridges})
+		Bridges   *reporter.Bridges          `json:"bridges"`
+	}{sorted, listed, trust, docker, removed, leftovers, parts.SealKey, parts.Security, parts.Vault, packagesHash, parts.Network, parts.Bridges})
 	if err != nil {
 		return Inventory{}, err
 	}
 	sum := sha256.Sum256(encoded)
-	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, Leftovers: leftovers, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Tailscale: parts.Tailscale, Network: parts.Network, TailscaleVault: parts.TailscaleVault, Bridges: parts.Bridges}, nil
+	return Inventory{Hash: hex.EncodeToString(sum[:]), TakenAt: now.UTC().Format(time.RFC3339Nano), Services: sorted, Stacks: listed, Trust: trust, Docker: docker, Removed: removed, Leftovers: leftovers, SealKey: parts.SealKey, Security: parts.Security, Vault: parts.Vault, Packages: parts.Packages, PackagesHash: packagesHash, Network: parts.Network, Bridges: parts.Bridges}, nil
 }
 
 func rank(service Service) int {

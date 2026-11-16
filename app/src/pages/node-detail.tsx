@@ -155,11 +155,7 @@ export function NodeDetailPage() {
         <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
           {quarantined && (
             <>
-              <WhatHappened
-                view={quarantine.data}
-                nodeName={node.name}
-                now={now}
-              />
+              <WhatHappened view={quarantine.data} now={now} />
               <ChangeThese node={node} view={quarantine.data} />
             </>
           )}

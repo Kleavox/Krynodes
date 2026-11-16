@@ -360,7 +360,7 @@ page's ⋯ beside IPv4 or IPv6 says **Its own address** or **A router's
 address** when the guess is wrong, and **Detect automatically** goes back.
 
 Interface addresses inside **Private addresses** are listed under their
-interface's name (`tailscale0 100.101.102.7`), so a VPN address shows once its
+interface's name (`tun0 10.8.0.2`), so a VPN address shows once its
 range is on that list; nothing is listed by default.
 
 Only an account with a passkey that reaches that server (the server page's
@@ -869,7 +869,7 @@ the public-ports finding. The agent reports each listener's
 address; the Worker applies the list when it shows the report, so a change
 shows at once, without a new check. A server's interface addresses inside a
 range show among its addresses under the interface's name, such as
-`tailscale0`.
+`tun0`.
 
 **Settings** (the account menu, under Passkeys) is its own page for
 what applies to every server: Cloudflare, Private addresses, Enroll defaults (what a new install command sets up) and Usage, each at its
@@ -930,11 +930,8 @@ can close.
 
 **Open Ports.** While the firewall is closed, the server page has a
 **Firewall** section under Security: one row per open port, who may reach it
-(Everyone, Tailscale, or one to eight addresses or ranges you type) and what
-listens on it. SSH and the private network's port are locked rows, always open.
-firewalld can only name Tailscale's address ranges, so on firewalld a port open
-from Tailscale is also held to the `tailscale0` interface by a Krynodes chain
-in `INPUT` (`KRY-TAILSCALE`); ufw names the interface itself.
+(Everyone, or one to eight addresses or ranges you type) and what listens on
+it. SSH and the private network's port are locked rows, always open.
 **Open Port**, **Change From** and **Close Port** each take your passkey and
 show in History. A rule added outside Krynodes (`ufw allow`,
 `firewall-cmd --add-port`) is a warning (see Quarantine); **It Was Me** keeps it
@@ -1118,9 +1115,14 @@ records every change and opens an upgrade to each package's old and new
 version; a failed one keeps apt's last lines and what did change. Search finds
 package names. The search and the try-outs before a change are not kept.
 
-**Tailscale** on This server: once `tailscale` is installed, **Sign in** asks
-tailscaled for a login link, sealed to this browser, so no terminal is needed.
-An expired key shows in Fleet's issues.
+**Tailscale** is no longer managed by Krynodes (agent 0.7.23): no rules,
+sign-in, exit node or DNS. A server's Tailscale keeps running as it is until
+you remove the package with **Remove**, and quarantine does not cut a server
+off your tailnet. A port that was open from Tailscale stays reachable over it
+and shows under Firewall as a rule **Kept as it was**; a server whose older
+agent still reports one cannot change its firewall until you update it.
+`sudo kry uninstall-service` removes the Tailscale chains and the exit node
+file Krynodes left behind, and nothing else of Tailscale's.
 
 Agents before 0.7.0 have no Packages; the page offers Update agent.
 
@@ -1135,7 +1137,7 @@ only its own links. From agent 0.7.0.
   free range, NAT, the UDP port tested from the other servers, firewall, MTU,
   clock) and shows what is already fine, what Krynodes does and what is yours to
   fix. The range is a free `/24` in `10.88.0.0/16` that no interface, Docker
-  network, Tailscale or **Private addresses** range uses; the port is
+  network or **Private addresses** range uses; the port is
   `51820/udp`, or the next free one on a server where it is taken. Both are
   fixed after creation. A hand-made `wg0` is left alone and avoided. The UDP
   port test listens for 20 seconds only on a server where that port is free; a
@@ -1220,72 +1222,6 @@ Stacks on the network:
   outside the network. Checks suggests a TCP check for each place a Contained
   stack reaches; **Not now** hides it until that list changes.
 
-### Tailscale rules
-
-Krynodes can keep who may reach your servers over Tailscale. Rules for your
-laptop, phone and other people stay yours, in Tailscale's admin console. From
-agent 0.7.0.
-
-- **Before Connect** each server reads from its own tailscaled which peers may
-  open connections to it, on which ports, and Network turns amber when every
-  device reaches every port. No credential is needed for that.
-- **Connect Tailscale** (Network) asks for four things from Tailscale's admin
-  console: `"tag:kry": ["autogroup:admin"],` inside `tagOwners`; a trust
-  credential with Policy File Write, Devices Core Write, Auth Keys Write and
-  Tags `tag:kry` and nothing else (Tailscale adds the read scopes itself); its
-  client ID and secret; and a webhook to `<agent origin>/hooks/tailscale`
-  (`AGENT_ORIGIN`, else `PUBLIC_ORIGIN`) with the events `nodeCreated` and
-  `policyUpdate`.
-- **What is kept where.** The client secret is held as the Cloudflare token is:
-  split in the browser, one piece sealed to each 0.7.0 server that is not
-  quarantined, any two rebuild it on one server for one signed job, which uses
-  it and erases it. It needs two such servers. The Worker keeps the sealed
-  pieces, the client ID, the tailnet, the rules you saved and the webhook
-  secret; that secret can only make Krynodes believe an event that did not
-  happen, never open anything.
-- **Start With These Rules** opens after Connect, from what listens on each
-  server and what was in use when the policy file was read. An "everyone to
-  everything" rule becomes "Your devices → everything except your servers".
-  Saving tags the servers `tag:kry` and turns off their key expiry.
-- **Saving** reads the policy file, replaces only the lines between
-  `// krynodes: begin` and `// krynodes: end`, has Tailscale validate the
-  file and writes it only if it did not change since it was read. Rules name
-  servers by their Tailscale addresses, never by the tag. A Krynodes line
-  changed in the admin console is never overwritten: Keep the Change or Put
-  Back Krynodes', then sign again. Each server's own report shows Applied.
-- **Sign In**, once connected, needs no link: a server holding a piece makes a
-  one-time key tagged `tag:kry`, sealed to the joining server.
-- **Two alarms**, each a red row on Network and one mail: a device that joins
-  with `tag:kry` that Krynodes never signed in, and a policy change made with
-  Krynodes' credential without your passkey.
-- A quarantined server's place on your tailnet gets **Remove from Tailnet**;
-  its credential piece gets **Reshare Without It**, and Delete Node reshares it
-  first. **Disconnect** erases every piece and leaves your rules in the policy
-  file; delete the trust credential in the admin console too.
-
-### Exit Node and Tailscale DNS
-
-On a server where Tailscale runs, its card on the server page has two more
-rows (agent 0.7.4), each a checkbox, Review and your passkey.
-
-- **Exit Node** turns on IP forwarding in its own sysctl file, advertises the
-  server as an exit node, and lets forwarded traffic through a firewall
-  Krynodes closed (firewalld masquerades in the default-route zone). When
-  Tailscale is connected in Krynodes, its policy lines approve exit nodes
-  tagged `tag:kry`; otherwise approve it in Tailscale's admin console
-  (Machines → the server → Edit route settings). Traffic through it counts
-  against the server's bandwidth, and a device using it loses the internet
-  while the server is down, until it picks no exit node. Off takes it back;
-  forwarding stays on at runtime, since Docker needs it. A quarantined server
-  stops advertising.
-- **Tailscale DNS** lets the server look names up through Tailscale, so it
-  finds devices and servers by their tailnet names. It must still reach
-  Krynodes' own host within 20 seconds, or it is turned back off and says why.
-  A DNS server on the server keeps working; its own lookups go through
-  Tailscale. Sign In leaves Tailscale DNS off.
-
-Either row shows `--` when the server cannot read it.
-
 ### Quarantine
 
 What Krynodes does on its own when a server looks broken into. It only ever
@@ -1311,16 +1247,14 @@ agent 0.7.0.
   knocked on, and quarantined when enough servers agree. One wrong port knocked
   again and again is a setting mistake: a row on the Network page, nothing cut
   off.
-- **Quarantined.** Every other server drops its WireGuard key for good and,
-  when it is on your tailnet, blocks its Tailscale address; Krynodes locks it
-  down, sends it nothing, refuses every action except reading and believes
-  none of its reports (its checks show **Not Trusted**). The server page shows
-  the red card, **What Happened** to the second, and **Change These**: the
-  stacks whose secrets to change, services elsewhere that trusted it, its
-  Cloudflare token piece (**Reshare Without It**), web addresses still on its
-  tunnel (**Remove Web Addresses**) and its place on your tailnet (**Admin
-  Console ↗**). Actions keeps only Refresh Services, Release Server, Remove
-  from Network and Delete Node.
+- **Quarantined.** Every other server drops its WireGuard key for good;
+  Krynodes locks it down, sends it nothing, refuses every action except reading
+  and believes none of its reports (its checks show **Not Trusted**). The
+  server page shows the red card, **What Happened** to the second, and
+  **Change These**: the stacks whose secrets to change, services elsewhere that
+  trusted it, its Cloudflare token piece (**Reshare Without It**) and web
+  addresses still on its tunnel (**Remove Web Addresses**). Actions keeps only
+  Refresh Services, Release Server, Remove from Network and Delete Node.
 - **Release Server.** Really broken into? Reinstall it and enroll it again. A
   false alarm: run `sudo kry release-code` on the server, type the code it
   shows (it works for 10 minutes) and sign. From agent 0.7.2 the code reaches
@@ -1328,8 +1262,7 @@ agent 0.7.0.
   a minute later, and needs `sudo chmod 644 /var/lib/kry-exec/release.json`
   after each `release-code`. The server makes new keys
   (WireGuard, sealing and its sign-in to Krynodes); the old ones stay blocked.
-  The same passkey releases it, lifts the Tailscale block and sends its new
-  keys to the network. The code shows you were on the server; it does not show
+  The same passkey releases it and sends its new keys to the network. The code shows you were on the server; it does not show
   the server is clean.
 - **A Contained stack that knocks** (tries places it was not given) is stopped
   and stays stopped after a reboot, while the server stays trusted. What Runs
@@ -1344,8 +1277,6 @@ agent 0.7.0.
 - A quarantined server's checks are grouped last on Checks under
   **Quarantined**, its windows are **Quarantined** (faded red) and not counted
   against uptime, and the public status page shows No data for them.
-- Delete Node on a quarantined server first makes your servers stop blocking
-  its Tailscale address; remove it from your tailnet before.
 - Every network document names the one before it, and an agent refuses one
   that is not built on what it applied, so the Worker cannot slip a member list
   past the browser.

@@ -87,7 +87,6 @@ const actionRequestSchema = z.object({
     "scan",
     "install",
     "uninstall",
-    "signin",
     "refresh",
     "find",
     "preview",
@@ -102,10 +101,7 @@ const actionRequestSchema = z.object({
     "prepare",
     "unprepare",
     "rekey",
-    "unblock",
     "admin",
-    "exitnode",
-    "dns",
     "open",
     "close",
     "putback",
@@ -169,8 +165,6 @@ const needsFeatures = (
   (target.kind === "compose" &&
     (hasStackNetworkArgs(args) || hasStackNameArgs(args)));
 
-const ON_OFF: readonly string[] = ["exitnode", "dns", "containers"];
-
 const changesFirewall = (
   target: { kind: string; name: string },
   action: string,
@@ -182,7 +176,7 @@ const changesFirewall = (
     (action === "apply" && args.closed !== undefined));
 
 const onOff = (target: { kind: string; name: string }, action: string) =>
-  target.kind === "host" && ON_OFF.includes(action);
+  target.kind === "host" && action === "containers";
 
 const needsSecurity = (
   target: { kind: string; name: string },
@@ -376,7 +370,7 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
-                  seal_key, security, vault, tailscale_vault, bridges, leftovers
+                  seal_key, security, vault, bridges, leftovers
            FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
@@ -389,7 +383,6 @@ export function registerServiceRoutes(
           seal_key: string | null;
           security: string | null;
           vault: string | null;
-          tailscale_vault: string | null;
           bridges: string | null;
           leftovers: string | null;
         }>(),
@@ -488,7 +481,6 @@ export function registerServiceRoutes(
           now,
         ),
         vault: parsed(node.vault),
-        tailscaleVault: parsed(node.tailscale_vault),
         bridges: parsed(node.bridges),
         leftovers: (parsed(node.leftovers) as string[] | null) ?? [],
         webAddresses: addresses.results
@@ -776,7 +768,7 @@ export function registerServiceRoutes(
     const nodeIds = JSON.stringify([...wanted]);
     const nodes = await db
       .prepare(
-        `SELECT id, name, agent_version, docker, tailscale, leftovers,
+        `SELECT id, name, agent_version, docker, leftovers,
                 (SELECT json_extract(report, '$.apt') FROM packages
                  WHERE node_id = nodes.id) AS apt
          FROM nodes
@@ -789,7 +781,6 @@ export function registerServiceRoutes(
         name: string;
         agent_version: string | null;
         docker: string | null;
-        tailscale: string | null;
         leftovers: string | null;
         apt: number | null;
       }>();
@@ -881,7 +872,7 @@ export function registerServiceRoutes(
              AND action NOT IN (SELECT value FROM json_each(?2))
              AND node_id IN (SELECT value FROM json_each(?1))`,
         )
-        .bind(nodeIds, JSON.stringify([...READ_ONLY, "block"]))
+        .bind(nodeIds, JSON.stringify([...READ_ONLY]))
         .all<{ nodeId: string; kind: string; name: string }>(),
     ]);
 
@@ -964,9 +955,6 @@ export function registerServiceRoutes(
             ...(node.docker === "missing" || node.docker === "no-compose"
               ? ["docker"]
               : []),
-            ...(node.tailscale === null && action !== "unblock"
-              ? []
-              : ["tailscale"]),
           ].map((name) => targetKey({ nodeId: node.id, kind: "host", name })),
         ),
       ]);

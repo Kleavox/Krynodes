@@ -19,7 +19,7 @@ import { confinementActionText } from "./confine";
 import { firewallActionText } from "./firewall";
 import { networkActionText } from "./network";
 import { actorOf } from "./operations";
-import { namesServer, outcomeOf, packageText } from "./packages";
+import { outcomeOf, packageText } from "./packages";
 import { quarantineActionText } from "./quarantine";
 import {
   displayName,
@@ -29,7 +29,6 @@ import {
   verb,
 } from "./services";
 import { containersOf, stackOf } from "./stacks";
-import { tailnetActionText } from "./tailscale";
 
 type Stacks = Pick<StackEntry, "project" | "containers">[];
 
@@ -239,7 +238,6 @@ export function historyText(
 ): string {
   const packages =
     packageText(action, nodeName) ??
-    tailnetActionText(action, nodeName) ??
     firewallActionText(action) ??
     confinementActionText(action) ??
     networkActionText(action, names) ??
@@ -309,10 +307,7 @@ export function actionLine(
         : stampTime(action.requestedAt, options.now),
     mark: action.status === "done" ? "✓" : failed(action) ? "✕" : null,
     text: historyText(action, options.stacks, options.nodeName, options.names),
-    server:
-      options.showServer && !namesServer(action)
-        ? (options.nodeName ?? null)
-        : null,
+    server: options.showServer ? (options.nodeName ?? null) : null,
     device: actorOf(action, options.devices),
     duration: durationText(action),
     failure,

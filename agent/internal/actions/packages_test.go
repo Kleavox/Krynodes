@@ -109,23 +109,11 @@ func TestAServerWithoutAptReportsItsSystem(t *testing.T) {
 	}
 }
 
-func TestTailscaledIsReadOnlyWhereTailscaleIsInstalled(t *testing.T) {
-	executor, run := securityExecutor(t)
-	if report := executor.tailnet(context.Background()); report != nil || len(run.calls) != 0 {
-		t.Fatalf("got %+v", report)
-	}
-	rootFile(t, executor, "/usr/bin/tailscale", "")
-	run.respond["tailscale status --json"] = `{"BackendState":"NeedsLogin","Self":{}}`
-	if report := executor.tailnet(context.Background()); report == nil || report.State != "needs-login" {
-		t.Fatalf("got %+v", report)
-	}
-}
-
 func TestThePackageListIsSentOnlyWhenItChanged(t *testing.T) {
 	relay, poster := newRelay(t)
 	packages := &reporter.PackagesReport{Apt: true, System: "Debian 12 bookworm", Packages: []reporter.PackageEntry{{Name: "nginx", Version: "1.22.1-9"}}}
 	write := func(services []Service, report *reporter.PackagesReport) {
-		inventory, err := NewInventory(Parts{Services: services, Packages: report, Tailscale: &reporter.TailscaleReport{State: "stopped", Addresses: []string{}}}, executorNow)
+		inventory, err := NewInventory(Parts{Services: services, Packages: report}, executorNow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,11 +129,11 @@ func TestThePackageListIsSentOnlyWhenItChanged(t *testing.T) {
 		return poster.reports[len(poster.reports)-1].Inventory
 	}
 	write(nil, packages)
-	if sent := poll(); sent.Packages == nil || sent.Tailscale == nil {
+	if sent := poll(); sent.Packages == nil || sent.Services == nil {
 		t.Fatalf("first report %+v", sent)
 	}
 	write([]Service{{Kind: "docker", Name: "resolver", State: "running"}}, packages)
-	if sent := poll(); sent.Packages != nil || sent.Tailscale == nil || sent.Services == nil {
+	if sent := poll(); sent.Packages != nil || sent.Services == nil {
 		t.Fatalf("an unchanged package list was sent again: %+v", sent)
 	}
 	changed := *packages

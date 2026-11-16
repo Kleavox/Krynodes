@@ -30,7 +30,6 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/metrics"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/stream"
-	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 	"github.com/Kleavox/krynodes/agent/internal/update"
 )
 
@@ -667,10 +666,7 @@ func execActions() error {
 		Collect: func(ctx context.Context, remembered []string) (actions.Snapshot, error) {
 			return actions.Collect(ctx, actions.RunCommand, remembered)
 		},
-		Audit:          true,
-		TailscaleLocal: tailscale.Socket,
-		QuarantineMark: filepath.Join(stateDirectory, "quarantined"),
-		Held:           actions.WorkerHeld(actions.StateDir, defaultConfigPath, version, &http.Client{Timeout: 10 * time.Second}),
+		Audit: true,
 	}
 	return executor.Execute(context.Background())
 }
@@ -688,7 +684,7 @@ func hostApply() error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("host-apply must run as root on Linux")
 	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand, ConfigPath: defaultConfigPath, QuarantineMark: filepath.Join(stateDirectory, "quarantined")}
+	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand, ConfigPath: defaultConfigPath}
 	return executor.HostApply(context.Background())
 }
 

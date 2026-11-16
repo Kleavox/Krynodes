@@ -86,11 +86,10 @@ export function isValidTarget(kind: string, name: string): boolean {
     return (
       name === "server" ||
       name === "docker" ||
-      name === "tailscale" ||
       (RECIPES as readonly string[]).includes(name)
     );
   }
-  if (kind === "vault") return name === "cloudflare" || name === "tailscale";
+  if (kind === "vault") return name === "cloudflare";
   if (kind === "apt") return APT_NAME.test(name);
   if (kind === "network") return name === "kry0";
   if (kind === "bridge") return BRIDGE_NAME.test(name);

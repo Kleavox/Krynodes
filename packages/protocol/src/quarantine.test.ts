@@ -75,18 +75,6 @@ describe("what only takes away goes unsigned", () => {
     expect(action("host", "server", "unlock")).toBe(false);
   });
 
-  it("blocks a tailnet address unsigned and lifts it only signed", () => {
-    expect(action("host", "tailscale", "block", { attachment: "e30" })).toBe(
-      true,
-    );
-    expect(action("host", "tailscale", "block", { signed })).toBe(false);
-    expect(action("host", "tailscale", "unblock")).toBe(false);
-    expect(action("host", "tailscale", "unblock", { signed })).toBe(true);
-    expect(action("host", "server", "block", { attachment: "e30" })).toBe(
-      false,
-    );
-  });
-
   it("drops a member and tightens the knock settings unsigned", () => {
     expect(action("network", "kry0", "drop", { attachment: "e30" })).toBe(true);
     expect(action("network", "kry0", "tighten", { attachment: "e30" })).toBe(

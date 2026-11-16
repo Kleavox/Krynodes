@@ -17,7 +17,7 @@ import type {
 } from "../types";
 import { systemName } from "./confine";
 import { parseTimestamp, shortDate, stampTime } from "./format";
-import { planRemoval, type VaultName, type VaultNode } from "./vault";
+import { planRemoval, type VaultNode } from "./vault";
 
 export const REPORTED = "Reported by the server itself, may not be true";
 
@@ -139,7 +139,6 @@ export const planWithout = (
   suspect: string,
   setId: string | null,
   addresses = false,
-  name: VaultName = "cloudflare",
 ) =>
   planRemoval(
     nodes.map((node) =>
@@ -148,7 +147,6 @@ export const planWithout = (
     suspect,
     setId,
     addresses,
-    name,
     true,
   );
 
@@ -168,13 +166,12 @@ export function quarantineReasons(
 export function quarantineCard(
   quarantine: { at: string; why: string },
   nodeName: string,
-  tailnet: string[],
   now: number,
 ) {
   return {
     chip: "Quarantined",
     title: `Cut off from the network at ${stampTime(quarantine.at, now)} · ${quarantine.why}`,
-    body: `Every other server dropped ${nodeName} and blocks its WireGuard key${tailnet.length > 0 ? " and its Tailscale address" : ""} for good. Krynodes sends it nothing and refuses every action except reading.`,
+    body: `Every other server dropped ${nodeName} and blocks its WireGuard key for good. Krynodes sends it nothing and refuses every action except reading.`,
     next: "Really broken into? Reinstall it and enroll it again. A false alarm? Release it from the server itself.",
   };
 }
@@ -184,14 +181,9 @@ const COUNTED = ["", "one", "two", "three", "four", "five"];
 const waiting = (step: QuarantineStep) =>
   step.status === "queued" || step.status === "sent";
 
-const mark = (step: QuarantineStep) =>
-  step.status === "done" ? "✓" : waiting(step) ? "…" : "✕";
-
 export function whatHappened(
   record: QuarantineRecord,
   now: number,
-  nodeName = "it",
-  devices: { id: string; name: string }[] = [],
 ): { time: string; lead: string | null; text: string }[] {
   const where = record.address ?? "it";
   const lines: { at: string; lead: string | null; text: string }[] =
@@ -247,23 +239,7 @@ export function whatHappened(
           )
           .join(" · "),
       });
-    } else if (action === "block") {
-      lines.push({
-        at,
-        lead: null,
-        text: `Blocked ${record.tailnet[0] ?? "--"} on Tailscale · ${steps
-          .map((step) => `${step.nodeName} ${mark(step)}`)
-          .join(" ")}`,
-      });
     }
-  }
-  if (record.removed) {
-    const by = devices.find((device) => device.id === record.removed!.by);
-    lines.push({
-      at: record.removed.at,
-      lead: null,
-      text: `Removed ${nodeName} from your tailnet · ${by?.name ?? "--"}`,
-    });
   }
   return lines
     .map((line, index) => ({ line, index }))
@@ -281,9 +257,7 @@ export function whatHappened(
 
 type ChangeAction =
   | { kind: "reshare"; label: "Reshare Without It" }
-  | { kind: "unexpose"; label: "Remove Web Addresses" }
-  | { kind: "remove"; label: "Remove from Tailnet" }
-  | { kind: "console"; label: "Admin Console ↗" };
+  | { kind: "unexpose"; label: "Remove Web Addresses" };
 
 export interface ChangeRow {
   id: string;
@@ -299,13 +273,8 @@ const RESHARE_NOTE =
 export function changeThese(
   view: QuarantineView,
   nodeName: string,
-  connected = false,
 ): { title: string; rows: ChangeRow[] } {
-  const { stacks, vault, tailscaleVault, webAddresses, trusted } =
-    view.changeThese;
-  const tailnet = view.quarantine?.removed
-    ? []
-    : (view.quarantine?.tailnet ?? []);
+  const { stacks, vault, webAddresses, trusted } = view.changeThese;
   const rows: ChangeRow[] = [
     ...(stacks.length > 0
       ? [
@@ -350,32 +319,6 @@ export function changeThese(
           },
         ]
       : []),
-    ...(tailnet.length > 0
-      ? [
-          {
-            id: "tailnet",
-            title: "Tailscale",
-            tag: `${nodeName} is on your tailnet as ${tailnet[0]}`,
-            note: connected
-              ? "Your servers block it already, and your rules never let a server reach your devices. Remove it, so its Tailscale key opens nothing at all."
-              : "Your servers block it already. Remove it in Tailscale's admin console, so its Tailscale key opens nothing anywhere else on your tailnet.",
-            action: connected
-              ? ({ kind: "remove", label: "Remove from Tailnet" } as const)
-              : ({ kind: "console", label: "Admin Console ↗" } as const),
-          },
-        ]
-      : []),
-    ...(tailscaleVault && tailscaleVault.holders > 0
-      ? [
-          {
-            id: "tailscale-vault",
-            title: "Tailscale credential",
-            tag: `${nodeName} held 1 of ${tailscaleVault.holders} pieces`,
-            note: RESHARE_NOTE,
-            action: { kind: "reshare", label: "Reshare Without It" } as const,
-          },
-        ]
-      : []),
   ];
   return {
     title: `Change These · ${nodeName} could read or reach them`,
@@ -394,38 +337,6 @@ export function changeThese(
   };
 }
 
-export const TAILSCALE_CONSOLE = "https://login.tailscale.com/admin/machines";
-
-export const tailnetRemoved = (record: QuarantineRecord, now: number) =>
-  record.removed
-    ? {
-        title: "Removed from your tailnet",
-        detail: `${stampTime(record.removed.at, now)} · Sign it in again after Release`,
-      }
-    : null;
-
-export function tailnetBlock(
-  record: QuarantineRecord | null | undefined,
-  nodeName: string,
-) {
-  const nodeIds = [
-    ...new Set(
-      (record?.steps ?? [])
-        .filter((step) => step.action === "block")
-        .map((step) => step.nodeId),
-    ),
-  ];
-  if (!record || nodeIds.length === 0 || record.tailnet.length === 0) {
-    return null;
-  }
-  return {
-    nodeIds,
-    addresses: record.tailnet.join(" "),
-    text: `Your servers stop blocking ${record.tailnet[0]} once ${nodeName} is deleted. Remove it from your tailnet first.`,
-    console: TAILSCALE_CONSOLE,
-  };
-}
-
 const RESHARE_VERBS = ["release", "reshare", "store"];
 
 export const resharing = (actions: ActionRecord[]) =>
@@ -440,13 +351,9 @@ export function releaseInputs(
   record: QuarantineRecord,
   release: PendingRelease,
   nodeId: string,
-  nodeName: string,
   reported: { locked: boolean; sealKeys: Record<string, string> },
 ) {
-  const block = tailnetBlock(record, nodeName);
   return {
-    blocked: block?.nodeIds ?? [],
-    addresses: block?.addresses ?? "",
     unlock:
       reported.locked ||
       record.steps.some(

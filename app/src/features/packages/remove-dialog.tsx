@@ -43,10 +43,6 @@ export function RemoveDialog({
   const preview = useQuestion<RemovePreview>(ask("remove"));
   const run = useSignedAction(false);
   const from = report.packages.find((entry) => entry.name === name)?.from;
-  const publicAddress =
-    node.addresses?.find(
-      (address) => address.label === `IPv${address.family}` && !address.router,
-    )?.address ?? null;
   const shown = preview.value?.what === what ? preview.value : null;
   const choose = (choice: "remove" | "purge") => {
     setWhat(choice);
@@ -97,12 +93,9 @@ export function RemoveDialog({
             {shown && (
               <Lines
                 lines={removeLines(shown, {
-                  nodeName: node.name,
                   repository: report.sources.some(
                     (source) => !source.system && source.name === from,
                   ),
-                  tailscale: node.tailscale,
-                  publicAddress,
                 })}
               />
             )}

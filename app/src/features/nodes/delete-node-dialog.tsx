@@ -23,7 +23,6 @@ import {
   useNetworkKeys,
   useSignChange,
 } from "@/features/network/use-network-sign";
-import { finished } from "@/features/network/use-tailscale";
 import { removalReady } from "@/lib/agent";
 import {
   useCloudflare,
@@ -31,13 +30,11 @@ import {
   useDevices,
   useNetwork,
   useOverview,
-  useQuarantine,
   useServices,
-  useTailscale,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import { leaveParagraph, networkText } from "@/lib/network";
-import { planWithout, tailnetBlock } from "@/lib/quarantine";
+import { planWithout } from "@/lib/quarantine";
 import {
   pieceOf,
   planRemoval,
@@ -67,14 +64,8 @@ export function DeleteNodeDialog({
   const leave = useSignChange();
   const keys = useNetworkKeys(network?.members ?? []);
   const operate = useSignedOperation(false);
-  const credential = useSignedOperation(false);
-  const [sharing, setSharing] = useState(false);
-  const [shareProblem, setShareProblem] = useState<string | null>(null);
   const run = useSignedAction(false);
-  const unblock = useSignedAction(false);
   const quarantined = !!node.quarantine;
-  const record = useQuarantine(node.id, quarantined).data?.quarantine;
-  const block = quarantined ? tailnetBlock(record, node.name) : null;
   const planFor = quarantined ? planWithout : planRemoval;
   const devices = useDevices();
   const services = useServices();
@@ -97,25 +88,6 @@ export function DeleteNodeDialog({
       setId,
     ) !== null;
   const plan = planFor(nodesFor(null), node.id, setId, addresses);
-  const tailnetSet = useTailscale().data?.connected?.setId ?? null;
-  const tailnetNodes = (fingerprint: string | null) =>
-    services.data && overview.data
-      ? vaultNodes(
-          services.data,
-          overview.data.nodes,
-          fingerprint,
-          seen,
-          "tailscale",
-        )
-      : [];
-  const tailnetPlan = planFor(
-    tailnetNodes(null),
-    node.id,
-    tailnetSet,
-    false,
-    "tailscale",
-  );
-  const tailnetHolds = tailnetPlan.ok && tailnetPlan.needed;
   const holds = !plan.ok || plan.needed;
   const trust =
     services.data?.nodes.find((entry) => entry.id === node.id)?.trust ?? null;
@@ -133,10 +105,7 @@ export function DeleteNodeDialog({
       remove.reset();
       leave.reset();
       operate.reset();
-      credential.reset();
-      setShareProblem(null);
       run.reset();
-      unblock.reset();
       setKeepAgent(false);
     }
     onOpenChange(next);
@@ -158,83 +127,6 @@ export function DeleteNodeDialog({
           { onSuccess: then },
         )
       : then();
-  const reshareCredential = (then: () => void) =>
-    tailnetHolds
-      ? credential.mutate(
-          {
-            kind: "reshare",
-            reach: [],
-            build: (fingerprint) => {
-              const all = tailnetNodes(fingerprint);
-              const chosen = planFor(
-                all,
-                node.id,
-                tailnetSet,
-                false,
-                "tailscale",
-              );
-              if (!chosen.ok) throw new Error(chosen.reason);
-              if (!chosen.needed || !tailnetSet) {
-                throw new Error("Nothing to reshare.");
-              }
-              return reshareSteps({
-                releaser: chosen.releaser,
-                assembler: chosen.assembler,
-                holders: chosen.holders,
-                keyOf: Object.fromEntries(
-                  all.map((item) => [item.id, item.sealKey ?? ""]),
-                ),
-                set: crypto.randomUUID(),
-                source: tailnetSet,
-                zone: "",
-                forgets: chosen.forgets,
-                name: "tailscale",
-              });
-            },
-          },
-          {
-            onSuccess: (sent) => {
-              setSharing(true);
-              setShareProblem(null);
-              finished(sent.actions.map((action) => action.id))
-                .then((actions) => {
-                  const stopped = actions.find(
-                    (action) => action.status !== "done",
-                  );
-                  if (stopped) {
-                    setShareProblem(
-                      stopped.output ||
-                        `The Tailscale credential could not be shared again, so ${node.name} was not deleted.`,
-                    );
-                    return;
-                  }
-                  then();
-                })
-                .catch((problem: unknown) =>
-                  setShareProblem(errorMessage(problem)),
-                )
-                .finally(() => setSharing(false));
-            },
-          },
-        )
-      : then();
-  const unblockThen = (then: () => void) =>
-    block
-      ? unblock.mutate(
-          {
-            action: "unblock",
-            targets: block.nodeIds.map((nodeId) => ({
-              nodeId,
-              kind: "host" as const,
-              name: "tailscale",
-              args: { addresses: block.addresses },
-            })),
-          },
-          { onSuccess: () => leaveThen(then) },
-        )
-      : leaveThen(then);
-  const first = (then: () => void) =>
-    reshareCredential(() => unblockThen(then));
   const deleteNow = () =>
     remove.mutate(node.id, {
       onSuccess: () => {
@@ -304,20 +196,10 @@ export function DeleteNodeDialog({
     reads.some((read) => !read.data) ||
     leave.isPending ||
     operate.isPending ||
-    credential.isPending ||
-    sharing ||
     run.isPending ||
-    unblock.isPending ||
     remove.isPending;
   const error =
-    unread ??
-    credential.error ??
-    shareProblem ??
-    unblock.error ??
-    leave.error ??
-    remove.error ??
-    operate.error ??
-    run.error;
+    unread ?? leave.error ?? remove.error ?? operate.error ?? run.error;
 
   return (
     <AlertDialog open={open} onOpenChange={close}>
@@ -344,38 +226,11 @@ export function DeleteNodeDialog({
               {member && network && (
                 <p>{leaveParagraph(member, network, !leaving)}</p>
               )}
-              {block && (
-                <p>
-                  {block.text}{" "}
-                  <a
-                    href={block.console}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline underline-offset-4"
-                  >
-                    Admin Console ↗
-                  </a>
-                </p>
-              )}
               {holds && plan.ok && (
                 <p>
                   {piece
                     ? `${node.name} holds a piece of the Cloudflare token. Krynodes first spreads the token across the other servers and removes the tunnel of ${node.name} from Cloudflare, then deletes it.`
                     : `${node.name} has web addresses. Krynodes first removes its tunnel, DNS records and logins from Cloudflare, then deletes it.`}
-                </p>
-              )}
-              {tailnetHolds && (
-                <p>
-                  {node.name} holds a piece of the Tailscale credential.
-                  Krynodes first shares it again among your other servers, with
-                  the same passkey.
-                </p>
-              )}
-              {!tailnetPlan.ok && (
-                <p>
-                  {node.name} holds a piece of the Tailscale credential, and it
-                  cannot move now: {tailnetPlan.reason} Change the credential on
-                  Network after deleting it.
                 </p>
               )}
               {background && (
@@ -443,7 +298,7 @@ export function DeleteNodeDialog({
             <Button
               variant="ghost"
               disabled={busy}
-              onClick={() => first(deleteNow)}
+              onClick={() => leaveThen(deleteNow)}
             >
               Delete Anyway
             </Button>
@@ -452,7 +307,7 @@ export function DeleteNodeDialog({
             <Button
               variant="destructive"
               disabled={busy}
-              onClick={() => first(deleteNow)}
+              onClick={() => leaveThen(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
               {remove.isPending ? <Busy>Working</Busy> : "Delete Anyway"}
@@ -461,7 +316,7 @@ export function DeleteNodeDialog({
             <Button
               variant="destructive"
               disabled={busy}
-              onClick={() => first(spread)}
+              onClick={() => leaveThen(spread)}
             >
               <KeyRound aria-hidden="true" />
               {operate.isPending ? (
@@ -476,7 +331,7 @@ export function DeleteNodeDialog({
             <Button
               variant="destructive"
               disabled={busy}
-              onClick={() => first(removeAndDelete)}
+              onClick={() => leaveThen(removeAndDelete)}
             >
               <KeyRound aria-hidden="true" />
               {run.isPending ? <Waiting /> : "Remove and Delete"}
@@ -485,7 +340,7 @@ export function DeleteNodeDialog({
             <Button
               variant="destructive"
               disabled={busy}
-              onClick={() => first(deleteNow)}
+              onClick={() => leaveThen(deleteNow)}
             >
               {!remove.isPending && <GuardIcon />}
               {remove.isPending ? (

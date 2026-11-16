@@ -3,7 +3,6 @@ package actions
 import (
 	"context"
 	"crypto/ecdh"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -16,8 +15,6 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/apt"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
-	"github.com/Kleavox/krynodes/agent/internal/seal"
-	"github.com/Kleavox/krynodes/agent/internal/tailscale"
 )
 
 func aptRequest(t *testing.T, id, name, action string, args map[string]string) Request {
@@ -225,44 +222,6 @@ func TestAFeaturePackageIsNotRemovedFromPackages(t *testing.T) {
 	}
 	if result := readResult(t, executor, idA); result.OK || !strings.Contains(result.Output, "came with docker") || streamed {
 		t.Fatalf("got %+v", result)
-	}
-}
-
-func TestTheSignInLinkIsSealedToTheBrowser(t *testing.T) {
-	executor, run := securityExecutor(t)
-	browser, err := ecdh.P256().GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rootFile(t, executor, tailscale.Binary, "")
-	run.respond["tailscale status --json"] = `{"BackendState":"NeedsLogin"}`
-	link := "https://login.tailscale.com/a/1a2b3c4d5e6f"
-	executor.Stream = func(ctx context.Context, each func(string), name string, args ...string) error {
-		each("To authenticate, visit:")
-		each("\t" + link)
-		return ctx.Err()
-	}
-	hostQueue(t, executor, hostRequest(t, idA, "tailscale", "signin", map[string]string{"key": seal.Public(browser)}))
-	if err := executor.HostApply(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	result := readResult(t, executor, idA)
-	raw, _ := os.ReadFile(filepath.Join(executor.StateDir, "results", idA+".json"))
-	if !result.OK || strings.Contains(string(raw), "login.tailscale.com") {
-		t.Fatalf("the link is in clear: %s", raw)
-	}
-	var sealed struct {
-		Sealed string `json:"sealed"`
-	}
-	if err := json.Unmarshal([]byte(result.Output), &sealed); err != nil {
-		t.Fatal(err)
-	}
-	opened, err := seal.Open(browser, sealed.Sealed)
-	if err != nil || string(opened) != `{"url":"`+link+`"}` {
-		t.Fatalf("opened %s %v", opened, err)
-	}
-	if _, err := seal.Open(mustKey(t, executor), sealed.Sealed); err == nil {
-		t.Fatal("the server's own key opens the link")
 	}
 }
 

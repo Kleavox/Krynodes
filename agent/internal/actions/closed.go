@@ -2,6 +2,7 @@ package actions
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -29,6 +30,7 @@ type closedFirewall struct {
 	Other  []string          `json:"other,omitempty"`
 	Known  []string          `json:"known,omitempty"`
 	Drift  []string          `json:"drift,omitempty"`
+	Filed  []network.Opening `json:"filed,omitempty"`
 }
 
 func (e Executor) readFirewall() closedFirewall {
@@ -105,11 +107,8 @@ func (e Executor) learnRules(ctx context.Context, before []string) {
 }
 
 func fromText(opening network.Opening) string {
-	switch opening.From {
-	case network.FromEveryone:
+	if opening.From == network.FromEveryone {
 		return "everyone"
-	case network.FromTailscale:
-		return "Tailscale"
 	}
 	return strings.Join(opening.Addresses, ", ")
 }
@@ -291,37 +290,37 @@ func (e Executor) firewallReport(cached *reporter.Firewall) *reporter.Firewall {
 	return fitReport(&reporter.Firewall{Closed: true, Open: state.Open, Other: state.Other, Drift: state.Drift})
 }
 
-const exitNodeState = "exit-node.json"
-
-type exitNodeRecord struct {
-	Masquerade string `json:"masquerade,omitempty"`
+func filedLines(tool string, opening network.Opening) []string {
+	if tool == "firewalld" {
+		return network.Opening{Port: opening.Port, Protocol: opening.Protocol, From: network.FromAddresses, Addresses: network.TailscaleRanges}.FirewalldRules()
+	}
+	return []string{fmt.Sprintf("allow in on %s to any port %d proto %s", network.TailscaleInterface, opening.Port, opening.Protocol)}
 }
 
-func (e Executor) masquerade(ctx context.Context, on bool) error {
-	if !on {
-		record, _ := readState[exitNodeRecord](e.StateDir, exitNodeState)
-		if record.Masquerade == "" {
-			return nil
-		}
-		if err := e.firewall(ctx, "firewall-cmd", "--permanent", "--zone="+record.Masquerade, "--remove-masquerade"); err != nil {
-			return fmt.Errorf("stop masquerading for the exit node: %w", err)
-		}
-		os.Remove(filepath.Join(e.StateDir, exitNodeState))
-		return e.firewall(ctx, "firewall-cmd", "--reload")
+func (e Executor) fileTailscaleOpenings(ctx context.Context) error {
+	var state closedFirewall
+	raw, err := os.ReadFile(filepath.Join(e.StateDir, firewallFile))
+	if err == nil {
+		err = json.Unmarshal(raw, &state)
 	}
-	env := e.recipeEnv()
-	if recipes.Detect(env).Family != recipes.RHEL {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %s: %w", firewallFile, err)
+	}
+	fromTailscale := func(opening network.Opening) bool { return opening.From == network.FromTailscale }
+	if !slices.ContainsFunc(state.Open, fromTailscale) || e.hostBusy(ctx) {
 		return nil
 	}
-	rules := recipes.ReadRules(ctx, env)
-	if rules.Tool != "firewalld" || !rules.Active || e.firewall(ctx, "firewall-cmd", "--permanent", "--zone="+rules.Zone, "--query-masquerade") == nil {
-		return nil
+	for _, opening := range state.Open {
+		if !fromTailscale(opening) {
+			continue
+		}
+		state.Filed = append(state.Filed, opening)
+		for _, line := range filedLines(state.Tool, opening) {
+			if !slices.Contains(state.Other, line) {
+				state.Other = append(state.Other, line)
+			}
+		}
 	}
-	if err := e.firewall(ctx, "firewall-cmd", "--permanent", "--zone="+rules.Zone, "--add-masquerade"); err != nil {
-		return fmt.Errorf("firewalld could not masquerade for the exit node: %w", err)
-	}
-	if err := writeJSON(e.StateDir, exitNodeState, exitNodeRecord{Masquerade: rules.Zone}, 0o640); err != nil {
-		return err
-	}
-	return e.firewall(ctx, "firewall-cmd", "--reload")
+	state.Open = slices.DeleteFunc(state.Open, fromTailscale)
+	return writeJSON(e.StateDir, firewallFile, state, 0o640)
 }

@@ -5,22 +5,14 @@ import { useEffect, useRef, useState } from "react";
 import { Busy, Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
-import { useRemoveFromTailnet } from "@/features/network/use-tailscale";
 import { LogsDialog } from "@/features/services/logs-dialog";
-import {
-  useCutOff,
-  useDevices,
-  useNetwork,
-  useServices,
-  useTailscale,
-} from "@/lib/api";
+import { useCutOff, useNetwork, useServices } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
 import {
   changeThese,
   quarantineCard,
   resharing,
   stoppedRow,
-  TAILSCALE_CONSOLE,
   warningStrip,
   whatHappened,
   type ChangeRow,
@@ -142,12 +134,7 @@ export function QuarantineCard({
   onRelease: () => void;
 }) {
   if (!node.quarantine) return null;
-  const card = quarantineCard(
-    node.quarantine,
-    node.name,
-    node.quarantine.tailnet ?? [],
-    now,
-  );
+  const card = quarantineCard(node.quarantine, node.name, now);
   return (
     <section
       aria-label={card.chip}
@@ -167,15 +154,12 @@ export function QuarantineCard({
 
 export function WhatHappened({
   view,
-  nodeName,
   now,
 }: {
   view: QuarantineView | undefined;
-  nodeName: string;
   now: number;
 }) {
   const record = view?.quarantine;
-  const devices = useDevices().data?.devices ?? [];
   return (
     <section aria-labelledby="what-happened">
       <h2 id="what-happened" className={SECTION_TITLE}>
@@ -183,7 +167,7 @@ export function WhatHappened({
       </h2>
       <ol className="space-y-1.5 rounded-lg border bg-card p-3 font-mono text-xs">
         {record ? (
-          whatHappened(record, now, nodeName, devices).map((line, index) => (
+          whatHappened(record, now).map((line, index) => (
             <li
               key={index}
               className="grid grid-cols-[auto_minmax(0,1fr)] gap-3"
@@ -211,38 +195,14 @@ function ChangeAction({
   row,
   node,
   reshare,
-  remove,
   busy,
 }: {
   row: ChangeRow;
   node: NodeRecord;
   reshare: ReturnType<typeof useReshareWithout>;
-  remove: ReturnType<typeof useRemoveFromTailnet>;
   busy: boolean;
 }) {
   if (!row.action) return null;
-  if (row.action.kind === "console") {
-    return (
-      <Button asChild variant="outline" size="sm">
-        <a href={TAILSCALE_CONSOLE} target="_blank" rel="noreferrer">
-          {row.action.label}
-        </a>
-      </Button>
-    );
-  }
-  if (row.action.kind === "remove") {
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={remove.isPending}
-        onClick={() => remove.mutate(node.id)}
-      >
-        <KeyRound aria-hidden="true" />
-        {remove.isPending ? <Waiting /> : row.action.label}
-      </Button>
-    );
-  }
   if (busy) {
     return (
       <span className="font-mono text-xs text-muted-foreground">
@@ -279,9 +239,6 @@ export function ChangeThese({
   view: QuarantineView | undefined;
 }) {
   const reshare = useReshareWithout(node);
-  const reshareTailscale = useReshareWithout(node, "tailscale");
-  const remove = useRemoveFromTailnet();
-  const connected = !!useTailscale().data?.connected;
   const client = useQueryClient();
   const busy = resharing(useServices().data?.actions ?? []);
   const was = useRef(busy);
@@ -294,9 +251,8 @@ export function ChangeThese({
     was.current = busy;
   }, [busy, client, node.id]);
   if (!view) return null;
-  const { title, rows } = changeThese(view, node.name, connected);
-  const error =
-    reshare.operate.error ?? reshareTailscale.operate.error ?? remove.error;
+  const { title, rows } = changeThese(view, node.name);
+  const error = reshare.operate.error;
   return (
     <section aria-labelledby="change-these">
       <h2 id="change-these" className={SECTION_TITLE}>
@@ -319,15 +275,7 @@ export function ChangeThese({
                 <p className="text-xs text-muted-foreground">{row.note}</p>
               )}
             </div>
-            <ChangeAction
-              row={row}
-              node={node}
-              reshare={
-                row.id === "tailscale-vault" ? reshareTailscale : reshare
-              }
-              remove={remove}
-              busy={busy}
-            />
+            <ChangeAction row={row} node={node} reshare={reshare} busy={busy} />
           </li>
         ))}
       </ul>

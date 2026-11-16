@@ -47,11 +47,10 @@ export function registerAdminRoutes(
               END AS deleting,
               ipv4, ipv4_at, ipv4_network, ipv4_owner,
               ipv6, ipv6_at, ipv6_network, ipv6_owner, interfaces, trust_report,
-              updates, tailscale, setup,
+              updates, setup,
               (SELECT json_object('state', state, 'address', address, 'port', port)
                FROM network_members WHERE node_id = nodes.id) AS network,
-              (SELECT json_object('at', at, 'why', why, 'tailnet',
-                 json(COALESCE(json_extract(timeline, '$.tailnet'), '[]')))
+              (SELECT json_object('at', at, 'why', why)
                FROM quarantines
                WHERE node_id = nodes.id AND released_at IS NULL) AS quarantine,
               (SELECT json_group_array(json_object('id', id, 'kind', kind,
@@ -67,7 +66,6 @@ export function registerAdminRoutes(
             interval_seconds: number;
             trust_report: string | null;
             updates: string | null;
-            tailscale: string | null;
             setup: string | null;
             network: string | null;
             quarantine: string | null;
@@ -123,7 +121,6 @@ export function registerAdminRoutes(
         interfaces,
         trust_report,
         updates,
-        tailscale,
         setup,
         network,
         quarantine,
@@ -136,8 +133,6 @@ export function registerAdminRoutes(
           quarantine === null ? null : (JSON.parse(quarantine) as unknown),
         warnings: JSON.parse(warnings) as unknown[],
         updates: updates === null ? null : (JSON.parse(updates) as unknown),
-        tailscale:
-          tailscale === null ? null : (JSON.parse(tailscale) as unknown),
         setup: setup === null ? null : (JSON.parse(setup) as unknown),
         addresses: trusts(readReport(trust_report), prints)
           ? listAddresses(

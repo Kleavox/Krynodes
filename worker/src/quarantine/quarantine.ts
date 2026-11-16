@@ -1,9 +1,8 @@
-import { agentSupported, NETWORK, QUARANTINE } from "@krynodes/protocol";
+import { QUARANTINE } from "@krynodes/protocol";
 
 import { createBatch } from "../actions/store";
 import { toB64url } from "../lib/b64url";
 import type { QuarantineMail } from "../lib/mail";
-import { inRanges } from "../lib/ranges";
 import { changeStatement } from "../routes/network";
 
 export const QUARANTINE_ACTOR = "Quarantine";
@@ -17,9 +16,7 @@ const attach = (value: Record<string, string>) =>
 
 export interface Timeline {
   batches: string[];
-  tailnet: string[];
   dropped: string[];
-  removed?: { at: string; by: string | null };
 }
 
 export const holdStatement = (db: D1Database, nodeId: string, at: string) =>
@@ -70,31 +67,9 @@ interface Suspect {
   id: string;
   owner_user_id: string;
   name: string;
-  tailscale: string | null;
   key: string | null;
   address: string | null;
   member: string | null;
-}
-
-const TAILSCALE_RANGES = [NETWORK.tailscale, "fd7a:115c:a1e0::/48"];
-
-function tailnetOf(text: string | null): string[] {
-  try {
-    const report = JSON.parse(text ?? "null") as {
-      addresses?: unknown;
-    } | null;
-    return Array.isArray(report?.addresses)
-      ? report.addresses
-          .filter(
-            (address): address is string =>
-              typeof address === "string" &&
-              inRanges(address, TAILSCALE_RANGES),
-          )
-          .slice(0, 8)
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 export async function quarantine(
@@ -108,7 +83,7 @@ export async function quarantine(
 ): Promise<{ started: boolean; nodes: string[] }> {
   const suspect = await db
     .prepare(
-      `SELECT n.id, n.owner_user_id, n.name, n.tailscale, m.key, m.address, m.state AS member
+      `SELECT n.id, n.owner_user_id, n.name, m.key, m.address, m.state AS member
        FROM nodes n LEFT JOIN network_members m ON m.node_id = n.id
        WHERE n.id = ? AND NOT EXISTS (
          SELECT 1 FROM quarantines WHERE node_id = n.id AND released_at IS NULL)`,
@@ -119,7 +94,7 @@ export async function quarantine(
   const others = (
     await db
       .prepare(
-        `SELECT n.id, n.agent_version, m.state AS member FROM nodes n
+        `SELECT n.id, m.state AS member FROM nodes n
          LEFT JOIN network_members m ON m.node_id = n.id
          WHERE n.owner_user_id = ? AND n.id <> ? AND n.enrolled_at IS NOT NULL
            AND n.disabled_at IS NULL
@@ -128,12 +103,11 @@ export async function quarantine(
       .bind(suspect.owner_user_id, suspect.id)
       .all<{
         id: string;
-        agent_version: string | null;
         member: string | null;
       }>()
   ).results;
   const at = iso(input.now);
-  const timeline: Timeline = { batches: [], tailnet: [], dropped: [] };
+  const timeline: Timeline = { batches: [], dropped: [] };
   const statements: D1PreparedStatement[] = [holdStatement(db, suspect.id, at)];
   const queue = (batch: ReturnType<typeof createBatch>) => {
     timeline.batches.push(batch.batchId);
@@ -180,24 +154,6 @@ export async function quarantine(
         .bind(suspect.owner_user_id, suspect.key, suspect.id, at),
     );
   }
-  timeline.tailnet = tailnetOf(suspect.tailscale);
-  const servers = others.filter((other) => agentSupported(other.agent_version));
-  if (timeline.tailnet.length > 0 && servers.length > 0) {
-    queue(
-      createBatch(db, {
-        action: "block",
-        mode: "parallel",
-        targets: servers.map((server) => ({
-          nodeId: server.id,
-          kind: "host",
-          name: "tailscale",
-          attachment: attach({ addresses: timeline.tailnet.join(" ") }),
-        })),
-        requestedBy: QUARANTINE_ACTOR,
-        now: input.now,
-      }),
-    );
-  }
   statements.unshift(
     db
       .prepare(
@@ -232,7 +188,7 @@ export async function quarantine(
   }
   return {
     started: true,
-    nodes: [suspect.id, ...servers.map((server) => server.id)],
+    nodes: [suspect.id, ...members.map((member) => member.id)],
   };
 }
 
@@ -312,6 +268,5 @@ export async function quarantineReport(
     stacks: row.stacks,
     pieces: row.vault ? 1 : 0,
     trusted: trusted.length,
-    tailnet: timeline.tailnet.length > 0,
   };
 }

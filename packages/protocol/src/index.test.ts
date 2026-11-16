@@ -18,6 +18,7 @@ import {
   COMMAND_GRACE_MS,
   SESSION_MS,
   TRUST_CHANGE_MS,
+  FIREWALL_FROM_REPORTED,
   isValidTarget,
   parseStackNames,
   SELINUX_BOOLEAN,
@@ -1154,7 +1155,7 @@ describe("package messages of agent 0.7.0", () => {
   };
   const nodeId = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a71";
   const hash = "a".repeat(64);
-  const { packages: report, tailscale } = shared;
+  const { packages: report } = shared;
   const accepts = (inventory: Record<string, unknown>) =>
     agentActionsRequestSchema.safeParse({
       nodeId,
@@ -1204,44 +1205,12 @@ describe("package messages of agent 0.7.0", () => {
     ).toBe(false);
   });
 
-  it("signs a server in to Tailscale and nothing else for it", () => {
-    const signin = {
-      ...base,
-      kind: "host",
-      name: "tailscale",
-      action: "signin",
-      signed: signedCommand,
-    };
-    expect(agentActionSchema.safeParse(signin).success).toBe(true);
-    expect(
-      agentActionSchema.safeParse({ ...signin, action: "install" }).success,
-    ).toBe(false);
-    expect(
-      agentActionSchema.safeParse({ ...signin, name: "server" }).success,
-    ).toBe(false);
-    expect(
-      agentActionSchema.safeParse({ ...signin, kind: "apt", name: "system" })
-        .success,
-    ).toBe(false);
-  });
-
-  it("reports the package list and tailscaled", () => {
-    expect(accepts({ packages: report, tailscale })).toBe(true);
+  it("reports the package list", () => {
+    expect(accepts({ packages: report })).toBe(true);
     expect(
       accepts({ packages: { apt: false, system: "Fedora Linux 41" } }),
     ).toBe(true);
     expect(accepts({ packages: { ...report, restart: null } })).toBe(true);
-    expect(
-      accepts({
-        tailscale: {
-          state: "needs-login",
-          addresses: [],
-          name: null,
-          keyExpiry: null,
-        },
-      }),
-    ).toBe(true);
-    expect(accepts({ tailscale: { ...tailscale, state: "lost" } })).toBe(false);
     expect(
       accepts({
         packages: {
@@ -1287,122 +1256,93 @@ describe("package messages of agent 0.7.0", () => {
   });
 });
 
-describe("Tailscale rules messages of agent 0.7.0", () => {
-  const base = {
-    id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a90",
-    kind: "host",
-    name: "tailscale",
-    expiresAt: "2026-10-27T10:10:00.000Z",
-  };
+describe("Tailscale left Krynodes", () => {
   const nodeId = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a91";
   const hash = "b".repeat(64);
-  const parses = (action: Record<string, unknown>) =>
-    agentActionSchema.safeParse({ ...base, ...action }).success;
   const accepts = (inventory: Record<string, unknown>) =>
     agentActionsRequestSchema.safeParse({
       nodeId,
       inventory: { hash, ...inventory },
     }).success;
-  const report = {
-    ...shared.tailscale,
-    id: "nAbC123CNTRL",
-    tailnet: "tail0000.ts.net",
-    tags: ["tag:kry"],
-    peers: 8,
-    reach: [{ from: ["*"], ports: ["*"] }],
-    names: { "100.101.7.11": "server-2" },
+  const security = {
+    checkedAt: "2026-11-14T10:00:00.000Z",
+    findings: [],
+    recipes: ["firewall"],
+    lockdown: false,
+    rebootHour: null,
   };
+  const step = (kind: string, name: string, action: string, signed = true) =>
+    agentActionSchema.safeParse({
+      id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a92",
+      kind,
+      name,
+      action,
+      expiresAt: "2026-11-14T10:10:00.000Z",
+      ...(signed ? { signed: signedCommand } : {}),
+    }).success;
 
-  it("reads In Use Now without a signature and joins only with one", () => {
-    expect(parses({ action: "inspect" })).toBe(true);
-    expect(parses({ action: "inspect", signed: signedCommand })).toBe(false);
-    expect(parses({ action: "join", signed: signedCommand })).toBe(true);
-    expect(parses({ action: "join" })).toBe(false);
+  it("an inventory from agent 0.7.22 with Tailscale fields still parses", () => {
     expect(
-      parses({ action: "join", name: "server", signed: signedCommand }),
-    ).toBe(false);
-    expect(parses({ action: "inspect", name: "server" })).toBe(false);
+      accepts({
+        tailscale: { running: true },
+        tailscaleVault: { set: "x" },
+      }),
+    ).toBe(true);
+    expect(accepts({ tailscale: null, tailscaleVault: null })).toBe(true);
+    expect(accepts({ packages: shared.packages, tailscale: {} })).toBe(true);
   });
 
-  it("uses the Tailscale credential only with a signed command", () => {
+  it("no target names Tailscale", () => {
+    expect(isValidTarget("vault", "tailscale")).toBe(false);
+    expect(isValidTarget("host", "tailscale")).toBe(false);
+    expect(isValidTarget("vault", "cloudflare")).toBe(true);
+  });
+
+  it("a reported opening from Tailscale parses, a sent one does not", () => {
+    const report = (from: string) => ({
+      ...security,
+      firewall: {
+        closed: true,
+        open: [{ port: 22, protocol: "tcp", from }],
+        other: [],
+      },
+    });
+    expect(accepts({ security: report("tailscale") })).toBe(true);
+    expect(accepts({ security: report("everyone") })).toBe(true);
+    expect(accepts({ security: report("nobody") })).toBe(false);
+    expect(FIREWALL_FROM_REPORTED).toEqual([
+      "everyone",
+      "tailscale",
+      "addresses",
+    ]);
+  });
+
+  it("no verb is left for signing in, blocking, joining, exit nodes or DNS", () => {
     for (const action of [
-      "store",
-      "release",
-      "reshare",
-      "forget",
-      "policy",
-      "save",
-      "key",
-      "remove",
+      "signin",
+      "block",
+      "unblock",
+      "join",
+      "inspect",
+      "exitnode",
+      "dns",
     ]) {
-      const step = { kind: "vault", name: "tailscale", action };
-      expect(parses({ ...step, signed: signedCommand }), action).toBe(true);
-      expect(parses(step), action).toBe(false);
+      for (const name of ["server", "tailscale", "firewall"]) {
+        for (const signed of [true, false]) {
+          expect(step("host", name, action, signed), `${name} ${action}`).toBe(
+            false,
+          );
+        }
+      }
     }
     for (const action of ["policy", "save", "key", "remove"]) {
-      expect(
-        parses({
-          kind: "vault",
-          name: "cloudflare",
-          action,
-          signed: signedCommand,
-        }),
-        action,
-      ).toBe(false);
+      expect(step("vault", "cloudflare", action), action).toBe(false);
+      expect(step("vault", "tailscale", action), action).toBe(false);
     }
-  });
-
-  it("offers the server as an exit node and uses Tailscale DNS only with a signature", () => {
-    for (const action of ["exitnode", "dns"]) {
-      expect(parses({ action, signed: signedCommand }), action).toBe(true);
-      expect(parses({ action }), action).toBe(false);
-      expect(
-        parses({ action, name: "server", signed: signedCommand }),
-        action,
-      ).toBe(false);
+    for (const action of ["store", "release", "reshare", "forget"]) {
+      expect(step("vault", "cloudflare", action), action).toBe(true);
+      expect(step("vault", "tailscale", action), action).toBe(false);
     }
-  });
-
-  it("reports the exit node and Tailscale DNS, or nothing when unread", () => {
-    expect(
-      accepts({
-        tailscale: {
-          ...report,
-          exitNode: { advertised: true, approved: false },
-          acceptDNS: false,
-        },
-      }),
-    ).toBe(true);
-    expect(
-      accepts({ tailscale: { ...report, exitNode: null, acceptDNS: null } }),
-    ).toBe(true);
-    expect(
-      accepts({
-        tailscale: { ...report, exitNode: { advertised: true } },
-      }),
-    ).toBe(false);
-  });
-
-  it("reports who may reach the server, its tag and the credential's piece", () => {
-    expect(accepts({ tailscale: report })).toBe(true);
-    expect(accepts({ tailscale: { ...report, reach: null } })).toBe(true);
-    expect(accepts({ tailscale: shared.tailscale })).toBe(true);
-    expect(
-      accepts({
-        tailscale: {
-          ...report,
-          reach: Array(65).fill({ from: ["*"], ports: ["*"] }),
-        },
-      }),
-    ).toBe(false);
-    expect(
-      accepts({
-        tailscaleVault: {
-          set: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a92",
-          holders: 4,
-        },
-      }),
-    ).toBe(true);
   });
 });
 

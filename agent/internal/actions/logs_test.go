@@ -7,7 +7,10 @@ import (
 	"time"
 )
 
-const idC = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a03"
+const (
+	idC = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a03"
+	idD = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a04"
+)
 
 func logsExecutor(t *testing.T) (Executor, *fakeRun) {
 	t.Helper()
