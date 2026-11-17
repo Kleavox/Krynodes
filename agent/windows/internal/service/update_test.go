@@ -8,8 +8,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type releaseFixture struct {
@@ -226,5 +228,145 @@ func TestAFailedSwapPutsTheRunningAgentBack(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(fixture.release.Executable); string(data) != "running agent" {
 		t.Errorf("the running agent was not put back: %q", data)
+	}
+}
+
+type watchFixture struct {
+	watch   Watch
+	dir     string
+	pids    []uint32
+	calls   []string
+	slept   time.Duration
+	startOK bool
+}
+
+func newWatch(t *testing.T, pids ...uint32) *watchFixture {
+	t.Helper()
+	f := &watchFixture{dir: t.TempDir(), pids: pids, startOK: true}
+	for name, data := range map[string]string{"krynodes.exe": "agent 0.7.25", oldName: "agent 0.7.24"} {
+		if err := os.WriteFile(filepath.Join(f.dir, name), []byte(data), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.watch = Watch{
+		Executable: filepath.Join(f.dir, "krynodes.exe"),
+		Previous:   "0.7.24",
+		Stop:       func() error { f.calls = append(f.calls, "stop"); return nil },
+		Start: func() error {
+			f.calls = append(f.calls, "start")
+			if !f.startOK {
+				return errors.New("the service did not start")
+			}
+			return nil
+		},
+		PID: func() (uint32, error) {
+			if len(f.pids) == 0 {
+				return 0, nil
+			}
+			pid := f.pids[0]
+			f.pids = f.pids[1:]
+			return pid, nil
+		},
+		Sleep: func(d time.Duration) { f.slept += d },
+		Note:  func(line string) { f.calls = append(f.calls, "note: "+line) },
+	}
+	return f
+}
+
+func (f *watchFixture) installed(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(f.watch.Executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestAnUpdateThatStaysUpIsKept(t *testing.T) {
+	f := newWatch(t, 4242, 4242)
+	if err := f.watch.Run("0.7.25"); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if got := f.installed(t); got != "agent 0.7.25" {
+		t.Errorf("installed %q", got)
+	}
+	if !slices.Equal(f.calls, []string{"stop", "start"}) || f.slept != settle+5*time.Second {
+		t.Errorf("calls %v, slept %v", f.calls, f.slept)
+	}
+}
+
+func TestAnUpdateThatDoesNotStayUpPutsThePreviousAgentBack(t *testing.T) {
+	for name, pids := range map[string][]uint32{
+		"never running":  {0},
+		"restarted once": {4242, 5151},
+		"died later":     {4242, 0},
+	} {
+		f := newWatch(t, pids...)
+		err := f.watch.Run("0.7.25")
+		if err == nil || err.Error() != "Krynodes 0.7.25 did not stay up, so 0.7.24 is back." {
+			t.Errorf("%s: Run = %v", name, err)
+		}
+		if got := f.installed(t); got != "agent 0.7.24" {
+			t.Errorf("%s: installed %q", name, got)
+		}
+		if data, _ := os.ReadFile(filepath.Join(f.dir, stagedName)); string(data) != "agent 0.7.25" {
+			t.Errorf("%s: the new agent was not set aside for Tidy: %q", name, data)
+		}
+		if !slices.Equal(f.calls, []string{"stop", "start", "stop", "note: " + err.Error(), "start"}) {
+			t.Errorf("%s: calls %v", name, f.calls)
+		}
+	}
+}
+
+func TestAnUpdateThatCannotStartIsRolledBackAndSaysSo(t *testing.T) {
+	f := newWatch(t)
+	f.startOK = false
+	err := f.watch.Run("0.7.25")
+	if err == nil || err.Error() != "Krynodes 0.7.25 did not stay up, so 0.7.24 is back. It did not start: the service did not start" {
+		t.Fatalf("Run = %v", err)
+	}
+	if got := f.installed(t); got != "agent 0.7.24" {
+		t.Errorf("installed %q", got)
+	}
+}
+
+func TestARollbackThatCannotPutThePreviousAgentBackKeepsTheNewOne(t *testing.T) {
+	t.Cleanup(func() { rename = os.Rename })
+	f := newWatch(t, 0)
+	count := 0
+	rename = func(from, to string) error {
+		count++
+		if count == 2 {
+			return errors.New("access is denied")
+		}
+		return os.Rename(from, to)
+	}
+	err := f.watch.Run("0.7.25")
+	if err == nil || !strings.Contains(err.Error(), "0.7.24 could not be put back") {
+		t.Fatalf("Run = %v", err)
+	}
+	if got := f.installed(t); got != "agent 0.7.25" {
+		t.Errorf("installed %q, want the new agent left in place", got)
+	}
+	if !slices.Contains(f.calls, "note: "+err.Error()) {
+		t.Errorf("the tray is not told: %v", f.calls)
+	}
+}
+
+func TestANewerReleaseIsOfferedOnce(t *testing.T) {
+	f := newFixture(t)
+	f.service.Offer("0.7.25", "0.7.24")
+	f.service.Offer("0.7.25", "0.7.24")
+	if notes := f.service.Status(0).Notes; !slices.Equal(notes, []string{"Krynodes 0.7.25 is available. Settings, Update Agent installs it."}) {
+		t.Fatalf("notes %v", notes)
+	}
+	if got := f.record().Offered; got != "0.7.25" {
+		t.Errorf("offered %q", got)
+	}
+	for _, versions := range [][2]string{{"0.7.24", "0.7.24"}, {"0.7.23", "0.7.24"}, {"0.7.26", "dev"}, {"nope", "0.7.24"}} {
+		f.service.Offer(versions[0], versions[1])
+	}
+	if notes := f.service.Status(0).Notes; len(notes) != 1 {
+		t.Errorf("offered more: %v", notes)
 	}
 }

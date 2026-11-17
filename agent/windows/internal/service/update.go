@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/update"
 )
@@ -19,6 +21,8 @@ const (
 	releaseFile = "krynodes-windows-amd64.exe"
 	stagedName  = "krynodes.new.exe"
 	oldName     = "krynodes.old.exe"
+	updateNote  = "update-note.txt"
+	settle      = 20 * time.Second
 )
 
 var (
@@ -141,6 +145,70 @@ func clearOld(old string) error {
 		return err
 	}
 	return rename(old, strings.TrimSuffix(old, ".exe")+"."+hex.EncodeToString(suffix)+".exe")
+}
+
+type Watch struct {
+	Executable string
+	Previous   string
+	Stop       func() error
+	Start      func() error
+	PID        func() (uint32, error)
+	Sleep      func(time.Duration)
+	Note       func(line string)
+}
+
+func (w Watch) Run(next string) error {
+	if w.stayedUp() {
+		return nil
+	}
+	_ = w.Stop()
+	dir := filepath.Dir(w.Executable)
+	staged := filepath.Join(dir, stagedName)
+	failed := fmt.Errorf("Krynodes %s did not stay up, so %s is back.", next, w.Previous)
+	if err := rename(w.Executable, staged); err != nil {
+		failed = fmt.Errorf("Krynodes %s did not stay up and could not be set aside: %v", next, err)
+	} else if err := rename(filepath.Join(dir, oldName), w.Executable); err != nil {
+		_ = rename(staged, w.Executable)
+		failed = fmt.Errorf("Krynodes %s did not stay up and %s could not be put back: %v", next, w.Previous, err)
+	}
+	w.Note(failed.Error())
+	if err := w.Start(); err != nil {
+		return fmt.Errorf("%v It did not start: %v", failed, err)
+	}
+	return failed
+}
+
+func (w Watch) stayedUp() bool {
+	if w.Stop() != nil || w.Start() != nil {
+		return false
+	}
+	w.Sleep(settle)
+	first, err := w.PID()
+	if err != nil || first == 0 {
+		return false
+	}
+	w.Sleep(5 * time.Second)
+	second, err := w.PID()
+	return err == nil && second == first
+}
+
+func (s *Service) Offer(latest, current string) {
+	newer, err := update.IsNewer(latest, current)
+	if err != nil || !newer {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	record, err := s.read()
+	if err != nil || record.Offered == latest {
+		return
+	}
+	record.Offered = latest
+	if err := s.save(record); err != nil {
+		log.Printf("remember the offered update: %v", err)
+		return
+	}
+	s.say("Krynodes " + latest + " is available. Settings, Update Agent installs it.")
 }
 
 func Tidy(executable string) {

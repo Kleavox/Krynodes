@@ -62,6 +62,8 @@ func system(command string, args []string, stdout, stderr io.Writer) int {
 		}
 	case "service":
 		err = service.RunService(version)
+	case "after-update":
+		err = service.AfterUpdate(args, version)
 	case "tray":
 		if len(args) > 0 {
 			err = errors.New("use tray with no arguments")

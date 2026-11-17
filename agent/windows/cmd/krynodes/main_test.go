@@ -44,6 +44,7 @@ func TestEverySubcommandIsKnownAndAnythingElseIsRefused(t *testing.T) {
 		{[]string{"uninstall", "now"}, 1},
 		{[]string{"service"}, 1},
 		{[]string{"tray", "now"}, 1},
+		{[]string{"after-update"}, 1},
 		{nil, 2},
 		{[]string{"nope"}, 2},
 	} {

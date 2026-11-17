@@ -67,6 +67,7 @@ type state struct {
 	Endpoints map[string]string         `json:"endpoints,omitempty"`
 	Removed   bool                      `json:"removed,omitempty"`
 	Offline   bool                      `json:"notifyOffline,omitempty"`
+	Offered   string                    `json:"offered,omitempty"`
 	Ledger    map[string]time.Time      `json:"ledger,omitempty"`
 	Results   []reporter.ActionResult   `json:"results,omitempty"`
 }

@@ -25,6 +25,7 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/internal/safefile"
 	"github.com/Kleavox/krynodes/agent/internal/update"
 	"github.com/Kleavox/krynodes/agent/windows/internal/bundle"
 	"github.com/Kleavox/krynodes/agent/windows/internal/pipe"
@@ -248,6 +249,13 @@ func (c control) Update() error {
 			c.say(line)
 			c.mu.Unlock()
 			time.Sleep(5 * time.Second)
+			watcher := exec.Command(filepath.Join(filepath.Dir(c.executable), oldName), "after-update", next, c.executable)
+			watcher.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP}
+			if err := watcher.Start(); err == nil {
+				_ = watcher.Process.Release()
+				return
+			}
+			log.Printf("start the previous agent to watch the update: %v; restarting without it", err)
 			select {
 			case c.restart <- struct{}{}:
 			default:
@@ -255,6 +263,62 @@ func (c control) Update() error {
 		}
 	}()
 	return nil
+}
+
+func (c control) offer(ctx context.Context) {
+	wait := time.Minute
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		wait = 6 * time.Hour
+		latest, err := c.release().Latest(ctx)
+		if err != nil {
+			log.Printf("check for a newer agent: %v", err)
+			continue
+		}
+		c.Offer(latest, c.version)
+	}
+}
+
+func AfterUpdate(args []string, version string) error {
+	if len(args) != 2 {
+		return errors.New("Update Agent runs after-update; it is not run by hand")
+	}
+	watch := Watch{
+		Executable: args[1],
+		Previous:   version,
+		Stop:       stopService,
+		Start:      system{}.StartService,
+		PID:        servicePID,
+		Sleep:      time.Sleep,
+		Note: func(line string) {
+			if secrets, err := openStore(); err == nil {
+				_ = secrets.Write(filepath.Join(secrets.Dir, updateNote), []byte(line))
+			}
+		},
+	}
+	return watch.Run(args[0])
+}
+
+func servicePID() (uint32, error) {
+	manager, err := mgr.Connect()
+	if err != nil {
+		return 0, err
+	}
+	defer manager.Disconnect()
+	service, err := manager.OpenService(serviceName)
+	if err != nil {
+		return 0, err
+	}
+	defer service.Close()
+	status, err := service.Query()
+	if err != nil || status.State != svc.Running {
+		return 0, err
+	}
+	return status.ProcessId, nil
 }
 
 func (c control) release() Release {
@@ -401,6 +465,13 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 		log.Printf("place wintun.dll and the licences beside the agent: %v", err)
 	}
 	service := &Service{Dir: secrets.Dir, Secrets: secrets, Now: time.Now}
+	notePath := filepath.Join(secrets.Dir, updateNote)
+	if line, err := safefile.Read(notePath, 4096); err == nil {
+		_ = os.Remove(notePath)
+		service.mu.Lock()
+		service.say(string(line))
+		service.mu.Unlock()
+	}
 	record, _ := service.read()
 	if err := tunnel.RemoveNRPT(); err != nil {
 		log.Printf("clear a leftover exit DNS rule: %v", err)
@@ -420,7 +491,9 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 	go refresh(ctx, adapter)
 	restart := make(chan struct{}, 1)
 	if executable != "" {
-		go serve(ctx, control{Service: service, executable: executable, version: h.version, updating: &atomic.Bool{}, restart: restart})
+		backend := control{Service: service, executable: executable, version: h.version, updating: &atomic.Bool{}, restart: restart}
+		go serve(ctx, backend)
+		go backend.offer(ctx)
 	}
 	done := make(chan error, 1)
 	go func() { done <- service.Run(ctx, h.version) }()

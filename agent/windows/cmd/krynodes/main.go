@@ -28,7 +28,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		fmt.Fprintln(stdout, version)
 		return 0
-	case "install", "uninstall", "service", "tray":
+	case "install", "uninstall", "service", "tray", "after-update":
 		return system(args[0], args[1:], stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "krynodes: unknown command %q\n%s\n", args[0], usage)
