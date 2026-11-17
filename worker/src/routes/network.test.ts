@@ -1,4 +1,4 @@
-import { links, type AgentActionsRequest } from "@krynodes/protocol";
+import { links, NETWORK, type AgentActionsRequest } from "@krynodes/protocol";
 import { describe, expect, it } from "vitest";
 
 import { receiveReport } from "../actions/report";
@@ -65,7 +65,7 @@ const member = (node: string, address: string) => ({
   psk: {} as Record<string, string>,
 });
 
-type Member = ReturnType<typeof member> & { cut?: boolean };
+type Member = ReturnType<typeof member> & { cut?: true };
 
 function documentOf(
   version: number,
@@ -697,7 +697,7 @@ describe("laptops in the network document", () => {
     kind: "laptop" as const,
   });
 
-  type Entry = ReturnType<typeof member> & {
+  type Entry = Member & {
     kind?: "laptop";
     exit?: true;
   };
@@ -706,17 +706,32 @@ describe("laptops in the network document", () => {
     version: number,
     members: Entry[],
     over: Record<string, unknown> = {},
-  ) => ({
-    ...documentOf(version, members, over),
-    members: members.map((entry) => ({
-      ...entry,
-      psk: Object.fromEntries(
-        members
-          .filter((other) => other !== entry && links(entry, other))
-          .map((other) => [other.node, "c2VhbGVk"]),
-      ),
-    })),
-  });
+  ) => {
+    let next = NETWORK.relayPort;
+    return {
+      ...documentOf(version, members, over),
+      members: members.map((entry) => ({
+        ...entry,
+        psk: Object.fromEntries(
+          members
+            .filter((other) => other !== entry && links(entry, other))
+            .map((other) => [other.node, "c2VhbGVk"]),
+        ),
+        ...(entry.kind === "laptop"
+          ? {
+              relay: Object.fromEntries(
+                members
+                  .filter(
+                    (other) =>
+                      other.kind !== "laptop" && other.nat && !other.cut,
+                  )
+                  .map((other) => [other.node, next++]),
+              ),
+            }
+          : {}),
+      })),
+    };
+  };
 
   function laptopSetup(version = "0.7.24") {
     const made = setup();
@@ -784,6 +799,43 @@ describe("laptops in the network document", () => {
     ).toBe(200);
     const expected = ["laptop.add", "laptop.remove", "network.exit", "null"];
     expect(await kinds(call)).toEqual([expected, expected]);
+  });
+
+  it("accepts two laptops beside a server behind NAT, each pair on its own relay port", async () => {
+    const { post, sqlite } = laptopSetup();
+    const second = "88888888-8888-4888-8888-888888888888";
+    seedNode(sqlite, { id: second });
+    sqlite
+      .prepare(
+        "UPDATE nodes SET name = 'laptop-2', kind = 'laptop', agent_version = '0.7.24', seal_key = 'seal-laptop-2' WHERE id = ?",
+      )
+      .run(second);
+    const nat = { ...member(B, "10.88.0.2"), nat: true };
+    expect(
+      (await post(linkedOf(1, [member(A, "10.88.0.1"), nat]))).status,
+    ).toBe(200);
+    const made = linkedOf(2, [
+      member(A, "10.88.0.1"),
+      nat,
+      laptopMember(),
+      {
+        ...laptopMember(),
+        node: second,
+        name: "laptop-2",
+        address: "10.88.0.4",
+        key: key(8),
+        signer: key(108),
+      },
+    ]);
+    expect(
+      made.members.map((entry) => ("relay" in entry ? entry.relay : null)),
+    ).toEqual([
+      null,
+      null,
+      { [B]: NETWORK.relayPort },
+      { [B]: NETWORK.relayPort + 1 },
+    ]);
+    expect((await post(made)).status).toBe(200);
   });
 
   it("retires a removed laptop's node and token at once, and a removed server stays", async () => {

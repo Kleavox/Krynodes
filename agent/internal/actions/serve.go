@@ -293,7 +293,7 @@ func (e Executor) syncRules(ctx context.Context, pending ...network.StackRules) 
 		}
 	}
 	if plan, joined := e.exitState(ctx, e.heldRecorded); joined {
-		return errors.Join(peers, e.syncRelayExit(ctx, plan))
+		return errors.Join(peers, e.syncExit(ctx, plan))
 	}
 	return peers
 }

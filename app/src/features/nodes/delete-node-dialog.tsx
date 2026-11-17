@@ -63,7 +63,10 @@ export function DeleteNodeDialog({
     (entry) => entry.nodeId === node.id && entry.state === "in",
   );
   const leave = useSignChange();
-  const keys = useNetworkKeys(network?.members ?? []);
+  const keys = useNetworkKeys(network?.members ?? [], [], {
+    nodeId: node.id,
+    name: node.name,
+  });
   const operate = useSignedOperation(false);
   const run = useSignedAction(false);
   const quarantined = !!node.quarantine;

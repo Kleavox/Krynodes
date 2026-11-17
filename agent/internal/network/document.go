@@ -13,13 +13,15 @@ import (
 )
 
 const (
-	Interface     = "kry0"
-	FirstPort     = 51820
-	LastPort      = 51919
-	Keepalive     = 25
-	AnswerSeconds = 180
-	maxMembers    = 32
-	laptopKind    = "laptop"
+	Interface      = "kry0"
+	FirstPort      = 51820
+	LastPort       = 51919
+	FirstRelayPort = 51920
+	LastRelayPort  = 52175
+	Keepalive      = 25
+	AnswerSeconds  = 180
+	maxMembers     = 32
+	laptopKind     = "laptop"
 )
 
 var (
@@ -41,9 +43,39 @@ type Member struct {
 	NAT      bool              `json:"nat"`
 	PSK      map[string]string `json:"psk"`
 	Kind     string            `json:"kind,omitempty"`
+	Relay    Relays            `json:"relay,omitempty"`
 	Exit     bool              `json:"exit,omitempty"`
 	Rekey    bool              `json:"rekey,omitempty"`
 	Cut      bool              `json:"cut,omitempty"`
+}
+
+type Relays map[string]int
+
+func (r *Relays) UnmarshalJSON(raw []byte) error {
+	if string(raw) == "null" {
+		return errors.New("relay ports cannot be null")
+	}
+	var ports map[string]int
+	if err := json.Unmarshal(raw, &ports); err != nil {
+		return err
+	}
+	*r = ports
+	return nil
+}
+
+func (m Member) MarshalJSON() ([]byte, error) {
+	type plain Member
+	if !m.IsLaptop() {
+		return json.Marshal(plain(m))
+	}
+	relay := m.Relay
+	if relay == nil {
+		relay = Relays{}
+	}
+	return json.Marshal(struct {
+		plain
+		Relay Relays `json:"relay"`
+	}{plain(m), relay})
 }
 
 type Knocks struct {
@@ -112,15 +144,65 @@ func (m Member) IsLaptop() bool {
 }
 
 func Links(a, b Member) bool {
-	switch {
-	case a.IsLaptop() && b.IsLaptop():
-		return false
-	case a.IsLaptop():
-		return !b.NAT
-	case b.IsLaptop():
-		return !a.NAT
+	return !(a.IsLaptop() && b.IsLaptop())
+}
+
+func relayed(member Member) bool {
+	return !member.IsLaptop() && member.NAT && !member.Cut
+}
+
+func RelayPort(document Document, laptop, nat string) (int, bool) {
+	for _, member := range document.Members {
+		if member.Node == laptop {
+			port, ok := member.Relay[nat]
+			return port, ok
+		}
 	}
-	return true
+	return 0, false
+}
+
+type Pair struct {
+	Port   int
+	Laptop Member
+	NAT    Member
+}
+
+func Pairs(document Document) []Pair {
+	var pairs []Pair
+	for _, laptop := range Laptops(document.Members) {
+		for _, nat := range document.Members {
+			if port, ok := laptop.Relay[nat.Node]; ok && relayed(nat) {
+				pairs = append(pairs, Pair{Port: port, Laptop: laptop, NAT: nat})
+			}
+		}
+	}
+	return pairs
+}
+
+func RelayEndpoint(document Document, hint, laptop, nat string) (string, bool) {
+	meeting := slices.IndexFunc(document.Members, func(member Member) bool { return member.Node == hint && MeetingPoint(member) })
+	if meeting < 0 {
+		fallback := DefaultMeeting(document)
+		meeting = slices.IndexFunc(document.Members, func(member Member) bool { return member.Node == fallback && fallback != "" })
+	}
+	port, ok := RelayPort(document, laptop, nat)
+	if meeting < 0 || !ok {
+		return "", false
+	}
+	host, err := netip.ParseAddrPort(*document.Members[meeting].Endpoint)
+	if err != nil {
+		return "", false
+	}
+	return netip.AddrPortFrom(host.Addr(), uint16(port)).String(), true
+}
+
+func SameEndpoint(a, b string) bool {
+	first, err := netip.ParseAddrPort(a)
+	if err != nil {
+		return false
+	}
+	second, err := netip.ParseAddrPort(b)
+	return err == nil && first.Addr().Unmap() == second.Addr().Unmap() && first.Port() == second.Port()
 }
 
 func Laptops(members []Member) []Member {
@@ -222,6 +304,13 @@ func Parse(raw []byte) (Document, error) {
 			return Document{}, fmt.Errorf("%s's key is blocked", member.Name)
 		}
 	}
+	var behind []string
+	for _, member := range document.Members {
+		if relayed(member) {
+			behind = append(behind, member.Node)
+		}
+	}
+	ports := map[int]bool{}
 	for _, member := range document.Members {
 		linked := 0
 		for _, other := range document.Members {
@@ -239,6 +328,22 @@ func Parse(raw []byte) (Document, error) {
 			if len(sealed) > 4096 || !blob.MatchString(sealed) {
 				return Document{}, fmt.Errorf("%s has a preshared key that is not sealed", member.Name)
 			}
+		}
+		if !member.IsLaptop() {
+			if member.Relay != nil {
+				return Document{}, fmt.Errorf("%s is not a laptop and has relay ports", member.Name)
+			}
+			continue
+		}
+		if member.Relay == nil || len(member.Relay) != len(behind) {
+			return Document{}, fmt.Errorf("%s needs one relay port for each server behind NAT", member.Name)
+		}
+		for _, node := range behind {
+			port, ok := member.Relay[node]
+			if !ok || port < FirstRelayPort || port > LastRelayPort || ports[port] {
+				return Document{}, fmt.Errorf("%s has a relay port that is missing, out of range or shared", member.Name)
+			}
+			ports[port] = true
 		}
 	}
 	return document, nil

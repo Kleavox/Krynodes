@@ -8,6 +8,14 @@ import (
 	"testing/fstest"
 )
 
+func folder(dir string) error {
+	return os.MkdirAll(dir, 0o755)
+}
+
+func write(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o644)
+}
+
 func TestUnpackWritesTheDLLAndLicencesBesideTheProgram(t *testing.T) {
 	dir := t.TempDir()
 	from := fstest.MapFS{
@@ -17,7 +25,7 @@ func TestUnpackWritesTheDLLAndLicencesBesideTheProgram(t *testing.T) {
 		"files/licenses/systray.txt":   {Data: []byte("apache")},
 		"files/licenses/wireguard.txt": {Data: []byte("mit")},
 	}
-	if err := unpack(from, dir); err != nil {
+	if err := unpack(from, dir, folder, write); err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{"wintun.dll": "dll", "licenses/wintun.txt": "prebuilt", "licenses/systray.txt": "apache", "licenses/wireguard.txt": "mit"} {
@@ -29,7 +37,7 @@ func TestUnpackWritesTheDLLAndLicencesBesideTheProgram(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".gitkeep")); !os.IsNotExist(err) {
 		t.Errorf(".gitkeep was written: %v", err)
 	}
-	if err := unpack(from, dir); err != nil {
+	if err := unpack(from, dir, folder, write); err != nil {
 		t.Errorf("a second unpack over the same files: %v", err)
 	}
 }
@@ -40,7 +48,7 @@ func TestABuildWithoutWintunIsRefused(t *testing.T) {
 	if err := missing(from); !errors.Is(err, ErrNoWintun) {
 		t.Errorf("missing = %v, want ErrNoWintun", err)
 	}
-	if err := unpack(from, dir); !errors.Is(err, ErrNoWintun) {
+	if err := unpack(from, dir, folder, write); !errors.Is(err, ErrNoWintun) {
 		t.Errorf("unpack = %v, want ErrNoWintun", err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {

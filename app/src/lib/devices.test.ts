@@ -15,6 +15,7 @@ import {
   canLabel,
   canRestartServer,
   decodeChange,
+  deleteRefusal,
   describeChange,
   fingerprint,
   firstTrusts,
@@ -220,6 +221,46 @@ describe("access", () => {
       "tablet",
     ]);
     expect(networkSigners(devices, [null])).toEqual([]);
+  });
+
+  it("names the server whose removal lets Delete Network be signed", () => {
+    const devices = [laptop, phone, tablet];
+    const at = (name: string, access: DeviceRecord[]) => ({
+      name,
+      trust: trust(1, access, access),
+    });
+    expect(
+      deleteRefusal(devices, [
+        at("server-1", []),
+        at("server-2", [laptop, phone]),
+        at("server-3", [phone]),
+      ]),
+    ).toBe(
+      "server-1 trusts none of the passkeys the others trust. Remove it from the network first, then delete the network.",
+    );
+    expect(
+      deleteRefusal(devices, [
+        at("server-1", [laptop]),
+        at("server-2", [phone]),
+        at("server-3", [laptop, phone]),
+      ]),
+    ).toBe(
+      "server-1 and server-2 each trust none of the passkeys the others trust. Remove one of them from the network first, then delete the network.",
+    );
+    expect(
+      deleteRefusal(devices, [
+        at("server-1", [laptop]),
+        at("server-2", [laptop, phone]),
+      ]),
+    ).toBeNull();
+    expect(
+      deleteRefusal(devices, [
+        at("server-1", []),
+        at("server-2", []),
+        at("server-3", [phone]),
+      ]),
+    ).toBeNull();
+    expect(deleteRefusal(devices, [at("server-1", [])])).toBeNull();
   });
 
   it("prefers a passkey every member laptop trusts, and never lets a laptop veto", () => {

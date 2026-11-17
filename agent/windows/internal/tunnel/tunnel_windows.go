@@ -5,9 +5,7 @@ package tunnel
 import (
 	"cmp"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -58,7 +56,6 @@ type Tunnel struct {
 	native    *tun.NativeTun
 	device    *device.Device
 	applied   *Config
-	peers     []string
 	mtu       int
 	tuned     map[winipcfg.AddressFamily]bool
 	addresses []netip.Prefix
@@ -134,6 +131,7 @@ func (t *Tunnel) sync() error {
 		return nil
 	}
 	firewall := firewallWarning()
+	var held error
 	if t.native == nil {
 		tun.WintunTunnelType = adapterName
 		created, err := tun.CreateTUNWithRequestedGUID(adapterName, &t.guid, mtuOf(t.config))
@@ -150,6 +148,8 @@ func (t *Tunnel) sync() error {
 		}
 		applied := t.config
 		t.applied = &applied
+	} else {
+		held = t.hold()
 	}
 	luid := winipcfg.LUID(t.native.LUID())
 	six, err := hasIPv6(luid)
@@ -183,11 +183,11 @@ func (t *Tunnel) sync() error {
 		refused = "IPv6 is off on the Krynodes adapter but on for this laptop's network, so the exit node stays off."
 	}
 	t.warn(firewall, refused)
-	return t.route(luid, plan, six)
+	return errors.Join(t.route(luid, plan, six), held)
 }
 
 func (t *Tunnel) forget() {
-	t.applied, t.peers, t.mtu, t.tuned = nil, nil, 0, map[winipcfg.AddressFamily]bool{}
+	t.applied, t.mtu, t.tuned = nil, 0, map[winipcfg.AddressFamily]bool{}
 	t.addresses, t.routes, t.dns = nil, nil, nil
 }
 
@@ -216,53 +216,28 @@ func mtuOf(config Config) int {
 	return defaultMTU
 }
 
-func hexKey(text string) (string, error) {
-	raw, err := base64.StdEncoding.DecodeString(text)
-	if err != nil || len(raw) != 32 {
-		return "", errors.New("a WireGuard key is not 32 bytes of base64")
-	}
-	return hex.EncodeToString(raw), nil
-}
-
 func (t *Tunnel) configure() error {
-	if len(t.config.Key) != 32 {
-		return errors.New("this laptop's WireGuard key is missing")
-	}
-	var uapi strings.Builder
-	fmt.Fprintf(&uapi, "private_key=%s\n", hex.EncodeToString(t.config.Key))
-	var configured []string
-	for _, peer := range t.config.Peers {
-		key, err := hexKey(peer.Key)
-		if err != nil {
-			return err
-		}
-		configured = append(configured, key)
-		fmt.Fprintf(&uapi, "public_key=%s\n", key)
-		if peer.PresharedKey != "" {
-			psk, err := hexKey(peer.PresharedKey)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(&uapi, "preshared_key=%s\n", psk)
-		}
-		if peer.Endpoint != "" {
-			fmt.Fprintf(&uapi, "endpoint=%s\n", peer.Endpoint)
-		}
-		fmt.Fprintf(&uapi, "persistent_keepalive_interval=%d\nreplace_allowed_ips=true\n", peer.Keepalive)
-		for _, allowed := range peer.AllowedIPs {
-			fmt.Fprintf(&uapi, "allowed_ip=%s\n", allowed)
-		}
-	}
-	for _, gone := range t.peers {
-		if !slices.Contains(configured, gone) {
-			fmt.Fprintf(&uapi, "public_key=%s\nremove=true\n", gone)
-		}
-	}
-	if err := t.device.IpcSet(uapi.String()); err != nil {
+	uapi, err := settings(t.config, t.applied)
+	if err != nil {
 		return err
 	}
-	t.peers = configured
+	if err := t.device.IpcSet(uapi); err != nil {
+		return err
+	}
 	return t.device.Up()
+}
+
+func (t *Tunnel) hold() error {
+	dump, err := t.device.IpcGet()
+	if err == nil {
+		if uapi := reassert(t.config.Peers, dump); uapi != "" {
+			err = t.device.IpcSet(uapi)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("put the members behind NAT back on the meeting point: %w", err)
+	}
+	return nil
 }
 
 func tune(luid winipcfg.LUID, family winipcfg.AddressFamily, mtu int) error {

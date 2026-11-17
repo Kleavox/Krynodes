@@ -103,6 +103,7 @@ func (e Executor) release(ctx context.Context, request Request, command Command)
 	if err := os.MkdirAll(keys, 0o700); err != nil {
 		return e.failed(request, err, "")
 	}
+	defer e.lockNetwork()()
 	record := e.readNetwork()
 	moves := [][2]string{{filepath.Join(dir, "seal.key"), filepath.Join(keys, "seal.key")}}
 	if record.Key != "" {

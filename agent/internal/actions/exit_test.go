@@ -18,6 +18,7 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/config"
 	"github.com/Kleavox/krynodes/agent/internal/network"
+	"github.com/Kleavox/krynodes/agent/internal/relay"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
 )
 
@@ -31,7 +32,7 @@ const (
 	v6Default   = "default via fe80::1 dev eth0 proto ra metric 1024 pref medium\n"
 	exitOutOf   = "-A FORWARD -i kry0 ! -o kry0 -j KRY-EXIT"
 	exitInto    = "-A FORWARD ! -i kry0 -o kry0 -j KRY-EXIT"
-	relayJumpOf = "-A FORWARD -i kry0 -o kry0 -j KRY-RELAY"
+	apartOf     = "-A FORWARD -i kry0 -o kry0 -j DROP"
 	ipForward   = "/proc/sys/net/ipv4/ip_forward"
 	ip6Forward  = "/proc/sys/net/ipv6/conf/all/forwarding"
 )
@@ -219,6 +220,7 @@ func (n *laptopNet) document(t *testing.T, change func(self *network.Member, mem
 	if err != nil {
 		t.Fatal(err)
 	}
+	relayPort := network.FirstRelayPort
 	for index := range members {
 		members[index].PSK = map[string]string{}
 		for _, other := range members {
@@ -226,6 +228,15 @@ func (n *laptopNet) document(t *testing.T, change func(self *network.Member, mem
 				members[index].PSK[other.Node] = "eyJ2IjoxfQ"
 				if members[index].Node == testNode {
 					members[index].PSK[other.Node] = sealed
+				}
+			}
+		}
+		if members[index].IsLaptop() {
+			members[index].Relay = map[string]int{}
+			for _, other := range members {
+				if other.NAT && !other.IsLaptop() && !other.Cut {
+					members[index].Relay[other.Node] = relayPort
+					relayPort++
 				}
 			}
 		}
@@ -362,40 +373,37 @@ func TestExitTurnsOnOnlyWhenTheDocumentSaysSo(t *testing.T) {
 	if _, found := sysctlFile(t, net.executor); found || slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "sysctl") }) {
 		t.Fatalf("an IPv4 exit persists no forwarding key: %v", run.calls)
 	}
-	if tables.has("iptables", "filter", network.RelayChain) {
-		t.Fatal("a server with no public endpoint is no meeting point")
-	}
 	net.apply(t, exitOnPrivate)
-	onTop(t, tables, "iptables", exitOutOf, exitInto)
-	if forward := tables.chain("iptables", "filter", "FORWARD"); len(forward) != 4 {
+	onTop(t, tables, "iptables", exitOutOf, exitInto, apartOf)
+	if forward := tables.chain("iptables", "filter", "FORWARD"); len(forward) != 5 {
 		t.Fatalf("the jumps were added twice: %q", forward)
 	}
 }
 
-func TestForwardingIsSwitchedOnOnlyWhenNeeded(t *testing.T) {
+func TestForwardingIsSwitchedOnOnlyForAnExit(t *testing.T) {
 	net, run, tables := newLaptopNet(t)
-	net.apply(t, withoutNATMember)
-	if !tables.has("iptables", "filter", network.RelayChain) || procValue(t, net.executor, ipForward) != "0" || slices.Contains(run.calls, "iptables -P FORWARD DROP") {
-		t.Fatalf("no member behind NAT, nothing to relay, yet forwarding is %q: %v", procValue(t, net.executor, ipForward), run.calls)
+	net.apply(t, asIs)
+	if procValue(t, net.executor, ipForward) != "0" || slices.Contains(run.calls, "iptables -P FORWARD DROP") {
+		t.Fatalf("a meeting point relays in user space, yet forwarding is %q: %v", procValue(t, net.executor, ipForward), run.calls)
 	}
 	flipped := false
 	run.effects = map[string]func(){"iptables -P FORWARD DROP": func() {
 		flipped = procValue(t, net.executor, ipForward) == "0"
 	}}
-	net.apply(t, asIs)
+	net.apply(t, exitOn)
 	if !flipped || procValue(t, net.executor, ipForward) != "1" || tables.policy["iptables filter FORWARD"] != "DROP" {
 		t.Fatalf("the policy is set before forwarding: flipped %v forwarding %q policy %q", flipped, procValue(t, net.executor, ipForward), tables.policy)
 	}
 	if _, found := sysctlFile(t, net.executor); found {
-		t.Fatal("the relay persists no forwarding key")
+		t.Fatal("an IPv4 exit persists no forwarding key")
 	}
-	net.apply(t, withoutLaptop)
+	net.apply(t, asIs)
 	if procValue(t, net.executor, ipForward) != "1" {
 		t.Fatal("forwarding is never switched back off")
 	}
 	other, run, tables := newLaptopNet(t)
 	rootFile(t, other.executor, ipForward, "1\n")
-	other.apply(t, asIs)
+	other.apply(t, exitOn)
 	if slices.Contains(run.calls, "iptables -P FORWARD DROP") || tables.policy["iptables filter FORWARD"] != "" {
 		t.Fatalf("forwarding was already on, the policy is left alone: %v", run.calls)
 	}
@@ -426,8 +434,11 @@ func TestExitTurnsOffWhenHeldEvenIfTheDocumentSaysOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	noExit(t, tables, "iptables", "ip6tables")
-	if relay := tables.chain("iptables", "filter", network.RelayChain); len(relay) != 3 || !slices.Contains(tables.chain("iptables", "filter", "FORWARD"), relayJumpOf) {
-		t.Fatalf("a held meeting point still relays until the laptop moves on:\n%s", tables)
+	if !slices.Contains(tables.chain("iptables", "filter", "FORWARD"), apartOf) || !slices.Contains(tables.chain("ip6tables", "filter", "FORWARD"), apartOf) {
+		t.Fatalf("a held server still forwards nothing between peers while kry0 carries the laptops' IPv6:\n%s", tables)
+	}
+	if pairs, err := net.executor.relayPairs(); err != nil || len(pairs) != 1 {
+		t.Fatalf("a held meeting point still relays until the laptop moves on: %+v", pairs)
 	}
 	if _, err := os.Stat(filepath.Join(net.executor.StateDir, "host", exitSyncMark)); err != nil {
 		t.Fatalf("the exec unit left the sysctl file to the host unit: %v", err)
@@ -441,8 +452,11 @@ func TestExitTurnsOffWhenHeldEvenIfTheDocumentSaysOn(t *testing.T) {
 	if config := readRoot(t, net.executor, network.ConfigPath); strings.Contains(config, "fd88:88::") {
 		t.Fatalf("held: the laptop's IPv6 address stays on kry0:\n%s", config)
 	}
+	if slices.Contains(tables.chain("ip6tables", "filter", "FORWARD"), apartOf) || !slices.Contains(tables.chain("iptables", "filter", "FORWARD"), apartOf) {
+		t.Fatalf("the IPv6 drop leaves with the laptops' IPv6 addresses, never before:\n%s", tables)
+	}
 	if procValue(t, net.executor, ipForward) != "1" {
-		t.Fatal("the relay still forwards")
+		t.Fatal("forwarding is never switched back off")
 	}
 	noExit(t, tables, "iptables", "ip6tables")
 	writeJSON(net.executor.StateDir, heldFile, heldState{Held: true, At: executorNow.Add(-time.Hour)}, 0o640)
@@ -453,8 +467,8 @@ func TestExitTurnsOffWhenHeldEvenIfTheDocumentSaysOn(t *testing.T) {
 	noExit(t, tables, "iptables", "ip6tables")
 	net.apply(t, exitOnPrivate)
 	noExit(t, tables, "iptables", "ip6tables")
-	if tables.has("iptables", "filter", network.RelayChain) {
-		t.Fatalf("held and no meeting point: nothing relays:\n%s", tables)
+	if pairs, err := net.executor.relayPairs(); err != nil || pairs != nil {
+		t.Fatalf("held and no meeting point: nothing relays: %+v", pairs)
 	}
 }
 
@@ -533,6 +547,9 @@ func TestAnIPv6ExitKeepsRouterAdvertisements(t *testing.T) {
 	if config := readRoot(t, net.executor, network.ConfigPath); !strings.Contains(config, "AllowedIPs = 10.88.0.9/32, fd88:88::9/128") {
 		t.Fatalf("the laptop's IPv6 address is not on kry0:\n%s", config)
 	}
+	if !slices.Contains(tables.chain("ip6tables", "filter", "FORWARD"), apartOf) {
+		t.Fatalf("an IPv6 exit forwards between peers:\n%s", tables)
+	}
 	net.apply(t, exitOnPrivate)
 	if body, _ := sysctlFile(t, net.executor); body != "net.ipv6.conf.eth0.accept_ra = 2\n" {
 		t.Fatalf("once applied, accept_ra reads 2 and must stay in the file: %q", body)
@@ -595,33 +612,175 @@ func TestAServerWithoutIPv6GetsNoIPv6ExitRules(t *testing.T) {
 	}
 }
 
-func TestRelayChainExistsOnlyOnPublicMembersWithLaptops(t *testing.T) {
-	net, _, tables := newLaptopNet(t)
+func TestServersNeverForwardBetweenPeers(t *testing.T) {
+	net, run, tables := newLaptopNet(t)
 	dockerForward(tables)
+	for _, change := range []func(*network.Member, []network.Member) []network.Member{withoutLaptop, asIs, behindNAT, asIs} {
+		net.apply(t, change)
+		if forward := tables.chain("iptables", "filter", "FORWARD"); forward[0] != apartOf || slices.Index(forward[1:], apartOf) >= 0 {
+			t.Fatalf("FORWARD %q", forward)
+		}
+		if slices.Contains(tables.chain("ip6tables", "filter", "FORWARD"), apartOf) || strings.Contains(tables.String(), "KRY-RELAY") || procValue(t, net.executor, ipForward) != "0" {
+			t.Fatalf("tables:\n%s", tables)
+		}
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "KRY-RELAY") }) {
+		t.Fatalf("%v", run.calls)
+	}
+}
+
+func TestOnlyAMeetingPointOpensItsPairPorts(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	opened := "ufw allow 51920/udp comment krynodes-network"
 	net.apply(t, withoutLaptop)
-	if tables.has("iptables", "filter", network.RelayChain) {
-		t.Fatalf("no laptop, no relay:\n%s", tables)
+	if slices.Contains(run.calls, opened) || net.executor.readNetwork().Relays != nil {
+		t.Fatalf("no laptop, no pair port: %v", run.calls)
+	}
+	run.calls = nil
+	net.apply(t, asIs)
+	if !slices.Contains(run.calls, opened) || !slices.Equal(net.executor.readNetwork().Relays, []int{51920}) {
+		t.Fatalf("a meeting point opens its pair port: %v", run.calls)
+	}
+	if pairs, err := net.executor.relayPairs(); err != nil || len(pairs) != 1 || pairs[0].Port != 51920 || pairs[0].Sides != [2]string{net.laptop.Public, net.behind.Public} || pairs[0].Host.String() != "203.0.113.30" {
+		t.Fatalf("pairs %+v", pairs)
+	}
+	run.calls = nil
+	net.apply(t, asIs)
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw") }) {
+		t.Fatalf("an open port is opened again: %v", run.calls)
+	}
+	run.respond["ufw status numbered"] = "[ 1] 51821/udp ALLOW IN Anywhere # krynodes-network\n[ 2] Anywhere on kry0 ALLOW IN Anywhere # krynodes-network\n[ 3] 51920/udp ALLOW IN Anywhere # krynodes-network\n[ 4] 51920/udp (v6) ALLOW IN Anywhere (v6) # krynodes-network\n"
+	run.calls = nil
+	net.apply(t, withoutLaptop)
+	if !slices.Contains(run.calls, "ufw --force delete 4") || !slices.Contains(run.calls, "ufw --force delete 3") || slices.ContainsFunc(run.calls, func(call string) bool {
+		return call == "ufw --force delete 1" || call == "ufw --force delete 2"
+	}) || net.executor.readNetwork().Relays != nil || noPairs(t, net.executor) {
+		t.Fatalf("the laptop left, its pair port stays: %v", run.calls)
 	}
 	net.apply(t, asIs)
-	want := []string{
-		"-A KRY-RELAY -s 10.88.0.9/32 -d 10.88.0.4/32 -i kry0 -o kry0 -j ACCEPT",
-		"-A KRY-RELAY -s 10.88.0.4/32 -d 10.88.0.9/32 -i kry0 -o kry0 -j ACCEPT",
-		"-A KRY-RELAY -i kry0 -o kry0 -j DROP",
-	}
-	if got := tables.chain("iptables", "filter", network.RelayChain); !slices.Equal(got, want) {
-		t.Fatalf("relay:\n%s", tables)
-	}
-	onTop(t, tables, "iptables", relayJumpOf)
-	if procValue(t, net.executor, ipForward) != "1" {
-		t.Fatal("the relay forwards")
-	}
-	net.apply(t, withoutLaptop)
-	if tables.has("iptables", "filter", network.RelayChain) || slices.Contains(tables.chain("iptables", "filter", "FORWARD"), relayJumpOf) {
-		t.Fatalf("the last laptop left, the relay stays:\n%s", tables)
-	}
+	run.calls = nil
 	net.apply(t, behindNAT)
-	if tables.has("iptables", "filter", network.RelayChain) {
-		t.Fatalf("a member behind NAT never relays:\n%s", tables)
+	if !slices.Contains(run.calls, "ufw --force delete 4") || net.executor.readNetwork().Relays != nil || noPairs(t, net.executor) {
+		t.Fatalf("a member behind NAT is no meeting point: %v", run.calls)
+	}
+}
+
+func noPairs(t *testing.T, executor Executor) bool {
+	t.Helper()
+	pairs, err := executor.relayPairs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pairs != nil
+}
+
+func TestAnUnreadableRecordKeepsThePairsTheRelayCarries(t *testing.T) {
+	net, _, _ := newLaptopNet(t)
+	net.apply(t, asIs)
+	path := filepath.Join(net.executor.StateDir, "network.json")
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry := func(do func() error) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for err := do(); err != nil; err = do() {
+			if time.Now().After(deadline) {
+				t.Fatal(err)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	sets := make(chan []relay.Pair, 64)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		net.executor.carryPairs(ctx, 5*time.Millisecond, func(pairs []relay.Pair) { sets <- pairs })
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	if pairs := <-sets; len(pairs) != 1 || pairs[0].Port != 51920 {
+		t.Fatalf("pairs %+v", pairs)
+	}
+	retry(func() error { return os.Remove(path) })
+	retry(func() error { return os.Mkdir(path, 0o700) })
+	for drained := false; !drained; {
+		select {
+		case <-sets:
+		case <-time.After(50 * time.Millisecond):
+			drained = true
+		}
+	}
+	select {
+	case pairs := <-sets:
+		t.Fatalf("an unreadable record set the pairs to %+v", pairs)
+	case <-time.After(50 * time.Millisecond):
+	}
+	retry(func() error { return os.Remove(path) })
+	retry(func() error { return os.WriteFile(path, saved, 0o644) })
+	for deadline := time.After(2 * time.Second); ; {
+		select {
+		case pairs := <-sets:
+			if len(pairs) != 1 || pairs[0].Port != 51920 {
+				continue
+			}
+		case <-deadline:
+			t.Fatal("a readable record never carries the pairs again")
+		}
+		break
+	}
+	if err := os.WriteFile(filepath.Join(net.executor.StateDir, "trust.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := net.executor.relayPairs(); err == nil {
+		t.Fatal("an unreadable trust store is an error, not an empty set")
+	}
+}
+
+func TestAPairPortTheFirewallRefusesFailsNothingAndIsTriedAgain(t *testing.T) {
+	net, run, tables := newLaptopNet(t)
+	opened := "ufw allow 51920/udp comment krynodes-network"
+	run.failing = map[string]string{opened: "ERROR: Could not get lock\n"}
+	net.apply(t, asIs)
+	record := net.executor.readNetwork()
+	if record.Relays != nil || record.Document == nil || record.Document.Version != net.version || !slices.Contains(tables.chain("iptables", "filter", "FORWARD"), apartOf) {
+		t.Fatalf("a refused pair port applies the document and records no port: %+v\n%s", record.Relays, tables)
+	}
+	delete(run.failing, opened)
+	run.calls = nil
+	if err := net.executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(run.calls, opened) || !slices.Equal(net.executor.readNetwork().Relays, []int{51920}) {
+		t.Fatalf("the refused port is opened on the next round, with no new document: %v", run.calls)
+	}
+	run.calls = nil
+	if err := net.executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool {
+		return strings.HasPrefix(call, "ufw") || strings.HasPrefix(call, "firewall-cmd")
+	}) {
+		t.Fatalf("a round with every port in place touches no firewall: %v", run.calls)
+	}
+	run.failing["ufw status numbered"] = "ERROR: Could not get lock\n"
+	run.calls = nil
+	net.apply(t, withoutLaptop)
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "ufw --force delete") }) || !slices.Equal(net.executor.readNetwork().Relays, []int{51920}) {
+		t.Fatalf("an unread listing deletes nothing and keeps the port for the next apply: %v", run.calls)
+	}
+	delete(run.failing, "ufw status numbered")
+	run.respond["ufw status numbered"] = "[ 1] 51821/udp ALLOW IN Anywhere # krynodes-network\n[ 2] 51920/udp ALLOW IN Anywhere # krynodes-network\n"
+	run.calls = nil
+	if err := net.executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(run.calls, "ufw --force delete 2") || slices.Contains(run.calls, "ufw --force delete 1") || slices.Contains(run.calls, "ufw reload") || net.executor.readNetwork().Relays != nil {
+		t.Fatalf("the kept port is closed on the next round, with no reload: %v", run.calls)
 	}
 }
 

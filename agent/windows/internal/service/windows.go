@@ -57,6 +57,14 @@ func (system) Unpack(dir string) error {
 	return bundle.Unpack(dir)
 }
 
+func (system) Folder(dir string) error {
+	return store.ProgramFolder(dir)
+}
+
+func (system) Write(path string, data []byte) error {
+	return store.ProgramFile(path, data)
+}
+
 func (system) StartService() error {
 	manager, err := mgr.Connect()
 	if err != nil {
@@ -261,6 +269,7 @@ func (c control) release() Release {
 		Current:    c.version,
 		Key:        key,
 		Executable: c.executable,
+		Write:      store.ProgramFile,
 		Latest: func(ctx context.Context) (string, error) {
 			client := &http.Client{Transport: transport, Timeout: time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(update.DefaultBase, "/download")+"/latest", nil)
@@ -461,7 +470,7 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 func configOf(wanted Wanted) tunnel.Config {
 	config := tunnel.Config{Key: wanted.Key, Address: wanted.Address, MTU: wanted.MTU, DNS: wanted.DNS, Exit: wanted.Exit != "", Local: wanted.Local}
 	for _, peer := range wanted.Peers {
-		config.Peers = append(config.Peers, tunnel.Peer{Key: peer.Key, PresharedKey: peer.PresharedKey, Endpoint: peer.Endpoint, Pin: peer.Pin, AllowedIPs: peer.AllowedIPs, Keepalive: peer.PersistentKeepalive})
+		config.Peers = append(config.Peers, tunnel.Peer{Key: peer.Key, PresharedKey: peer.PresharedKey, Endpoint: peer.Endpoint, Pin: peer.Pin, Relay: peer.Relay, AllowedIPs: peer.AllowedIPs, Keepalive: peer.PersistentKeepalive})
 	}
 	return config
 }

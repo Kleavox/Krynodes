@@ -2,6 +2,8 @@ package store
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,15 +17,13 @@ import (
 )
 
 const (
-	folderSDDL = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
-	fileSDDL   = "O:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)"
-	suffix     = ".dpapi"
-	logLimit   = 1 << 20
+	suffix   = ".dpapi"
+	logLimit = 1 << 20
 )
 
 type Store struct {
-	Dir  string
-	file string
+	Dir   string
+	owner string
 }
 
 func Dir() (string, error) {
@@ -35,14 +35,39 @@ func Dir() (string, error) {
 }
 
 func Open(dir string) (Store, error) {
-	if err := create(dir, folderSDDL); err != nil {
+	mine := owner()
+	if err := create(dir, descriptor(mine, true, false)); err != nil {
 		return Store{}, err
 	}
-	return Store{Dir: dir, file: fileSDDL}, nil
+	return Store{Dir: dir, owner: mine}, nil
+}
+
+func ProgramFolder(dir string) error {
+	return create(dir, descriptor(owner(), true, true))
+}
+
+func ProgramFile(path string, data []byte) error {
+	return write(path, data, descriptor(owner(), false, true))
+}
+
+func owner() string {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return administrators
+	}
+	return ownerFor(user.User.Sid.String())
+}
+
+func attributes(sddl string) (*windows.SecurityAttributes, error) {
+	parsed, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		return nil, err
+	}
+	return &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: parsed}, nil
 }
 
 func create(dir, sddl string) error {
-	descriptor, err := windows.SecurityDescriptorFromString(sddl)
+	security, err := attributes(sddl)
 	if err != nil {
 		return err
 	}
@@ -50,15 +75,54 @@ func create(dir, sddl string) error {
 	if err != nil {
 		return err
 	}
-	attributes := windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: descriptor}
-	if err := windows.CreateDirectory(path, &attributes); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+	if err := windows.CreateDirectory(path, security); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
 		return err
 	}
 	return lock(dir, sddl, true)
 }
 
-func (s Store) Lock(name string) error {
-	return lock(filepath.Join(s.Dir, name), s.file, false)
+func write(path string, data []byte, sddl string) error {
+	security, err := attributes(sddl)
+	if err != nil {
+		return err
+	}
+	random := make([]byte, 8)
+	if _, err := rand.Read(random); err != nil {
+		return err
+	}
+	temporary := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+"."+hex.EncodeToString(random)+".tmp")
+	from, err := windows.UTF16PtrFromString(temporary)
+	if err != nil {
+		return err
+	}
+	to, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	handle, err := windows.CreateFile(from, windows.GENERIC_WRITE, 0, security, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return err
+	}
+	file := os.NewFile(uintptr(handle), temporary)
+	_, err = file.Write(data)
+	if err == nil {
+		err = file.Sync()
+	}
+	if closed := file.Close(); err == nil {
+		err = closed
+	}
+	if err == nil {
+		err = windows.MoveFileEx(from, to, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
+	}
+	if err != nil {
+		_ = os.Remove(temporary)
+		return err
+	}
+	return lock(path, sddl, false)
+}
+
+func (s Store) Write(path string, data []byte) error {
+	return write(path, data, descriptor(s.owner, false, false))
 }
 
 func (s Store) Put(name string, value []byte) error {
@@ -66,11 +130,7 @@ func (s Store) Put(name string, value []byte) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(s.Dir, name+suffix)
-	if err := safefile.Write(path, sealed, 0o600); err != nil {
-		return err
-	}
-	return lock(path, s.file, false)
+	return s.Write(filepath.Join(s.Dir, name+suffix), sealed)
 }
 
 func (s Store) Get(name string) ([]byte, error) {
@@ -113,15 +173,11 @@ func take(out windows.DataBlob) []byte {
 }
 
 func lock(path, sddl string, directory bool) error {
-	descriptor, err := windows.SecurityDescriptorFromString(sddl)
+	parsed, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
 		return err
 	}
-	owner, _, err := descriptor.Owner()
-	if err != nil {
-		return err
-	}
-	dacl, _, err := descriptor.DACL()
+	dacl, _, err := parsed.DACL()
 	if err != nil {
 		return err
 	}
@@ -129,7 +185,7 @@ func lock(path, sddl string, directory bool) error {
 	if err != nil {
 		return err
 	}
-	handle, err := windows.CreateFile(name, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	handle, err := windows.CreateFile(name, windows.READ_CONTROL|windows.WRITE_DAC, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	if err != nil {
 		return err
 	}
@@ -151,22 +207,10 @@ func lock(path, sddl string, directory bool) error {
 	if err != nil {
 		return err
 	}
-	if !trusted(found, owner) {
+	if !trusted(found.String()) {
 		return refused
 	}
-	return windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, owner, nil, dacl, nil)
-}
-
-func trusted(found, owner *windows.SID) bool {
-	if found.Equals(owner) {
-		return true
-	}
-	for _, kind := range []windows.WELL_KNOWN_SID_TYPE{windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid} {
-		if sid, err := windows.CreateWellKnownSid(kind); err == nil && found.Equals(sid) {
-			return true
-		}
-	}
-	return false
+	return windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 }
 
 type Log struct {
@@ -179,7 +223,7 @@ type Log struct {
 }
 
 func (s Store) Log(name string) *Log {
-	return &Log{path: filepath.Join(s.Dir, name), sddl: s.file, limit: logLimit}
+	return &Log{path: filepath.Join(s.Dir, name), sddl: descriptor(s.owner, false, false), limit: logLimit}
 }
 
 func (l *Log) Write(line []byte) (int, error) {
@@ -203,10 +247,19 @@ func (l *Log) open() error {
 			return err
 		}
 	}
-	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	security, err := attributes(l.sddl)
 	if err != nil {
 		return err
 	}
+	name, err := windows.UTF16PtrFromString(l.path)
+	if err != nil {
+		return err
+	}
+	handle, err := windows.CreateFile(name, windows.FILE_APPEND_DATA|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE, windows.FILE_SHARE_READ|windows.FILE_SHARE_DELETE, security, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return err
+	}
+	file := os.NewFile(uintptr(handle), l.path)
 	if err := lock(l.path, l.sddl, false); err != nil {
 		file.Close()
 		return err

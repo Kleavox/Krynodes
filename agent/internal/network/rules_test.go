@@ -219,27 +219,6 @@ func TestTheKnockWatchNeverCountsALaptop(t *testing.T) {
 	}
 }
 
-func TestRelayRulesOnlyBetweenLaptopsAndNATMembers(t *testing.T) {
-	members := laptopNetwork().Members
-	want := []string{
-		"-A KRY-RELAY -s 10.88.0.9/32 -d 10.88.0.3/32 -i kry0 -o kry0 -j ACCEPT",
-		"-A KRY-RELAY -s 10.88.0.3/32 -d 10.88.0.9/32 -i kry0 -o kry0 -j ACCEPT",
-		"-A KRY-RELAY -i kry0 -o kry0 -j DROP",
-	}
-	if rules := Relay(members[0], members); !slices.Equal(rules, want) {
-		t.Fatalf("relay\n%s", strings.Join(rules, "\n"))
-	}
-	withoutNAT := slices.Delete(slices.Clone(members), 2, 3)
-	if rules := Relay(members[0], withoutNAT); !slices.Equal(rules, want[2:]) {
-		t.Fatalf("no NAT member %q", rules)
-	}
-	for _, self := range []Member{members[2], members[3]} {
-		if rules := Relay(self, members); len(rules) != 0 {
-			t.Fatalf("%s relays %q", self.Name, rules)
-		}
-	}
-}
-
 func TestExitRulesOnlyForLaptopsAndOnlyWhenOn(t *testing.T) {
 	members := laptopNetwork().Members
 	if forward, nat := Exit(members[0], members, "eth0", 4); len(forward)+len(nat) != 0 {
@@ -281,10 +260,10 @@ func TestARemovedLaptopLeavesEveryRule(t *testing.T) {
 		_, knock := Watch(nil, []int{22}, nil, laptopAddresses(members))
 		forward4, nat4 := Exit(self, members, "eth0", 4)
 		forward6, nat6 := Exit(self, members, "eth0", 6)
-		return strings.Join(slices.Concat(serve, knock, Relay(self, members), forward4, nat4, forward6, nat6), "\n")
+		return strings.Join(slices.Concat(serve, knock, forward4, nat4, forward6, nat6), "\n")
 	}
 	members := laptopNetwork().Members
-	if before := everything(members); strings.Count(before, "-s 10.88.0.9/32") != 5 || strings.Count(before, "-s fd88:88::9/128") != 2 {
+	if before := everything(members); strings.Count(before, "-s 10.88.0.9/32") != 4 || strings.Count(before, "-s fd88:88::9/128") != 2 {
 		t.Fatalf("before\n%s", before)
 	}
 	if after := everything(members[:3]); strings.Contains(after, "10.88.0.9") || strings.Contains(after, "fd88") {
@@ -296,23 +275,9 @@ func TestARemovedLaptopLeavesEveryRule(t *testing.T) {
 	}
 }
 
-func TestRelayAndExitIgnoreCutAndIneligibleMembers(t *testing.T) {
-	drop := []string{"-A KRY-RELAY -i kry0 -o kry0 -j DROP"}
+func TestExitIgnoresCutAndIneligibleMembers(t *testing.T) {
 	members := laptopNetwork().Members
-	members[2].Cut = true
-	if rules := Relay(members[0], members); !slices.Equal(rules, drop) {
-		t.Fatalf("cut NAT member %q", rules)
-	}
-	members = laptopNetwork().Members
-	members[0].Endpoint = nil
-	if rules := Relay(members[0], members); rules != nil {
-		t.Fatalf("no endpoint %q", rules)
-	}
-	members = laptopNetwork().Members
 	members[0].Exit, members[0].Cut = true, true
-	if rules := Relay(members[0], members); rules != nil {
-		t.Fatalf("cut self relays %q", rules)
-	}
 	if forward, nat := Exit(members[0], members, "eth0", 4); forward != nil || nat != nil {
 		t.Fatalf("cut self exits %q %q", forward, nat)
 	}

@@ -18,7 +18,6 @@ const (
 	KnockChain  = "KRY-KNOCK"
 	PeersChain  = "KRY-PEERS"
 	PortsChain  = "KRY-PORTS"
-	RelayChain  = "KRY-RELAY"
 	ExitChain   = "KRY-EXIT"
 	logRule     = " -m limit --limit 600/min -j LOG --log-prefix \"%s\" --log-level 6"
 	multiports  = 15
@@ -210,23 +209,6 @@ func Rules(own string, members []Member, stacks []StackRules) ([]string, []strin
 		}
 	}
 	return serve, append(reach, "-A "+ReachChain+" -j DROP")
-}
-
-func Relay(self Member, members []Member) []string {
-	if !MeetingPoint(self) {
-		return nil
-	}
-	var rules []string
-	for _, laptop := range Laptops(members) {
-		for _, behind := range members {
-			if behind.NAT && !behind.IsLaptop() && !behind.Cut {
-				rules = append(rules,
-					fmt.Sprintf("-A %s -s %s/32 -d %s/32 -i %s -o %s -j ACCEPT", RelayChain, laptop.Address, behind.Address, Interface, Interface),
-					fmt.Sprintf("-A %s -s %s/32 -d %s/32 -i %s -o %s -j ACCEPT", RelayChain, behind.Address, laptop.Address, Interface, Interface))
-			}
-		}
-	}
-	return append(rules, fmt.Sprintf("-A %s -i %s -o %s -j DROP", RelayChain, Interface, Interface))
 }
 
 func Exit(self Member, members []Member, uplink string, family int) ([]string, []string) {

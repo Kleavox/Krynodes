@@ -1,6 +1,10 @@
 package tunnel
 
 import (
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"net/netip"
 	"slices"
 	"strings"
@@ -31,6 +35,7 @@ type Peer struct {
 	PresharedKey string
 	Endpoint     string
 	Pin          string
+	Relay        bool
 	AllowedIPs   []string
 	Keepalive    int
 }
@@ -189,6 +194,82 @@ func shadow(route Route, routed bool, pins, kept []netip.Prefix) bool {
 		return !inside(prefix, private)
 	}
 	return !inside(prefix, kept)
+}
+
+func hexKey(text string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(text)
+	if err != nil || len(raw) != 32 {
+		return "", errors.New("a WireGuard key is not 32 bytes of base64")
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func settings(config Config, before *Config) (string, error) {
+	if len(config.Key) != 32 {
+		return "", errors.New("this laptop's WireGuard key is missing")
+	}
+	var uapi strings.Builder
+	fmt.Fprintf(&uapi, "private_key=%s\n", hex.EncodeToString(config.Key))
+	var had []Peer
+	if before != nil {
+		had = before.Peers
+	}
+	for _, peer := range config.Peers {
+		key, err := hexKey(peer.Key)
+		if err != nil {
+			return "", err
+		}
+		if peer.Endpoint == "" && slices.ContainsFunc(had, func(was Peer) bool { return was.Key == peer.Key && was.Endpoint != "" }) {
+			fmt.Fprintf(&uapi, "public_key=%s\nremove=true\n", key)
+		}
+		fmt.Fprintf(&uapi, "public_key=%s\n", key)
+		if peer.PresharedKey != "" {
+			psk, err := hexKey(peer.PresharedKey)
+			if err != nil {
+				return "", err
+			}
+			fmt.Fprintf(&uapi, "preshared_key=%s\n", psk)
+		}
+		if peer.Endpoint != "" {
+			fmt.Fprintf(&uapi, "endpoint=%s\n", peer.Endpoint)
+		}
+		fmt.Fprintf(&uapi, "persistent_keepalive_interval=%d\nreplace_allowed_ips=true\n", peer.Keepalive)
+		for _, allowed := range peer.AllowedIPs {
+			fmt.Fprintf(&uapi, "allowed_ip=%s\n", allowed)
+		}
+	}
+	for _, was := range had {
+		if slices.ContainsFunc(config.Peers, func(peer Peer) bool { return peer.Key == was.Key }) {
+			continue
+		}
+		if key, err := hexKey(was.Key); err == nil {
+			fmt.Fprintf(&uapi, "public_key=%s\nremove=true\n", key)
+		}
+	}
+	return uapi.String(), nil
+}
+
+func reassert(peers []Peer, dump string) string {
+	current := map[string]string{}
+	key := ""
+	for line := range strings.SplitSeq(dump, "\n") {
+		name, value, _ := strings.Cut(strings.TrimSpace(line), "=")
+		switch name {
+		case "public_key":
+			key = value
+		case "endpoint":
+			current[key] = value
+		}
+	}
+	var uapi strings.Builder
+	for _, peer := range peers {
+		key, err := hexKey(peer.Key)
+		if err != nil || !peer.Relay || peer.Endpoint == "" || network.SameEndpoint(current[key], peer.Endpoint) {
+			continue
+		}
+		fmt.Fprintf(&uapi, "public_key=%s\nupdate_only=true\nendpoint=%s\n", key, peer.Endpoint)
+	}
+	return uapi.String()
 }
 
 func NRPT(plan Plan) (Policy, bool) {

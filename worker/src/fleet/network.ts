@@ -31,11 +31,28 @@ export interface NetworkTurn {
   changed?: boolean;
 }
 
+function behindOf(members: Member[], cut: Set<string>): Member[] {
+  return members.filter(
+    (member) =>
+      member.kind !== "laptop" &&
+      member.nat === 1 &&
+      member.state === "in" &&
+      !cut.has(member.node_id),
+  );
+}
+
+function connectedOf(behind: Member[], online: ReadonlySet<string>): string[] {
+  return behind
+    .map((member) => member.node_id)
+    .filter((id) => online.has(id))
+    .sort();
+}
+
 export class HubNetwork {
   readonly latest = new Map<string, { at: number; links: NetworkLink[] }>();
   private readonly meets = new Map<string, string>();
   private readonly told = new Map<string, string>();
-  private heldNow: string | null = null;
+  private newsNow: string | null = null;
   private cache: { stamp: string; members: Member[]; cut: Set<string> } | null =
     null;
   private readonly db: D1Database;
@@ -53,6 +70,7 @@ export class HubNetwork {
     beat: NetworkBeat,
     now: number,
     laptop = false,
+    online: ReadonlySet<string> = new Set(),
   ): Promise<NetworkTurn> {
     this.latest.set(nodeId, { at: now, links: beat.links });
     const row = await this.db
@@ -70,10 +88,7 @@ export class HubNetwork {
     const laptops = members.filter(
       (member) => member.kind === "laptop" && usable(member),
     );
-    const behind = members.filter(
-      (member) =>
-        member.kind !== "laptop" && member.nat === 1 && usable(member),
-    );
+    const behind = behindOf(members, cut);
     const meetingPoint = (id: string | undefined) =>
       members.find(
         (member) =>
@@ -188,7 +203,11 @@ export class HubNetwork {
     }
     if (laptop && self?.kind === "laptop") {
       const held = await this.held(ownerId);
-      if (this.tell(nodeId, held)) reply.held = held;
+      const connected = connectedOf(behind, online);
+      if (this.tell(nodeId, { held, connected })) {
+        reply.held = held;
+        reply.connected = connected;
+      }
     }
     return {
       reply: Object.keys(reply).length > 0 ? reply : null,
@@ -198,10 +217,25 @@ export class HubNetwork {
     };
   }
 
-  async heldMoved(ownerId: string): Promise<boolean> {
-    const held = JSON.stringify(await this.held(ownerId));
-    if (held === this.heldNow) return false;
-    this.heldNow = held;
+  async laptopNewsMoved(
+    ownerId: string,
+    online: ReadonlySet<string>,
+  ): Promise<boolean> {
+    const row = await this.db
+      .prepare("SELECT stamp FROM network WHERE owner_user_id = ?")
+      .bind(ownerId)
+      .first<{ stamp: string }>();
+    let behind: Member[] = [];
+    if (row) {
+      const { members, cut } = await this.members(ownerId, row.stamp);
+      behind = behindOf(members, cut);
+    }
+    const news = JSON.stringify({
+      held: await this.held(ownerId),
+      connected: connectedOf(behind, online),
+    });
+    if (news === this.newsNow) return false;
+    this.newsNow = news;
     return true;
   }
 

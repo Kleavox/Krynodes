@@ -11,8 +11,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/network"
+	"github.com/Kleavox/krynodes/agent/internal/relay"
+	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
 const (
@@ -24,14 +27,14 @@ const (
 var (
 	laptopPools   = []netip.Prefix{netip.MustParsePrefix("10.88.0.0/16"), netip.MustParsePrefix("fd88:88::/64")}
 	interfaceName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,15}$`)
-	relayJumps    = [][]string{{"-i", network.Interface, "-o", network.Interface, "-j", network.RelayChain}}
+	betweenPeers  = []string{"-i", network.Interface, "-o", network.Interface, "-j", "DROP"}
 	exitJumps     = [][]string{{"-i", network.Interface, "!", "-o", network.Interface, "-j", network.ExitChain}, {"!", "-i", network.Interface, "-o", network.Interface, "-j", network.ExitChain}}
 	exitTools     = []string{"iptables", "ip6tables"}
 	routing       = map[string]string{"iptables": "/proc/sys/net/ipv4/ip_forward", "ip6tables": "/proc/sys/net/ipv6/conf/all/forwarding"}
 )
 
 type exitPlan struct {
-	relay   []string
+	apart   map[string]bool
 	forward map[string][]string
 	nat     map[string][]string
 	routes  map[string]bool
@@ -44,11 +47,7 @@ func (p exitPlan) exit6() bool {
 }
 
 func (e Executor) planExit(ctx context.Context, document network.Document, self network.Member, held func() bool) exitPlan {
-	plan := exitPlan{forward: map[string][]string{}, nat: map[string][]string{}, routes: map[string]bool{}}
-	if len(network.Laptops(document.Members)) > 0 {
-		plan.relay = network.Relay(self, document.Members)
-		plan.routes["iptables"] = plan.relay != nil && slices.ContainsFunc(document.Members, func(other network.Member) bool { return other.NAT && !other.Cut && !other.IsLaptop() })
-	}
+	plan := exitPlan{apart: map[string]bool{"iptables": true}, forward: map[string][]string{}, nat: map[string][]string{}, routes: map[string]bool{}}
 	missing := false
 	if self.Exit && !held() {
 		uplink := e.uplink(ctx, "-4")
@@ -64,8 +63,9 @@ func (e Executor) planExit(ctx context.Context, document network.Document, self 
 		}
 	}
 	e.noteUplink(missing)
-	plan.routes["iptables"] = plan.routes["iptables"] || plan.forward["iptables"] != nil
+	plan.routes["iptables"] = plan.forward["iptables"] != nil
 	plan.routes["ip6tables"] = plan.exit6()
+	plan.apart["ip6tables"] = plan.exit6() || e.carries6()
 	if plan.ra != "" {
 		key := "net.ipv6.conf." + plan.ra + ".accept_ra"
 		if strings.Contains(plan.ra, ".") {
@@ -74,6 +74,22 @@ func (e Executor) planExit(ctx context.Context, document network.Document, self 
 		plan.sysctl = key + " = 2\n"
 	}
 	return plan
+}
+
+func (e Executor) carries6() bool {
+	config, _ := os.ReadFile(e.path(network.ConfigPath))
+	for line := range strings.SplitSeq(string(config), "\n") {
+		allowed, found := strings.CutPrefix(strings.TrimSpace(line), "AllowedIPs = ")
+		if !found {
+			continue
+		}
+		for field := range strings.SplitSeq(allowed, ",") {
+			if prefix, err := netip.ParsePrefix(strings.TrimSpace(field)); err == nil && prefix.Addr().Is6() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (e Executor) exitState(ctx context.Context, held func() bool) (exitPlan, bool) {
@@ -122,12 +138,22 @@ func (e Executor) keepsRA(uplink string) string {
 	return ""
 }
 
-func (e Executor) syncRelayExit(ctx context.Context, plan exitPlan) error {
-	problems := e.syncForward(ctx, "iptables", network.RelayChain, relayJumps, plan.relay)
+func (e Executor) syncExit(ctx context.Context, plan exitPlan) error {
+	var problems error
 	for _, tool := range exitTools {
-		problems = errors.Join(problems, e.syncForward(ctx, tool, network.ExitChain, exitJumps, plan.forward[tool]), e.syncNAT(ctx, tool, plan.nat[tool]))
+		problems = errors.Join(problems, e.keepApart(ctx, tool, plan.apart[tool]), e.syncForward(ctx, tool, network.ExitChain, exitJumps, plan.forward[tool]), e.syncNAT(ctx, tool, plan.nat[tool]))
 	}
 	return errors.Join(problems, e.switchForwarding(ctx, plan))
+}
+
+func (e Executor) keepApart(ctx context.Context, tool string, wanted bool) error {
+	if wanted {
+		return e.ensure(ctx, tool, []string{"-I", "FORWARD", "1"}, "FORWARD", betweenPeers)
+	}
+	if e.firewall(ctx, tool, append([]string{"-C", "FORWARD"}, betweenPeers...)...) == nil {
+		return e.firewall(ctx, tool, append([]string{"-D", "FORWARD"}, betweenPeers...)...)
+	}
+	return nil
 }
 
 func (e Executor) switchForwarding(ctx context.Context, plan exitPlan) error {
@@ -247,7 +273,7 @@ func (e Executor) syncForwarding(ctx context.Context, content string) error {
 }
 
 func (e Executor) dropExit(ctx context.Context) error {
-	return errors.Join(e.syncRelayExit(ctx, exitPlan{}), e.syncForwarding(ctx, ""))
+	return errors.Join(e.syncExit(ctx, exitPlan{}), e.syncForwarding(ctx, ""))
 }
 
 func (e Executor) leaveExitWhenHeld(ctx context.Context) {
@@ -255,8 +281,8 @@ func (e Executor) leaveExitWhenHeld(ctx context.Context) {
 	if !joined {
 		return
 	}
-	if err := e.syncRelayExit(ctx, plan); err != nil {
-		log.Printf("laptop relay and exit: %v", err)
+	if err := e.syncExit(ctx, plan); err != nil {
+		log.Printf("laptop exit: %v", err)
 	}
 	if current, _ := os.ReadFile(e.path(laptopExitConf)); string(current) != plan.sysctl {
 		if err := writeJSON(filepath.Join(e.StateDir, "host"), exitSyncMark, struct{}{}, 0o600); err != nil {
@@ -271,13 +297,14 @@ func (e Executor) followExit(ctx context.Context, dir string) {
 		return
 	}
 	os.Remove(marker)
+	defer e.lockNetwork()()
 	record, self, keys, psk, err := e.joinedState()
 	if err == nil {
 		err = e.writeNetwork(ctx, &record, *record.Document, self, keys, psk)
 	}
 	if err == nil {
 		plan := e.planExit(ctx, *record.Document, self, e.heldRecorded)
-		err = errors.Join(e.syncRelayExit(ctx, plan), e.syncForwarding(ctx, plan.sysctl))
+		err = errors.Join(e.syncExit(ctx, plan), e.syncForwarding(ctx, plan.sysctl))
 	}
 	if err != nil {
 		log.Printf("laptop exit: %v", err)
@@ -285,6 +312,7 @@ func (e Executor) followExit(ctx context.Context, dir string) {
 }
 
 func (e Executor) meet(ctx context.Context, request Request, args map[string]string) Result {
+	defer e.lockNetwork()()
 	record, self, keys, psk, err := e.joinedState()
 	if err != nil {
 		return e.refuse(request.ID, err)
@@ -298,12 +326,15 @@ func (e Executor) meet(ctx context.Context, request Request, args map[string]str
 	case !self.NAT:
 		return e.refuse(request.ID, errors.New("only a server behind NAT follows a meeting point"))
 	}
+	endpoint, ok := network.RelayEndpoint(document, via.Node, laptop.Node, self.Node)
+	if !ok {
+		return e.refuse(request.ID, fmt.Errorf("%s has no relay port for this server", laptop.Name))
+	}
 	if record.Meetings == nil {
 		record.Meetings = map[string]string{}
 	}
 	record.Meetings[laptop.Node] = via.Node
-	allowed := append([]string{via.Address + "/32"}, network.Carried(document, record.Meetings)[via.Node]...)
-	if err := e.networkCommand(ctx, "wg", "set", network.Interface, "peer", via.Key, "allowed-ips", strings.Join(allowed, ",")); err != nil {
+	if err := e.networkCommand(ctx, "wg", "set", network.Interface, "peer", laptop.Key, "endpoint", endpoint); err != nil {
 		return e.failed(request, err, "")
 	}
 	path := e.path(network.ConfigPath)
@@ -314,4 +345,196 @@ func (e Executor) meet(ctx context.Context, request Request, args map[string]str
 		return e.failed(request, err, "")
 	}
 	return Result{ID: request.ID, OK: true, Output: laptop.Name + " reaches this server through " + via.Name, FinishedAt: e.stamp()}
+}
+
+func (e Executor) meetingEndpoints(record networkRecord) map[string]string {
+	node, err := e.selfNode()
+	if !record.Joined || record.Document == nil || err != nil {
+		return nil
+	}
+	document := withAnnounced(*record.Document, record.Announced)
+	self, ok := member(document, node)
+	if !ok || !self.NAT {
+		return nil
+	}
+	wanted := map[string]string{}
+	for _, laptop := range network.Laptops(document.Members) {
+		if endpoint, ok := network.RelayEndpoint(document, record.Meetings[laptop.Node], laptop.Node, self.Node); ok {
+			wanted[laptop.Key] = endpoint
+		}
+	}
+	return wanted
+}
+
+func roamed(wanted map[string]string, links []network.Link) []string {
+	var keys []string
+	for key, endpoint := range wanted {
+		link := linkOf(links, key)
+		if link.Key == "" {
+			continue
+		}
+		if link.Endpoint == nil || !network.SameEndpoint(*link.Endpoint, endpoint) {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+func (e Executor) holdMeetings(ctx context.Context) {
+	wanted := e.meetingEndpoints(e.readNetwork())
+	if len(wanted) == 0 {
+		return
+	}
+	links := e.dump(ctx)
+	if len(roamed(wanted, links)) == 0 {
+		return
+	}
+	defer e.lockNetwork()()
+	wanted = e.meetingEndpoints(e.readNetwork())
+	for _, key := range roamed(wanted, links) {
+		if err := e.networkCommand(ctx, "wg", "set", network.Interface, "peer", key, "endpoint", wanted[key]); err != nil {
+			log.Printf("meeting point: %v", err)
+		}
+	}
+}
+
+func relayPorts(document network.Document, self network.Member) []int {
+	if !network.MeetingPoint(self) {
+		return nil
+	}
+	var ports []int
+	for _, pair := range network.Pairs(document) {
+		ports = append(ports, pair.Port)
+	}
+	slices.Sort(ports)
+	return ports
+}
+
+func (e Executor) syncRelayPorts(ctx context.Context, record *networkRecord, document network.Document, self network.Member) error {
+	wanted := relayPorts(document, self)
+	var open []int
+	var problems error
+	for _, port := range record.Relays {
+		if slices.Contains(wanted, port) {
+			open = append(open, port)
+			continue
+		}
+		if err := e.closeRelay(ctx, record.Firewall, port); err != nil {
+			problems = errors.Join(problems, fmt.Errorf("close relay port %d: %w", port, err))
+			open = append(open, port)
+		}
+	}
+	for _, port := range wanted {
+		if slices.Contains(record.Relays, port) {
+			continue
+		}
+		if err := e.networkCommands(ctx, network.OpenRelay(record.Firewall, []int{port})); err != nil {
+			problems = errors.Join(problems, fmt.Errorf("open relay port %d: %w", port, err))
+			continue
+		}
+		open = append(open, port)
+	}
+	slices.Sort(open)
+	record.Relays = open
+	return problems
+}
+
+func (e Executor) relayDrift(record networkRecord) (network.Member, bool) {
+	node, err := e.selfNode()
+	if !record.Joined || record.Document == nil || err != nil {
+		return network.Member{}, false
+	}
+	self, ok := member(*record.Document, node)
+	return self, ok && !slices.Equal(record.Relays, relayPorts(*record.Document, self))
+}
+
+func (e Executor) retryRelayPorts(ctx context.Context) {
+	if _, drift := e.relayDrift(e.readNetwork()); !drift {
+		return
+	}
+	defer e.lockNetwork()()
+	record := e.readNetwork()
+	self, drift := e.relayDrift(record)
+	if !drift {
+		return
+	}
+	if err := e.syncRelayPorts(ctx, &record, *record.Document, self); err != nil {
+		log.Printf("relay ports: %v", err)
+	}
+	if err := e.saveNetwork(record); err != nil {
+		log.Printf("relay ports: %v", err)
+	}
+}
+
+func (e Executor) closeRelay(ctx context.Context, firewall string, port int) error {
+	numbered := ""
+	if firewall == "ufw" {
+		var listed bool
+		if numbered, listed = e.output(ctx, "ufw", "status", "numbered"); !listed {
+			return errors.New("ufw status numbered failed")
+		}
+	}
+	return e.networkCommands(ctx, network.CloseRelay(firewall, []int{port}, numbered))
+}
+
+func (e Executor) networkCommands(ctx context.Context, commands [][]string) error {
+	for _, command := range commands {
+		if err := e.networkCommand(ctx, command[0], command[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e Executor) relayPairs() ([]relay.Pair, error) {
+	record, err := readState[networkRecord](e.StateDir, "network.json")
+	if err != nil || !record.Joined || record.Document == nil {
+		return nil, err
+	}
+	current, err := trust.Load(e.StateDir)
+	if err != nil {
+		return nil, err
+	}
+	document := withAnnounced(*record.Document, record.Announced)
+	self, ok := member(document, current.NodeID)
+	if !ok || !network.MeetingPoint(self) {
+		return nil, nil
+	}
+	var host netip.Addr
+	if signed, err := netip.ParseAddrPort(*self.Endpoint); err == nil {
+		host = signed.Addr().Unmap()
+	}
+	var pairs []relay.Pair
+	for _, pair := range network.Pairs(document) {
+		pairs = append(pairs, relay.Pair{Port: pair.Port, Sides: [2]string{pair.Laptop.Key, pair.NAT.Key}, Host: host})
+	}
+	return pairs, nil
+}
+
+func (e Executor) CarryPairs(ctx context.Context, every time.Duration) {
+	carrier := relay.New(network.Runner(e.Run))
+	defer carrier.Close()
+	e.carryPairs(ctx, every, carrier.Set)
+}
+
+func (e Executor) carryPairs(ctx context.Context, every time.Duration, set func([]relay.Pair)) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	failing := false
+	for {
+		pairs, err := e.relayPairs()
+		if err == nil {
+			set(pairs)
+		} else if !failing {
+			log.Printf("relay: keeping the pairs it carries: %v", err)
+		}
+		failing = err != nil
+		e.holdMeetings(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

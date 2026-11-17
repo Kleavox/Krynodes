@@ -47,7 +47,7 @@ const (
 type Secrets interface {
 	Get(name string) ([]byte, error)
 	Put(name string, value []byte) error
-	Lock(name string) error
+	Write(path string, data []byte) error
 }
 
 type server interface {
@@ -78,26 +78,27 @@ type Service struct {
 	Apply   func(Wanted)
 	Ping    func(address string) (time.Duration, bool)
 
-	mu       sync.Mutex
-	applying sync.Mutex
-	pending  *Wanted
-	off      bool
-	linked   bool
-	notes    []note
-	noteID   uint64
-	health   map[string]*health
-	meet     string
-	exit     string
-	local    bool
-	held     []string
-	chooser  meet.Chooser
-	watch    exit.ExitWatch
-	watching string
-	wake     chan struct{}
-	last     Wanted
-	queued   []reporter.ActionRequest
-	acked    string
-	interval time.Duration
+	mu        sync.Mutex
+	applying  sync.Mutex
+	pending   *Wanted
+	off       bool
+	linked    bool
+	notes     []note
+	noteID    uint64
+	health    map[string]*health
+	meet      string
+	exit      string
+	local     bool
+	held      []string
+	connected []string
+	chooser   meet.Chooser
+	watch     exit.ExitWatch
+	watching  string
+	wake      chan struct{}
+	last      Wanted
+	queued    []reporter.ActionRequest
+	acked     string
+	interval  time.Duration
 }
 
 func laptopWords(text string) string {
@@ -114,14 +115,15 @@ func (s *Service) read() (state, error) {
 }
 
 func (s *Service) save(current state) error {
-	encoded, err := json.Marshal(current)
+	return s.keep(stateFile, current)
+}
+
+func (s *Service) keep(name string, value any) error {
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	if err := safefile.Write(filepath.Join(s.Dir, stateFile), encoded, 0o600); err != nil {
-		return err
-	}
-	return s.Secrets.Lock(stateFile)
+	return s.Secrets.Write(filepath.Join(s.Dir, name), encoded)
 }
 
 func newKeys(secrets Secrets) (network.Keys, *ecdh.PrivateKey, error) {
@@ -351,12 +353,7 @@ func (s *Service) wanted() Wanted {
 			s.exit, chosen = "", ""
 		}
 	}
-	peers := laptopPeers(document, self, meetingOf(*record.Document, s.meet, s.held), chosen, psk)
-	for index := range peers {
-		if signed, ok := member(*record.Document, peers[index].Node); ok && signed.Endpoint != nil && !signed.NAT {
-			peers[index].Pin = *signed.Endpoint
-		}
-	}
+	peers := laptopPeers(document, *record.Document, self, meetingOf(*record.Document, s.meet, s.held), chosen, psk)
 	mtu := document.MTU
 	if self.MTU != nil {
 		mtu = *self.MTU
@@ -421,6 +418,9 @@ func (s *Service) observe(now time.Time, answers map[string]answer) {
 	for node, got := range answers {
 		s.chooser.Observe(now, node, got.rtt, got.ok)
 	}
+	if answered, counted := s.through(*record.Document, record.NodeID, answers); s.linked {
+		s.chooser.Through(now, meetingOf(*record.Document, s.meet, s.held), answered || !counted)
+	}
 	s.listen(now, record, answers)
 	changed := false
 	if point := s.chooser.Current(s.linked); point != s.meet {
@@ -436,6 +436,25 @@ func (s *Service) observe(now time.Time, answers map[string]answer) {
 	if changed {
 		s.refresh()
 	}
+}
+
+func (s *Service) through(signed network.Document, self string, answers map[string]answer) (bool, bool) {
+	laptop, ok := member(signed, self)
+	if !ok {
+		return false, false
+	}
+	answered, counted := false, false
+	for _, node := range s.connected {
+		got, pinged := answers[node]
+		if _, relayed := laptop.Relay[node]; !pinged || !relayed {
+			continue
+		}
+		if entry, ok := member(signed, node); !ok || entry.Cut || !entry.NAT {
+			continue
+		}
+		answered, counted = answered || got.ok, true
+	}
+	return answered, counted
 }
 
 func (s *Service) watchExit(now time.Time, answered bool) bool {
@@ -579,10 +598,7 @@ func (s *Service) act(request reporter.ActionRequest) reporter.ActionResult {
 	if err != nil {
 		return refuse(err)
 	}
-	if err := trust.Save(s.Dir, next); err != nil {
-		return refuse(err)
-	}
-	if err := s.Secrets.Lock(trustFile); err != nil {
+	if err := s.keep(trustFile, next); err != nil {
 		return refuse(err)
 	}
 	result.OK = true
@@ -605,6 +621,9 @@ func (s *Service) answer(response reporter.HeartbeatResponse) {
 	if reply := response.Network; reply != nil {
 		if reply.Held != nil {
 			s.held = reply.Held
+		}
+		if reply.Connected != nil {
+			s.connected = reply.Connected
 		}
 		if record, err := s.read(); err == nil && len(reply.Document) > 0 && newer(reply.Document, record.Applied.Version) {
 			if err := s.applyDocument(reply.Document); err != nil {

@@ -3,7 +3,6 @@ package network
 import (
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -40,37 +39,26 @@ func Render(document Document, self Member, private string, psk map[string]strin
 		clamp := fmt.Sprintf("-t mangle %%s POSTROUTING -o %s -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss %d", Interface, mtu-40)
 		fmt.Fprintf(&config, "PostUp = iptables -w "+clamp+"\nPostDown = iptables -w "+clamp+"\n", "-A", "-D")
 	}
-	carried := map[string][]string{}
-	if self.NAT {
-		carried = Carried(document, meetings)
-	}
 	for _, peer := range document.Members {
 		if peer.Node == self.Node || peer.Cut || !Links(self, peer) {
 			continue
 		}
-		allowed := append([]string{peer.Address + "/32"}, carried[peer.Node]...)
+		allowed := []string{peer.Address + "/32"}
 		if peer.IsLaptop() && exit6 {
 			allowed = append(allowed, Address6(peer.Address)+"/128")
 		}
 		fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s\n", peer.Key, psk[peer.Node], strings.Join(allowed, ", "))
-		if !peer.IsLaptop() && !peer.NAT && peer.Endpoint != nil {
+		switch {
+		case peer.IsLaptop() && self.NAT:
+			if endpoint, ok := RelayEndpoint(document, meetings[peer.Node], peer.Node, self.Node); ok {
+				fmt.Fprintf(&config, "Endpoint = %s\n", endpoint)
+			}
+		case !peer.IsLaptop() && !peer.NAT && peer.Endpoint != nil:
 			fmt.Fprintf(&config, "Endpoint = %s\n", *peer.Endpoint)
 		}
 		fmt.Fprintf(&config, "PersistentKeepalive = %d\n", Keepalive)
 	}
 	return config.String()
-}
-
-func Carried(document Document, meetings map[string]string) map[string][]string {
-	carried := map[string][]string{}
-	for _, laptop := range Laptops(document.Members) {
-		meeting := meetings[laptop.Node]
-		if !slices.ContainsFunc(document.Members, func(member Member) bool { return member.Node == meeting && MeetingPoint(member) }) {
-			meeting = DefaultMeeting(document)
-		}
-		carried[meeting] = append(carried[meeting], laptop.Address+"/32")
-	}
-	return carried
 }
 
 func quickOnly(line string) bool {

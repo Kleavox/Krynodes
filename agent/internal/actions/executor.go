@@ -81,6 +81,7 @@ type pending struct {
 func (e Executor) Execute(ctx context.Context) error {
 	e.clearWake()
 	e.leaveExitWhenHeld(ctx)
+	e.retryRelayPorts(ctx)
 	stopped, err := readState[[]string](e.StateDir, "stopped.json")
 	if err != nil {
 		return err

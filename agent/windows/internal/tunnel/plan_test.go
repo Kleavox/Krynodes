@@ -1,9 +1,12 @@
 package tunnel
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"net/netip"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -329,5 +332,111 @@ func TestNRPTSendsEveryNameToTheDocumentsDNS(t *testing.T) {
 	refused.NoIPv6 = true
 	if _, on := NRPT(Build(laptop(true, false), refused)); on {
 		t.Fatal("a policy for a refused exit")
+	}
+}
+
+func TestARelayEndpointLeavesThroughItsPinNotTheTunnel(t *testing.T) {
+	relayed := func(local bool, host string) Config {
+		config := laptop(true, local)
+		config.Peers = append(config.Peers[1:2], Peer{Endpoint: host + ":51920", Pin: host + ":51920", Relay: true, AllowedIPs: []string{"10.88.0.3/32"}})
+		return config
+	}
+	gateway := home.Default4.Via
+	routed := home
+	routed.Routed = []uint64{wifi}
+	routed.Routes = []Route{
+		{Prefix: netip.MustParsePrefix("203.0.113.0/24"), Interface: wifi, Via: gateway},
+		{Prefix: netip.MustParsePrefix("203.0.113.3/32"), Interface: wifi, Via: gateway},
+	}
+	for _, local := range []bool{false, true} {
+		for _, system := range []System{home, routed} {
+			plan := Build(relayed(local, "203.0.113.3"), system)
+			if !slices.Contains(plan.Routes, Route{Prefix: netip.MustParsePrefix("203.0.113.3/32"), Interface: wifi, Via: gateway}) {
+				t.Fatalf("local %v: the meeting point's host is not pinned: %+v", local, plan.Routes)
+			}
+			everything := table(system, plan)
+			if route := lookup(everything, "203.0.113.3"); route.Interface != wifi {
+				t.Fatalf("local %v: the pair port's datagrams go through %+v", local, route)
+			}
+			if route := lookup(everything, "203.0.113.50"); route.Interface != Inside {
+				t.Fatalf("local %v: a route covering the relay host pulled %+v out of the exit", local, route)
+			}
+			if route := lookup(everything, "10.88.0.3"); route.Interface != Inside {
+				t.Fatalf("local %v: the member behind NAT is reached through %+v", local, route)
+			}
+		}
+		onLink := Build(relayed(local, "192.168.1.30"), home)
+		if !slices.Contains(onLink.Routes, Route{Prefix: netip.MustParsePrefix("192.168.1.30/32"), Interface: wifi}) {
+			t.Fatalf("local %v: a relay host on the local network is not pinned on its link: %+v", local, onLink.Routes)
+		}
+		if route := lookup(table(home, onLink), "192.168.1.30"); route.Interface != wifi {
+			t.Fatalf("local %v: a relay host on the local network goes through %+v", local, route)
+		}
+	}
+}
+
+func key(seed byte) (string, string) {
+	raw := make([]byte, 32)
+	for index := range raw {
+		raw[index] = seed
+	}
+	return base64.StdEncoding.EncodeToString(raw), hex.EncodeToString(raw)
+}
+
+func TestARelayPeerThatLosesItsEndpointIsMadeAgain(t *testing.T) {
+	public, publicHex := key(1)
+	behind, behindHex := key(2)
+	gone, goneHex := key(3)
+	before := Config{Key: make([]byte, 32), Peers: []Peer{
+		{Key: public, Endpoint: "203.0.113.1:51820", Keepalive: 25, AllowedIPs: []string{"10.88.0.1/32"}},
+		{Key: behind, Endpoint: "203.0.113.1:51920", Relay: true, Keepalive: 25, AllowedIPs: []string{"10.88.0.2/32"}},
+		{Key: gone, Endpoint: "203.0.113.4:51820", Keepalive: 25, AllowedIPs: []string{"10.88.0.4/32"}},
+	}}
+	after := Config{Key: before.Key, Peers: []Peer{before.Peers[0], before.Peers[1]}}
+	after.Peers[1].Endpoint = ""
+	uapi, err := settings(after, &before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "private_key=" + hex.EncodeToString(before.Key) + "\n" +
+		"public_key=" + publicHex + "\nendpoint=203.0.113.1:51820\npersistent_keepalive_interval=25\nreplace_allowed_ips=true\nallowed_ip=10.88.0.1/32\n" +
+		"public_key=" + behindHex + "\nremove=true\n" +
+		"public_key=" + behindHex + "\npersistent_keepalive_interval=25\nreplace_allowed_ips=true\nallowed_ip=10.88.0.2/32\n" +
+		"public_key=" + goneHex + "\nremove=true\n"
+	if uapi != want {
+		t.Fatalf("got\n%s\nwant\n%s", uapi, want)
+	}
+	if again, err := settings(after, &after); err != nil || strings.Contains(again, "remove=true") {
+		t.Fatalf("a peer without an endpoint is made again on every change: %v\n%s", err, again)
+	}
+	if _, err := settings(Config{Peers: after.Peers}, nil); err == nil {
+		t.Fatal("no private key is no tunnel")
+	}
+}
+
+func TestRoamingNeverMovesARelayPeerOffTheChosenMeetingPoint(t *testing.T) {
+	public, publicHex := key(1)
+	behind, behindHex := key(2)
+	other, otherHex := key(3)
+	waiting, waitingHex := key(4)
+	peers := []Peer{
+		{Key: public, Endpoint: "203.0.113.1:51820"},
+		{Key: behind, Endpoint: "203.0.113.3:51920", Relay: true},
+		{Key: other, Endpoint: "203.0.113.3:51921", Relay: true},
+		{Key: waiting, Relay: true},
+	}
+	dump := "private_key=" + publicHex + "\nlisten_port=51820\n" +
+		"public_key=" + publicHex + "\nendpoint=198.51.100.1:51820\nlast_handshake_time_sec=1\n" +
+		"public_key=" + behindHex + "\nendpoint=203.0.113.1:51920\ntx_bytes=10\n" +
+		"public_key=" + otherHex + "\nendpoint=[::ffff:203.0.113.3]:51921\n" +
+		"public_key=" + waitingHex + "\nendpoint=203.0.113.1:51922\n"
+	if got, want := reassert(peers, dump), "public_key="+behindHex+"\nupdate_only=true\nendpoint=203.0.113.3:51920\n"; got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	if got := reassert(peers[2:], "public_key="+otherHex+"\nendpoint=203.0.113.3:51921\n"); got != "" {
+		t.Fatalf("an endpoint in place is set again:\n%s", got)
+	}
+	if got := reassert(peers[1:2], ""); got != "public_key="+behindHex+"\nupdate_only=true\nendpoint=203.0.113.3:51920\n" {
+		t.Fatalf("a relay peer with no endpoint yet:\n%s", got)
 	}
 }

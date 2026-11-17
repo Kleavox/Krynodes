@@ -8,13 +8,17 @@ import (
 const (
 	missesToLeave = 3
 	steady        = 60 * time.Second
+	settle        = 20 * time.Second
+	longestWait   = 30 * time.Minute
 )
 
 type server struct {
-	rtt    time.Duration
-	seen   bool
-	misses int
-	since  time.Time
+	rtt     time.Duration
+	seen    bool
+	misses  int
+	since   time.Time
+	through int
+	broken  time.Time
 }
 
 type Chooser struct {
@@ -22,7 +26,11 @@ type Chooser struct {
 	only    []string
 	limited bool
 	current string
+	chosen  time.Time
 	now     time.Time
+	outage  time.Time
+	wait    time.Duration
+	answers time.Time
 }
 
 func (c *Chooser) Only(servers []string) {
@@ -65,30 +73,66 @@ func (c *Chooser) Observe(now time.Time, name string, rtt time.Duration, answere
 	entry.rtt += (rtt - entry.rtt) / 8
 }
 
-func live(entry *server) bool {
-	return entry != nil && entry.seen && entry.misses < missesToLeave
+func (c *Chooser) Through(now time.Time, name string, answered bool) {
+	if now.After(c.now) {
+		c.now = now
+	}
+	entry := c.servers[name]
+	if answered {
+		if c.answers.IsZero() {
+			c.answers = now
+		}
+		if now.Sub(c.answers) >= steady {
+			c.wait = 0
+		}
+		if entry != nil {
+			entry.through = 0
+		}
+		return
+	}
+	c.answers = time.Time{}
+	if entry == nil || c.waiting() || now.Sub(c.chosen) < settle {
+		return
+	}
+	entry.through++
+	if entry.through < missesToLeave {
+		return
+	}
+	entry.through, entry.broken, c.outage = 0, now, now
+	c.wait = min(max(2*c.wait, steady), longestWait)
+}
+
+func (c *Chooser) waiting() bool {
+	return c.wait > 0 && c.now.Sub(c.outage) < c.wait
+}
+
+func (c *Chooser) live(entry *server) bool {
+	return entry != nil && entry.seen && entry.misses < missesToLeave && (entry.broken.IsZero() || c.now.Sub(entry.broken) >= steady)
 }
 
 func (c *Chooser) Current(connected bool) string {
 	best := ""
 	for name, entry := range c.servers {
-		if !live(entry) {
+		if !c.live(entry) {
 			continue
 		}
 		if chosen := c.servers[best]; best == "" || entry.rtt < chosen.rtt || (entry.rtt == chosen.rtt && name < best) {
 			best = name
 		}
 	}
-	current := c.servers[c.current]
+	current, was := c.servers[c.current], c.current
 	switch {
 	case best == "":
 		if current == nil {
 			c.current = ""
 		}
-	case !live(current):
+	case !c.live(current):
 		c.current = best
-	case connected && best != c.current && c.servers[best].rtt*5 <= current.rtt*4 && c.now.Sub(c.servers[best].since) >= steady:
+	case connected && c.wait == 0 && best != c.current && c.servers[best].rtt*5 <= current.rtt*4 && c.now.Sub(c.servers[best].since) >= steady:
 		c.current = best
+	}
+	if c.current != was {
+		c.chosen = c.now
 	}
 	return c.current
 }

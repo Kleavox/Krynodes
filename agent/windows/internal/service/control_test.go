@@ -35,13 +35,13 @@ func TestDisconnectLastsUntilTheServiceRestarts(t *testing.T) {
 	again.refresh()
 	again.mu.Unlock()
 	again.push()
-	if len(restarted) != 1 || len(restarted[0].Peers) != 1 || !again.Status(0).Connected {
+	if len(restarted) != 1 || len(restarted[0].Peers) != 2 || !again.Status(0).Connected {
 		t.Fatalf("a restart did not connect: %+v", restarted)
 	}
 	if err := f.service.Connect(true); err != nil {
 		t.Fatal(err)
 	}
-	if up := f.last(); len(up.Peers) != 1 {
+	if up := f.last(); len(up.Peers) != 2 {
 		t.Fatalf("connected tunnel %+v", up)
 	}
 }

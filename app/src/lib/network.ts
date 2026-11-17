@@ -2202,6 +2202,37 @@ async function pairKey(
   b.psk[a.node] = forB;
 }
 
+function placeRelays(members: NetworkMember[]) {
+  const behind = members
+    .filter((member) => member.kind !== "laptop" && member.nat && !member.cut)
+    .map((member) => member.node);
+  const laptops = members.filter((member) => member.kind === "laptop");
+  const held = laptops.map((laptop) =>
+    Object.fromEntries(
+      Object.entries(laptop.relay ?? {}).filter(([node]) =>
+        behind.includes(node),
+      ),
+    ),
+  );
+  const used = new Set(held.flatMap((relay) => Object.values(relay)));
+  let next = NETWORK.relayPort;
+  for (const [index, laptop] of laptops.entries()) {
+    const relay = held[index]!;
+    for (const node of behind) {
+      if (relay[node] !== undefined) continue;
+      while (used.has(next)) next++;
+      if (next > NETWORK.lastRelayPort) {
+        throw new Error(
+          "There is no relay port left for another laptop and server behind NAT. Remove a laptop or a server behind NAT first.",
+        );
+      }
+      used.add(next);
+      relay[node] = next;
+    }
+    laptop.relay = relay;
+  }
+}
+
 export async function buildDocument(
   current: NetworkDocument | null,
   change: DocumentChange,
@@ -2342,5 +2373,6 @@ export async function buildDocument(
   if (parent) next.parent = parent;
   else delete next.parent;
   if (knocks && change.kind !== "delete") next.knocks = knocks;
+  placeRelays(next.members);
   return networkDocumentSchema.parse(next);
 }

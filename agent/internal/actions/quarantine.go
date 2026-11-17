@@ -13,6 +13,7 @@ import (
 )
 
 func (e Executor) dropMember(ctx context.Context, request Request, args map[string]string) Result {
+	defer e.lockNetwork()()
 	node, key := args["node"], args["key"]
 	address, err := netip.ParseAddr(args["address"])
 	raw, keyErr := base64.StdEncoding.DecodeString(key)
@@ -76,6 +77,7 @@ func (e Executor) dropMember(ctx context.Context, request Request, args map[stri
 }
 
 func (e Executor) tighten(request Request, args map[string]string) Result {
+	defer e.lockNetwork()()
 	scan, err := strconv.Atoi(args["scan"])
 	if len(args) != 2 || err != nil || !slices.Contains([]int{5, 10, 20}, scan) || (args["stop"] != "true" && args["stop"] != "false") {
 		return e.refuse(request.ID, errors.New("a scan counts from 5, 10 or 20 places, and a stack stops or only warns"))

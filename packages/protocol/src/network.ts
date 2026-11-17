@@ -6,6 +6,8 @@ export const NETWORK = {
   interface: "kry0",
   port: 51820,
   lastPort: 51919,
+  relayPort: 51920,
+  lastRelayPort: 52175,
   pool: "10.88.0.0/16",
   pool6: "fd88:88::/64",
   keepalive: 25,
@@ -63,6 +65,11 @@ const b64url = z
   .max(4096)
   .regex(/^[A-Za-z0-9_-]+$/u);
 const port = z.number().int().min(NETWORK.port).max(NETWORK.lastPort);
+const relayPort = z
+  .number()
+  .int()
+  .min(NETWORK.relayPort)
+  .max(NETWORK.lastRelayPort);
 const mtu = z.number().int().min(1280).max(1500);
 const endpoint = z
   .string()
@@ -84,6 +91,7 @@ const memberSchema = z.strictObject({
   nat: z.boolean(),
   psk: z.record(z.string().uuid(), b64url),
   kind: z.enum(["laptop"]).optional(),
+  relay: z.record(z.string().uuid(), relayPort).optional(),
   exit: z.literal(true).optional(),
   rekey: z.literal(true).optional(),
   cut: z.literal(true).optional(),
@@ -94,15 +102,26 @@ type Member = z.infer<typeof memberSchema>;
 const isLaptop = (member: Member) => member.kind === "laptop";
 
 export function links(a: Member, b: Member): boolean {
-  if (isLaptop(a) && isLaptop(b)) return false;
-  if (isLaptop(a)) return !b.nat;
-  if (isLaptop(b)) return !a.nat;
-  return true;
+  return !(isLaptop(a) && isLaptop(b));
 }
 
 const ipv4 = z.string().regex(IPV4);
 
-const distinct = (values: string[]) => new Set(values).size === values.length;
+const distinct = (values: (string | number)[]) =>
+  new Set(values).size === values.length;
+
+const relayed = (member: Member) =>
+  !isLaptop(member) && member.nat && member.cut === undefined;
+
+function relayHeld(member: Member, behind: string[]): boolean {
+  const { relay } = member;
+  if (!isLaptop(member)) return relay === undefined;
+  return (
+    relay !== undefined &&
+    Object.keys(relay).length === behind.length &&
+    behind.every((node) => Object.hasOwn(relay, node))
+  );
+}
 
 export const networkDocumentSchema = z
   .strictObject({
@@ -128,10 +147,14 @@ export const networkDocumentSchema = z
   })
   .refine((document) => {
     const nodes = new Set(document.members.map((member) => member.node));
+    const behind = document.members.filter(relayed).map((one) => one.node);
     return (
       nodes.size === document.members.length &&
       distinct(document.members.map((member) => member.address)) &&
       distinct(document.members.map((member) => member.key)) &&
+      distinct(
+        document.members.flatMap((member) => Object.values(member.relay ?? {})),
+      ) &&
       document.members.every((member) => {
         const linked = document.members
           .filter((other) => other !== member && links(member, other))
@@ -141,6 +164,7 @@ export const networkDocumentSchema = z
           inRange(document.range, member.address) &&
           !document.blocked.includes(member.key) &&
           (member.exit === undefined || (!isLaptop(member) && !member.nat)) &&
+          relayHeld(member, behind) &&
           held.length === linked.length &&
           linked.every((peer) => Object.hasOwn(member.psk, peer))
         );

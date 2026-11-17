@@ -1,6 +1,7 @@
 package network
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -95,13 +96,13 @@ func laptopNetwork() Document {
 		{Node: nodeA, Name: "server-2", Address: "10.88.0.1", Key: "key-a", Port: 51820, Endpoint: endpoint("203.0.113.1:51820")},
 		{Node: nodeB, Name: "server-3", Address: "10.88.0.2", Key: "key-b", Port: 51820, Endpoint: endpoint("203.0.113.2:51820")},
 		{Node: nodeC, Name: "server-1", Address: "10.88.0.3", Key: "key-c", Port: 51820, NAT: true},
-		{Node: nodeL, Name: "laptop-1", Address: "10.88.0.9", Key: "key-l", Port: 51820, NAT: true, Kind: "laptop", Endpoint: endpoint("203.0.113.9:51820")},
+		{Node: nodeL, Name: "laptop-1", Address: "10.88.0.9", Key: "key-l", Port: 51820, NAT: true, Kind: "laptop", Endpoint: endpoint("203.0.113.9:51820"), Relay: Relays{nodeC: 51920}},
 	}}
 }
 
 var laptopPSK = map[string]string{nodeA: "psk-a", nodeB: "psk-b", nodeC: "psk-c", nodeL: "psk-l"}
 
-func TestRenderOnANATMemberPutsLaptopsOnTheMeetingPeer(t *testing.T) {
+func TestRenderOnANATMemberReachesEachLaptopThroughItsRelayPort(t *testing.T) {
 	document := laptopNetwork()
 	config := Render(document, document.Members[2], "private", laptopPSK, map[string]string{nodeL: nodeB}, false)
 	want := `[Interface]
@@ -120,8 +121,15 @@ PersistentKeepalive = 25
 [Peer]
 PublicKey = key-b
 PresharedKey = psk-b
-AllowedIPs = 10.88.0.2/32, 10.88.0.9/32
+AllowedIPs = 10.88.0.2/32
 Endpoint = 203.0.113.2:51820
+PersistentKeepalive = 25
+
+[Peer]
+PublicKey = key-l
+PresharedKey = psk-l
+AllowedIPs = 10.88.0.9/32
+Endpoint = 203.0.113.2:51920
 PersistentKeepalive = 25
 `
 	if config != want {
@@ -130,8 +138,8 @@ PersistentKeepalive = 25
 }
 
 func TestRenderOnANATMemberFallsBackToTheDefaultMeeting(t *testing.T) {
-	onA := "AllowedIPs = 10.88.0.1/32, 10.88.0.9/32\n"
-	onB := "AllowedIPs = 10.88.0.2/32, 10.88.0.9/32\n"
+	onA := "Endpoint = 203.0.113.1:51920\n"
+	onB := "Endpoint = 203.0.113.2:51920\n"
 	cases := []struct {
 		name     string
 		change   func(*Document)
@@ -145,21 +153,75 @@ func TestRenderOnANATMemberFallsBackToTheDefaultMeeting(t *testing.T) {
 		{"a hint naming a cut member", func(document *Document) { document.Members[1].Cut = true }, map[string]string{nodeL: nodeB}, onA},
 		{"the first public member cut", func(document *Document) { document.Members[0].Cut = true }, nil, onB},
 		{"the first public member without an endpoint", func(document *Document) { document.Members[0].Endpoint = nil }, nil, onB},
+		{"an IPv6 meeting point", func(document *Document) { ipv6 := "[2001:db8::2]:51820"; document.Members[1].Endpoint = &ipv6 }, map[string]string{nodeL: nodeB}, "Endpoint = [2001:db8::2]:51920\n"},
 		{"no public member", func(document *Document) { document.Members[0].NAT, document.Members[1].NAT = true, true }, nil, ""},
 	}
 	for _, entry := range cases {
 		document := laptopNetwork()
 		entry.change(&document)
 		config := Render(document, document.Members[2], "private", laptopPSK, entry.meetings, false)
+		laptop := config[strings.Index(config, "PublicKey = key-l"):]
+		if !strings.Contains(laptop, "AllowedIPs = 10.88.0.9/32\n") || strings.Count(config, "10.88.0.9") != 1 || !strings.HasSuffix(laptop, "PersistentKeepalive = 25\n") {
+			t.Errorf("%s:\n%s", entry.name, config)
+		}
 		if entry.want == "" {
-			if strings.Contains(config, "10.88.0.9") || DefaultMeeting(document) != "" {
+			if strings.Contains(laptop, "Endpoint") || DefaultMeeting(document) != "" {
 				t.Errorf("%s:\n%s", entry.name, config)
 			}
 			continue
 		}
-		if !strings.Contains(config, entry.want) || strings.Count(config, "10.88.0.9") != 1 || strings.Contains(config, "key-l") {
+		if !strings.Contains(laptop, entry.want) || strings.Count(config, ":51920") != 1 {
 			t.Errorf("%s:\n%s", entry.name, config)
 		}
+	}
+}
+
+func TestARemovedLaptopLeavesNoPeerAndNoPair(t *testing.T) {
+	for name, change := range map[string]func(*Document){
+		"cut":  func(document *Document) { document.Members[3].Cut = true },
+		"gone": func(document *Document) { document.Members = document.Members[:3] },
+	} {
+		document := laptopNetwork()
+		change(&document)
+		for _, self := range document.Members[:3] {
+			if config := Render(document, self, "private", laptopPSK, map[string]string{nodeL: nodeB}, false); strings.Contains(config, "key-l") || strings.Contains(config, "10.88.0.9") || strings.Contains(config, ":51920") {
+				t.Errorf("%s: %s keeps the laptop:\n%s", name, self.Name, config)
+			}
+		}
+		if pairs := Pairs(document); len(pairs) != 0 {
+			t.Errorf("%s: pairs %+v", name, pairs)
+		}
+	}
+}
+
+func TestALaptopWithNoServerBehindNATHasNoPair(t *testing.T) {
+	document := laptopNetwork()
+	document.Members = slices.Delete(document.Members, 2, 3)
+	document.Members[2].Relay = Relays{}
+	if pairs := Pairs(document); len(pairs) != 0 {
+		t.Fatalf("pairs %+v", pairs)
+	}
+	if _, ok := RelayEndpoint(document, nodeA, nodeL, nodeA); ok {
+		t.Fatal("a public member has no relay port")
+	}
+	config := Render(document, document.Members[0], "private", laptopPSK, nil, false)
+	if !strings.HasSuffix(config, "\n[Peer]\nPublicKey = key-l\nPresharedKey = psk-l\nAllowedIPs = 10.88.0.9/32\nPersistentKeepalive = 25\n") {
+		t.Fatalf("server-2's config:\n%s", config)
+	}
+}
+
+func TestEachLaptopAndNATMemberPairHasItsPort(t *testing.T) {
+	document := laptopNetwork()
+	behind := Member{Node: "44444444-4444-4444-8444-444444444444", Name: "server-4", Address: "10.88.0.4", Key: "key-d", Port: 51820, NAT: true}
+	document.Members = append(document.Members, behind)
+	document.Members[3].Relay["44444444-4444-4444-8444-444444444444"] = 51921
+	pairs := Pairs(document)
+	if len(pairs) != 2 || pairs[0].Port != 51920 || pairs[0].Laptop.Key != "key-l" || pairs[0].NAT.Key != "key-c" || pairs[1].Port != 51921 || pairs[1].NAT.Key != "key-d" {
+		t.Fatalf("pairs %+v", pairs)
+	}
+	document.Members[4].Cut = true
+	if pairs := Pairs(document); len(pairs) != 1 || pairs[0].NAT.Key != "key-c" {
+		t.Fatalf("a cut NAT member keeps its pair: %+v", pairs)
 	}
 }
 

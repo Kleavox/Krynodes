@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import document from "./fixtures/network-document.json";
+import laptopDocument from "./fixtures/network-document-laptop.json";
 import {
   agentActionSchema,
   agentHeartbeatSchema,
@@ -36,11 +37,20 @@ describe("the network document", () => {
       interface: "kry0",
       port: 51820,
       lastPort: 51919,
+      relayPort: 51920,
+      lastRelayPort: 52175,
       pool: "10.88.0.0/16",
       keepalive: 25,
       answerSeconds: 180,
       mtuMargin: 80,
     });
+  });
+
+  it("reads the shared laptop fixture with its relay port", () => {
+    const parsed = networkDocumentSchema.safeParse(laptopDocument);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.members[2]?.relay).toEqual({ [B]: 51920 });
+    expect(parsed.data?.members[0]?.relay).toBeUndefined();
   });
 
   it("refuses an address outside the range or given twice", () => {
@@ -141,23 +151,36 @@ describe("laptops on the network", () => {
   const document = (
     members: NetworkMember[],
     extra: Record<string, unknown> = {},
-  ) => ({
-    v: 1,
-    version: 1,
-    range: "10.88.0.0/24",
-    port: 51820,
-    mtu: 1420,
-    members: members.map((one) => ({
-      ...one,
-      psk: Object.fromEntries(
-        members
-          .filter((other) => other.node !== one.node && links(one, other))
-          .map((other) => [other.node, "eyJ2IjoxfQ"]),
-      ),
-    })),
-    blocked: [],
-    ...extra,
-  });
+  ) => {
+    const behind = members.filter(
+      (one) => one.kind !== "laptop" && one.nat && !one.cut,
+    );
+    let next = NETWORK.relayPort;
+    return {
+      v: 1,
+      version: 1,
+      range: "10.88.0.0/24",
+      port: 51820,
+      mtu: 1420,
+      members: members.map((one) => ({
+        ...one,
+        psk: Object.fromEntries(
+          members
+            .filter((other) => other.node !== one.node && links(one, other))
+            .map((other) => [other.node, "eyJ2IjoxfQ"]),
+        ),
+        ...(one.kind === "laptop"
+          ? {
+              relay: Object.fromEntries(
+                behind.map((nat) => [nat.node, next++]),
+              ),
+            }
+          : {}),
+      })),
+      blocked: [],
+      ...extra,
+    };
+  };
   const parses = (value: unknown) =>
     networkDocumentSchema.safeParse(value).success;
   const withMembers = (
@@ -171,11 +194,11 @@ describe("laptops on the network", () => {
   const named = (made: ReturnType<typeof document>, who: NetworkMember) =>
     made.members.find((one) => one.node === who.node)!;
 
-  it("a laptop links with public members only", () => {
+  it("a laptop links with every member except another laptop", () => {
     expect(links(laptop, publicServer)).toBe(true);
     expect(links(publicServer, laptop)).toBe(true);
-    expect(links(laptop, natServer)).toBe(false);
-    expect(links(natServer, laptop)).toBe(false);
+    expect(links(laptop, natServer)).toBe(true);
+    expect(links(natServer, laptop)).toBe(true);
     expect(links(laptop, otherLaptop)).toBe(false);
     expect(links(publicServer, natServer)).toBe(true);
     expect(links(natServer, member(5, { nat: true }))).toBe(true);
@@ -184,28 +207,40 @@ describe("laptops on the network", () => {
   it("a document with laptops parses, and each member holds a psk for exactly the members it links with", () => {
     const all = [publicServer, natServer, laptop, otherLaptop];
     expect(parses(document(all))).toBe(true);
-    expect(Object.keys(named(document(all), laptop).psk)).toEqual([
-      publicServer.node,
-    ]);
+    expect(Object.keys(named(document(all), laptop).psk).sort()).toEqual(
+      [publicServer.node, natServer.node].sort(),
+    );
     expect(Object.keys(named(document(all), natServer).psk).sort()).toEqual(
-      [publicServer.node].sort(),
+      [publicServer.node, laptop.node, otherLaptop.node].sort(),
     );
   });
 
-  it("a document whose laptop has a psk for a NAT member is refused", () => {
+  it("a document whose laptop and NAT member lack each other's psk is refused", () => {
     const all = [publicServer, natServer, laptop];
     expect(
       parses(
         withMembers(all, (made) => {
-          named(made, laptop).psk[natServer.node] = "eyJ2IjoxfQ";
-          named(made, natServer).psk[laptop.node] = "eyJ2IjoxfQ";
+          delete named(made, laptop).psk[natServer.node];
         }),
       ),
     ).toBe(false);
     expect(
       parses(
         withMembers(all, (made) => {
-          named(made, laptop).psk[natServer.node] = "eyJ2IjoxfQ";
+          delete named(made, natServer).psk[laptop.node];
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("a document with a psk between two laptops is refused", () => {
+    const all = [publicServer, laptop, otherLaptop];
+    expect(parses(document(all))).toBe(true);
+    expect(
+      parses(
+        withMembers(all, (made) => {
+          named(made, laptop).psk[otherLaptop.node] = "eyJ2IjoxfQ";
+          named(made, otherLaptop).psk[laptop.node] = "eyJ2IjoxfQ";
         }),
       ),
     ).toBe(false);
@@ -231,6 +266,158 @@ describe("laptops on the network", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  describe("relay ports", () => {
+    const secondNat = member(5, { nat: true });
+    const cutNat = member(6, { nat: true, cut: true });
+    const all = [publicServer, natServer, laptop];
+    const relayOf = (made: ReturnType<typeof document>, who = laptop) =>
+      named(made, who).relay!;
+
+    it("a laptop holds exactly one port for each server behind NAT, from the relay range", () => {
+      expect(parses(document(all))).toBe(true);
+      expect(parses(document([publicServer, laptop]))).toBe(true);
+      expect(
+        parses(document([publicServer, natServer, secondNat, laptop])),
+      ).toBe(true);
+      expect(
+        parses(
+          document([publicServer, natServer, secondNat, laptop, otherLaptop]),
+        ),
+      ).toBe(true);
+      for (const port of [NETWORK.relayPort, NETWORK.lastRelayPort]) {
+        expect(
+          parses(
+            withMembers(all, (made) => {
+              relayOf(made)[natServer.node] = port;
+            }),
+          ),
+        ).toBe(true);
+      }
+    });
+
+    it("a missing port, or a laptop without relay, is refused", () => {
+      expect(
+        parses(
+          withMembers(all, (made) => {
+            named(made, laptop).relay = {};
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        parses(
+          withMembers(all, (made) => {
+            delete named(made, laptop).relay;
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        parses(
+          withMembers([publicServer, laptop], (made) => {
+            delete named(made, laptop).relay;
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        parses(
+          withMembers([publicServer, natServer, secondNat, laptop], (made) => {
+            delete relayOf(made)[secondNat.node];
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("a duplicate port is refused on one laptop and across laptops", () => {
+      expect(
+        parses(
+          withMembers([publicServer, natServer, secondNat, laptop], (made) => {
+            relayOf(made)[secondNat.node] = relayOf(made)[natServer.node]!;
+          }),
+        ),
+      ).toBe(false);
+      expect(
+        parses(
+          withMembers(
+            [publicServer, natServer, laptop, otherLaptop],
+            (made) => {
+              relayOf(made, otherLaptop)[natServer.node] =
+                relayOf(made)[natServer.node]!;
+            },
+          ),
+        ),
+      ).toBe(false);
+    });
+
+    it("a port outside the relay range is refused", () => {
+      for (const port of [
+        0,
+        NETWORK.lastPort,
+        NETWORK.relayPort - 1,
+        NETWORK.lastRelayPort + 1,
+        51920.5,
+        65536,
+      ]) {
+        expect(
+          parses(
+            withMembers(all, (made) => {
+              relayOf(made)[natServer.node] = port;
+            }),
+          ),
+        ).toBe(false);
+      }
+    });
+
+    it("a port for anyone but a server behind NAT is refused", () => {
+      const extra = (node: string) =>
+        parses(
+          withMembers(all, (made) => {
+            relayOf(made)[node] = NETWORK.relayPort + 9;
+          }),
+        );
+      expect(extra(publicServer.node)).toBe(false);
+      expect(extra(laptop.node)).toBe(false);
+      expect(extra(otherLaptop.node)).toBe(false);
+      expect(extra(id(9))).toBe(false);
+      expect(extra("not-an-id")).toBe(false);
+    });
+
+    it("a cut NAT member holds no port, and is refused one", () => {
+      const members = [publicServer, natServer, cutNat, laptop];
+      expect(parses(document(members))).toBe(true);
+      expect(Object.keys(relayOf(document(members)))).toEqual([natServer.node]);
+      expect(
+        parses(
+          withMembers(members, (made) => {
+            relayOf(made)[cutNat.node] = NETWORK.relayPort + 9;
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("only a laptop has relay ports", () => {
+      for (const who of [publicServer, natServer]) {
+        expect(
+          parses(
+            withMembers(all, (made) => {
+              named(made, who).relay = {};
+            }),
+          ),
+        ).toBe(false);
+      }
+    });
+
+    it("a relay of null is refused on every member", () => {
+      for (const who of [publicServer, natServer, laptop]) {
+        expect(
+          parses(
+            withMembers(all, (made) => {
+              (named(made, who) as { relay?: unknown }).relay = null;
+            }),
+          ),
+        ).toBe(false);
+      }
+    });
   });
 
   it("only laptop is a kind", () => {

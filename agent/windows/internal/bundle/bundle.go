@@ -8,8 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-
-	"github.com/Kleavox/krynodes/agent/internal/safefile"
 )
 
 const (
@@ -26,10 +24,6 @@ func Missing() error {
 	return missing(files)
 }
 
-func Unpack(dir string) error {
-	return unpack(files, dir)
-}
-
 func missing(from fs.FS) error {
 	if _, err := fs.Stat(from, path.Join(root, Wintun)); err != nil {
 		return ErrNoWintun
@@ -37,7 +31,7 @@ func missing(from fs.FS) error {
 	return nil
 }
 
-func unpack(from fs.FS, dir string) error {
+func unpack(from fs.FS, dir string, folder func(dir string) error, write func(path string, data []byte) error) error {
 	if err := missing(from); err != nil {
 		return err
 	}
@@ -57,9 +51,9 @@ func unpack(from fs.FS, dir string) error {
 		if current, err := os.ReadFile(target); err == nil && bytes.Equal(current, data) {
 			return nil
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := folder(filepath.Dir(target)); err != nil {
 			return err
 		}
-		return safefile.Write(target, data, 0o644)
+		return write(target, data)
 	})
 }

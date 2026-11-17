@@ -262,12 +262,14 @@ export interface Change {
   detail?: string | null;
   signers: string[];
   sealKeys?: Record<string, string>;
+  refusal?: string | null;
 }
 
 async function signChange(input: Change) {
   if (input.signers.length === 0) {
     throw new Error(
-      "None of your passkeys has access to every server in the network. Change access in Passkeys.",
+      input.refusal ??
+        "None of your passkeys has access to every server in the network. Change access in Passkeys.",
     );
   }
   const session = await openSession(input.signers);
@@ -471,6 +473,7 @@ export function useAsk<T>(action: "inspect" | "probe") {
 export function useNetworkKeys(
   members: Pick<NetworkView["members"][number], "nodeId" | "state">[],
   joining: string[] = [],
+  leaving?: { nodeId: string; name: string },
 ) {
   const devices = useDevices().data?.devices ?? [];
   const reports = useServices().data?.nodes ?? [];
@@ -478,19 +481,40 @@ export function useNetworkKeys(
   const trust = new Map(reports.map((entry) => [entry.id, entry.trust]));
   const ids = [
     ...members
-      .filter((member) => member.state === "in")
+      .filter(
+        (member) => member.state === "in" && member.nodeId !== leaving?.nodeId,
+      )
       .map((member) => member.nodeId),
     ...joining,
   ];
+  const rest = networkSigners(
+    devices,
+    serverIds(ids, laptops).map((id) => trust.get(id) ?? null),
+  );
+  const left = leaving ? (trust.get(leaving.nodeId) ?? null) : null;
+  const all = leaving
+    ? rest.filter((id) =>
+        devices.some(
+          (device) =>
+            device.id === id && left?.access.includes(device.fingerprint),
+        ),
+      )
+    : rest;
+  const followed = preferFollowed(
+    devices,
+    all.length > 0 ? all : rest,
+    laptops.filter((laptop) => ids.includes(laptop.nodeId)),
+  );
   return {
-    ...preferFollowed(
-      devices,
-      networkSigners(
-        devices,
-        serverIds(ids, laptops).map((id) => trust.get(id) ?? null),
-      ),
-      laptops.filter((laptop) => ids.includes(laptop.nodeId)),
-    ),
+    signers: followed.signers,
+    unfollowed: [
+      ...(leaving && all.length === 0 && rest.length > 0
+        ? [
+            `${leaving.name} does not trust this passkey and will not take down its own network. Every other server drops it at once.`,
+          ]
+        : []),
+      ...followed.unfollowed,
+    ],
     sealKeys: {
       ...Object.fromEntries(
         reports.flatMap((entry) =>

@@ -12,6 +12,7 @@ type Peer struct {
 	PresharedKey        string
 	Endpoint            string
 	Pin                 string
+	Relay               bool
 	AllowedIPs          []string
 	PersistentKeepalive int
 }
@@ -43,33 +44,35 @@ func meetingOf(signed network.Document, meeting string, held []string) string {
 	return network.DefaultMeeting(signed)
 }
 
-func laptopPeers(document network.Document, self network.Member, meeting string, exit string, psk map[string]string) []Peer {
-	var behind []string
-	for _, entry := range document.Members {
-		if entry.NAT && !entry.IsLaptop() && !entry.Cut {
-			behind = append(behind, entry.Address+"/32")
-		}
-	}
+func laptopPeers(document, signed network.Document, self network.Member, meeting string, exit string, psk map[string]string) []Peer {
 	var peers []Peer
 	for _, entry := range document.Members {
-		if entry.Node == self.Node || entry.Cut || entry.Endpoint == nil || !network.Links(self, entry) {
+		if entry.Node == self.Node || entry.Cut || !network.Links(self, entry) || (!entry.NAT && entry.Endpoint == nil) {
 			continue
 		}
-		allowed := []string{entry.Address + "/32"}
-		if entry.Node == meeting {
-			allowed = append(allowed, behind...)
-		}
-		if entry.Node == exit && entry.Exit {
-			allowed = append(allowed, "0.0.0.0/0", "::/0")
-		}
-		peers = append(peers, Peer{
+		peer := Peer{
 			Node:                entry.Node,
 			Key:                 entry.Key,
 			PresharedKey:        psk[entry.Node],
-			Endpoint:            *entry.Endpoint,
-			AllowedIPs:          allowed,
+			AllowedIPs:          []string{entry.Address + "/32"},
 			PersistentKeepalive: network.Keepalive,
-		})
+		}
+		switch {
+		case entry.NAT:
+			peer.Relay = true
+			if endpoint, ok := network.RelayEndpoint(signed, meeting, self.Node, entry.Node); ok && meeting != "" {
+				peer.Endpoint, peer.Pin = endpoint, endpoint
+			}
+		default:
+			peer.Endpoint = *entry.Endpoint
+			if listed, ok := member(signed, entry.Node); ok && listed.Endpoint != nil && !listed.NAT {
+				peer.Pin = *listed.Endpoint
+			}
+		}
+		if entry.Node == exit && entry.Exit {
+			peer.AllowedIPs = append(peer.AllowedIPs, "0.0.0.0/0", "::/0")
+		}
+		peers = append(peers, peer)
 	}
 	return peers
 }

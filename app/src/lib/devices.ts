@@ -141,6 +141,25 @@ export const networkSigners = (
     ? devices.filter(usable).map((device) => device.id)
     : signersFor(devices, members);
 
+export function deleteRefusal(
+  devices: DeviceRecord[],
+  members: { name: string; trust: NodeTrust | null }[],
+): string | null {
+  const shared = (list: typeof members) =>
+    signersFor(
+      devices,
+      list.map((member) => member.trust),
+    ).length > 0;
+  if (members.length < 2 || shared(members)) return null;
+  const names = members
+    .filter((member) => shared(members.filter((other) => other !== member)))
+    .map((member) => member.name);
+  if (names.length === 0) return null;
+  return names.length === 1
+    ? `${names[0]} trusts none of the passkeys the others trust. Remove it from the network first, then delete the network.`
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)} each trust none of the passkeys the others trust. Remove one of them from the network first, then delete the network.`;
+}
+
 export function preferFollowed(
   devices: DeviceRecord[],
   signers: string[],

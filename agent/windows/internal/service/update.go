@@ -34,6 +34,7 @@ type Release struct {
 	Latest     func(ctx context.Context) (string, error)
 	Fetch      func(ctx context.Context, url string) ([]byte, error)
 	Run        func(path string) (string, error)
+	Write      func(path string, data []byte) error
 }
 
 func LatestFrom(location string) (string, bool) {
@@ -76,7 +77,7 @@ func (r Release) Update(ctx context.Context) (string, error) {
 	if err := update.Verify(binary, checksum, signature, r.Key); err != nil {
 		return "", fmt.Errorf("refusing %s: %w", latest, err)
 	}
-	return latest, swapIn(r.Executable, binary, func(staged string) error {
+	return latest, swapIn(r.Write, r.Executable, binary, func(staged string) error {
 		reported, err := r.Run(staged)
 		if err != nil || strings.TrimSpace(reported) != latest {
 			if err == nil {
@@ -88,10 +89,10 @@ func (r Release) Update(ctx context.Context) (string, error) {
 	})
 }
 
-func swapIn(executable string, binary []byte, check func(staged string) error) error {
+func swapIn(write func(path string, data []byte) error, executable string, binary []byte, check func(staged string) error) error {
 	dir := filepath.Dir(executable)
 	staged := filepath.Join(dir, stagedName)
-	if err := writeSynced(staged, binary); err != nil {
+	if err := write(staged, binary); err != nil {
 		_ = os.Remove(staged)
 		return fmt.Errorf("stage the new agent: %w", err)
 	}
@@ -140,22 +141,6 @@ func clearOld(old string) error {
 		return err
 	}
 	return rename(old, strings.TrimSuffix(old, ".exe")+"."+hex.EncodeToString(suffix)+".exe")
-}
-
-func writeSynced(path string, data []byte) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	return file.Close()
 }
 
 func Tidy(executable string) {

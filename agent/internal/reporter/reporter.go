@@ -94,6 +94,7 @@ type NetworkReply struct {
 	Announced []NetworkAnnounced `json:"announced,omitempty"`
 	Meetings  []NetworkMeeting   `json:"meetings,omitempty"`
 	Held      []string           `json:"held,omitempty"`
+	Connected []string           `json:"connected,omitempty"`
 }
 
 type NetworkMeeting struct {

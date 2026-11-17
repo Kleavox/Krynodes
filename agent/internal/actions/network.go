@@ -30,6 +30,7 @@ const (
 	networkTools = "wireguard-tools"
 	networkUnit  = "wg-quick@kry0.service"
 	linksFile    = "network-links.json"
+	networkLock  = "network.lock"
 	linksFresh   = 2 * time.Minute
 	resendEvery  = 10 * time.Minute
 )
@@ -74,6 +75,7 @@ type networkRecord struct {
 	Dropped   []string                  `json:"dropped,omitempty"`
 	Tightened *network.Knocks           `json:"tightened,omitempty"`
 	Meetings  map[string]string         `json:"meetings,omitempty"`
+	Relays    []int                     `json:"relays,omitempty"`
 }
 
 type networkLinks struct {
@@ -92,6 +94,15 @@ func (e Executor) readNetwork() networkRecord {
 
 func (e Executor) saveNetwork(record networkRecord) error {
 	return writeJSON(e.StateDir, "network.json", record, 0o644)
+}
+
+func (e Executor) updateNetwork(change func(*networkRecord) bool) error {
+	defer e.lockNetwork()()
+	record := e.readNetwork()
+	if !change(&record) {
+		return nil
+	}
+	return e.saveNetwork(record)
 }
 
 func (e Executor) network(ctx context.Context, request Request) (Result, bool) {
@@ -192,9 +203,9 @@ func (e Executor) applyNetwork(ctx context.Context, request Request) Result {
 }
 
 func (e Executor) prepareNetwork(ctx context.Context, networkRange string, port int) (reporter.NetworkPrepared, error) {
-	record := e.readNetwork()
-	if record.Joined {
-		return reporter.NetworkPrepared{}, errors.New("this server is already in the private network")
+	joined := errors.New("this server is already in the private network")
+	if e.readNetwork().Joined {
+		return reporter.NetworkPrepared{}, joined
 	}
 	found := network.Read(ctx, e.Root, network.Runner(e.Run))
 	if port == 0 && found.Port != nil {
@@ -210,13 +221,20 @@ func (e Executor) prepareNetwork(ctx context.Context, networkRange string, port 
 	case network.Clashes(networkRange, found.Used):
 		return reporter.NetworkPrepared{}, fmt.Errorf("%s is already used on this server", networkRange)
 	}
+	installed := false
 	if !found.Tools {
-		installed, err := recipes.Install(ctx, e.recipeEnv(), networkTools)
+		names, err := recipes.Install(ctx, e.recipeEnv(), networkTools)
 		if err != nil {
 			return reporter.NetworkPrepared{}, fmt.Errorf("install %s: %w", networkTools, err)
 		}
-		record.Tools = record.Tools || slices.Contains(strings.Fields(installed), networkTools)
+		installed = slices.Contains(strings.Fields(names), networkTools)
 	}
+	defer e.lockNetwork()()
+	record := e.readNetwork()
+	if record.Joined {
+		return reporter.NetworkPrepared{}, joined
+	}
+	record.Tools = record.Tools || installed
 	keys, err := network.Load(e.networkDir(), true)
 	if err != nil {
 		return reporter.NetworkPrepared{}, err
@@ -230,14 +248,18 @@ func (e Executor) prepareNetwork(ctx context.Context, networkRange string, port 
 }
 
 func (e Executor) unprepareNetwork(ctx context.Context) error {
+	unlock := e.lockNetwork()
 	record := e.readNetwork()
 	if record.Joined {
+		unlock()
 		return errors.New("this server is in the private network; remove it from the network instead")
 	}
 	problems := e.takeDown(ctx, record)
 	if err := e.saveNetwork(networkRecord{Applied: record.Applied}); err != nil {
 		problems = append(problems, err.Error())
 	}
+	unlock()
+	problems = append(problems, e.leaveTools(ctx, record)...)
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
 	}
@@ -258,20 +280,34 @@ func (e Executor) takeDown(ctx context.Context, record networkRecord) []string {
 		if record.Firewall == "ufw" {
 			numbered, _ = e.output(ctx, "ufw", "status", "numbered")
 		}
-		for _, command := range network.Close(record.Firewall, record.Port, numbered) {
+		for _, command := range network.Close(record.Firewall, append([]int{record.Port}, record.Relays...), numbered) {
 			step("firewall", e.networkCommand(ctx, command[0], command[1:]...))
 		}
 		e.dropRules(ctx)
-		step("laptop relay and exit", e.dropExit(ctx))
+		step("laptop exit", e.dropExit(ctx))
 		step("remove the Docker drop-in", os.Remove(e.path(network.DropInPath)))
 		step("reload systemd", e.networkCommand(ctx, "systemctl", "daemon-reload"))
 		step("hosts", e.writeHosts(nil))
 	}
 	step("remove the network key", network.Forget(e.networkDir()))
-	if record.Tools && len(network.Read(ctx, e.Root, network.Runner(e.Run)).Others) == 0 {
-		step("remove "+networkTools, recipes.Purge(ctx, e.recipeEnv(), networkTools))
-	}
 	return problems
+}
+
+func (e Executor) purgeTools(ctx context.Context, record networkRecord) []string {
+	if !record.Tools || len(network.Read(ctx, e.Root, network.Runner(e.Run)).Others) > 0 {
+		return nil
+	}
+	if err := recipes.Purge(ctx, e.recipeEnv(), networkTools); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return []string{"remove " + networkTools + ": " + err.Error()}
+	}
+	return nil
+}
+
+func (e Executor) leaveTools(ctx context.Context, record networkRecord) []string {
+	if e.readNetwork().Key != "" {
+		return nil
+	}
+	return e.purgeTools(ctx, record)
 }
 
 func (e Executor) networkCommand(ctx context.Context, name string, args ...string) error {
@@ -346,6 +382,23 @@ func withAnnounced(document network.Document, announced map[string]string) netwo
 }
 
 func (e Executor) applyDocument(ctx context.Context, request Request) Result {
+	var left *networkRecord
+	result := e.applyLocked(ctx, request, &left)
+	if left == nil {
+		return result
+	}
+	if problems := e.leaveTools(ctx, *left); len(problems) > 0 {
+		output := "left the private network, but: "
+		if !result.OK {
+			output = result.Output + "; "
+		}
+		result.OK, result.Output = false, clean([]byte(output+strings.Join(problems, "; ")))
+	}
+	return result
+}
+
+func (e Executor) applyLocked(ctx context.Context, request Request, left **networkRecord) Result {
+	defer e.lockNetwork()()
 	current, err := trust.Load(e.StateDir)
 	if err != nil {
 		return e.refuse(request.ID, err)
@@ -362,6 +415,9 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 	hash := network.BodyHash(body)
 	self, err := network.Accept(document, record.Applied, current.NodeID, record.Joined)
 	if errors.Is(err, network.ErrLeave) {
+		if record.Joined {
+			*left = &record
+		}
 		return e.leaveNetwork(ctx, request, document, hash, record)
 	}
 	if err != nil {
@@ -413,6 +469,12 @@ func (e Executor) applyDocument(ctx context.Context, request Request) Result {
 		return e.failed(request, err, "")
 	}
 	e.syncRules(ctx)
+	if err := e.syncRelayPorts(ctx, &record, document, self); err != nil {
+		log.Printf("applied version %d, but %v", document.Version, err)
+	}
+	if err := e.saveNetwork(record); err != nil {
+		return e.failed(request, err, "")
+	}
 	if err := e.syncForwarding(ctx, e.planExit(ctx, document, self, e.heldRecorded).sysctl); err != nil {
 		return e.failed(request, fmt.Errorf("applied version %d, but forwarding for laptops: %w", document.Version, err), "")
 	}
@@ -517,6 +579,7 @@ func (e Executor) joinedState() (networkRecord, network.Member, network.Keys, ma
 }
 
 func (e Executor) takeAnnouncement(ctx context.Context, request Request, args map[string]string) Result {
+	defer e.lockNetwork()()
 	record, self, keys, psk, err := e.joinedState()
 	if err != nil {
 		return e.refuse(request.ID, err)
@@ -552,6 +615,7 @@ func (e Executor) takeAnnouncement(ctx context.Context, request Request, args ma
 }
 
 func (e Executor) rekeyNetwork(ctx context.Context, request Request) Result {
+	defer e.lockNetwork()()
 	record := e.readNetwork()
 	node, err := e.selfNode()
 	if err != nil {
@@ -754,7 +818,7 @@ func (e Executor) setEndpoints(ctx context.Context, request Request, args map[st
 	}
 	listening := map[string]bool{}
 	for _, entry := range withAnnounced(*record.Document, record.Announced).Members {
-		listening[entry.Key] = !entry.NAT
+		listening[entry.Key] = !entry.NAT && !entry.IsLaptop()
 	}
 	changed := 0
 	for index := 0; index < len(fields); index += 2 {

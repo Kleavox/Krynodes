@@ -58,14 +58,20 @@ func (e Executor) watchKnocks(ctx context.Context) {
 	}
 	minute, hour := strconv.FormatInt(now.Unix()/60, 10), strconv.FormatInt(now.Unix()/3600, 10)
 	dropped := false
-	for _, scan := range seen.Sources {
-		if slices.Contains(record.Dropped, scan.Who) {
-			continue
-		}
-		record.Dropped, dropped = append(record.Dropped, scan.Who), true
-		e.event("knock", "knock:"+scan.Who+":"+minute, map[string]string{"from": scan.Who, "count": strconv.Itoa(scan.Count), "sample": strings.Join(scan.Sample, " ")})
+	if slices.ContainsFunc(seen.Sources, func(scan network.Scan) bool { return !slices.Contains(record.Dropped, scan.Who) }) {
+		err := e.updateNetwork(func(record *networkRecord) bool {
+			for _, scan := range seen.Sources {
+				if !record.Joined || slices.Contains(record.Dropped, scan.Who) {
+					continue
+				}
+				record.Dropped, dropped = append(record.Dropped, scan.Who), true
+				e.event("knock", "knock:"+scan.Who+":"+minute, map[string]string{"from": scan.Who, "count": strconv.Itoa(scan.Count), "sample": strings.Join(scan.Sample, " ")})
+			}
+			return dropped
+		})
+		dropped = dropped && err == nil
 	}
-	if dropped && e.saveNetwork(record) == nil {
+	if dropped {
 		e.syncRules(ctx)
 	}
 	for _, scan := range seen.Stacks {

@@ -40,26 +40,45 @@ func second(at int) time.Time {
 	return testNow.Add(time.Duration(at) * time.Second)
 }
 
+func (f *fixture) behind() Peer {
+	f.t.Helper()
+	peers := f.last().Peers
+	for node, ips := range allowed(peers) {
+		if want := []string{map[string]string{server1: "10.88.0.1/32", server2: "10.88.0.2/32", server3: "10.88.0.3/32"}[node]}; !slices.Equal(ips, want) {
+			f.t.Fatalf("%s allows %v, want %v", node, ips, want)
+		}
+	}
+	return peerOf(f.t, peers, server2)
+}
+
 func TestTheMeetingPointFollowsThePings(t *testing.T) {
 	f := newFixture(t)
 	f.twoPublic()
-	f.service.observe(second(0), map[string]answer{server1: {30 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}})
+	if behind := f.behind(); behind.Endpoint != "203.0.113.1:51920" || behind.Pin != behind.Endpoint || !behind.Relay {
+		t.Fatalf("before any ping the member behind NAT is reached through the default meeting point: %+v", behind)
+	}
+	f.service.observe(second(0), map[string]answer{server1: {30 * time.Millisecond, true}, server2: {40 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}})
 	select {
 	case <-f.service.wake:
 	default:
 		t.Fatal("a new meeting point sent no beat")
 	}
-	carried := allowed(f.last().Peers)
-	if !slices.Contains(carried[server3], "10.88.0.2/32") || slices.Contains(carried[server1], "10.88.0.2/32") {
-		t.Fatalf("the member behind NAT is not on the meeting point: %v", carried)
+	if behind := f.behind(); behind.Endpoint != "203.0.113.3:51920" || behind.Pin != behind.Endpoint {
+		t.Fatalf("the member behind NAT did not follow the switch: %+v", behind)
 	}
 	if beat, ok := f.service.beat(reporter.Host{}); !ok || beat.Network.Meet != server3 {
 		t.Fatalf("beat %+v", beat.Network)
 	}
+	if via := f.service.Status(0).Servers[1]; via.Node != server2 || via.Via != "server-3" {
+		t.Fatalf("the member behind NAT is shown %+v", via)
+	}
 	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Held: []string{server3}}})
-	f.service.observe(second(1), map[string]answer{server1: {30 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}})
+	f.service.observe(second(1), map[string]answer{server1: {30 * time.Millisecond, true}, server2: {40 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}})
 	if f.service.meet != server1 {
 		t.Fatalf("a held server stays the meeting point: %q", f.service.meet)
+	}
+	if behind := f.behind(); behind.Endpoint != "203.0.113.1:51920" {
+		t.Fatalf("the member behind NAT stays on a held meeting point: %+v", behind)
 	}
 }
 
@@ -192,17 +211,79 @@ func TestTheDefaultMeetingPointComesFromTheSignedDocumentAndIsNeverHeld(t *testi
 	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{
 		Endpoints: []reporter.NetworkEndpoint{{Key: f.server.Public, Endpoint: "198.51.100.7:51820"}},
 	}})
-	carried := allowed(f.last().Peers)
-	if !slices.Contains(carried[server3], "10.88.0.2/32") || slices.Contains(carried[server1], "10.88.0.2/32") {
-		t.Fatalf("the default meeting point was taken from a hinted endpoint: %v", carried)
+	if behind := f.behind(); behind.Endpoint != "203.0.113.3:51920" {
+		t.Fatalf("the default meeting point was taken from a hinted endpoint: %+v", behind)
 	}
 	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Held: []string{server3}}})
-	for node, ips := range allowed(f.last().Peers) {
-		if slices.Contains(ips, "10.88.0.2/32") {
-			t.Fatalf("%s carries the member behind NAT with every meeting point held: %v", node, ips)
-		}
+	if behind := f.behind(); behind.Endpoint != "" || behind.Pin != "" || !behind.Relay {
+		t.Fatalf("the member behind NAT keeps an endpoint with every meeting point held: %+v", behind)
 	}
 	if via := f.service.Status(0).Servers[1].Via; via != "" {
 		t.Fatalf("the member behind NAT is shown via %q", via)
+	}
+}
+
+func (f *fixture) natRound(from, to int, behind bool) {
+	f.t.Helper()
+	for at := from; at <= to; at++ {
+		answers := map[string]answer{server1: {30 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}, server2: {}}
+		if behind {
+			answers[server2] = answer{40 * time.Millisecond, true}
+		}
+		f.service.observe(second(at), answers)
+	}
+}
+
+func TestABrokenRelayIsLeftWhenAConnectedMemberBehindNATMissesThrough(t *testing.T) {
+	f := newFixture(t)
+	f.twoPublic()
+	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{server2}}})
+	f.natRound(0, 21, false)
+	if f.service.meet != server3 || f.behind().Endpoint != "203.0.113.3:51920" {
+		t.Fatalf("left %q before 3 counted misses", f.service.meet)
+	}
+	f.natRound(22, 22, false)
+	if f.service.meet != server1 || f.behind().Endpoint != "203.0.113.1:51920" {
+		t.Fatalf("still on %q with its relay broken", f.service.meet)
+	}
+	if beat, ok := f.service.beat(reporter.Host{}); !ok || beat.Network.Meet != server1 {
+		t.Fatalf("beat %+v", beat.Network)
+	}
+}
+
+func TestAMemberBehindNATTheWorkerReportsOfflineNeverMovesTheLaptop(t *testing.T) {
+	f := newFixture(t)
+	f.twoPublic()
+	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{}}})
+	f.natRound(0, 200, false)
+	if f.service.meet != server3 {
+		t.Fatalf("a switched-off member behind NAT moved the laptop to %q", f.service.meet)
+	}
+}
+
+func TestAnUnreachableWorkerFreezesTheCountThroughTheMeetingPoint(t *testing.T) {
+	f := newFixture(t)
+	f.twoPublic()
+	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{server2}}})
+	f.natRound(0, 21, false)
+	f.service.cycle(context.Background(), &unreachable{}, reporter.Host{})
+	f.natRound(22, 120, false)
+	if f.service.meet != server3 {
+		t.Fatalf("counted misses while the Worker was unreachable and moved to %q", f.service.meet)
+	}
+	f.service.answer(reporter.HeartbeatResponse{})
+	f.natRound(121, 121, false)
+	if f.service.meet != server1 {
+		t.Fatalf("the frozen count did not resume: still on %q", f.service.meet)
+	}
+}
+
+func TestAnAnswerThroughTheMeetingPointKeepsIt(t *testing.T) {
+	f := newFixture(t)
+	f.twoPublic()
+	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{server2}}})
+	f.natRound(0, 200, true)
+	if f.service.meet != server3 {
+		t.Fatalf("a member answering through server-3 moved the laptop to %q", f.service.meet)
 	}
 }

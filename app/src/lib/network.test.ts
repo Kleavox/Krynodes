@@ -97,6 +97,7 @@ const B = "22222222-2222-4222-8222-222222222222";
 const C = "33333333-3333-4333-8333-333333333333";
 const D = "44444444-4444-4444-8444-444444444444";
 const E = "55555555-5555-4555-8555-555555555555";
+const F = "88888888-8888-4888-8888-888888888888";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Array(32).fill(n)));
 
@@ -181,6 +182,7 @@ function view(extra: Partial<NetworkView> = {}): NetworkView {
 
 const L = "66666666-6666-4666-8666-666666666666";
 const M = "77777777-7777-4777-8777-777777777777";
+const N = "99999999-9999-4999-8999-999999999999";
 
 const laptopSeat = (
   nodeId: string,
@@ -1602,7 +1604,7 @@ describe("the network document", () => {
 
   describe("with laptops", () => {
     const start = async () => {
-      const { keys } = await ends([A, B, C, D, L, M]);
+      const { pairs, keys } = await ends([A, B, C, D, L, M]);
       const first = await buildDocument(
         null,
         {
@@ -1614,10 +1616,10 @@ describe("the network document", () => {
         },
         keys,
       );
-      return { keys, first };
+      return { pairs, keys, first };
     };
     const withLaptops = async () => {
-      const { keys, first } = await start();
+      const { pairs, keys, first } = await start();
       const added = await buildDocument(
         first,
         {
@@ -1629,16 +1631,31 @@ describe("the network document", () => {
         },
         keys,
       );
-      return { keys, first, added };
+      return { pairs, keys, first, added };
+    };
+    const pairOf = async (
+      pairs: Record<string, Awaited<ReturnType<typeof recipient>>>,
+      document: NetworkDocument,
+      a: string,
+      b: string,
+    ) => {
+      const [forA, forB] = await Promise.all([
+        opened(pairs[a]!, member(document, a).psk[b]!),
+        opened(pairs[b]!, member(document, b).psk[a]!),
+      ]);
+      expect(forA).toBe(forB);
+      return forA;
     };
     const member = (document: NetworkDocument, id: string) =>
       document.members.find((entry) => entry.node === id)!;
 
-    it("gives a laptop psks only with public members", async () => {
+    it("gives a laptop a psk with every server and no laptop", async () => {
       const { first, added } = await withLaptops();
       expect(first.members.every((entry) => !("kind" in entry))).toBe(true);
-      expect(Object.keys(member(added, L).psk).sort()).toEqual([A, B].sort());
-      expect(member(added, D).psk[L]).toBeUndefined();
+      expect(Object.keys(member(added, L).psk).sort()).toEqual(
+        [A, B, D].sort(),
+      );
+      expect(member(added, D).psk[L]).toBeDefined();
       expect(member(added, A).psk[L]).toBeDefined();
       expect(member(added, L).psk[M]).toBeUndefined();
       expect(member(added, M).psk[L]).toBeUndefined();
@@ -1677,6 +1694,153 @@ describe("the network document", () => {
       );
     });
 
+    it("gives each laptop one relay port for each server behind NAT, and no one else", async () => {
+      const { added } = await withLaptops();
+      expect(member(added, L).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(added, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      for (const id of [A, B, D]) {
+        expect(member(added, id).relay).toBeUndefined();
+      }
+    });
+
+    it("keeps every port and fills the lowest free one as servers behind NAT come and go", async () => {
+      const { keys, added } = await withLaptops();
+      const more = { ...keys, ...(await ends([E, F])).keys };
+      const joined = await buildDocument(
+        added,
+        {
+          kind: "add",
+          join: [joiner(server(E, "server-5", "10.88.0.5", null))],
+        },
+        more,
+      );
+      expect(member(joined, L).relay).toEqual({
+        [D]: NETWORK.relayPort,
+        [E]: NETWORK.relayPort + 2,
+      });
+      expect(member(joined, M).relay).toEqual({
+        [D]: NETWORK.relayPort + 1,
+        [E]: NETWORK.relayPort + 3,
+      });
+      expect(Object.keys(member(joined, E).psk).sort()).toEqual(
+        [A, B, D, L, M].sort(),
+      );
+      const left = await buildDocument(
+        joined,
+        { kind: "remove", nodeId: D },
+        more,
+      );
+      expect(member(left, L).relay).toEqual({ [E]: NETWORK.relayPort + 2 });
+      expect(member(left, M).relay).toEqual({ [E]: NETWORK.relayPort + 3 });
+      const third = await buildDocument(
+        left,
+        {
+          kind: "add",
+          join: [joiner(server(F, "server-6", "10.88.0.6", null))],
+        },
+        more,
+      );
+      expect(member(third, L).relay).toEqual({
+        [E]: NETWORK.relayPort + 2,
+        [F]: NETWORK.relayPort,
+      });
+      expect(member(third, M).relay).toEqual({
+        [E]: NETWORK.relayPort + 3,
+        [F]: NETWORK.relayPort + 1,
+      });
+    });
+
+    it("keeps ports through other changes, frees a removed laptop's and gives them to the next laptop", async () => {
+      const { pairs, keys, added } = await withLaptops();
+      const before = JSON.stringify(added);
+      const renamed = await buildDocument(
+        added,
+        { kind: "rename", nodeId: A, name: "server-9" },
+        keys,
+      );
+      expect(JSON.stringify(added)).toBe(before);
+      expect(member(renamed, L).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(renamed, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      expect(member(renamed, D).psk).toEqual(member(added, D).psk);
+      expect(member(renamed, M).psk).toEqual(member(added, M).psk);
+      const gone = await buildDocument(
+        renamed,
+        { kind: "remove", nodeId: L },
+        keys,
+      );
+      expect(member(gone, L)).toBeUndefined();
+      expect(member(gone, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      const third = await ends([N]);
+      const more = { ...keys, ...third.keys };
+      const next = await buildDocument(
+        gone,
+        {
+          kind: "add",
+          join: [laptopJoiner(waitingLaptop(N, "laptop-3", 64), "10.88.0.11")],
+        },
+        more,
+      );
+      expect(member(next, N).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(next, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      const all = { ...pairs, ...third.pairs };
+      const fresh = await pairOf(all, next, N, D);
+      expect(fresh).not.toBe(await pairOf(all, added, M, D));
+      expect(member(next, D).psk[M]).toBe(member(added, D).psk[M]);
+      expect(member(next, M).psk[D]).toBe(member(added, M).psk[D]);
+    });
+
+    it("says plainly when the relay ports run out", async () => {
+      const id = (n: number) =>
+        `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+      const crowd = {
+        v: 1,
+        version: 1,
+        range: "10.88.0.0/24",
+        port: 51820,
+        mtu: 1420,
+        blocked: [],
+        members: [
+          ...Array.from({ length: 16 }, (_, index) => ({
+            node: id(index),
+            nat: true,
+            psk: {},
+          })),
+          ...Array.from({ length: 17 }, (_, index) => ({
+            node: id(100 + index),
+            kind: "laptop",
+            nat: true,
+            psk: {},
+          })),
+        ],
+      } as unknown as NetworkDocument;
+      await expect(buildDocument(crowd, { kind: "again" }, {})).rejects.toThrow(
+        "There is no relay port left for another laptop and server behind NAT. Remove a laptop or a server behind NAT first.",
+      );
+    });
+
+    it("takes a cut server's ports away and gives it new ones when it is released", async () => {
+      const { keys, added } = await withLaptops();
+      const cut = {
+        ...added,
+        members: added.members.map((entry) =>
+          entry.node === D ? { ...entry, cut: true as const } : entry,
+        ),
+      };
+      const held = await buildDocument(cut, { kind: "again" }, keys);
+      expect(member(held, L).relay).toEqual({});
+      expect(member(held, M).relay).toEqual({});
+      expect(Object.keys(member(held, L).psk)).toContain(D);
+      const released = await buildDocument(
+        held,
+        { kind: "release", nodeId: D, key: key(212), signer: key(213) },
+        keys,
+      );
+      expect(member(released, L).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(released, M).relay).toEqual({
+        [D]: NETWORK.relayPort + 1,
+      });
+    });
+
     it("says a laptop's seal key is missing before it signs anything", async () => {
       const { keys, first } = await start();
       const { [L]: _, ...without } = keys;
@@ -1695,7 +1859,7 @@ describe("the network document", () => {
     });
 
     it("makes new keys and releases a server with a laptop in the network", async () => {
-      const { keys, added } = await withLaptops();
+      const { pairs, keys, added } = await withLaptops();
       const fresh = await buildDocument(
         added,
         {
@@ -1704,9 +1868,15 @@ describe("the network document", () => {
         },
         keys,
       );
-      expect(Object.keys(member(fresh, L).psk).sort()).toEqual([A, B].sort());
+      expect(Object.keys(member(fresh, L).psk).sort()).toEqual(
+        [A, B, D].sort(),
+      );
       expect(member(fresh, L).rekey).toBe(true);
-      expect(member(fresh, D).psk[L]).toBeUndefined();
+      expect(member(fresh, D).psk[L]).not.toBe(member(added, D).psk[L]);
+      expect(member(fresh, L).psk[D]).not.toBe(member(added, L).psk[D]);
+      expect(await pairOf(pairs, fresh, L, D)).not.toBe(
+        await pairOf(pairs, added, L, D),
+      );
       const cut = {
         ...added,
         members: added.members.map((entry) =>
@@ -1722,8 +1892,13 @@ describe("the network document", () => {
         [A, D, L, M].sort(),
       );
       expect(Object.keys(member(released, L).psk).sort()).toEqual(
-        [A, B].sort(),
+        [A, B, D].sort(),
       );
+      expect(await pairOf(pairs, released, L, B)).not.toBe(
+        await pairOf(pairs, added, L, B),
+      );
+      expect(member(released, L).psk[D]).toBe(member(added, L).psk[D]);
+      expect(member(released, D).psk[L]).toBe(member(added, D).psk[L]);
     });
 
     it("exit change sets and clears exit on one server", async () => {

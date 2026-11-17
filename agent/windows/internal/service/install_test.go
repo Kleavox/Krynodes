@@ -63,6 +63,14 @@ func (f *fakeSystem) Unpack(string) error {
 	return nil
 }
 
+func (f *fakeSystem) Folder(dir string) error {
+	return os.MkdirAll(dir, 0o755)
+}
+
+func (f *fakeSystem) Write(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o755)
+}
+
 func (f *fakeSystem) Register(executable string) error {
 	f.calls = append(f.calls, "register "+filepath.Base(executable))
 	return f.fail
@@ -123,9 +131,9 @@ func TestInstallEnrollsAsALaptopAndStartsTheService(t *testing.T) {
 	if string(secrets[tokenSecret]) != "agent-token" {
 		t.Errorf("token %q", secrets[tokenSecret])
 	}
-	for _, name := range []string{"locked trust.json", "locked state.json"} {
+	for _, name := range []string{"wrote trust.json", "wrote state.json"} {
 		if _, ok := secrets[name]; !ok {
-			t.Errorf("%s was not locked", strings.TrimPrefix(name, "locked "))
+			t.Errorf("%s was not written through the store", strings.TrimPrefix(name, "wrote "))
 		}
 	}
 	current, err := trust.Load(dir)

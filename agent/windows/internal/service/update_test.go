@@ -52,6 +52,9 @@ func newRelease(t *testing.T, current, latest string) *releaseFixture {
 			data, err := os.ReadFile(path)
 			return strings.TrimPrefix(string(data), "agent ") + "\n", err
 		},
+		Write: func(path string, data []byte) error {
+			return os.WriteFile(path, data, 0o755)
+		},
 	}
 	return fixture
 }

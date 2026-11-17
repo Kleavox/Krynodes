@@ -582,6 +582,22 @@ func TestEndpointsChangeOnlyThePeersOfTheNetwork(t *testing.T) {
 	}
 }
 
+func TestEndpointsNeverMoveALaptopOffItsPairPort(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, behindNAT)
+	writeRequest(t, net.executor.RequestDir, idC+".json", askNetwork(t, idC, "endpoints", map[string]string{"endpoints": net.laptop.Public + " 203.0.113.9:51820 " + net.peer.Public + " 203.0.113.99:51820"}))
+	run.calls = nil
+	if err := net.executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, net.executor, idC); !result.OK || !slices.Contains(run.calls, "wg set kry0 peer "+net.peer.Public+" endpoint 203.0.113.99:51820") {
+		t.Fatalf("%+v %v", result, run.calls)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, net.laptop.Public) }) {
+		t.Fatalf("a laptop's endpoint was set: %v", run.calls)
+	}
+}
+
 func TestTheInventoryNamesWhatStacksPointAt(t *testing.T) {
 	executor, _, _, _, _ := joinedServer(t)
 	dir := t.TempDir()
@@ -686,9 +702,15 @@ func TestAHintNamingANATMemberOrAStrangerIsIgnored(t *testing.T) {
 func TestAHintMovesTheLaptopToTheNamedPeer(t *testing.T) {
 	net, run, _ := newLaptopNet(t)
 	net.apply(t, behindNAT)
-	config := readRoot(t, net.executor, network.ConfigPath)
-	if !strings.Contains(config, "AllowedIPs = 10.88.0.1/32, 10.88.0.9/32\n") || !strings.Contains(config, "AllowedIPs = 10.88.0.3/32\n") {
-		t.Fatalf("the laptop starts on the default meeting point:\n%s", config)
+	laptopPeer := func() string {
+		config := readRoot(t, net.executor, network.ConfigPath)
+		if !strings.Contains(config, "AllowedIPs = 10.88.0.1/32\n") || !strings.Contains(config, "AllowedIPs = 10.88.0.3/32\n") || strings.Count(config, "10.88.0.9") != 1 {
+			t.Fatalf("a meeting peer carries the laptop:\n%s", config)
+		}
+		return config[strings.Index(config, "PublicKey = "+net.laptop.Public):]
+	}
+	if peer := laptopPeer(); !strings.Contains(peer, "AllowedIPs = 10.88.0.9/32\nEndpoint = 203.0.113.21:51921\nPersistentKeepalive = 25\n") {
+		t.Fatalf("the laptop starts on the default meeting point's pair port:\n%s", peer)
 	}
 	relay := &Relay{RequestDir: net.executor.RequestDir, StateDir: net.executor.StateDir, Now: net.executor.Now, NodeID: testNode}
 	hint := &reporter.NetworkReply{Meetings: []reporter.NetworkMeeting{{Laptop: laptopNode, Via: thirdNode}}}
@@ -710,12 +732,12 @@ func TestAHintMovesTheLaptopToTheNamedPeer(t *testing.T) {
 	if result := readResult(t, net.executor, requests[0].ID); !result.OK {
 		t.Fatalf("%+v", result)
 	}
-	if want := "wg set kry0 peer " + net.third.Public + " allowed-ips 10.88.0.3/32,10.88.0.9/32"; !slices.Contains(run.calls, want) {
-		t.Fatalf("want %q in %v", want, run.calls)
+	want := []string{"wg set kry0 peer " + net.laptop.Public + " endpoint 203.0.113.23:51921"}
+	if got := slices.DeleteFunc(slices.Clone(run.calls), func(call string) bool { return !strings.HasPrefix(call, "wg ") }); !slices.Equal(got, want) {
+		t.Fatalf("want %q, got %q", want, got)
 	}
-	config = readRoot(t, net.executor, network.ConfigPath)
-	if !strings.Contains(config, "AllowedIPs = 10.88.0.1/32\n") || !strings.Contains(config, "AllowedIPs = 10.88.0.3/32, 10.88.0.9/32\n") {
-		t.Fatalf("kry0.conf does not follow the hint:\n%s", config)
+	if peer := laptopPeer(); !strings.Contains(peer, "Endpoint = 203.0.113.23:51921\n") {
+		t.Fatalf("kry0.conf does not follow the hint:\n%s", peer)
 	}
 	if err := relay.NetworkReply(hint); err != nil {
 		t.Fatal(err)
@@ -724,8 +746,53 @@ func TestAHintMovesTheLaptopToTheNamedPeer(t *testing.T) {
 		t.Fatalf("a hint already followed was queued again: %+v", requests)
 	}
 	net.apply(t, behindNAT)
-	if config := readRoot(t, net.executor, network.ConfigPath); !strings.Contains(config, "AllowedIPs = 10.88.0.3/32, 10.88.0.9/32\n") {
-		t.Fatalf("a newer document forgot the meeting point:\n%s", config)
+	if peer := laptopPeer(); !strings.Contains(peer, "Endpoint = 203.0.113.23:51921\n") {
+		t.Fatalf("a newer document forgot the meeting point:\n%s", peer)
+	}
+}
+
+func TestRoamingNeverMovesALaptopOffItsMeetingPoint(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, behindNAT)
+	sets := func(endpoint string) []string {
+		t.Helper()
+		run.respond["wg show kry0 dump"] = "cHJpdmF0ZQ==\tcHVibGlj\t51820\toff\n" + net.laptop.Public + "\t(none)\t" + endpoint + "\t10.88.0.9/32\t0\t0\t0\t25\n"
+		run.calls = nil
+		net.executor.holdMeetings(context.Background())
+		return slices.DeleteFunc(slices.Clone(run.calls), func(call string) bool { return !strings.HasPrefix(call, "wg set") })
+	}
+	back := func(endpoint string) []string {
+		return []string{"wg set kry0 peer " + net.laptop.Public + " endpoint " + endpoint}
+	}
+	if got := sets("203.0.113.21:51921"); len(got) != 0 {
+		t.Fatalf("an endpoint in place is set again: %q", got)
+	}
+	if got := sets("[::ffff:203.0.113.21]:51921"); len(got) != 0 {
+		t.Fatalf("a mapped form of the same endpoint is set again: %q", got)
+	}
+	if got, want := sets("203.0.113.23:51921"), back("203.0.113.21:51921"); !slices.Equal(got, want) {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	if result := net.executor.meet(context.Background(), Request{ID: "meet-1"}, map[string]string{"laptop": laptopNode, "via": thirdNode}); !result.OK {
+		t.Fatalf("%+v", result)
+	}
+	if got, want := sets("203.0.113.21:51921"), back("203.0.113.23:51921"); !slices.Equal(got, want) {
+		t.Fatalf("a datagram through the old meeting point undid the hint: want %q, got %q", want, got)
+	}
+	if got, want := sets("(none)"), back("203.0.113.23:51921"); !slices.Equal(got, want) {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	run.respond["wg show kry0 dump"] = "cHJpdmF0ZQ==\tcHVibGlj\t51820\toff\n"
+	run.calls = nil
+	net.executor.holdMeetings(context.Background())
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "wg set") }) {
+		t.Fatalf("a laptop kry0 does not hold yet was set: %q", run.calls)
+	}
+	net.apply(t, asIs)
+	run.calls = nil
+	net.executor.holdMeetings(context.Background())
+	if len(run.calls) != 0 {
+		t.Fatalf("a meeting point follows no meeting point: %q", run.calls)
 	}
 }
 

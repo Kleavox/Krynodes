@@ -39,10 +39,15 @@ func (e Executor) readFirewall() closedFirewall {
 }
 
 func (e Executor) networkPort() string {
-	if record := e.readNetwork(); record.Joined && record.Port != 0 {
-		return strconv.Itoa(record.Port)
+	record := e.readNetwork()
+	if !record.Joined || record.Port == 0 {
+		return ""
 	}
-	return ""
+	ports := []string{strconv.Itoa(record.Port)}
+	for _, port := range record.Relays {
+		ports = append(ports, strconv.Itoa(port))
+	}
+	return strings.Join(ports, " ")
 }
 
 func (e Executor) rememberClosed(ctx context.Context, env recipes.Env, ports string) error {
@@ -79,7 +84,7 @@ func (e Executor) reopenNetwork(ctx context.Context) {
 	if !record.Joined || record.Port == 0 {
 		return
 	}
-	for _, command := range network.Open(record.Firewall, record.Port) {
+	for _, command := range slices.Concat(network.Open(record.Firewall, record.Port), network.OpenRelay(record.Firewall, record.Relays)) {
 		if err := e.networkCommand(ctx, command[0], command[1:]...); err != nil {
 			log.Printf("open the private network's port again: %v", err)
 			return

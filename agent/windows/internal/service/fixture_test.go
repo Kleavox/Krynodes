@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -51,9 +52,9 @@ func (m memory) Put(name string, value []byte) error {
 	return nil
 }
 
-func (m memory) Lock(name string) error {
-	m["locked "+name] = nil
-	return nil
+func (m memory) Write(path string, data []byte) error {
+	m["wrote "+filepath.Base(path)] = nil
+	return os.WriteFile(path, data, 0o600)
 }
 
 type fakeServer struct {
@@ -200,7 +201,7 @@ func (f *fixture) psk() string {
 }
 
 func (f *fixture) laptop() network.Member {
-	return network.Member{Node: laptop1, Name: "laptop-1", Address: "10.88.0.10", Key: f.keys.Public, Signer: f.keys.Signer, Port: network.FirstPort, Kind: "laptop", PSK: map[string]string{server1: f.psk()}}
+	return network.Member{Node: laptop1, Name: "laptop-1", Address: "10.88.0.10", Key: f.keys.Public, Signer: f.keys.Signer, Port: network.FirstPort, Kind: "laptop", PSK: map[string]string{server1: f.psk(), server2: f.psk()}, Relay: map[string]int{server2: network.FirstRelayPort}}
 }
 
 func (f *fixture) document(version int, parent string, withLaptop bool) []byte {
@@ -211,7 +212,7 @@ func (f *fixture) document(version int, parent string, withLaptop bool) []byte {
 	}
 	blocked := []string{}
 	if withLaptop {
-		members[0].PSK[laptop1] = "c2VhbGVk"
+		members[0].PSK[laptop1], members[1].PSK[laptop1] = "c2VhbGVk", "c2VhbGVk"
 		members = append(members, f.laptop())
 	} else {
 		blocked = append(blocked, f.keys.Public)

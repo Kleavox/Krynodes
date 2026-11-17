@@ -1676,6 +1676,18 @@ describe("laptops of agent 0.7.24", () => {
     expect(reply({ held: ["a"] })).toBe(false);
   });
 
+  it("a laptop's reply names the members behind NAT that are connected", () => {
+    expect(reply({ held: [], connected: [A, B] })).toBe(true);
+    expect(reply({ connected: [] })).toBe(true);
+    expect(reply({ connected: ["a"] })).toBe(false);
+    expect(
+      networkReplySchema.safeParse({ connected: Array(32).fill(A) }).success,
+    ).toBe(true);
+    expect(
+      networkReplySchema.safeParse({ connected: Array(33).fill(A) }).success,
+    ).toBe(false);
+  });
+
   it("limits meetings and held to 32", () => {
     const meeting = { laptop: A, via: B };
     expect(

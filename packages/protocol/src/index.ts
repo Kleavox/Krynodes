@@ -281,6 +281,7 @@ export const networkReplySchema = z.strictObject({
     .max(32)
     .optional(),
   held: z.array(z.string().uuid()).max(32).optional(),
+  connected: z.array(z.string().uuid()).max(32).optional(),
 });
 
 export const UNSIGNED_VERBS = [

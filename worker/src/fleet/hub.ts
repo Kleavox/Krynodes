@@ -260,7 +260,7 @@ export class FleetHub {
         ? body.nodeIds.filter((id): id is string => typeof id === "string")
         : [];
       const poked = await this.poke(nodeIds);
-      await this.heldMoved();
+      await this.laptopNews();
       return Response.json({ poked });
     }
     return new Response(null, { status: 404 });
@@ -309,14 +309,26 @@ export class FleetHub {
     return poked;
   }
 
-  private async heldMoved(): Promise<void> {
-    const laptops = this.ctx
+  private streams(): StreamState[] {
+    return this.ctx
       .getWebSockets()
       .filter((ws) => !watching(ws))
-      .map((ws) => ws.deserializeAttachment() as StreamState)
-      .filter((state) => state.laptop);
+      .map((ws) => ws.deserializeAttachment() as StreamState | null)
+      .filter((state): state is StreamState => state !== null && !state.left);
+  }
+
+  private online(): Set<string> {
+    return new Set(
+      this.streams()
+        .filter((state) => !state.laptop && !state.away)
+        .map((state) => state.nodeId),
+    );
+  }
+
+  private async laptopNews(): Promise<void> {
+    const laptops = this.streams().filter((state) => state.laptop);
     const owner = laptops[0]?.ownerId;
-    if (owner && (await this.network.heldMoved(owner))) {
+    if (owner && (await this.network.laptopNewsMoved(owner, this.online()))) {
       await this.poke(laptops.map((state) => state.nodeId));
     }
   }
@@ -354,6 +366,7 @@ export class FleetHub {
     };
     await this.ctx.storage.put(ROSTER, roster);
     await this.schedule(Date.now());
+    await this.laptopNews();
   }
 
   async watch(ws: WebSocket): Promise<void> {
@@ -506,7 +519,7 @@ export class FleetHub {
         reply({ type: "actions", response });
         await this.poke(next);
         if (!state.laptop && parsed.data.results?.length) {
-          await this.heldMoved();
+          await this.laptopNews();
         }
         this.announce(
           deleted
@@ -537,12 +550,14 @@ export class FleetHub {
     if (watching(ws)) return;
     await this.leave(ws);
     this.announce(["nodes"]);
+    await this.laptopNews();
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
     if (watching(ws)) return;
     await this.leave(ws);
     this.announce(["nodes"]);
+    await this.laptopNews();
   }
 
   private async box() {
@@ -623,7 +638,7 @@ export class FleetHub {
     for (const [key, at] of done) if (kept[key] === at) delete kept[key];
     await this.ctx.storage.put(CUTOFFS, kept);
     await this.poke(poke);
-    await this.heldMoved();
+    await this.laptopNews();
     this.announce(["all"]);
     await this.tell({ quarantined });
   }
@@ -871,6 +886,7 @@ export class FleetHub {
       this.announce(["nodes"]);
     }
     await this.quiet(quiet, now);
+    if (quiet.length > 0) await this.laptopNews();
     return notices;
   }
 
@@ -1192,9 +1208,9 @@ export class FleetHub {
       if (network) await this.poke(network.poke);
       if (poked.length > 0) {
         await this.poke(poked.filter((id) => id !== node.id));
-        await this.heldMoved();
         this.announce(["all"]);
       }
+      if (poked.length > 0 || current.away) await this.laptopNews();
       const topics = [
         ...(current.lastSeen === null || setupMoved ? ["nodes"] : []),
         ...(ingestion.statements.length > 0 || ingestion.transitions.length > 0
@@ -1248,6 +1264,7 @@ export class FleetHub {
           beat.network,
           now,
           true,
+          this.online(),
         )
       : null;
     if (network?.changed) this.version.count += 1;

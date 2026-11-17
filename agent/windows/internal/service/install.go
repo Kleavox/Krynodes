@@ -27,6 +27,8 @@ type System interface {
 	StopService() error
 	StartService() error
 	Unpack(dir string) error
+	Folder(dir string) error
+	Write(path string, data []byte) error
 	Register(executable string) error
 	Tray(executable string) error
 }
@@ -103,10 +105,10 @@ func place(system System) (string, bool, error) {
 	if err := system.StopService(); err != nil {
 		return "", true, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := system.Folder(dir); err != nil {
 		return "", true, err
 	}
-	if err := swapIn(target, data, nil); err != nil {
+	if err := swapIn(system.Write, target, data, nil); err != nil {
 		return "", true, err
 	}
 	return target, true, system.Unpack(dir)
@@ -184,13 +186,10 @@ func enroll(ctx context.Context, client *http.Client, dir string, secrets Secret
 		return err
 	}
 	first.NodeID = answer.NodeID
-	if err := trust.Save(dir, first); err != nil {
-		return err
-	}
-	if err := secrets.Lock(trustFile); err != nil {
-		return err
-	}
 	service := Service{Dir: dir, Secrets: secrets}
+	if err := service.keep(trustFile, first); err != nil {
+		return err
+	}
 	if err := service.save(state{Endpoint: enrollment.Endpoint, NodeID: answer.NodeID, Interval: answer.IntervalSeconds}); err != nil {
 		return err
 	}

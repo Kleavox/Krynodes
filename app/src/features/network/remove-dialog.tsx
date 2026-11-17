@@ -34,7 +34,7 @@ export function RemoveDialog({
   onClose: () => void;
 }) {
   const reports = useServices().data?.nodes ?? [];
-  const keys = useNetworkKeys(view.members);
+  const keys = useNetworkKeys(view.members, [], server);
   const remove = useSignChange();
   const node = nodes.find((entry) => entry.id === server.nodeId);
   const seat = node

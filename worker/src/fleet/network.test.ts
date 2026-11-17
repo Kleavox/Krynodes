@@ -1,5 +1,6 @@
 import {
   links,
+  NETWORK,
   type AgentHeartbeat,
   type NetworkBeat,
 } from "@krynodes/protocol";
@@ -300,27 +301,42 @@ describe("laptops on the hub", () => {
     ...extra,
   });
 
-  const signedWith = (members: Entry[]) => ({
-    ...SIGNED,
-    document: Buffer.from(
-      JSON.stringify({
-        v: 1,
-        version: 2,
-        range: "10.88.0.0/24",
-        port: 51820,
-        mtu: 1420,
-        members: members.map((one) => ({
-          ...one,
-          psk: Object.fromEntries(
-            members
-              .filter((other) => other !== one && links(one, other))
-              .map((other) => [other.node, "c2VhbGVk"]),
-          ),
-        })),
-        blocked: [],
-      }),
-    ).toString("base64url"),
-  });
+  const signedWith = (members: Entry[]) => {
+    let next = NETWORK.relayPort;
+    return {
+      ...SIGNED,
+      document: Buffer.from(
+        JSON.stringify({
+          v: 1,
+          version: 2,
+          range: "10.88.0.0/24",
+          port: 51820,
+          mtu: 1420,
+          members: members.map((one) => ({
+            ...one,
+            psk: Object.fromEntries(
+              members
+                .filter((other) => other !== one && links(one, other))
+                .map((other) => [other.node, "c2VhbGVk"]),
+            ),
+            ...(one.kind === "laptop"
+              ? {
+                  relay: Object.fromEntries(
+                    members
+                      .filter(
+                        (other) =>
+                          other.kind !== "laptop" && other.nat && !other.cut,
+                      )
+                      .map((other) => [other.node, next++]),
+                  ),
+                }
+              : {}),
+          })),
+          blocked: [],
+        }),
+      ).toString("base64url"),
+    };
+  };
 
   function laptopSetup(cut = false) {
     const { db, sqlite } = createTestDb();
@@ -492,6 +508,29 @@ describe("laptops on the hub", () => {
     await poke([A]);
     expect(pokes(l)).toBe(settled + 2);
     expect((await send(l, L, at()))?.held).toEqual([]);
+  });
+
+  it("a laptop's reply names the members behind NAT that are connected, and a change pokes it", async () => {
+    const { send, laptop, connect, hub, calls } = laptopSetup();
+    const l = await laptop();
+    const a = await connect(A);
+    expect(await send(l, L, at())).toMatchObject({ held: [], connected: [] });
+    expect((await send(l, L, at()))?.connected).toBeUndefined();
+    const settled = pokes(l);
+    const before = calls();
+    const nat = await connect(B);
+    expect(pokes(l)).toBe(settled + 1);
+    expect(calls()).toBe(before);
+    expect(pokes(a)).toBe(0);
+    expect(await send(l, L, at())).toMatchObject({ held: [], connected: [B] });
+    expect((await send(l, L, at()))?.connected).toBeUndefined();
+    expect((await send(nat, B, quiet(2)))?.connected).toBeUndefined();
+    expect((await send(a, A, quiet(1)))?.connected).toBeUndefined();
+    expect(pokes(l)).toBe(settled + 1);
+    nat.close(1000, "gone");
+    await hub.webSocketClose(nat as unknown as WebSocket);
+    expect(pokes(l)).toBe(settled + 2);
+    expect((await send(l, L, at()))?.connected).toEqual([]);
   });
 
   it("a warning's cut-off reaches the connected laptops at once", async () => {
