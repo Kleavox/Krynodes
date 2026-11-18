@@ -245,7 +245,17 @@ export class FleetHub {
       });
     }
     if (url.pathname === "/network") {
-      return Response.json(Object.fromEntries(this.network.latest));
+      const served = Object.fromEntries(this.network.latest);
+      for (const ws of this.ctx.getWebSockets()) {
+        const state = ws.deserializeAttachment() as StreamState | null;
+        if (!state?.laptop || state.left) continue;
+        const at = this.heard(ws, state);
+        const known = served[state.nodeId];
+        if (!known || known.at < at) {
+          served[state.nodeId] = { at, links: known?.links ?? [] };
+        }
+      }
+      return Response.json(served);
     }
     if (url.pathname === "/denials") {
       return Response.json(
