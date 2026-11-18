@@ -439,6 +439,28 @@ describe("laptops on the hub", () => {
     ).toEqual({ last_seen_at: null });
   });
 
+  it("still serves a connected laptop after the hub slept and forgot its beats", async () => {
+    const { hub, send, laptop, sqlite } = laptopSetup();
+    sqlite
+      .prepare("UPDATE network_members SET state = 'waiting' WHERE node_id = ?")
+      .run(L);
+    const l = await laptop();
+    await send(l, L, quiet(3));
+    const beatAt = (l.deserializeAttachment() as { lastSeen: number }).lastSeen;
+    (
+      hub as unknown as { network: { latest: Map<string, unknown> } }
+    ).network.latest.clear();
+    const served = async () =>
+      (await (
+        await hub.fetch(new Request("https://fleet/network"))
+      ).json()) as Record<string, { at: number; links: unknown[] }>;
+    expect((await served())[L]).toEqual({ at: beatAt, links: [] });
+    l.pinged = beatAt + 25_000;
+    expect((await served())[L]?.at).toBe(beatAt + 25_000);
+    l.close(1000, "bye");
+    expect((await served())[L]).toBeUndefined();
+  });
+
   it("ignores a meeting point that is no public server of the network", async () => {
     const { connect, send, laptop } = laptopSetup();
     const nat = await connect(B);
