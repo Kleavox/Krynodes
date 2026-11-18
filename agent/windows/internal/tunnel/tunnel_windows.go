@@ -22,8 +22,6 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
-	"golang.org/x/sys/windows/svc"
-	"golang.org/x/sys/windows/svc/mgr"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
@@ -528,18 +526,22 @@ func RemoveFirewall() error {
 }
 
 func firewallRunning() bool {
-	manager, err := mgr.Connect()
+	manager, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return false
 	}
-	defer manager.Disconnect()
-	service, err := manager.OpenService("MpsSvc")
+	defer windows.CloseServiceHandle(manager)
+	name, err := windows.UTF16PtrFromString("MpsSvc")
 	if err != nil {
 		return false
 	}
-	defer service.Close()
-	status, err := service.Query()
-	return err == nil && status.State == svc.Running
+	service, err := windows.OpenService(manager, name, windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseServiceHandle(service)
+	var status windows.SERVICE_STATUS
+	return windows.QueryServiceStatus(service, &status) == nil && status.CurrentState == windows.SERVICE_RUNNING
 }
 
 func FirewallOff() bool {
