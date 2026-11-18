@@ -27,7 +27,7 @@ export function registerPackageRoutes(
        FROM packages p
        JOIN nodes n ON n.id = p.node_id,
          json_each(p.report, '$.packages') AS item
-       WHERE n.owner_user_id = ? AND n.disabled_at IS NULL
+       WHERE n.owner_user_id = ? AND n.kind = 'server' AND n.disabled_at IS NULL
        ORDER BY p.node_id, name`,
     )
       .bind(context.get("identity").id)

@@ -1,12 +1,14 @@
-package actions
+package trust
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -56,7 +58,7 @@ type trustV1 struct {
 	Keys    []TrustKey `json:"keys"`
 }
 
-func LoadTrust(stateDir string) (Trust, error) {
+func Load(stateDir string) (Trust, error) {
 	raw, err := os.ReadFile(filepath.Join(stateDir, "trust.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return Trust{}, nil
@@ -80,8 +82,54 @@ func LoadTrust(stateDir string) (Trust, error) {
 	return settled(upgraded), nil
 }
 
-func SaveTrust(stateDir string, trust Trust) error {
+func Save(stateDir string, trust Trust) error {
 	return writeJSON(stateDir, "trust.json", trust, 0o600)
+}
+
+func writeJSON(directory, name string, value any, mode os.FileMode) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return err
+	}
+	temporary := filepath.Join(directory, "."+name+".tmp")
+	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		return err
+	}
+	if _, err := file.Write(encoded); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, filepath.Join(directory, name)); err != nil {
+		return err
+	}
+	return syncDirectory(directory)
+}
+
+func syncDirectory(path string) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func (t Trust) Report() reporter.TrustReport {
@@ -178,7 +226,7 @@ func checkAccess(access, core []string) error {
 	return nil
 }
 
-func ApplyTrustChange(current Trust, request Request, now time.Time) (Trust, error) {
+func ApplyTrustChange(current Trust, request reporter.ActionRequest, now time.Time) (Trust, error) {
 	var signed signedTrust
 	if err := strict(request.Signed, &signed); err != nil {
 		return Trust{}, fmt.Errorf("the change is malformed: %w", err)
@@ -203,7 +251,7 @@ func ApplyTrustChange(current Trust, request Request, now time.Time) (Trust, err
 		return Trust{}, errors.New("the change lasts longer than 24 hours")
 	}
 	if now.After(expires.Add(clockSkew)) {
-		return Trust{}, fmt.Errorf("the change expired at %s", clockSays(expires, now))
+		return Trust{}, fmt.Errorf("the change expired at %s", ClockSays(expires, now))
 	}
 	host, err := originHost(change.Origin)
 	if err != nil {

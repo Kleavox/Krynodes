@@ -1,6 +1,7 @@
 export const MIN_AGENT_VERSION = "0.7.20";
 export const SEAL_AGENT = "0.7.21";
 export const ACCOUNTS_AGENT = "0.7.22";
+export const MEMBER_KINDS_AGENT = "0.7.24";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 
@@ -26,3 +27,6 @@ export const agentSealsFromSender = (version: string | null | undefined) =>
 
 export const agentKnowsAccounts = (version: string | null | undefined) =>
   reaches(version, ACCOUNTS_AGENT);
+
+export const agentKnowsMemberKinds = (version: string | null | undefined) =>
+  reaches(version, MEMBER_KINDS_AGENT);

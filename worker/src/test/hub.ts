@@ -89,9 +89,17 @@ export function hubHarness(env: Partial<Env>) {
     nodeId: string,
     ownerId = "standalone",
     interval = 60,
+    laptop = false,
   ) => {
     const ws = new FakeSocket();
-    await hub.accept(ws as unknown as WebSocket, nodeId, ownerId, interval);
+    await hub.accept(
+      ws as unknown as WebSocket,
+      nodeId,
+      ownerId,
+      interval,
+      null,
+      laptop,
+    );
     return ws;
   };
   const request = async (
@@ -107,5 +115,5 @@ export function hubHarness(env: Partial<Env>) {
     );
     return ws.replies().find((reply) => reply.id === id) ?? null;
   };
-  return { hub, accepted, connect, request };
+  return { hub, accepted, connect, request, storage: ctx.storage };
 }

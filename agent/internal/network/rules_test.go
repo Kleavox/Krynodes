@@ -80,7 +80,7 @@ func TestTheWatchChainsDropAndLogOnlyClosedPorts(t *testing.T) {
 	for port := 1000; port < 1014; port++ {
 		tcp = append(tcp, port)
 	}
-	drop, knock := Watch([]string{"10.88.0.9"}, tcp, []int{53})
+	drop, knock := Watch([]string{"10.88.0.9"}, tcp, []int{53}, nil)
 	if !slices.Equal(drop, []string{"-A KRY-DROP -s 10.88.0.9/32 -j DROP"}) {
 		t.Fatalf("drop %q", drop)
 	}
@@ -177,5 +177,121 @@ func TestPortsReturnOnlyEachStacksOwnServerPorts(t *testing.T) {
 	}
 	if strings.Join(PortsJump, " ") != "-i krc+ -m conntrack --ctstate DNAT --ctdir ORIGINAL -j KRY-PORTS" {
 		t.Fatalf("jump %q", PortsJump)
+	}
+}
+
+func laptopAddresses(members []Member) []string {
+	var addresses []string
+	for _, laptop := range Laptops(members) {
+		addresses = append(addresses, laptop.Address)
+	}
+	return addresses
+}
+
+func TestALaptopPassesServeRulesForEveryPort(t *testing.T) {
+	members := laptopNetwork().Members
+	serve, _ := Rules("10.88.0.1", members, []StackRules{{Project: "db", Serves: []Serve{{Port: "5432/tcp", To: []string{nodeB}}}}})
+	match := "-p tcp -m conntrack --ctorigdst 10.88.0.1/32 --ctorigdstport 5432"
+	want := []string{
+		"-A KRY-SERVE -s 10.88.0.9/32 -j RETURN",
+		"-A KRY-SERVE -s 10.88.0.2/32 " + match + " -j RETURN",
+		"-A KRY-SERVE " + match + " -m limit --limit 600/min -j LOG --log-prefix \"kry-knock \" --log-level 6",
+		"-A KRY-SERVE " + match + " -m comment --comment kry-serve:db -j DROP",
+	}
+	if !slices.Equal(serve, want) {
+		t.Fatalf("serve\n%s\nwant\n%s", strings.Join(serve, "\n"), strings.Join(want, "\n"))
+	}
+	if serve, _ := Rules("10.88.0.1", members, nil); !slices.Equal(serve, want[:1]) {
+		t.Fatalf("no stacks %q", serve)
+	}
+}
+
+func TestTheKnockWatchNeverCountsALaptop(t *testing.T) {
+	_, knock := Watch(nil, []int{22}, nil, laptopAddresses(laptopNetwork().Members))
+	want := []string{
+		"-A KRY-KNOCK -p icmp -j RETURN",
+		"-A KRY-KNOCK -p tcp -m multiport --dports 22 -j RETURN",
+		"-A KRY-KNOCK -s 10.88.0.9/32 -j RETURN",
+		"-A KRY-KNOCK -m limit --limit 600/min -j LOG --log-prefix \"kry-knock \" --log-level 6",
+	}
+	if !slices.Equal(knock, want) {
+		t.Fatalf("knock\n%s", strings.Join(knock, "\n"))
+	}
+}
+
+func TestExitRulesOnlyForLaptopsAndOnlyWhenOn(t *testing.T) {
+	members := laptopNetwork().Members
+	if forward, nat := Exit(members[0], members, "eth0", 4); len(forward)+len(nat) != 0 {
+		t.Fatalf("off %q %q", forward, nat)
+	}
+	members[0].Exit = true
+	forward, nat := Exit(members[0], members, "eth0", 4)
+	want := []string{
+		"-A KRY-EXIT -i eth0 -o kry0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+		"-A KRY-EXIT -s 10.88.0.9/32 -i kry0 -o eth0 -j ACCEPT",
+		"-A KRY-EXIT -i kry0 -o eth0 -j DROP",
+		"-A KRY-EXIT -i eth0 -o kry0 -j DROP",
+	}
+	if !slices.Equal(forward, want) || !slices.Equal(nat, []string{"-A POSTROUTING -s 10.88.0.9/32 -o eth0 -j MASQUERADE"}) {
+		t.Fatalf("forward\n%s\nnat %q", strings.Join(forward, "\n"), nat)
+	}
+}
+
+func TestExitRulesForIPv6UseTheLaptopsSixAddress(t *testing.T) {
+	members := laptopNetwork().Members
+	members[0].Exit = true
+	forward, nat := Exit(members[0], members, "eth0", 6)
+	want := []string{
+		"-A KRY-EXIT -i eth0 -o kry0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+		"-A KRY-EXIT -s fd88:88::9/128 -i kry0 -o eth0 -j ACCEPT",
+		"-A KRY-EXIT -i kry0 -o eth0 -j DROP",
+		"-A KRY-EXIT -i eth0 -o kry0 -j DROP",
+	}
+	if !slices.Equal(forward, want) || !slices.Equal(nat, []string{"-A POSTROUTING -s fd88:88::9/128 -o eth0 -j MASQUERADE"}) {
+		t.Fatalf("forward\n%s\nnat %q", strings.Join(forward, "\n"), nat)
+	}
+}
+
+func TestARemovedLaptopLeavesEveryRule(t *testing.T) {
+	everything := func(members []Member) string {
+		self := members[0]
+		self.Exit = true
+		serve, _ := Rules("10.88.0.1", members, []StackRules{{Project: "db", Serves: []Serve{{Port: "5432/tcp", To: []string{nodeB}}}}})
+		_, knock := Watch(nil, []int{22}, nil, laptopAddresses(members))
+		forward4, nat4 := Exit(self, members, "eth0", 4)
+		forward6, nat6 := Exit(self, members, "eth0", 6)
+		return strings.Join(slices.Concat(serve, knock, forward4, nat4, forward6, nat6), "\n")
+	}
+	members := laptopNetwork().Members
+	if before := everything(members); strings.Count(before, "-s 10.88.0.9/32") != 4 || strings.Count(before, "-s fd88:88::9/128") != 2 {
+		t.Fatalf("before\n%s", before)
+	}
+	if after := everything(members[:3]); strings.Contains(after, "10.88.0.9") || strings.Contains(after, "fd88") {
+		t.Fatalf("after\n%s", after)
+	}
+	members[3].Cut = true
+	if cut := everything(members); strings.Contains(cut, "10.88.0.9") || strings.Contains(cut, "fd88") {
+		t.Fatalf("cut\n%s", cut)
+	}
+}
+
+func TestExitIgnoresCutAndIneligibleMembers(t *testing.T) {
+	members := laptopNetwork().Members
+	members[0].Exit, members[0].Cut = true, true
+	if forward, nat := Exit(members[0], members, "eth0", 4); forward != nil || nat != nil {
+		t.Fatalf("cut self exits %q %q", forward, nat)
+	}
+	members = laptopNetwork().Members
+	members[2].Exit, members[3].Exit = true, true
+	for _, self := range members[2:] {
+		if forward, nat := Exit(self, members, "eth0", 4); forward != nil || nat != nil {
+			t.Fatalf("%s exits %q %q", self.Name, forward, nat)
+		}
+	}
+	members[0].Exit = true
+	for _, family := range []int{0, 5, 46} {
+		if forward, nat := Exit(members[0], members, "eth0", family); forward != nil || nat != nil {
+			t.Fatalf("family %d %q %q", family, forward, nat)
+		}
 	}
 }

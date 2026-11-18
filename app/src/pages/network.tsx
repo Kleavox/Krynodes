@@ -7,9 +7,17 @@ import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AddLaptopDialog } from "@/features/network/add-laptop-dialog";
 import { JoinDialog } from "@/features/network/create-dialog";
 import { DeleteDialog } from "@/features/network/delete-dialog";
 import { KeysDialog } from "@/features/network/keys-dialog";
+import {
+  ApproveLaptopDialog,
+  DismissLaptopDialog,
+  LaptopsSection,
+  RemoveLaptopDialog,
+  RenameLaptopDialog,
+} from "@/features/network/laptops-section";
 import { LinksDialog } from "@/features/network/links-dialog";
 import { RemoveDialog } from "@/features/network/remove-dialog";
 import {
@@ -28,13 +36,18 @@ import {
   useServices,
 } from "@/lib/api";
 import { errorMessage } from "@/lib/http";
-import { presenceOf, testPairs } from "@/lib/network";
+import { laptopBlocker, presenceOf, testPairs } from "@/lib/network";
 import { queryKeys } from "@/lib/query-client";
 import { useNow } from "@/lib/use-now";
 
 type Open =
   | { kind: "create" }
   | { kind: "add"; preset?: string }
+  | { kind: "laptop" }
+  | { kind: "approve"; nodeId: string }
+  | { kind: "dismiss"; nodeId: string }
+  | { kind: "rename"; nodeId: string }
+  | { kind: "unlaptop"; nodeId: string }
   | { kind: "links"; nodeId: string }
   | { kind: "test"; nodeId?: string; pair?: [string, string] }
   | { kind: "remove"; nodeId: string }
@@ -43,17 +56,19 @@ type Open =
 
 export function NetworkPage() {
   const job = useJoin();
-  const network = useNetwork(job?.phase === "done" ? 5_000 : 60_000);
-  const overview = useOverview();
-  const services = useServices();
-  const ranges = usePrivateRanges(true);
-  const client = useQueryClient();
-  const now = useNow(5_000);
   const [search, setSearch] = useSearchParams();
   const joining = search.get("join");
   const [open, setOpen] = useState<Open | null>(
     joining ? { kind: "add", preset: joining } : null,
   );
+  const network = useNetwork(
+    job?.phase === "done" || open?.kind === "laptop" ? 5_000 : 60_000,
+  );
+  const overview = useOverview();
+  const services = useServices();
+  const ranges = usePrivateRanges(true);
+  const client = useQueryClient();
+  const now = useNow(5_000);
 
   useEffect(() => {
     if (joining) setSearch({}, { replace: true });
@@ -92,6 +107,16 @@ export function NetworkPage() {
   const removing = open?.kind === "remove" ? memberOf(open.nodeId) : undefined;
   const creating = job?.kind === "create";
   const close = () => setOpen(null);
+  const blocker = laptopBlocker(view, nodes);
+  const laptopOf = (id: string | undefined) =>
+    view.laptops.find((laptop) => laptop.nodeId === id);
+  const approving =
+    open?.kind === "approve" ? laptopOf(open.nodeId) : undefined;
+  const dismissing =
+    open?.kind === "dismiss" ? laptopOf(open.nodeId) : undefined;
+  const renaming = open?.kind === "rename" ? laptopOf(open.nodeId) : undefined;
+  const unlaptopping =
+    open?.kind === "unlaptop" ? laptopOf(open.nodeId) : undefined;
 
   const testing = (() => {
     if (open?.kind !== "test") return null;
@@ -117,14 +142,24 @@ export function NetworkPage() {
         title="Network"
         actions={
           view.network && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 md:h-8"
-              onClick={() => setOpen({ kind: "add" })}
-            >
-              {job?.kind === "add" ? <Busy>Adding</Busy> : "Add Server"}
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 md:h-8"
+                onClick={() => setOpen({ kind: "laptop" })}
+              >
+                Add Laptop
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 md:h-8"
+                onClick={() => setOpen({ kind: "add" })}
+              >
+                {job?.kind === "add" ? <Busy>Adding</Busy> : "Add Server"}
+              </Button>
+            </div>
           )
         }
       />
@@ -165,6 +200,23 @@ export function NetworkPage() {
                 setOpen({ kind: "remove", nodeId: server.nodeId })
               }
             />
+            <LaptopsSection
+              view={view}
+              now={now}
+              blocker={blocker}
+              onApprove={(laptop) =>
+                setOpen({ kind: "approve", nodeId: laptop.nodeId })
+              }
+              onDismiss={(laptop) =>
+                setOpen({ kind: "dismiss", nodeId: laptop.nodeId })
+              }
+              onRename={(laptop) =>
+                setOpen({ kind: "rename", nodeId: laptop.nodeId })
+              }
+              onRemove={(laptop) =>
+                setOpen({ kind: "unlaptop", nodeId: laptop.nodeId })
+              }
+            />
             <ChangesCard view={view} />
           </div>
           <aside className="min-w-0 space-y-6">
@@ -188,6 +240,34 @@ export function NetworkPage() {
           release={overview.data.agentRelease.version}
           preset={open.kind === "add" ? open.preset : undefined}
           now={now}
+          onClose={close}
+        />
+      )}
+      {open?.kind === "laptop" && <AddLaptopDialog onClose={close} />}
+      {approving && (
+        <ApproveLaptopDialog
+          laptop={approving}
+          view={view}
+          blocker={blocker}
+          onClose={close}
+        />
+      )}
+      {dismissing && (
+        <DismissLaptopDialog laptop={dismissing} onClose={close} />
+      )}
+      {renaming && (
+        <RenameLaptopDialog
+          laptop={renaming}
+          view={view}
+          blocker={blocker}
+          onClose={close}
+        />
+      )}
+      {unlaptopping && (
+        <RemoveLaptopDialog
+          laptop={unlaptopping}
+          view={view}
+          blocker={blocker}
           onClose={close}
         />
       )}

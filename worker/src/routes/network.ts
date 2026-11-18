@@ -1,6 +1,8 @@
 import {
+  agentKnowsMemberKinds,
   agentSupported,
   dnsName,
+  MEMBER_KINDS_AGENT,
   MIN_AGENT_VERSION,
   signedDocumentSchema,
 } from "@krynodes/protocol";
@@ -20,7 +22,7 @@ import {
 } from "../network/document";
 import { Refusal } from "../trust/approval";
 import { verifySigned } from "../trust/intent";
-import { loadFleet, syncedUpdates } from "../trust/fleet";
+import { loadFleet, readReport, syncedUpdates } from "../trust/fleet";
 import {
   invalidRequest,
   readJson,
@@ -47,6 +49,7 @@ const testBodySchema = z.object({
 interface MemberRow {
   node_id: string;
   name: string;
+  kind: string;
   state: "waiting" | "in" | "leaving";
   address: string | null;
   port: number;
@@ -66,7 +69,7 @@ interface MemberRow {
 const membersOf = (db: D1Database, owner: string) =>
   db
     .prepare(
-      `SELECT m.node_id, n.name, m.state, m.address, m.port, m.mtu, m.uplink, m.key,
+      `SELECT m.node_id, n.name, n.kind, m.state, m.address, m.port, m.mtu, m.uplink, m.key,
               m.signer, m.endpoint, m.nat, m.announce_key, m.announce_signature,
               m.points, m.since, m.joined_at
        FROM network_members m JOIN nodes n ON n.id = m.node_id
@@ -116,58 +119,89 @@ export function registerNetworkRoutes(
   app.get("/api/network", requireOperator, unchangedList, async (context) => {
     const db = context.env.DB;
     const owner = context.get("identity").id;
-    const [row, members, addresses, links, changes, stored, held, wrong] =
-      await Promise.all([
-        readNetwork(db, owner),
-        membersOf(db, owner),
-        addressesOf(db, owner),
-        db
-          .prepare(
-            `SELECT a, b, answering, since FROM network_links
+    const [
+      row,
+      members,
+      addresses,
+      links,
+      changes,
+      stored,
+      held,
+      wrong,
+      laptops,
+    ] = await Promise.all([
+      readNetwork(db, owner),
+      membersOf(db, owner),
+      addressesOf(db, owner),
+      db
+        .prepare(
+          `SELECT a, b, answering, since FROM network_links
              WHERE a IN (SELECT id FROM nodes WHERE owner_user_id = ?)
              ORDER BY a, b`,
-          )
-          .bind(owner)
-          .all<{ a: string; b: string; answering: number; since: string }>(),
-        db
-          .prepare(
-            `SELECT id, at, change, detail, requested_by, device_id FROM network_changes
+        )
+        .bind(owner)
+        .all<{ a: string; b: string; answering: number; since: string }>(),
+      db
+        .prepare(
+          `SELECT id, at, change, detail, requested_by, device_id, kind FROM network_changes
              WHERE owner_user_id = ? AND change NOT LIKE 'Test % ↔ %'
              ORDER BY at DESC, id DESC LIMIT ?`,
-          )
-          .bind(owner, CHANGES)
-          .all<{
-            id: string;
-            at: string;
-            change: string;
-            detail: string | null;
-            requested_by: string;
-            device_id: string | null;
-          }>(),
-        db
-          .prepare(
-            `SELECT m.node_id, n.links FROM network_members m JOIN nodes n ON n.id = m.node_id
+        )
+        .bind(owner, CHANGES)
+        .all<{
+          id: string;
+          at: string;
+          change: string;
+          detail: string | null;
+          requested_by: string;
+          device_id: string | null;
+          kind: string | null;
+        }>(),
+      db
+        .prepare(
+          `SELECT m.node_id, n.links FROM network_members m JOIN nodes n ON n.id = m.node_id
              WHERE n.owner_user_id = ? AND m.state = 'in' AND n.links IS NOT NULL`,
-          )
-          .bind(owner)
-          .all<{ node_id: string; links: string }>(),
-        db
-          .prepare(
-            `SELECT q.node_id FROM quarantines q JOIN nodes n ON n.id = q.node_id
+        )
+        .bind(owner)
+        .all<{ node_id: string; links: string }>(),
+      db
+        .prepare(
+          `SELECT q.node_id FROM quarantines q JOIN nodes n ON n.id = q.node_id
              WHERE n.owner_user_id = ? AND q.released_at IS NULL ORDER BY q.at`,
-          )
-          .bind(owner)
-          .all<{ node_id: string }>(),
-        db
-          .prepare(
-            `SELECT w.node_id, w.detail, MAX(w.at) AS at FROM warnings w
+        )
+        .bind(owner)
+        .all<{ node_id: string }>(),
+      db
+        .prepare(
+          `SELECT w.node_id, w.detail, MAX(w.at) AS at FROM warnings w
              JOIN nodes n ON n.id = w.node_id
              WHERE n.owner_user_id = ? AND w.kind = 'wrong-port' AND w.at >= ?
              GROUP BY w.node_id, w.detail ORDER BY at DESC`,
-          )
-          .bind(owner, new Date(Date.now() - 86_400_000).toISOString())
-          .all<{ node_id: string; detail: string; at: string }>(),
-      ]);
+        )
+        .bind(owner, new Date(Date.now() - 86_400_000).toISOString())
+        .all<{ node_id: string; detail: string; at: string }>(),
+      db
+        .prepare(
+          `SELECT n.id, n.name, n.agent_version, n.last_seen_at, n.trust_report,
+                    n.seal_key, m.address, m.state, m.applied
+             FROM nodes n LEFT JOIN network_members m ON m.node_id = n.id
+             WHERE n.owner_user_id = ? AND n.kind = 'laptop'
+               AND n.enrolled_at IS NOT NULL AND n.disabled_at IS NULL
+             ORDER BY n.name, n.id`,
+        )
+        .bind(owner)
+        .all<{
+          id: string;
+          name: string;
+          agent_version: string | null;
+          last_seen_at: string | null;
+          trust_report: string | null;
+          seal_key: string | null;
+          address: string | null;
+          state: string | null;
+          applied: number | null;
+        }>(),
+    ]);
     const live: Record<string, { at: number; links: unknown[] }> = {};
     for (const entry of stored.results) {
       try {
@@ -253,6 +287,21 @@ export function registerNetworkRoutes(
         since: link.since,
       })),
       live,
+      laptops: laptops.results.map((laptop) => ({
+        nodeId: laptop.id,
+        name: laptop.name,
+        address: laptop.address,
+        state: laptop.state,
+        version: laptop.agent_version,
+        lastSeen: live[laptop.id]
+          ? new Date(live[laptop.id]!.at).toISOString()
+          : laptop.last_seen_at
+            ? `${laptop.last_seen_at.replace(" ", "T")}Z`
+            : null,
+        sealKey: laptop.seal_key,
+        trust: readReport(laptop.trust_report),
+        applied: laptop.applied,
+      })),
       held: addresses.results
         .filter((address) => address.state === "held")
         .map((address) => ({
@@ -268,6 +317,7 @@ export function registerNetworkRoutes(
         detail: change.detail,
         requestedBy: change.requested_by,
         deviceId: change.device_id,
+        kind: change.kind,
       })),
     });
   });
@@ -387,7 +437,7 @@ export function registerNetworkRoutes(
         .all<{ key: string }>(),
       db
         .prepare(
-          `SELECT id, name, agent_version FROM nodes
+          `SELECT id, name, agent_version, kind FROM nodes
            WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
              AND id IN (SELECT value FROM json_each(?))`,
         )
@@ -395,7 +445,12 @@ export function registerNetworkRoutes(
           owner,
           JSON.stringify(document.members.map((member) => member.node)),
         )
-        .all<{ id: string; name: string; agent_version: string | null }>(),
+        .all<{
+          id: string;
+          name: string;
+          agent_version: string | null;
+          kind: string;
+        }>(),
     ]);
     if (document.version !== (row?.version ?? 0) + 1) {
       return refusal(
@@ -417,6 +472,32 @@ export function registerNetworkRoutes(
         422,
         "AGENT_TOO_OLD",
         `Update the agent on ${old.name} to ${MIN_AGENT_VERSION} or newer.`,
+      );
+    }
+    const kinds = new Map(nodes.results.map((node) => [node.id, node.kind]));
+    const misnamed = document.members.find(
+      (member) => (member.kind ?? "server") !== kinds.get(member.node),
+    );
+    if (misnamed) {
+      return refusal(
+        context,
+        422,
+        "WRONG_KIND",
+        `The document lists ${misnamed.name} as the wrong kind of member.`,
+      );
+    }
+    const kindsUsed =
+      document.dns !== undefined ||
+      document.members.some((member) => member.kind || member.exit);
+    const behind = nodes.results.find(
+      (node) => !agentKnowsMemberKinds(node.agent_version),
+    );
+    if (kindsUsed && behind) {
+      return refusal(
+        context,
+        422,
+        "AGENT_TOO_OLD",
+        `Update ${behind.name} to agent ${MEMBER_KINDS_AGENT} first.`,
       );
     }
     const creating = !row || row.deleted === 1;
@@ -643,6 +724,25 @@ export function registerNetworkRoutes(
           )
           .bind(ids),
       );
+      const laptops = JSON.stringify(
+        leaving
+          .filter((member) => member.kind === "laptop")
+          .map((member) => member.node_id),
+      );
+      statements.push(
+        db
+          .prepare(
+            `UPDATE nodes SET disabled_at = ?1, agent_token_hash = 'retired-' || id
+             WHERE id IN (SELECT value FROM json_each(?2))`,
+          )
+          .bind(at, laptops),
+        db
+          .prepare(
+            `DELETE FROM network_members
+             WHERE node_id IN (SELECT value FROM json_each(?1))`,
+          )
+          .bind(laptops),
+      );
       if (!document.deleted) {
         const released = leaving.map((member) => {
           const points = pointsAt(member.address!, member.name, staying);
@@ -694,12 +794,30 @@ export function registerNetworkRoutes(
     }
     const joins = joining.map((member) => member.node);
     const leaves = leaving.map((member) => member.node_id);
+    const exits = (list: { node: string; exit?: true }[]) =>
+      list
+        .filter((member) => member.exit)
+        .map((member) => member.node)
+        .sort()
+        .join();
+    const before =
+      row && !creating
+        ? (storedDocument(row.document)?.document.members ?? [])
+        : [];
+    const kind = joining.some((member) => member.kind === "laptop")
+      ? "laptop.add"
+      : leaving.some((member) => member.kind === "laptop")
+        ? "laptop.remove"
+        : exits(before) !== exits(document.members)
+          ? "network.exit"
+          : null;
     statements.push(
       changeStatement(db, {
         owner,
         at,
         change,
         detail,
+        kind,
         requestedBy: identity.email,
         deviceId: signed.grant.credentialId,
         nodes: [...new Set([...inside.keys(), ...kept])],
@@ -763,13 +881,14 @@ export function changeStatement(
     nodes: string[];
     joins: string[];
     leaves: string[];
+    kind?: "laptop.add" | "laptop.remove" | "network.exit" | null;
   },
 ) {
   return db
     .prepare(
       `INSERT INTO network_changes (id, owner_user_id, at, change, detail, requested_by,
-         device_id, nodes, joins, leaves)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         device_id, nodes, joins, leaves, kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       change.id ?? crypto.randomUUID(),
@@ -782,5 +901,6 @@ export function changeStatement(
       JSON.stringify(change.nodes),
       JSON.stringify(change.joins),
       JSON.stringify(change.leaves),
+      change.kind ?? null,
     );
 }

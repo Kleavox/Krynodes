@@ -2,7 +2,7 @@ import type { MiddlewareHandler } from "hono";
 
 import { quietByNode, type QuietSpan } from "../agent/quiet";
 import { fleetLive, mergeLive } from "../fleet/client";
-import { findOwnedNode, type KrynodesApp, type KrynodesEnv } from "./shared";
+import { findOwnedServer, type KrynodesApp, type KrynodesEnv } from "./shared";
 
 const RANGES = {
   "6h": { seconds: 21_600, bucket: 300 },
@@ -76,7 +76,7 @@ interface RecentNode {
 
 const RECENT_NODES_SQL = `
   SELECT id, interval_seconds, last_seen_at, security FROM nodes
-  WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
+  WHERE owner_user_id = ? AND kind = 'server' AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
 
 export const RECENT_SQL = `
   SELECT m.node_id,
@@ -104,7 +104,7 @@ export function registerMetricRoutes(
   requireAdmin: MiddlewareHandler<KrynodesEnv>,
 ): void {
   app.get("/api/nodes/:id/metrics", requireAdmin, async (context) => {
-    const node = await findOwnedNode(
+    const node = await findOwnedServer(
       context.env.DB,
       context.req.param("id"),
       context.get("identity").id,

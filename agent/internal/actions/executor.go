@@ -24,6 +24,7 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
+	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
 const (
@@ -38,6 +39,8 @@ const (
 var requestName = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$`)
 
 type Request = reporter.ActionRequest
+
+type Command = trust.Command
 
 type Result = reporter.ActionResult
 
@@ -55,7 +58,9 @@ type Executor struct {
 	Audit      bool
 	ConfigPath string
 
-	GoneMark string
+	QuarantineMark string
+	GoneMark       string
+	Held           func(context.Context) (bool, error)
 
 	CloudflareBase string
 	CloudflareHTTP *http.Client
@@ -75,6 +80,8 @@ type pending struct {
 
 func (e Executor) Execute(ctx context.Context) error {
 	e.clearWake()
+	e.leaveExitWhenHeld(ctx)
+	e.retryRelayPorts(ctx)
 	stopped, err := readState[[]string](e.StateDir, "stopped.json")
 	if err != nil {
 		return err
@@ -174,7 +181,7 @@ run:
 		e.guard(ctx)
 		e.refreshTunnel(ctx)
 	}
-	trust, err := LoadTrust(e.StateDir)
+	current, err := trust.Load(e.StateDir)
 	if err != nil {
 		log.Printf("%v", err)
 	}
@@ -197,7 +204,7 @@ run:
 			bridges = e.bridgesReport(ctx)
 		}
 	}
-	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: trust.Report(), Docker: snapshot.Docker, Removed: removed, Leftovers: leftovers, SealKey: sealKey, Security: security, Vault: e.vaultReport(), Packages: packages, Network: e.networkInventory(snapshot), Bridges: bridges}, e.Now())
+	inventory, err := NewInventory(Parts{Services: snapshot.Services, Stacks: e.stackEntries(snapshot), Trust: current.Report(), Docker: snapshot.Docker, Removed: removed, Leftovers: leftovers, SealKey: sealKey, Security: security, Vault: e.vaultReport(), Packages: packages, Network: e.networkInventory(snapshot), Bridges: bridges}, e.Now())
 	if err != nil {
 		return err
 	}
@@ -345,14 +352,14 @@ func check(request Request, now time.Time, services []Service) error {
 }
 
 func (e Executor) authorize(request Request) (Command, error) {
-	trust, err := LoadTrust(e.StateDir)
+	current, err := trust.Load(e.StateDir)
 	if err != nil {
 		return Command{}, err
 	}
-	if len(trust.Core) == 0 {
+	if len(current.Core) == 0 {
 		return Command{}, errors.New("no trusted devices")
 	}
-	return VerifyCommand(trust, request, e.Now())
+	return trust.VerifyCommand(current, request, e.Now())
 }
 
 func (e Executor) execute(ctx context.Context, request Request, services []Service) Result {
@@ -432,7 +439,7 @@ func expired(request Request, now time.Time) error {
 		return errors.New("invalid expiry")
 	}
 	if now.After(expires.Add(expirySkew)) {
-		return fmt.Errorf("the request expired at %s", clockSays(expires, now))
+		return fmt.Errorf("the request expired at %s", trust.ClockSays(expires, now))
 	}
 	return nil
 }
@@ -441,15 +448,15 @@ func (e Executor) trustChange(request Request) Result {
 	if err := expired(request, e.Now()); err != nil {
 		return e.refuse(request.ID, err)
 	}
-	current, err := LoadTrust(e.StateDir)
+	current, err := trust.Load(e.StateDir)
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	next, err := ApplyTrustChange(current, request, e.Now())
+	next, err := trust.ApplyTrustChange(current, request, e.Now())
 	if err != nil {
 		return e.refuse(request.ID, err)
 	}
-	if err := SaveTrust(e.StateDir, next); err != nil {
+	if err := trust.Save(e.StateDir, next); err != nil {
 		return e.refuse(request.ID, err)
 	}
 	return Result{ID: request.ID, OK: true, Output: fmt.Sprintf("%d trusted devices, %d reach this server, version %d", len(next.Core), len(next.Access), next.Version), FinishedAt: e.stamp()}

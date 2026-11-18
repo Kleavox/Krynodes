@@ -648,7 +648,7 @@ export function registerQuarantineRoutes(
               .prepare(
                 `SELECT m.node_id, n.agent_version FROM network_members m
                  JOIN nodes n ON n.id = m.node_id
-                 WHERE n.owner_user_id = ? AND m.state = 'in'
+                 WHERE n.owner_user_id = ? AND m.state = 'in' AND n.kind = 'server'
                  ORDER BY m.address`,
               )
               .bind(identity.id)

@@ -300,7 +300,7 @@ async function knocked(
       .prepare(
         `SELECT m.node_id, m.address, EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL) AS quarantined
          FROM network_members m JOIN nodes n ON n.id = m.node_id
-         WHERE n.owner_user_id = ? AND m.state = 'in'`,
+         WHERE n.owner_user_id = ? AND m.state = 'in' AND n.kind = 'server'`,
       )
       .bind(owner)
       .all<{ node_id: string; address: string | null; quarantined: number }>()

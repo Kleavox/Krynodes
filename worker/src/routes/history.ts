@@ -32,6 +32,7 @@ interface ChangeRow {
   detail: string | null;
   requested_by: string;
   device_id: string | null;
+  kind: string | null;
 }
 
 type HistoryEntry =
@@ -46,6 +47,7 @@ type HistoryEntry =
         detail: string | null;
         requestedBy: string;
         deviceId: string | null;
+        kind: string | null;
       };
     }
   | {
@@ -161,7 +163,7 @@ export function registerHistoryRoutes(
         .all<IncidentRow>(),
       db
         .prepare(
-          `SELECT id, at, change, detail, requested_by, device_id FROM network_changes
+          `SELECT id, at, change, detail, requested_by, device_id, kind FROM network_changes
            WHERE id IN (SELECT value FROM json_each(?))`,
         )
         .bind(refs("network"))
@@ -187,6 +189,7 @@ export function registerHistoryRoutes(
                     detail: row.detail,
                     requestedBy: row.requested_by,
                     deviceId: row.device_id,
+                    kind: row.kind,
                   },
                 },
               ]

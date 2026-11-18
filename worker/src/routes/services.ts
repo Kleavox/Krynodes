@@ -371,7 +371,8 @@ export function registerServiceRoutes(
         .prepare(
           `SELECT id, inventory_at, refresh_requested_at, trust_report, docker,
                   seal_key, security, vault, bridges, leftovers
-           FROM nodes WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
+           FROM nodes WHERE owner_user_id = ? AND kind = 'server'
+             AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
         )
         .bind(owner)
         .all<{
@@ -404,7 +405,7 @@ export function registerServiceRoutes(
       db
         .prepare(
           `SELECT * FROM actions
-           WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ?)
+           WHERE node_id IN (SELECT id FROM nodes WHERE owner_user_id = ? AND kind = 'server')
              AND requested_at >= ?
            ORDER BY requested_at, position`,
         )
@@ -772,7 +773,7 @@ export function registerServiceRoutes(
                 (SELECT json_extract(report, '$.apt') FROM packages
                  WHERE node_id = nodes.id) AS apt
          FROM nodes
-         WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
+         WHERE owner_user_id = ? AND kind = 'server' AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
       .bind(identity.id, nodeIds)

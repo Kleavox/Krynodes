@@ -1,5 +1,5 @@
 export {
   agentActionsRequestSchema as actionsSchema,
+  agentEnrollSchema as enrollSchema,
   agentHeartbeatSchema as heartbeatSchema,
-  agentHostSchema as hostSchema,
 } from "@krynodes/protocol";

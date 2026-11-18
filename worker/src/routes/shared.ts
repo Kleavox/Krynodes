@@ -32,6 +32,15 @@ export async function readJson(context: KrynodesContext): Promise<unknown> {
   return context.req.json().catch(() => null);
 }
 
+export function findOwnedServer(db: D1Database, id: string, ownerId: string) {
+  return db
+    .prepare(
+      "SELECT id FROM nodes WHERE id = ? AND owner_user_id = ? AND kind = 'server' LIMIT 1",
+    )
+    .bind(id, ownerId)
+    .first<{ id: string }>();
+}
+
 export function findOwnedNode(db: D1Database, id: string, ownerId: string) {
   return db
     .prepare("SELECT id FROM nodes WHERE id = ? AND owner_user_id = ? LIMIT 1")

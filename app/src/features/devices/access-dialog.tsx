@@ -16,6 +16,7 @@ import {
   agentCurrent,
   buildChange,
   formatPrint,
+  hasLaptops,
   syncText,
   type FleetServer,
 } from "@/lib/devices";
@@ -211,6 +212,7 @@ function Body({
     if (row) toggle(row.nodeId, row.id, next);
   };
   const name = scope.device ? scope.device.name : scope.server.node.name;
+  const kinds = hasLaptops(fleet.trusted) ? "Servers and Laptops" : "Servers";
 
   return (
     <DialogContent className={cn(SHEET, "sm:max-w-md")}>
@@ -218,8 +220,12 @@ function Body({
         <DialogTitle>{scope.device ? name : `Passkeys on ${name}`}</DialogTitle>
         <DialogDescription>
           {scope.device
-            ? `${name} runs actions only on the servers ticked below.`
-            : `Only the passkeys ticked below run actions on ${name}.`}
+            ? kinds === "Servers"
+              ? `${name} runs actions only on the servers ticked below.`
+              : `${name} is trusted only by the servers and laptops ticked below.`
+            : scope.server.laptop
+              ? `Only the passkeys ticked below can change the private network on ${name}.`
+              : `Only the passkeys ticked below run actions on ${name}.`}
         </DialogDescription>
       </DialogHeader>
       {scope.device && <DeviceFacts device={scope.device} />}
@@ -229,10 +235,10 @@ function Body({
         </p>
       ) : (
         <div className="grid gap-1.5">
-          {scope.device && <p className="text-sm font-medium">Servers</p>}
+          {scope.device && <p className="text-sm font-medium">{kinds}</p>}
           <Ticks
             ticks={ticks}
-            all={scope.device && rows.length > 1 ? "All Servers" : undefined}
+            all={scope.device && rows.length > 1 ? `All ${kinds}` : undefined}
             onTick={tick}
             onAll={(next) =>
               rows.forEach((row) => toggle(row.nodeId, row.id, next))

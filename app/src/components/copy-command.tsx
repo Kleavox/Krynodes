@@ -3,12 +3,18 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
-export function CopyCommand({ command }: { command: string }) {
+export function CopyCommand({
+  command,
+  label = "Copy Command",
+}: {
+  command: string;
+  label?: string;
+}) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard.writeText(command).then(
       () => setCopied(true),
-      () => toast.error("Copy failed. Select the command and copy it by hand."),
+      () => toast.error("Copy failed. Select the text and copy it by hand."),
     );
   };
   return (
@@ -17,7 +23,7 @@ export function CopyCommand({ command }: { command: string }) {
         {command}
       </pre>
       <Button variant="outline" size="sm" onClick={copy}>
-        {copied ? "Copied" : "Copy Command"}
+        {copied ? "Copied" : label}
       </Button>
     </div>
   );

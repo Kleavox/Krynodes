@@ -55,7 +55,7 @@ const QUIET_NODES_SQL = `
   SELECT id, interval_seconds, last_seen_at, security,
     (SELECT json_group_array(json_object('at', at, 'releasedAt', released_at)) FROM quarantines q WHERE q.node_id = nodes.id) AS quarantines
   FROM nodes
-  WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
+  WHERE owner_user_id = ? AND kind = 'server' AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
 
 type QuietWindow = WindowRow & {
   node_id: string;

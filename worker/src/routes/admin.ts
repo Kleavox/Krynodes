@@ -15,6 +15,7 @@ import { WARNING_KINDS } from "../quarantine/events";
 import {
   agentOrigin,
   findOwnedNode,
+  findOwnedServer,
   invalidRequest,
   readJson,
   type CheckRow,
@@ -57,7 +58,7 @@ export function registerAdminRoutes(
                  'detail', json(detail), 'at', at, 'cutAt', cut_at))
                FROM (SELECT * FROM warnings WHERE node_id = nodes.id AND answer IS NULL
                  AND kind IN (SELECT value FROM json_each(?2)) ORDER BY at)) AS warnings
-       FROM nodes WHERE owner_user_id = ?1 ORDER BY created_at DESC`,
+       FROM nodes WHERE owner_user_id = ?1 AND kind = 'server' ORDER BY created_at DESC`,
       )
         .bind(ownerId, JSON.stringify(WARNING_KINDS))
         .all<
@@ -262,7 +263,7 @@ export function registerAdminRoutes(
       .safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
 
-    const node = await findOwnedNode(
+    const node = await findOwnedServer(
       context.env.DB,
       body.data.nodeId,
       context.get("identity").id,
@@ -346,7 +347,7 @@ export function registerAdminRoutes(
     }
     const nodeId = change.nodeId ?? check.node_id ?? "";
     if (nodeId !== check.node_id) {
-      const node = await findOwnedNode(
+      const node = await findOwnedServer(
         context.env.DB,
         nodeId,
         context.get("identity").id,

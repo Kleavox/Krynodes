@@ -146,10 +146,21 @@ func (r Rules) zone(args ...string) (string, []string) {
 	return "firewall-offline-cmd", append([]string{"--zone=" + r.Zone}, args...)
 }
 
+func networkPorts(networkPort string) []string {
+	var ports []string
+	for _, field := range strings.Fields(networkPort) {
+		if _, err := strconv.Atoi(field); err == nil {
+			ports = append(ports, field+"/udp")
+		}
+	}
+	return ports
+}
+
 func (r Rules) system(line string, ssh []string, networkPort string) bool {
+	ports := networkPorts(networkPort)
 	if r.Tool == "firewalld" {
 		kind, value, _ := strings.Cut(line, ":")
-		return (kind == "port" && (slices.Contains(ssh, value) || value == networkPort+"/udp")) ||
+		return (kind == "port" && (slices.Contains(ssh, value) || slices.Contains(ports, value))) ||
 			(kind == "service" && (value == "ssh" || value == "dhcpv6-client"))
 	}
 	for _, port := range ssh {
@@ -157,7 +168,8 @@ func (r Rules) system(line string, ssh []string, networkPort string) bool {
 			return true
 		}
 	}
-	return line == "allow "+networkPort+"/udp" || line == "allow in on "+network.Interface
+	verb, port, _ := strings.Cut(line, " ")
+	return (verb == "allow" && slices.Contains(ports, port)) || line == "allow in on "+network.Interface
 }
 
 func (r Rules) openings(ctx context.Context, env Env, line string) []network.Opening {
@@ -351,11 +363,14 @@ func (r Rules) wanted(ssh []string, networkPort string, open []network.Opening) 
 			add("krynodes", "allow "+port)
 		}
 	}
-	if _, err := strconv.Atoi(networkPort); err == nil {
-		if r.Tool == "firewalld" {
-			add("", "port:"+networkPort+"/udp")
-		} else {
-			add(network.Comment, "allow "+networkPort+"/udp", "allow in on "+network.Interface)
+	for index, port := range networkPorts(networkPort) {
+		switch {
+		case r.Tool == "firewalld":
+			add("", "port:"+port)
+		case index == 0:
+			add(network.Comment, "allow "+port, "allow in on "+network.Interface)
+		default:
+			add(network.Comment, "allow "+port)
 		}
 	}
 	for _, opening := range open {
@@ -544,7 +559,7 @@ func alwaysOpen(ctx context.Context, env Env, opening network.Opening, networkPo
 	if slices.Contains(sshPorts(ctx, env), opening.Key()) {
 		return errors.New("SSH stays open to everyone")
 	}
-	if opening.Key() == networkPort+"/udp" {
+	if slices.Contains(networkPorts(networkPort), opening.Key()) {
 		return errors.New("the private network's port stays open")
 	}
 	return nil

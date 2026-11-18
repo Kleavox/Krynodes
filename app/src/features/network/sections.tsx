@@ -10,6 +10,7 @@ import { clockTime } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
 import {
   heldRows,
+  inside,
   networkFacts,
   problemRows,
   wrongPortRows,
@@ -23,8 +24,8 @@ import { actorOf } from "@/lib/operations";
 import { cn } from "@/lib/utils";
 import type { NetworkServer, NetworkView } from "@/types";
 
-const sectionTitle = "mb-2 text-xs font-medium text-muted-foreground";
-const card = "divide-y rounded-lg border bg-card";
+export const sectionTitle = "mb-2 text-xs font-medium text-muted-foreground";
+export const card = "divide-y rounded-lg border bg-card";
 
 const TONE: Record<Mark, string> = {
   "✓": "text-success",
@@ -178,13 +179,16 @@ export function WaitingCard({
   view: NetworkView;
   onJoin: (nodeId: string) => void;
 }) {
-  const next = useNetworkNext(view.waiting.map((server) => server.nodeId));
+  const waiting = view.waiting.filter(
+    (server) => !view.laptops.some((laptop) => laptop.nodeId === server.nodeId),
+  );
+  const next = useNetworkNext(waiting.map((server) => server.nodeId));
   const later = useSignedAction(false);
-  if (view.waiting.length === 0) return null;
+  if (waiting.length === 0) return null;
   return (
     <section className="space-y-2">
       <ul className={cn(card, "border-warning/40")}>
-        {view.waiting.map((server) => {
+        {waiting.map((server) => {
           const line = waitingLine(
             server,
             next.data?.addresses.find((entry) => entry.nodeId === server.nodeId)
@@ -254,7 +258,7 @@ export function ServersCard({
   onTest: (server: NetworkServer) => void;
   onRemove: (server: NetworkServer) => void;
 }) {
-  const members = view.members.filter((member) => member.state === "in");
+  const members = inside(view);
   return (
     <section>
       <h2 className={sectionTitle}>Servers</h2>

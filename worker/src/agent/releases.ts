@@ -65,7 +65,7 @@ export async function requestAutoUpdates(
   const candidates = await db
     .prepare(
       `SELECT id, agent_version FROM nodes
-       WHERE auto_update = 1 AND enrolled_at IS NOT NULL
+       WHERE auto_update = 1 AND kind = 'server' AND enrolled_at IS NOT NULL
          AND disabled_at IS NULL
          AND (update_requested_version IS NULL OR update_requested_version <> ?)`,
     )

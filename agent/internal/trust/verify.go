@@ -1,4 +1,4 @@
-package actions
+package trust
 
 import (
 	"bytes"
@@ -16,6 +16,8 @@ import (
 	"math/big"
 	"slices"
 	"time"
+
+	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
 const (
@@ -295,7 +297,7 @@ func verifySession(trust Trust, approval SignedGrant, payload, signed, name stri
 		return nil, time.Time{}, errors.New("the session is longer than 15 minutes")
 	}
 	if issued.After(now.Add(clockSkew)) {
-		return nil, time.Time{}, fmt.Errorf("the grant is from the future: signed %s", clockSays(issued, now))
+		return nil, time.Time{}, fmt.Errorf("the grant is from the future: signed %s", ClockSays(issued, now))
 	}
 	keyBytes, err := decode("session key", session.SessionKey)
 	if err != nil {
@@ -343,7 +345,7 @@ func VerifyDocument(trust Trust, raw []byte, now time.Time) ([]byte, error) {
 	return document, err
 }
 
-func VerifyCommand(trust Trust, request Request, now time.Time) (Command, error) {
+func VerifyCommand(trust Trust, request reporter.ActionRequest, now time.Time) (Command, error) {
 	if len(request.Signed) == 0 {
 		return Command{}, errors.New("the request is not signed")
 	}
@@ -380,12 +382,12 @@ func VerifyCommand(trust Trust, request Request, now time.Time) (Command, error)
 		return Command{}, errors.New("the command outlives its session by more than an hour")
 	}
 	if now.After(commandExpires.Add(clockSkew)) {
-		return Command{}, fmt.Errorf("the command expired at %s", clockSays(commandExpires, now))
+		return Command{}, fmt.Errorf("the command expired at %s", ClockSays(commandExpires, now))
 	}
 	return command, nil
 }
 
-func clockSays(at, now time.Time) string {
+func ClockSays(at, now time.Time) string {
 	const layout = "2 Jan 15:04:05 UTC"
 	return at.UTC().Format(layout) + "; this server's clock says " + now.UTC().Format(layout)
 }

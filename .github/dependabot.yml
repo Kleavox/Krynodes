@@ -27,7 +27,7 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: gomod
-    directory: /agent
+    directories: [/agent, /agent/windows]
     schedule:
       interval: weekly
     groups:

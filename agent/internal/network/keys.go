@@ -31,7 +31,7 @@ func Load(dir string, create bool) (Keys, error) {
 	if err != nil {
 		return Keys{}, err
 	}
-	return keysOf(private, seed)
+	return KeysOf(private, seed)
 }
 
 func Rekey(dir string) (Keys, error) {
@@ -82,7 +82,7 @@ func newKeys(dir string, signer bool) (Keys, error) {
 	return Load(dir, false)
 }
 
-func keysOf(private, seed []byte) (Keys, error) {
+func KeysOf(private, seed []byte) (Keys, error) {
 	key, err := ecdh.X25519().NewPrivateKey(private)
 	if err != nil || len(seed) != ed25519.SeedSize {
 		return Keys{}, errors.New("the network keys are unreadable")

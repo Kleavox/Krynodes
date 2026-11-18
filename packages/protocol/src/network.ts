@@ -6,7 +6,10 @@ export const NETWORK = {
   interface: "kry0",
   port: 51820,
   lastPort: 51919,
+  relayPort: 51920,
+  lastRelayPort: 52175,
   pool: "10.88.0.0/16",
+  pool6: "fd88:88::/64",
   keepalive: 25,
   answerSeconds: 180,
   readSeconds: 120,
@@ -20,6 +23,7 @@ const OCTET = "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 const HOST = "(25[0-4]|2[0-4]\\d|1\\d\\d|[1-9]\\d?)";
 const RANGE = new RegExp(`^10\\.88\\.${OCTET}\\.0/24$`, "u");
 const POOL_HOST = new RegExp(`^10\\.88\\.${OCTET}\\.${HOST}$`, "u");
+export const IPV4 = new RegExp(`^${OCTET}(\\.${OCTET}){3}$`, "u");
 const ENDPOINT = new RegExp(
   `^(${OCTET}(\\.${OCTET}){3}|\\[[0-9A-Fa-f:.]{2,45}\\]):(\\d{1,5})$`,
   "u",
@@ -44,6 +48,14 @@ function endpointPort(endpoint: string): number | null {
   return parts ? Number(parts.at(-1)) : null;
 }
 
+export function laptopAddress6(address: string): string {
+  if (!POOL_HOST.test(address)) {
+    throw new RangeError(`${address} is not an address of ${NETWORK.pool}`);
+  }
+  const [third, fourth] = address.split(".").slice(2).map(Number);
+  return `${NETWORK.pool6.slice(0, -3)}${third!.toString(16)}:${fourth!.toString(16)}`;
+}
+
 const wireguardKey = z
   .string()
   .regex(/^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/u);
@@ -53,6 +65,11 @@ const b64url = z
   .max(4096)
   .regex(/^[A-Za-z0-9_-]+$/u);
 const port = z.number().int().min(NETWORK.port).max(NETWORK.lastPort);
+const relayPort = z
+  .number()
+  .int()
+  .min(NETWORK.relayPort)
+  .max(NETWORK.lastRelayPort);
 const mtu = z.number().int().min(1280).max(1500);
 const endpoint = z
   .string()
@@ -73,11 +90,38 @@ const memberSchema = z.strictObject({
   endpoint: endpoint.nullable(),
   nat: z.boolean(),
   psk: z.record(z.string().uuid(), b64url),
+  kind: z.enum(["laptop"]).optional(),
+  relay: z.record(z.string().uuid(), relayPort).optional(),
+  exit: z.literal(true).optional(),
   rekey: z.literal(true).optional(),
   cut: z.literal(true).optional(),
 });
 
-const distinct = (values: string[]) => new Set(values).size === values.length;
+type Member = z.infer<typeof memberSchema>;
+
+const isLaptop = (member: Member) => member.kind === "laptop";
+
+export function links(a: Member, b: Member): boolean {
+  return !(isLaptop(a) && isLaptop(b));
+}
+
+const ipv4 = z.string().regex(IPV4);
+
+const distinct = (values: (string | number)[]) =>
+  new Set(values).size === values.length;
+
+const relayed = (member: Member) =>
+  !isLaptop(member) && member.nat && member.cut === undefined;
+
+function relayHeld(member: Member, behind: string[]): boolean {
+  const { relay } = member;
+  if (!isLaptop(member)) return relay === undefined;
+  return (
+    relay !== undefined &&
+    Object.keys(relay).length === behind.length &&
+    behind.every((node) => Object.hasOwn(relay, node))
+  );
+}
 
 export const networkDocumentSchema = z
   .strictObject({
@@ -97,24 +141,34 @@ export const networkDocumentSchema = z
         stop: z.boolean(),
       })
       .optional(),
+    dns: z.array(ipv4).min(1).max(2).optional(),
     members: z.array(memberSchema).max(32),
     blocked: z.array(wireguardKey).max(1000),
   })
   .refine((document) => {
     const nodes = new Set(document.members.map((member) => member.node));
+    const behind = document.members.filter(relayed).map((one) => one.node);
     return (
       nodes.size === document.members.length &&
       distinct(document.members.map((member) => member.address)) &&
       distinct(document.members.map((member) => member.key)) &&
-      document.members.every(
-        (member) =>
+      distinct(
+        document.members.flatMap((member) => Object.values(member.relay ?? {})),
+      ) &&
+      document.members.every((member) => {
+        const linked = document.members
+          .filter((other) => other !== member && links(member, other))
+          .map((other) => other.node);
+        const held = Object.keys(member.psk);
+        return (
           inRange(document.range, member.address) &&
           !document.blocked.includes(member.key) &&
-          Object.keys(member.psk).length === nodes.size - 1 &&
-          Object.keys(member.psk).every(
-            (peer) => peer !== member.node && nodes.has(peer),
-          ),
-      )
+          (member.exit === undefined || (!isLaptop(member) && !member.nat)) &&
+          relayHeld(member, behind) &&
+          held.length === linked.length &&
+          linked.every((peer) => Object.hasOwn(member.psk, peer))
+        );
+      })
     );
   });
 
@@ -194,6 +248,16 @@ export const networkBeatSchema = z.strictObject({
   key: wireguardKey.nullable(),
   links: z.array(networkLinkSchema).max(32),
   announce: z.strictObject({ key: wireguardKey, signature: b64url }).optional(),
+  meet: z.string().uuid().optional(),
+});
+
+export const sealKeySchema = z.string().regex(/^[A-Za-z0-9_-]{87}$/u);
+
+export const laptopEnrollSchema = z.strictObject({
+  key: wireguardKey,
+  signer: wireguardKey,
+  port,
+  sealKey: sealKeySchema,
 });
 
 const cidr = z.string().max(64);

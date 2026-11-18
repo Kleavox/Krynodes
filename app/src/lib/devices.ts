@@ -5,7 +5,12 @@ import {
   type ChangeSummary,
 } from "@krynodes/protocol/summary";
 
-import type { DeviceRecord, NodeRecord, NodeTrust } from "../types";
+import type {
+  DeviceRecord,
+  NetworkLaptop,
+  NodeRecord,
+  NodeTrust,
+} from "../types";
 import {
   agentKnowsAccounts,
   agentSupported,
@@ -18,9 +23,38 @@ import { serverNow } from "./http";
 const CHANGE_MS = 24 * 3_600_000;
 
 export interface FleetServer {
-  node: NodeRecord;
+  node: Pick<NodeRecord, "id" | "name" | "agent_version">;
   trust: NodeTrust | null;
+  laptop?: true;
 }
+
+export const hasLaptops = (servers: FleetServer[]) =>
+  servers.some((server) => server.laptop);
+
+export function syncTarget(servers: FleetServer[], names: string[]): string {
+  const laptops = names.filter((name) =>
+    servers.some((server) => server.laptop && server.node.name === name),
+  ).length;
+  const one = names.length === 1;
+  if (laptops === 0) return one ? "that server" : "those servers";
+  if (laptops === names.length) return one ? "that laptop" : "those laptops";
+  return "those servers and laptops";
+}
+
+export const laptopServers = (laptops: NetworkLaptop[]): FleetServer[] =>
+  laptops
+    .filter(
+      (laptop) => laptop.state === "in" && (laptop.trust?.core.length ?? 0) > 0,
+    )
+    .map((laptop) => ({
+      node: {
+        id: laptop.nodeId,
+        name: laptop.name,
+        agent_version: laptop.version,
+      },
+      trust: laptop.trust,
+      laptop: true as const,
+    }));
 
 export interface FleetView {
   origin: string;
@@ -107,6 +141,50 @@ export const networkSigners = (
     ? devices.filter(usable).map((device) => device.id)
     : signersFor(devices, members);
 
+export function deleteRefusal(
+  devices: DeviceRecord[],
+  members: { name: string; trust: NodeTrust | null }[],
+): string | null {
+  const shared = (list: typeof members) =>
+    signersFor(
+      devices,
+      list.map((member) => member.trust),
+    ).length > 0;
+  if (members.length < 2 || shared(members)) return null;
+  const names = members
+    .filter((member) => shared(members.filter((other) => other !== member)))
+    .map((member) => member.name);
+  if (names.length === 0) return null;
+  return names.length === 1
+    ? `${names[0]} trusts none of the passkeys the others trust. Remove it from the network first, then delete the network.`
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)} each trust none of the passkeys the others trust. Remove one of them from the network first, then delete the network.`;
+}
+
+export function preferFollowed(
+  devices: DeviceRecord[],
+  signers: string[],
+  laptops: { name: string; trust: NodeTrust | null }[],
+): { signers: string[]; unfollowed: string[] } {
+  const trusts = (trust: NodeTrust | null, id: string) =>
+    devices.some(
+      (device) =>
+        device.id === id && trust?.access.includes(device.fingerprint),
+    );
+  const followed = signers.filter((id) =>
+    laptops.every((laptop) => trusts(laptop.trust, id)),
+  );
+  return {
+    signers: [...followed, ...signers.filter((id) => !followed.includes(id))],
+    unfollowed: laptops
+      .filter((laptop) => !signers.every((id) => trusts(laptop.trust, id)))
+      .map((laptop) =>
+        followed.length > 0
+          ? `${laptop.name} follows this change only when it is signed with a passkey it trusts.`
+          : `${laptop.name} does not trust this passkey and will not follow this change.`,
+      ),
+  };
+}
+
 const coreOf = (view: FleetView) =>
   view.devices.filter((device) => device.core);
 
@@ -166,11 +244,18 @@ export const unreached = (view: FleetView) =>
     (server) => agentCurrent(server.node) && server.trust?.access.length === 0,
   );
 
-export function reachText(reached: string[], total: number): string {
-  if (reached.length === 0) return "No Servers";
-  if (reached.length === total) return "All Servers";
+export function reachText(
+  reached: string[],
+  total: number,
+  laptops = false,
+): string {
+  const kinds = laptops ? "Servers and Laptops" : "Servers";
+  if (reached.length === 0) {
+    return laptops ? "No Servers or Laptops" : "No Servers";
+  }
+  if (reached.length === total) return `All ${kinds}`;
   if (reached.length <= 2) return reached.join(", ");
-  return `${reached.length} of ${total} Servers`;
+  return `${reached.length} of ${total} ${kinds}`;
 }
 
 export const lacksOwners = (view: FleetView, server: FleetServer) =>

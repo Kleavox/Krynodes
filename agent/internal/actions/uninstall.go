@@ -62,6 +62,7 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	}
 	if record := e.readNetwork(); record.Joined || record.Key != "" {
 		removal.Problems = append(removal.Problems, e.takeDown(ctx, record)...)
+		removal.Problems = append(removal.Problems, e.purgeTools(ctx, record)...)
 		if record.Joined {
 			removal.TurnedOff = append(removal.TurnedOff, "This server left the private network")
 		}
@@ -88,6 +89,7 @@ func (e Executor) Uninstall(ctx context.Context, deleteApps bool) Removal {
 	if err := os.Remove(e.path(exitNodeConf)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		problem("remove "+exitNodeConf, err)
 	}
+	problem("remove the laptop exit", e.dropExit(ctx))
 	if _, err := os.Stat(filepath.Join(e.StateDir, "docker.json")); err == nil {
 		remove := "sudo apt-get purge "
 		if recipes.Detect(env).Family == recipes.RHEL {

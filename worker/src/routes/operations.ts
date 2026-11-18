@@ -404,7 +404,7 @@ export function registerOperationRoutes(
     const nodes = await db
       .prepare(
         `SELECT id, name, agent_version, docker, seal_key, vault, bridges, leftovers FROM nodes
-         WHERE owner_user_id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL
+         WHERE owner_user_id = ? AND kind = 'server' AND enrolled_at IS NOT NULL AND disabled_at IS NULL
            AND id IN (SELECT value FROM json_each(?))`,
       )
       .bind(identity.id, JSON.stringify(wanted))

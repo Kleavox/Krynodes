@@ -1,4 +1,9 @@
-import type { AgentHeartbeat, NetworkBeat } from "@krynodes/protocol";
+import {
+  links,
+  NETWORK,
+  type AgentHeartbeat,
+  type NetworkBeat,
+} from "@krynodes/protocol";
 import { describe, expect, it } from "vitest";
 
 import { hubHarness } from "../test/hub";
@@ -261,5 +266,358 @@ describe("the network on the heartbeat", () => {
         .prepare("SELECT state FROM network_members WHERE node_id = ?")
         .get(B),
     ).toBeUndefined();
+  });
+});
+
+describe("laptops on the hub", () => {
+  const L = "44444444-4444-4444-8444-444444444444";
+
+  interface Entry {
+    node: string;
+    name: string;
+    address: string;
+    key: string;
+    signer: string;
+    port: number;
+    mtu: null;
+    endpoint: string | null;
+    nat: boolean;
+    psk: Record<string, string>;
+    kind?: "laptop";
+    cut?: true;
+  }
+
+  const entry = (node: string, n: number, extra: Partial<Entry> = {}) => ({
+    node,
+    name: `server-${n}`,
+    address: `10.88.0.${n}`,
+    key: key(n),
+    signer: key(n + 100),
+    port: 51820,
+    mtu: null,
+    endpoint: `203.0.113.${n}:51820`,
+    nat: false,
+    psk: {},
+    ...extra,
+  });
+
+  const signedWith = (members: Entry[]) => {
+    let next = NETWORK.relayPort;
+    return {
+      ...SIGNED,
+      document: Buffer.from(
+        JSON.stringify({
+          v: 1,
+          version: 2,
+          range: "10.88.0.0/24",
+          port: 51820,
+          mtu: 1420,
+          members: members.map((one) => ({
+            ...one,
+            psk: Object.fromEntries(
+              members
+                .filter((other) => other !== one && links(one, other))
+                .map((other) => [other.node, "c2VhbGVk"]),
+            ),
+            ...(one.kind === "laptop"
+              ? {
+                  relay: Object.fromEntries(
+                    members
+                      .filter(
+                        (other) =>
+                          other.kind !== "laptop" && other.nat && !other.cut,
+                      )
+                      .map((other) => [other.node, next++]),
+                  ),
+                }
+              : {}),
+          })),
+          blocked: [],
+        }),
+      ).toString("base64url"),
+    };
+  };
+
+  function laptopSetup(cut = false) {
+    const { db, sqlite } = createTestDb();
+    for (const id of [A, B, L]) {
+      seedNode(sqlite, { id });
+      sqlite
+        .prepare("UPDATE nodes SET agent_version = '0.7.24' WHERE id = ?")
+        .run(id);
+    }
+    sqlite.prepare("UPDATE nodes SET kind = 'laptop' WHERE id = ?").run(L);
+    const document = signedWith([
+      entry(A, 1),
+      entry(B, 2, { endpoint: null, nat: true }),
+      entry(L, 3, {
+        endpoint: null,
+        nat: true,
+        kind: "laptop",
+        ...(cut ? { cut: true as const } : {}),
+      }),
+    ]);
+    sqlite
+      .prepare(
+        `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
+         VALUES ('standalone', '10.88.0.0/24', 51820, 1420, 2, ?, 's1', 'now', 'owner')`,
+      )
+      .run(JSON.stringify(document));
+    sqlite.exec(
+      `INSERT INTO network_members (node_id, state, address, port, key, signer, endpoint, nat, since) VALUES
+       ('${A}', 'in', '10.88.0.1', 51820, '${key(1)}', '${key(101)}', '203.0.113.1:51820', 0, 'now'),
+       ('${B}', 'in', '10.88.0.2', 51820, '${key(2)}', '${key(102)}', NULL, 1, 'now'),
+       ('${L}', 'in', '10.88.0.3', 51820, '${key(3)}', '${key(103)}', NULL, 1, 'now')`,
+    );
+    let calls = 0;
+    const counted = (statement: D1PreparedStatement): D1PreparedStatement =>
+      ({
+        ...statement,
+        bind: (...values: unknown[]) => counted(statement.bind(...values)),
+        run: () => {
+          calls += 1;
+          return statement.run();
+        },
+      }) as unknown as D1PreparedStatement;
+    const watched = {
+      prepare: (sql: string) => counted(db.prepare(sql)),
+      batch: (statements: D1PreparedStatement[]) => {
+        calls += 1;
+        return db.batch(statements);
+      },
+    } as unknown as D1Database;
+    const harness = hubHarness({ DB: watched });
+    const send = async (
+      ws: Awaited<ReturnType<typeof harness.connect>>,
+      nodeId: string,
+      network: NetworkBeat,
+    ) =>
+      (
+        (await harness.request(ws, "heartbeat", {
+          heartbeat: { ...beat(nodeId, network), agentVersion: "0.7.24" },
+        })) as { response: { network?: Record<string, unknown> } }
+      ).response.network;
+    const laptop = () => harness.connect(L, "standalone", 60, true);
+    return { ...harness, sqlite, send, laptop, calls: () => calls };
+  }
+
+  const at = (meet?: string): NetworkBeat => ({
+    version: 2,
+    key: key(3),
+    links: [link(1, 10)],
+    ...(meet ? { meet } : {}),
+  });
+  const quiet = (n: number): NetworkBeat => ({
+    version: 2,
+    key: key(n),
+    links: [],
+  });
+  const pokes = (ws: { replies: () => Record<string, unknown>[] }) =>
+    ws.replies().filter((reply) => reply.type === "poke").length;
+
+  it("a laptop's meeting point reaches the NAT members and costs no D1 write", async () => {
+    const { connect, send, laptop, calls, sqlite } = laptopSetup();
+    const nat = await connect(B);
+    const l = await laptop();
+    expect((await send(nat, B, quiet(2)))?.meetings).toBeUndefined();
+    await send(l, L, at());
+    const before = calls();
+    await send(l, L, at(A));
+    expect(calls()).toBe(before);
+    expect(pokes(nat)).toBe(1);
+    expect((await send(nat, B, quiet(2)))?.meetings).toEqual([
+      { laptop: L, via: A },
+    ]);
+    expect((await send(nat, B, quiet(2)))?.meetings).toBeUndefined();
+    const again = calls();
+    await send(l, L, at(A));
+    expect(pokes(nat)).toBe(1);
+    expect(calls()).toBe(again);
+    expect(sqlite.prepare("SELECT * FROM network_links").all()).toEqual([]);
+    expect(
+      sqlite.prepare("SELECT last_seen_at FROM nodes WHERE id = ?").get(L),
+    ).toEqual({ last_seen_at: null });
+  });
+
+  it("ignores a meeting point that is no public server of the network", async () => {
+    const { connect, send, laptop } = laptopSetup();
+    const nat = await connect(B);
+    const l = await laptop();
+    await send(l, L, at(B));
+    await send(l, L, at(L));
+    await send(l, L, at(C));
+    expect(pokes(nat)).toBe(0);
+    expect((await send(nat, B, quiet(2)))?.meetings).toBeUndefined();
+  });
+
+  it("takes no meeting point from a server, nor for a laptop that is cut", async () => {
+    const server = laptopSetup();
+    const nat = await server.connect(B);
+    const a = await server.connect(A);
+    await server.send(a, A, { ...quiet(1), meet: A });
+    expect(pokes(nat)).toBe(0);
+    const cut = laptopSetup(true);
+    const natOfCut = await cut.connect(B);
+    await cut.send(await cut.laptop(), L, at(A));
+    expect(pokes(natOfCut)).toBe(0);
+    expect((await cut.send(natOfCut, B, quiet(2)))?.meetings).toBeUndefined();
+  });
+
+  it("a laptop's reply lists held servers", async () => {
+    const { send, laptop, connect, sqlite } = laptopSetup();
+    const l = await laptop();
+    expect((await send(l, L, at()))?.held).toEqual([]);
+    expect((await send(l, L, at()))?.held).toBeUndefined();
+    sqlite.exec(
+      `INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', '${A}', 'test', 'now', '{}')`,
+    );
+    expect((await send(l, L, at()))?.held).toEqual([A]);
+    expect((await send(l, L, at()))?.held).toBeUndefined();
+    sqlite.exec("UPDATE quarantines SET released_at = 'later'");
+    expect((await send(l, L, at()))?.held).toEqual([]);
+    const nat = await connect(B);
+    expect((await send(nat, B, quiet(2)))?.held).toBeUndefined();
+  });
+
+  it("pokes the connected laptops when a hold starts or ends, without a D1 write", async () => {
+    const { send, laptop, connect, hub, sqlite, calls } = laptopSetup();
+    const l = await laptop();
+    const nat = await connect(B);
+    const poke = (nodeIds: string[]) =>
+      hub.fetch(
+        new Request("https://fleet/poke", {
+          method: "POST",
+          body: JSON.stringify({ nodeIds }),
+        }),
+      );
+    expect((await send(l, L, at()))?.held).toEqual([]);
+    await poke([A]);
+    const settled = pokes(l);
+    await poke([A]);
+    expect(pokes(l)).toBe(settled);
+    sqlite.exec(
+      `INSERT INTO quarantines (id, node_id, why, at, timeline) VALUES ('q1', '${A}', 'test', 'now', '{}')`,
+    );
+    const before = calls();
+    await poke([A]);
+    expect(calls()).toBe(before);
+    expect(pokes(l)).toBe(settled + 1);
+    expect(pokes(nat)).toBe(0);
+    expect((await send(l, L, at()))?.held).toEqual([A]);
+    sqlite.exec("UPDATE quarantines SET released_at = 'later'");
+    await poke([A]);
+    expect(pokes(l)).toBe(settled + 2);
+    expect((await send(l, L, at()))?.held).toEqual([]);
+  });
+
+  it("a laptop's reply names the members behind NAT that are connected, and a change pokes it", async () => {
+    const { send, laptop, connect, hub, calls } = laptopSetup();
+    const l = await laptop();
+    const a = await connect(A);
+    expect(await send(l, L, at())).toMatchObject({ held: [], connected: [] });
+    expect((await send(l, L, at()))?.connected).toBeUndefined();
+    const settled = pokes(l);
+    const before = calls();
+    const nat = await connect(B);
+    expect(pokes(l)).toBe(settled + 1);
+    expect(calls()).toBe(before);
+    expect(pokes(a)).toBe(0);
+    expect(await send(l, L, at())).toMatchObject({ held: [], connected: [B] });
+    expect((await send(l, L, at()))?.connected).toBeUndefined();
+    expect((await send(nat, B, quiet(2)))?.connected).toBeUndefined();
+    expect((await send(a, A, quiet(1)))?.connected).toBeUndefined();
+    expect(pokes(l)).toBe(settled + 1);
+    nat.close(1000, "gone");
+    await hub.webSocketClose(nat as unknown as WebSocket);
+    expect(pokes(l)).toBe(settled + 2);
+    expect((await send(l, L, at()))?.connected).toEqual([]);
+  });
+
+  it("a warning's cut-off reaches the connected laptops at once", async () => {
+    const { send, laptop, hub, sqlite, storage } = laptopSetup();
+    const l = await laptop();
+    expect((await send(l, L, at()))?.held).toEqual([]);
+    await hub.fetch(
+      new Request("https://fleet/poke", {
+        method: "POST",
+        body: JSON.stringify({ nodeIds: [A] }),
+      }),
+    );
+    const settled = pokes(l);
+    const cut = Date.now() - 1_000;
+    sqlite
+      .prepare(
+        "INSERT INTO warnings (node_id, id, kind, detail, at, cut_at) VALUES (?, 'w1', 'port', '{}', ?, ?)",
+      )
+      .run(A, new Date(cut).toISOString(), new Date(cut).toISOString());
+    await storage.put("cutoffs", { [`${A}|w1`]: cut });
+    await hub.alarm();
+    expect(sqlite.prepare("SELECT node_id FROM quarantines").all()).toEqual([
+      { node_id: A },
+    ]);
+    expect(pokes(l)).toBe(settled + 1);
+    expect((await send(l, L, at()))?.held).toEqual([A]);
+  });
+
+  it("never watches a laptop for silence and writes when it was last seen as it leaves", async () => {
+    const { send, laptop, hub, sqlite, storage } = laptopSetup();
+    const l = await laptop();
+    await send(l, L, at());
+    expect(Object.keys((await storage.get("roster")) ?? {})).not.toContain(L);
+    await hub.webSocketClose(l as unknown as WebSocket);
+    expect(
+      (
+        sqlite
+          .prepare("SELECT last_seen_at FROM nodes WHERE id = ?")
+          .get(L) as {
+          last_seen_at: string | null;
+        }
+      ).last_seen_at,
+    ).not.toBeNull();
+  });
+
+  it("keeps the network version each laptop last asked with, written only when it moves", async () => {
+    const { send, laptop, connect, sqlite, calls } = laptopSetup();
+    const applied = (id: string) =>
+      sqlite
+        .prepare("SELECT applied FROM network_members WHERE node_id = ?")
+        .get(id);
+    expect(applied(L)).toEqual({ applied: null });
+    const l = await laptop();
+    await send(l, L, { ...at(), version: 1 });
+    expect(applied(L)).toEqual({ applied: 1 });
+    const before = calls();
+    await send(l, L, { ...at(), version: 1 });
+    expect(calls()).toBe(before);
+    await send(l, L, at());
+    expect(applied(L)).toEqual({ applied: 2 });
+    await send(await connect(B), B, quiet(2));
+    expect(applied(B)).toEqual({ applied: null });
+  });
+
+  it("hands a laptop its trust change and writes its version only when it moves", async () => {
+    const { request, laptop, sqlite } = laptopSetup();
+    const now = new Date().toISOString();
+    sqlite
+      .prepare(
+        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
+           status, requested_by, requested_at, deliverable_at, signed)
+         VALUES ('t1', 'b1', 0, 'parallel', ?, 'trust', 'devices', 'trust', 'queued',
+           'user1@example.com', ?, ?, '{"change":"Y2hhbmdl","approvals":[]}')`,
+      )
+      .run(L, now, now);
+    const l = await laptop();
+    const answer = (await request(l, "heartbeat", {
+      heartbeat: { ...beat(L, at()), agentVersion: "0.7.25" },
+    })) as { response: { actions?: { id: string }[] } };
+    expect(answer.response.actions?.map((action) => action.id)).toEqual(["t1"]);
+    expect(
+      sqlite
+        .prepare("SELECT agent_version, last_seen_at FROM nodes WHERE id = ?")
+        .get(L),
+    ).toMatchObject({ agent_version: "0.7.25" });
+    expect(
+      sqlite.prepare("SELECT COUNT(*) AS n FROM node_windows").get(),
+    ).toEqual({ n: 0 });
   });
 });

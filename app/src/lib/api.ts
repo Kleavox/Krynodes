@@ -528,6 +528,25 @@ export const postNetworkDocument = (body: {
 }) =>
   apiFetch<{ version: number }>("/api/network/document", send("POST", body));
 
+export const useAddLaptop = () =>
+  useApiMutation(
+    () =>
+      apiFetch<{
+        code: string;
+        expiresAt: string;
+        origin: string;
+        endpoint: string;
+      }>("/api/laptops", send("POST")),
+    [],
+  );
+
+export const useDismissLaptop = () =>
+  useApiMutation(
+    (nodeId: string) =>
+      apiFetch(`/api/laptops/${encodeURIComponent(nodeId)}`, send("DELETE")),
+    [queryKeys.network],
+  );
+
 export const postNetworkTest = (body: {
   change: string;
   detail: string | null;

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Kleavox/krynodes/agent/internal/network"
 )
 
 func krynodesStack(t *testing.T, executor Executor, name string) string {
@@ -168,5 +170,34 @@ func TestUninstallSaysWhenTheServerHeldAPieceOfTheToken(t *testing.T) {
 	}
 	if removal := executor.Uninstall(context.Background(), false); !strings.Contains(removal.Token, "Cloudflare token") {
 		t.Fatalf("removal %#v", removal)
+	}
+}
+
+func TestUninstallRemovesPairPortsAndExit(t *testing.T) {
+	net, run, tables := newLaptopNet(t)
+	run.respond["ip -6 route show default"] = v6Default
+	rootFile(t, net.executor, "/proc/sys/net/ipv6/conf/eth0/accept_ra", "1\n")
+	rootFile(t, net.executor, exitNodeConf, "net.ipv4.ip_forward = 1\n")
+	net.apply(t, exitOn)
+	if !slices.Contains(tables.chain("iptables", "filter", "FORWARD"), apartOf) || !tables.has("ip6tables", "filter", network.ExitChain) {
+		t.Fatalf("nothing to remove:\n%s", tables)
+	}
+	run.respond["ufw status numbered"] = "[ 1] 22/tcp ALLOW IN Anywhere\n[ 2] 51821/udp ALLOW IN Anywhere # krynodes-network\n[ 3] 51920/udp ALLOW IN Anywhere # krynodes-network\n"
+	tables.rules["iptables filter FORWARD"] = append(tables.rules["iptables filter FORWARD"], "-A FORWARD -i kry0 -o eth9 -j KRY-EXIT")
+	removal := net.executor.Uninstall(context.Background(), false)
+	noExit(t, tables, "iptables", "ip6tables")
+	if len(tables.chain("iptables", "filter", "FORWARD"))+len(tables.chain("ip6tables", "filter", "FORWARD")) != 0 {
+		t.Fatalf("a forward rule stays:\n%s", tables)
+	}
+	if !slices.Contains(run.calls, "ufw --force delete 3") || !slices.Contains(run.calls, "ufw --force delete 2") || slices.Contains(run.calls, "ufw --force delete 1") {
+		t.Fatalf("the pair port stays: %v", run.calls)
+	}
+	for _, path := range []string{laptopExitConf, exitNodeConf} {
+		if _, err := os.Stat(net.executor.path(path)); !os.IsNotExist(err) {
+			t.Fatalf("%s stays: %v", path, err)
+		}
+	}
+	if slices.ContainsFunc(removal.Problems, func(problem string) bool { return strings.Contains(problem, "exit") }) {
+		t.Fatalf("%v", removal.Problems)
 	}
 }

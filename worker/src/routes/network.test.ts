@@ -1,10 +1,11 @@
-import type { AgentActionsRequest } from "@krynodes/protocol";
+import { links, NETWORK, type AgentActionsRequest } from "@krynodes/protocol";
 import { describe, expect, it } from "vitest";
 
 import { receiveReport } from "../actions/report";
 import type { AgentNode } from "../agent/ingest";
 import { app } from "../app";
 import type { Env } from "../env";
+import { sha256 } from "../lib/crypto";
 import { quarantine } from "../quarantine/quarantine";
 import { fingerprint } from "../lib/webauthn";
 import { signedBy, testPasskey, type TestPasskey } from "../test/passkeys";
@@ -64,7 +65,7 @@ const member = (node: string, address: string) => ({
   psk: {} as Record<string, string>,
 });
 
-type Member = ReturnType<typeof member> & { cut?: boolean };
+type Member = ReturnType<typeof member> & { cut?: true };
 
 function documentOf(
   version: number,
@@ -680,5 +681,300 @@ describe("Delete Node", () => {
     });
     expect(refused.status).toBe(409);
     expect(await json(refused)).toMatchObject({ code: "NETWORK_MEMBER" });
+  });
+});
+
+describe("laptops in the network document", () => {
+  const L = "77777777-7777-4777-8777-777777777777";
+
+  const laptopMember = () => ({
+    ...member(A, "10.88.0.3"),
+    node: L,
+    name: "laptop-1",
+    key: key(7),
+    signer: key(107),
+    nat: true,
+    kind: "laptop" as const,
+  });
+
+  type Entry = Member & {
+    kind?: "laptop";
+    exit?: true;
+  };
+
+  const linkedOf = (
+    version: number,
+    members: Entry[],
+    over: Record<string, unknown> = {},
+  ) => {
+    let next = NETWORK.relayPort;
+    return {
+      ...documentOf(version, members, over),
+      members: members.map((entry) => ({
+        ...entry,
+        psk: Object.fromEntries(
+          members
+            .filter((other) => other !== entry && links(entry, other))
+            .map((other) => [other.node, "c2VhbGVk"]),
+        ),
+        ...(entry.kind === "laptop"
+          ? {
+              relay: Object.fromEntries(
+                members
+                  .filter(
+                    (other) =>
+                      other.kind !== "laptop" && other.nat && !other.cut,
+                  )
+                  .map((other) => [other.node, next++]),
+              ),
+            }
+          : {}),
+      })),
+    };
+  };
+
+  function laptopSetup(version = "0.7.24") {
+    const made = setup();
+    seedNode(made.sqlite, { id: L });
+    made.sqlite
+      .prepare(
+        "UPDATE nodes SET name = 'laptop-1', kind = 'laptop', agent_version = '0.7.24', last_seen_at = '2026-11-15 08:00:00', seal_key = 'seal-laptop-1' WHERE id = ?",
+      )
+      .run(L);
+    made.sqlite
+      .prepare("UPDATE nodes SET agent_version = ? WHERE id IN (?, ?)")
+      .run(version, A, B);
+    made.sqlite
+      .prepare(
+        `INSERT INTO network_members (node_id, state, port, key, signer, since)
+         VALUES (?, 'waiting', 51820, ?, ?, 'now')`,
+      )
+      .run(L, key(7), key(107));
+    return made;
+  }
+
+  const servers = () => [member(A, "10.88.0.1"), member(B, "10.88.0.2")];
+  const kinds = async (call: ReturnType<typeof setup>["call"]) => [
+    ((await json(call("GET", "/api/network"))).changes as { kind: string }[])
+      .map((change) => String(change.kind))
+      .sort(),
+    (
+      (await json(call("GET", "/api/history"))).entries as {
+        change: { kind: string };
+      }[]
+    )
+      .map((entry) => String(entry.change.kind))
+      .sort(),
+  ];
+
+  it("records adding and removing a laptop and turning an exit on as their kinds", async () => {
+    const { post, call } = laptopSetup();
+    expect((await post(linkedOf(1, servers()))).status).toBe(200);
+    expect(
+      (await post(linkedOf(2, [...servers(), laptopMember()]))).status,
+    ).toBe(200);
+    expect(
+      (
+        await post(
+          linkedOf(3, [
+            { ...member(A, "10.88.0.1"), exit: true },
+            member(B, "10.88.0.2"),
+            laptopMember(),
+          ]),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await post(
+          linkedOf(
+            4,
+            [{ ...member(A, "10.88.0.1"), exit: true }, member(B, "10.88.0.2")],
+            {
+              blocked: [key(7)],
+            },
+          ),
+        )
+      ).status,
+    ).toBe(200);
+    const expected = ["laptop.add", "laptop.remove", "network.exit", "null"];
+    expect(await kinds(call)).toEqual([expected, expected]);
+  });
+
+  it("accepts two laptops beside a server behind NAT, each pair on its own relay port", async () => {
+    const { post, sqlite } = laptopSetup();
+    const second = "88888888-8888-4888-8888-888888888888";
+    seedNode(sqlite, { id: second });
+    sqlite
+      .prepare(
+        "UPDATE nodes SET name = 'laptop-2', kind = 'laptop', agent_version = '0.7.24', seal_key = 'seal-laptop-2' WHERE id = ?",
+      )
+      .run(second);
+    const nat = { ...member(B, "10.88.0.2"), nat: true };
+    expect(
+      (await post(linkedOf(1, [member(A, "10.88.0.1"), nat]))).status,
+    ).toBe(200);
+    const made = linkedOf(2, [
+      member(A, "10.88.0.1"),
+      nat,
+      laptopMember(),
+      {
+        ...laptopMember(),
+        node: second,
+        name: "laptop-2",
+        address: "10.88.0.4",
+        key: key(8),
+        signer: key(108),
+      },
+    ]);
+    expect(
+      made.members.map((entry) => ("relay" in entry ? entry.relay : null)),
+    ).toEqual([
+      null,
+      null,
+      { [B]: NETWORK.relayPort },
+      { [B]: NETWORK.relayPort + 1 },
+    ]);
+    expect((await post(made)).status).toBe(200);
+  });
+
+  it("retires a removed laptop's node and token at once, and a removed server stays", async () => {
+    const { post, call, sqlite } = laptopSetup();
+    const row = (id: string) =>
+      sqlite
+        .prepare(
+          `SELECT disabled_at IS NOT NULL AS disabled, agent_token_hash AS token,
+             (SELECT state FROM network_members WHERE node_id = nodes.id) AS state
+           FROM nodes WHERE id = ?`,
+        )
+        .get(id);
+    await post(linkedOf(1, servers()));
+    await post(linkedOf(2, [...servers(), laptopMember()]));
+    expect(row(L)).toEqual({ disabled: 0, token: `hash-${L}`, state: "in" });
+    const removed = await post(linkedOf(3, servers(), { blocked: [key(7)] }));
+    expect(removed.status).toBe(200);
+    expect(row(L)).toEqual({ disabled: 1, token: `retired-${L}`, state: null });
+    expect((await json(call("GET", "/api/network"))).laptops).toEqual([]);
+    const left = await post(
+      linkedOf(4, [member(A, "10.88.0.1")], { blocked: [key(7), key(2)] }),
+    );
+    expect(left.status).toBe(200);
+    expect(row(B)).toEqual({
+      disabled: 0,
+      token: `hash-${B}`,
+      state: "leaving",
+    });
+  });
+
+  it("retires every laptop when the network is deleted", async () => {
+    const { post, call, sqlite } = laptopSetup();
+    await post(linkedOf(1, servers()));
+    await post(linkedOf(2, [...servers(), laptopMember()]));
+    const deleted = await post(
+      documentOf(3, [], { deleted: true }),
+      "Delete the private network",
+    );
+    expect(deleted.status).toBe(200);
+    expect(
+      sqlite
+        .prepare(
+          `SELECT disabled_at IS NOT NULL AS disabled, agent_token_hash AS token,
+             (SELECT COUNT(*) FROM network_members WHERE node_id = nodes.id) AS rows
+           FROM nodes WHERE id = ?`,
+        )
+        .get(L),
+    ).toEqual({ disabled: 1, token: `retired-${L}`, rows: 0 });
+    expect((await json(call("GET", "/api/network"))).laptops).toEqual([]);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT state FROM network_members WHERE node_id IN (?, ?) ORDER BY node_id",
+        )
+        .all(A, B),
+    ).toEqual([{ state: "leaving" }, { state: "leaving" }]);
+  });
+
+  it("refuses a retired laptop's token on the agent routes and its live connection", async () => {
+    const { post, db, sqlite } = laptopSetup();
+    sqlite
+      .prepare("UPDATE nodes SET agent_token_hash = ? WHERE id = ?")
+      .run(await sha256("laptop-token"), L);
+    const env = {
+      DB: db,
+      PUBLIC_ORIGIN: "https://kry.example.test",
+      FLEET: {
+        idFromName: (name: string) => ({ name }),
+        get: () => ({ fetch: async () => new Response("from hub") }),
+      },
+    } as unknown as Env;
+    const agent = (path: string, headers: Record<string, string> = {}) =>
+      app.request(
+        `https://kry.example.test${path}`,
+        { headers: { authorization: "Bearer laptop-token", ...headers } },
+        env,
+      );
+    const stream = () =>
+      agent("/api/agent/stream", {
+        upgrade: "websocket",
+        "user-agent": "kry-agent/0.7.24",
+      });
+    await post(linkedOf(1, servers()));
+    await post(linkedOf(2, [...servers(), laptopMember()]));
+    expect((await agent("/api/agent/held")).status).toBe(200);
+    expect(await (await stream()).text()).toBe("from hub");
+    expect(
+      (await post(linkedOf(3, servers(), { blocked: [key(7)] }))).status,
+    ).toBe(200);
+    expect((await agent("/api/agent/held")).status).toBe(401);
+    expect((await stream()).status).toBe(401);
+  });
+
+  it("refuses a laptop listed as a server, a server listed as a laptop, and a laptop beside an old agent", async () => {
+    const { post } = laptopSetup();
+    expect((await post(linkedOf(1, servers()))).status).toBe(200);
+    const { kind: _, ...asServer } = laptopMember();
+    const wrong = await post(
+      linkedOf(2, [...servers(), { ...asServer, nat: false }]),
+    );
+    expect(wrong.status).toBe(422);
+    expect(await json(wrong)).toMatchObject({ code: "WRONG_KIND" });
+    const server = await post(
+      linkedOf(2, [
+        { ...member(A, "10.88.0.1"), kind: "laptop" },
+        member(B, "10.88.0.2"),
+      ]),
+    );
+    expect(await json(server)).toMatchObject({ code: "WRONG_KIND" });
+    const old = laptopSetup("0.7.23");
+    expect((await old.post(linkedOf(1, servers()))).status).toBe(200);
+    const refused = await old.post(linkedOf(2, [...servers(), laptopMember()]));
+    expect(refused.status).toBe(422);
+    expect(await json(refused)).toEqual({
+      code: "AGENT_TOO_OLD",
+      message: "Update vps-1 to agent 0.7.24 first.",
+    });
+  });
+
+  it("the network view lists laptops with their state, version and last sight", async () => {
+    const { post, call } = laptopSetup();
+    await post(linkedOf(1, servers()));
+    const waiting = (await json(call("GET", "/api/network"))).laptops;
+    expect(waiting).toMatchObject([
+      {
+        nodeId: L,
+        name: "laptop-1",
+        address: null,
+        state: "waiting",
+        version: "0.7.24",
+        lastSeen: "2026-11-15T08:00:00Z",
+        sealKey: "seal-laptop-1",
+        trust: { version: 1 },
+        applied: null,
+      },
+    ]);
+    await post(linkedOf(2, [...servers(), laptopMember()]));
+    expect((await json(call("GET", "/api/network"))).laptops).toMatchObject([
+      { nodeId: L, address: "10.88.0.3", state: "in", applied: null },
+    ]);
   });
 });

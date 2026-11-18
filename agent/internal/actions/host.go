@@ -200,6 +200,7 @@ func (e Executor) HostApply(ctx context.Context) error {
 		return err
 	}
 	e.followSSH(ctx, dir)
+	e.followExit(ctx, dir)
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -292,15 +293,17 @@ func (e Executor) applyHost(ctx context.Context, request Request) Result {
 		record := e.readNetwork()
 		opens := request.Name == "firewall" && record.Joined && record.Firewall == "" && record.Port != 0 && recipes.Detect(env).Family != recipes.RHEL
 		if opens || (closed && record.Joined && record.Port != 0) {
-			args[recipes.NetworkPort] = strconv.Itoa(record.Port)
+			args[recipes.NetworkPort] = e.networkPort()
 		}
 		saved, err := recipes.Apply(ctx, env, request.Name, args)
 		if err != nil {
 			return e.refuse(request.ID, err)
 		}
 		if opens {
-			record.Firewall = "ufw"
-			if err := e.saveNetwork(record); err != nil {
+			if err := e.updateNetwork(func(record *networkRecord) bool {
+				record.Firewall = "ufw"
+				return record.Joined
+			}); err != nil {
 				log.Printf("remember the network's ufw rules: %v", err)
 			}
 		}

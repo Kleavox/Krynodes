@@ -22,7 +22,10 @@ playwright-report/
 
 # Go
 bin/
+*.exe
 coverage.out
+agent/windows/internal/bundle/files/*
+!agent/windows/internal/bundle/files/.gitkeep
 
 # Rust
 target/

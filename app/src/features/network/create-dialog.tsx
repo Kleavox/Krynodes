@@ -16,15 +16,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Said, SHEET, SignButton } from "@/features/packages/lines";
+import {
+  NotFollowing,
+  Said,
+  SHEET,
+  SignButton,
+} from "@/features/packages/lines";
 import { useDevices, useNetworkNext, useRequestAgentUpdate } from "@/lib/api";
 import { agentState } from "@/lib/agent";
-import { signersFor } from "@/lib/devices";
+import { preferFollowed, signersFor } from "@/lib/devices";
 import { capitalize, parseTimestamp } from "@/lib/format";
 import {
   candidateState,
   checkRows,
   heldNote,
+  inside,
+  joinBlocker,
+  laptopSeals,
   LEGEND,
   linkProgress,
   pickMtu,
@@ -159,6 +167,10 @@ export function Picker({
       : null;
   const eligible = (node: NodeRecord) =>
     presence[node.id]?.online === true && agentSupported(node.agent_version);
+  const staleOf = (node: NodeRecord) =>
+    kind === "add" && agentSupported(node.agent_version)
+      ? joinBlocker(view.document, node.name, node.agent_version)
+      : null;
   const [picked, setPicked] = useState<string[]>(() =>
     single
       ? [single.id]
@@ -192,20 +204,18 @@ export function Picker({
       ranges,
     );
   const mtu = live?.mtu ?? pickMtu(picked.map((id) => found(id)?.mtu ?? null));
-  const members = view.members
-    .filter((member) => member.state === "in")
-    .map((member) => {
-      const node = nodes.find((entry) => entry.id === member.nodeId);
-      return {
-        nodeId: member.nodeId,
-        name: member.name,
-        publicAddress: node
-          ? seatOf(node, reports.get(node.id)).publicAddress
-          : null,
-        nat: true,
-        port: member.port,
-      };
-    });
+  const members = inside(view).map((member) => {
+    const node = nodes.find((entry) => entry.id === member.nodeId);
+    return {
+      nodeId: member.nodeId,
+      name: member.name,
+      publicAddress: node
+        ? seatOf(node, reports.get(node.id)).publicAddress
+        : null,
+      nat: true,
+      port: member.port,
+    };
+  });
   const listeners = [
     ...picked.flatMap((id) => {
       const seat = seats.get(id);
@@ -296,12 +306,25 @@ export function Picker({
     );
   }
 
-  const ready = picked.length > 0 && inspected && range !== null;
+  const ready =
+    picked.length > 0 &&
+    inspected &&
+    range !== null &&
+    !candidates.some((node) => picked.includes(node.id) && staleOf(node));
+  const trust = new Map(
+    (services?.nodes ?? []).map((entry) => [entry.id, entry.trust] as const),
+  );
+  const signing = preferFollowed(
+    devices.data?.devices ?? [],
+    signersFor(
+      devices.data?.devices ?? [],
+      [...picked, ...inside(view).map((member) => member.nodeId)].map(
+        (id) => trust.get(id) ?? null,
+      ),
+    ),
+    view.laptops.filter((laptop) => laptop.state === "in"),
+  );
   const go = () => {
-    const trust = new Map(
-      (services?.nodes ?? []).map((entry) => [entry.id, entry.trust]),
-    );
-    const everyone = [...picked, ...members.map((member) => member.nodeId)];
     const joining: JoinSeat[] = picked.map((id) => {
       const seat = seats.get(id)!;
       const prepared = waiting.get(id);
@@ -333,15 +356,15 @@ export function Picker({
       port: live?.port ?? NETWORK.port,
       mtu,
       seats: joining,
-      signers: signersFor(
-        devices.data?.devices ?? [],
-        everyone.map((id) => trust.get(id) ?? null),
-      ),
-      sealKeys: Object.fromEntries(
-        (services?.nodes ?? []).flatMap((entry) =>
-          entry.sealKey ? [[entry.id, entry.sealKey]] : [],
+      signers: signing.signers,
+      sealKeys: {
+        ...Object.fromEntries(
+          (services?.nodes ?? []).flatMap((entry) =>
+            entry.sealKey ? [[entry.id, entry.sealKey]] : [],
+          ),
         ),
-      ),
+        ...laptopSeals(view.laptops),
+      },
     });
   };
 
@@ -370,6 +393,7 @@ export function Picker({
             const seat = seats.get(node.id)!;
             const online = presence[node.id]?.online === true;
             const error = inspect.answers[node.id]?.error ?? null;
+            const stale = staleOf(node);
             const running = services?.actions.find(
               (action) =>
                 action.nodeId === node.id &&
@@ -387,12 +411,14 @@ export function Picker({
                   }
                 : error
                   ? { text: error, details: false, joinable: false }
-                  : waiting.has(node.id) && !found(node.id)
-                    ? { text: "Ready", details: false, joinable: true }
-                    : candidateState(node.agent_version, rowsOf(node.id));
+                  : stale
+                    ? { text: stale, details: false, joinable: false }
+                    : waiting.has(node.id) && !found(node.id)
+                      ? { text: "Ready", details: false, joinable: true }
+                      : candidateState(node.agent_version, rowsOf(node.id));
             const on = picked.includes(node.id);
             const gets = on ? addressOf(node.id) : null;
-            const old = !agentSupported(node.agent_version);
+            const old = !agentSupported(node.agent_version) || stale !== null;
             const updatable =
               old &&
               release !== null &&
@@ -497,6 +523,7 @@ export function Picker({
           <p className="text-xs text-muted-foreground">{heldNote(view)}</p>
         )
       )}
+      {picked.length > 0 && <NotFollowing lines={signing.unfollowed} />}
       <Said
         text={inspect.error ?? probe.error ?? start.error?.message ?? null}
       />
@@ -527,10 +554,8 @@ function Progress({
   now: number;
 }) {
   const presence = presenceOf(nodes, now);
-  const others = view.members.filter(
-    (member) =>
-      member.state === "in" &&
-      !job.seats.some((seat) => seat.nodeId === member.nodeId),
+  const others = inside(view).filter(
+    (member) => !job.seats.some((seat) => seat.nodeId === member.nodeId),
   ).length;
   const joining: Joining[] = job.seats.map((seat) => {
     const action = job.actions[seat.nodeId];

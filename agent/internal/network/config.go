@@ -28,7 +28,7 @@ func DNSName(name string) string {
 	return label
 }
 
-func Render(document Document, self Member, private string, psk map[string]string) string {
+func Render(document Document, self Member, private string, psk map[string]string, meetings map[string]string, exit6 bool) string {
 	mtu := document.MTU
 	if self.MTU != nil {
 		mtu = *self.MTU
@@ -40,11 +40,20 @@ func Render(document Document, self Member, private string, psk map[string]strin
 		fmt.Fprintf(&config, "PostUp = iptables -w "+clamp+"\nPostDown = iptables -w "+clamp+"\n", "-A", "-D")
 	}
 	for _, peer := range document.Members {
-		if peer.Node == self.Node || peer.Cut {
+		if peer.Node == self.Node || peer.Cut || !Links(self, peer) {
 			continue
 		}
-		fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s/32\n", peer.Key, psk[peer.Node], peer.Address)
-		if !peer.NAT && peer.Endpoint != nil {
+		allowed := []string{peer.Address + "/32"}
+		if peer.IsLaptop() && exit6 {
+			allowed = append(allowed, Address6(peer.Address)+"/128")
+		}
+		fmt.Fprintf(&config, "\n[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s\n", peer.Key, psk[peer.Node], strings.Join(allowed, ", "))
+		switch {
+		case peer.IsLaptop() && self.NAT:
+			if endpoint, ok := RelayEndpoint(document, meetings[peer.Node], peer.Node, self.Node); ok {
+				fmt.Fprintf(&config, "Endpoint = %s\n", endpoint)
+			}
+		case !peer.IsLaptop() && !peer.NAT && peer.Endpoint != nil:
 			fmt.Fprintf(&config, "Endpoint = %s\n", *peer.Endpoint)
 		}
 		fmt.Fprintf(&config, "PersistentKeepalive = %d\n", Keepalive)

@@ -15,6 +15,7 @@ import { CheckDialog } from "@/features/checks/check-dialog";
 import { ServerPasskeys } from "@/features/devices/server-passkeys";
 import { useSignedAction } from "@/features/deploy/use-signed-action";
 import {
+  useNetwork,
   useOverview,
   useRefreshServices,
   useRequestAgentUpdate,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/api";
 import { agentState } from "@/lib/agent";
 import { agentCurrent, canRestartServer } from "@/lib/devices";
+import { exitState } from "@/lib/network";
 import { serverOperation } from "@/lib/operations";
 import { actionsFor } from "@/lib/quarantine";
 import type { NodeRecord } from "@/types";
@@ -29,6 +31,7 @@ import type { NodeRecord } from "@/types";
 import { AdminUserDialog } from "./admin-user-dialog";
 import { DeleteNodeDialog } from "./delete-node-dialog";
 import { EditNodeDialog } from "./edit-node-dialog";
+import { ExitDialog } from "./exit-dialog";
 import { InstallDockerDialog } from "./install-docker-dialog";
 import { ReleaseDialog } from "./release-dialog";
 
@@ -42,6 +45,7 @@ type OpenDialog =
   | "docker"
   | "release"
   | "admin"
+  | "exit"
   | "passkeys"
   | "unpass"
   | null;
@@ -66,7 +70,10 @@ export function NodeActions({
   const update = useRequestAgentUpdate();
   const limited = actionsFor(node);
   const services = useServices();
-  const release = useOverview().data?.agentRelease;
+  const overview = useOverview().data;
+  const release = overview?.agentRelease;
+  const network = useNetwork().data;
+  const exit = network ? exitState(network, node.id) : null;
   const entry = services.data?.nodes.find((item) => item.id === node.id);
   const trust = entry?.trust ?? null;
   const locked = entry?.security?.lockdown ?? false;
@@ -87,6 +94,14 @@ export function NodeActions({
     !busy &&
     release?.version &&
     ["available", "failed"].includes(agentState(node, release.version, now));
+  const exitItem = (
+    <DropdownMenuItem onSelect={() => setDialog("exit")}>
+      Exit Node for Laptops
+      <span className="ml-auto pl-3 text-xs text-muted-foreground">
+        {exit === "on" ? "On" : "Off"}
+      </span>
+    </DropdownMenuItem>
+  );
 
   return (
     <>
@@ -139,6 +154,7 @@ export function NodeActions({
                 </DropdownMenuItem>
               ),
             )}
+            {exit === "on" && exitItem}
           </DropdownMenuContent>
         ) : (
           <DropdownMenuContent align="end">
@@ -159,6 +175,7 @@ export function NodeActions({
             <DropdownMenuItem onSelect={() => setDialog("edit")}>
               Rename Node
             </DropdownMenuItem>
+            {exit !== null && exitItem}
             <DropdownMenuSeparator />
             {installable && (
               <DropdownMenuItem onSelect={() => setDialog("docker")}>
@@ -245,6 +262,15 @@ export function NodeActions({
         open={dialog === "edit"}
         onOpenChange={(open) => setDialog(open ? "edit" : null)}
       />
+
+      {dialog === "exit" && network && exit !== null && (
+        <ExitDialog
+          node={node}
+          view={network}
+          nodes={overview?.nodes ?? []}
+          onClose={() => setDialog(null)}
+        />
+      )}
 
       <ConfirmDialog
         open={dialog === "restart" && !limited && canRestartServer(node, trust)}

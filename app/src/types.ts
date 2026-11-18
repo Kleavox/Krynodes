@@ -148,6 +148,18 @@ export interface NetworkServer {
   points: { stack: string; target: string }[];
 }
 
+export interface NetworkLaptop {
+  nodeId: string;
+  name: string;
+  address: string | null;
+  state: "waiting" | "in" | "leaving" | null;
+  version: string | null;
+  lastSeen: string | null;
+  sealKey: string | null;
+  trust: NodeTrust | null;
+  applied: number | null;
+}
+
 export interface NetworkChange {
   id: string;
   at: string;
@@ -187,6 +199,7 @@ export interface NetworkView {
     since: string;
   }[];
   links: { a: string; b: string; answering: boolean; since: string }[];
+  laptops: NetworkLaptop[];
   live: Record<string, { at: number; links: NetworkLink[] }>;
   held: {
     address: string;

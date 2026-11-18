@@ -272,3 +272,51 @@ func fmtOpenings(openings []network.Opening) string {
 	}
 	return strings.Join(texts, ",")
 }
+
+func TestPairPortsStayOpenLikeThePrivateNetworksPort(t *testing.T) {
+	env, run := closedUfw(t, true)
+	run.respond["ufw show added"] = ufwAdded + "ufw allow 51920/udp comment 'krynodes-network'\n"
+	rules := ReadRules(context.Background(), env)
+	if !slices.Contains(rules.Lines, "allow 51920/udp") {
+		t.Fatalf("rules %q", rules.Lines)
+	}
+	ports := "51821 51920 51922"
+	adopted := Adopt(context.Background(), env, rules, ports)
+	if slices.ContainsFunc(adopted.Open, func(opening network.Opening) bool { return opening.Port == 51920 }) || slices.Contains(adopted.Other, "allow 51920/udp") {
+		t.Fatalf("a pair port was adopted as the owner's: %+v", adopted)
+	}
+	if drift := WatchRules(context.Background(), env, rules, nil, nil, nil, ports).Drift; slices.Contains(drift, "allow 51920/udp") {
+		t.Fatalf("a pair port is drift: %q", drift)
+	}
+	if drift := WatchRules(context.Background(), env, rules, nil, nil, nil, "51821").Drift; !slices.Contains(drift, "allow 51920/udp") {
+		t.Fatalf("a port that is no pair's is drift: %q", drift)
+	}
+	pair, _ := network.ParseOpening("51920", "udp", "everyone")
+	if OpenPort(context.Background(), env, nil, pair, ports) == nil || ClosePort(context.Background(), env, pair, ports) == nil || RemoveRule(context.Background(), env, "allow 51920/udp", ports) == nil {
+		t.Fatal("a pair port was changed by hand")
+	}
+	run.calls = nil
+	if _, err := Apply(context.Background(), env, "firewall", map[string]string{"closed": "1", NetworkPort: ports}); err != nil {
+		t.Fatal(err)
+	}
+	mustCall(t, run, "ufw allow 51922/udp comment krynodes-network")
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "51920") || strings.Contains(call, "51821") }) {
+		t.Fatalf("a pair port that is open was touched: %q", run.calls)
+	}
+}
+
+func TestTheFirewallOpensThePrivateNetworksPortsWhenItTurnsOn(t *testing.T) {
+	env, run := newEnv(t)
+	run.respond["sshd -T"] = "port 22\n"
+	run.respond["ufw status"] = "Status: inactive\n"
+	run.effects["ufw --force enable"] = func() {
+		run.respond["ufw status"] = "Status: active\n\nTo Action From\n22/tcp ALLOW Anywhere # krynodes\n"
+	}
+	if _, err := Apply(context.Background(), env, "firewall", map[string]string{NetworkPort: "51821 51920"}); err != nil {
+		t.Fatal(err)
+	}
+	mustCall(t, run, "ufw allow 51821/udp comment krynodes-network", "ufw allow in on kry0 comment krynodes-network", "ufw allow 51920/udp comment krynodes-network")
+	if slices.Contains(run.calls, "ufw allow in on kry0 comment krynodes-network") && strings.Count(strings.Join(run.calls, "\n"), "allow in on kry0") != 1 {
+		t.Fatalf("kry0 is opened once: %q", run.calls)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -581,6 +582,22 @@ func TestEndpointsChangeOnlyThePeersOfTheNetwork(t *testing.T) {
 	}
 }
 
+func TestEndpointsNeverMoveALaptopOffItsPairPort(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, behindNAT)
+	writeRequest(t, net.executor.RequestDir, idC+".json", askNetwork(t, idC, "endpoints", map[string]string{"endpoints": net.laptop.Public + " 203.0.113.9:51820 " + net.peer.Public + " 203.0.113.99:51820"}))
+	run.calls = nil
+	if err := net.executor.Execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, net.executor, idC); !result.OK || !slices.Contains(run.calls, "wg set kry0 peer "+net.peer.Public+" endpoint 203.0.113.99:51820") {
+		t.Fatalf("%+v %v", result, run.calls)
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, net.laptop.Public) }) {
+		t.Fatalf("a laptop's endpoint was set: %v", run.calls)
+	}
+}
+
 func TestTheInventoryNamesWhatStacksPointAt(t *testing.T) {
 	executor, _, _, _, _ := joinedServer(t)
 	dir := t.TempDir()
@@ -629,5 +646,193 @@ func TestUninstallTakesTheServerOutOfTheNetwork(t *testing.T) {
 	}
 	if _, err := os.Stat(executor.path(network.ConfigPath)); !os.IsNotExist(err) {
 		t.Fatal("kry0.conf stays")
+	}
+}
+
+func waiting(t *testing.T, executor Executor) []Request {
+	t.Helper()
+	entries, _ := os.ReadDir(executor.RequestDir)
+	var requests []Request
+	for _, entry := range entries {
+		var request Request
+		if err := readJSON(filepath.Join(executor.RequestDir, entry.Name()), &request); err != nil {
+			t.Fatal(err)
+		}
+		requests = append(requests, request)
+	}
+	return requests
+}
+
+func TestAHintNamingANATMemberOrAStrangerIsIgnored(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, asIs)
+	relay := &Relay{RequestDir: net.executor.RequestDir, StateDir: net.executor.StateDir, Now: net.executor.Now, NodeID: testNode}
+	if err := relay.NetworkReply(&reporter.NetworkReply{Meetings: []reporter.NetworkMeeting{{Laptop: laptopNode, Via: thirdNode}}}); err != nil {
+		t.Fatal(err)
+	}
+	if requests := waiting(t, net.executor); len(requests) != 0 {
+		t.Fatalf("a public server follows no meeting point: %+v", requests)
+	}
+	net.apply(t, behindNAT)
+	hints := []reporter.NetworkMeeting{
+		{Laptop: laptopNode, Via: behindNode},
+		{Laptop: laptopNode, Via: strangeNode},
+		{Laptop: laptopNode, Via: laptopNode},
+		{Laptop: peerNode, Via: thirdNode},
+		{Laptop: strangeNode, Via: thirdNode},
+	}
+	if err := relay.NetworkReply(&reporter.NetworkReply{Meetings: hints}); err != nil {
+		t.Fatal(err)
+	}
+	if requests := waiting(t, net.executor); len(requests) != 0 {
+		t.Fatalf("queued %+v", requests)
+	}
+	run.calls = nil
+	for index, hint := range hints {
+		id := fmt.Sprintf("0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1c%02d", index)
+		if result := hostRun(t, net.executor, askNetwork(t, id, "meet", map[string]string{"laptop": hint.Laptop, "via": hint.Via})); result.OK {
+			t.Fatalf("the root unit took %+v: %+v", hint, result)
+		}
+	}
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "wg set") }) {
+		t.Fatalf("a refused hint moved a peer: %v", run.calls)
+	}
+}
+
+func TestAHintMovesTheLaptopToTheNamedPeer(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, behindNAT)
+	laptopPeer := func() string {
+		config := readRoot(t, net.executor, network.ConfigPath)
+		if !strings.Contains(config, "AllowedIPs = 10.88.0.1/32\n") || !strings.Contains(config, "AllowedIPs = 10.88.0.3/32\n") || strings.Count(config, "10.88.0.9") != 1 {
+			t.Fatalf("a meeting peer carries the laptop:\n%s", config)
+		}
+		return config[strings.Index(config, "PublicKey = "+net.laptop.Public):]
+	}
+	if peer := laptopPeer(); !strings.Contains(peer, "AllowedIPs = 10.88.0.9/32\nEndpoint = 203.0.113.21:51921\nPersistentKeepalive = 25\n") {
+		t.Fatalf("the laptop starts on the default meeting point's pair port:\n%s", peer)
+	}
+	relay := &Relay{RequestDir: net.executor.RequestDir, StateDir: net.executor.StateDir, Now: net.executor.Now, NodeID: testNode}
+	hint := &reporter.NetworkReply{Meetings: []reporter.NetworkMeeting{{Laptop: laptopNode, Via: thirdNode}}}
+	if err := relay.NetworkReply(hint); err != nil {
+		t.Fatal(err)
+	}
+	requests := waiting(t, net.executor)
+	if len(requests) != 1 || requests[0].Action != "meet" {
+		t.Fatalf("queued %+v", requests)
+	}
+	os.Remove(filepath.Join(net.executor.RequestDir, requests[0].ID+".json"))
+	if _, forwarded := net.executor.network(context.Background(), requests[0]); !forwarded {
+		t.Fatal("the hint is not left to the host unit")
+	}
+	run.calls = nil
+	if err := net.executor.HostApply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if result := readResult(t, net.executor, requests[0].ID); !result.OK {
+		t.Fatalf("%+v", result)
+	}
+	want := []string{"wg set kry0 peer " + net.laptop.Public + " endpoint 203.0.113.23:51921"}
+	if got := slices.DeleteFunc(slices.Clone(run.calls), func(call string) bool { return !strings.HasPrefix(call, "wg ") }); !slices.Equal(got, want) {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	if peer := laptopPeer(); !strings.Contains(peer, "Endpoint = 203.0.113.23:51921\n") {
+		t.Fatalf("kry0.conf does not follow the hint:\n%s", peer)
+	}
+	if err := relay.NetworkReply(hint); err != nil {
+		t.Fatal(err)
+	}
+	if requests := waiting(t, net.executor); len(requests) != 0 {
+		t.Fatalf("a hint already followed was queued again: %+v", requests)
+	}
+	net.apply(t, behindNAT)
+	if peer := laptopPeer(); !strings.Contains(peer, "Endpoint = 203.0.113.23:51921\n") {
+		t.Fatalf("a newer document forgot the meeting point:\n%s", peer)
+	}
+}
+
+func TestRoamingNeverMovesALaptopOffItsMeetingPoint(t *testing.T) {
+	net, run, _ := newLaptopNet(t)
+	net.apply(t, behindNAT)
+	sets := func(endpoint string) []string {
+		t.Helper()
+		run.respond["wg show kry0 dump"] = "cHJpdmF0ZQ==\tcHVibGlj\t51820\toff\n" + net.laptop.Public + "\t(none)\t" + endpoint + "\t10.88.0.9/32\t0\t0\t0\t25\n"
+		run.calls = nil
+		net.executor.holdMeetings(context.Background())
+		return slices.DeleteFunc(slices.Clone(run.calls), func(call string) bool { return !strings.HasPrefix(call, "wg set") })
+	}
+	back := func(endpoint string) []string {
+		return []string{"wg set kry0 peer " + net.laptop.Public + " endpoint " + endpoint}
+	}
+	if got := sets("203.0.113.21:51921"); len(got) != 0 {
+		t.Fatalf("an endpoint in place is set again: %q", got)
+	}
+	if got := sets("[::ffff:203.0.113.21]:51921"); len(got) != 0 {
+		t.Fatalf("a mapped form of the same endpoint is set again: %q", got)
+	}
+	if got, want := sets("203.0.113.23:51921"), back("203.0.113.21:51921"); !slices.Equal(got, want) {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	if result := net.executor.meet(context.Background(), Request{ID: "meet-1"}, map[string]string{"laptop": laptopNode, "via": thirdNode}); !result.OK {
+		t.Fatalf("%+v", result)
+	}
+	if got, want := sets("203.0.113.21:51921"), back("203.0.113.23:51921"); !slices.Equal(got, want) {
+		t.Fatalf("a datagram through the old meeting point undid the hint: want %q, got %q", want, got)
+	}
+	if got, want := sets("(none)"), back("203.0.113.23:51921"); !slices.Equal(got, want) {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+	run.respond["wg show kry0 dump"] = "cHJpdmF0ZQ==\tcHVibGlj\t51820\toff\n"
+	run.calls = nil
+	net.executor.holdMeetings(context.Background())
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "wg set") }) {
+		t.Fatalf("a laptop kry0 does not hold yet was set: %q", run.calls)
+	}
+	net.apply(t, asIs)
+	run.calls = nil
+	net.executor.holdMeetings(context.Background())
+	if len(run.calls) != 0 {
+		t.Fatalf("a meeting point follows no meeting point: %q", run.calls)
+	}
+}
+
+func TestTheRootUnitRefusesAMeetingPointItMayNotFollow(t *testing.T) {
+	cutLaptop := func(self *network.Member, members []network.Member) []network.Member {
+		behindNAT(self, members)
+		members[3].Cut = true
+		return members
+	}
+	cutVia := func(self *network.Member, members []network.Member) []network.Member {
+		behindNAT(self, members)
+		members[1].Cut = true
+		return members
+	}
+	names := "refused: a meeting point names a laptop and a public server of the network"
+	for _, refusal := range []struct {
+		name   string
+		change func(*network.Member, []network.Member) []network.Member
+		args   map[string]string
+		output string
+	}{
+		{"cut laptop", cutLaptop, map[string]string{"laptop": laptopNode, "via": thirdNode}, names},
+		{"cut via", cutVia, map[string]string{"laptop": laptopNode, "via": thirdNode}, names},
+		{"extra argument", behindNAT, map[string]string{"laptop": laptopNode, "via": thirdNode, "endpoint": "203.0.113.9:51820"}, names},
+		{"public self", asIs, map[string]string{"laptop": laptopNode, "via": thirdNode}, "refused: only a server behind NAT follows a meeting point"},
+	} {
+		t.Run(refusal.name, func(t *testing.T) {
+			net, run, _ := newLaptopNet(t)
+			net.apply(t, refusal.change)
+			run.calls = nil
+			result := hostRun(t, net.executor, askNetwork(t, "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1d01", "meet", refusal.args))
+			if result.OK || result.Output != refusal.output {
+				t.Fatalf("%+v", result)
+			}
+			if slices.ContainsFunc(run.calls, func(call string) bool { return strings.HasPrefix(call, "wg set") }) {
+				t.Fatalf("a refused meeting point moved a peer: %v", run.calls)
+			}
+			if net.executor.readNetwork().Meetings != nil {
+				t.Fatal("a refused meeting point was recorded")
+			}
+		})
 	}
 }

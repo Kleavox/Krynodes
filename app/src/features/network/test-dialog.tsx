@@ -12,7 +12,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Said, SHEET, SignButton } from "@/features/packages/lines";
+import {
+  NotFollowing,
+  Said,
+  SHEET,
+  SignButton,
+} from "@/features/packages/lines";
 import { postNetworkTest, useServices } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
@@ -266,6 +271,7 @@ export function TestDialog({
                       detail: likely.text,
                       signers: keys.signers,
                     }}
+                    unfollowed={keys.unfollowed}
                     fixed={fixed.has(key)}
                     onFixed={() =>
                       setFixed((current) => new Set(current).add(key))
@@ -328,21 +334,30 @@ function FixRow({
   change,
   fixed,
   onFixed,
+  unfollowed,
 }: {
   label: string;
   change: Change;
   fixed: boolean;
   onFixed: () => void;
+  unfollowed: string[];
 }) {
   const fix = useSignChange();
   return (
-    <FixLine
-      label={label}
-      fixed={fixed}
-      pending={fix.isPending}
-      error={fix.error?.message ?? null}
-      onFix={() => fix.mutate(change, { onSuccess: onFixed })}
-    />
+    <>
+      {!fixed && (
+        <div className="mt-2">
+          <NotFollowing lines={unfollowed} />
+        </div>
+      )}
+      <FixLine
+        label={label}
+        fixed={fixed}
+        pending={fix.isPending}
+        error={fix.error?.message ?? null}
+        onFix={() => fix.mutate(change, { onSuccess: onFixed })}
+      />
+    </>
   );
 }
 

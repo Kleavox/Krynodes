@@ -61,7 +61,9 @@ import {
   firstTrusts,
   formatPrint,
   agentCurrent,
+  hasLaptops,
   reachText,
+  syncTarget,
   removeChange,
   lacksOwners,
   serverState,
@@ -292,6 +294,7 @@ function serversText(fleet: Fleet, device: DeviceRecord): string {
       .filter((server) => server.trust?.access.includes(device.fingerprint))
       .map((server) => server.node.name),
     fleet.trusted.length,
+    hasLaptops(fleet.trusted),
   );
 }
 
@@ -744,8 +747,7 @@ function Manage({ fleet }: { fleet: Fleet }) {
         <Notice key={`removing-${gone.id}`} tone="warning">
           {gone.name} was removed, but {gone.servers.join(", ")} still{" "}
           {gone.servers.length === 1 ? "trusts" : "trust"} it. Sync{" "}
-          {gone.servers.length === 1 ? "that server" : "those servers"} to
-          finish removing it.
+          {syncTarget(fleet.servers, gone.servers)} to finish removing it.
         </Notice>,
       );
     }
@@ -753,7 +755,8 @@ function Manage({ fleet }: { fleet: Fleet }) {
       notices.push(
         <Notice key="old" tone="warning">
           Update {names(old)} to agent {MIN_AGENT_VERSION}. Devices cannot be
-          added or removed until every server runs it.
+          added or removed until every{" "}
+          {hasLaptops(fleet.trusted) ? "server and laptop" : "server"} runs it.
         </Notice>,
       );
     }
@@ -793,7 +796,9 @@ function Manage({ fleet }: { fleet: Fleet }) {
             </Button>
           }
         >
-          No passkey runs actions on {server.node.name}.
+          {server.laptop
+            ? `No passkey can change the private network on ${server.node.name}.`
+            : `No passkey runs actions on ${server.node.name}.`}
         </Notice>,
       );
     }

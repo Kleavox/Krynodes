@@ -545,8 +545,16 @@ func firewall(ctx context.Context, env Env, chosen, networkPort string) (map[str
 			added = append(added, rule)
 		}
 	}
-	if port, err := strconv.Atoi(networkPort); err == nil {
-		for _, command := range network.Open("ufw", port) {
+	for index, field := range strings.Fields(networkPort) {
+		port, err := strconv.Atoi(field)
+		if err != nil {
+			continue
+		}
+		commands := network.OpenRelay("ufw", []int{port})
+		if index == 0 {
+			commands = network.Open("ufw", port)
+		}
+		for _, command := range commands {
 			if err := env.run(ctx, command[0], command[1:]...); err != nil {
 				return failed(err)
 			}

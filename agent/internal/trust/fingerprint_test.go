@@ -1,4 +1,4 @@
-package actions
+package trust
 
 import "testing"
 
@@ -32,10 +32,10 @@ func TestAStoredPassphraseIsDroppedAndFingerprintsAreReported(t *testing.T) {
 	pass, _ := passphraseKey(t)
 	stored := storeOf(found, []string{"a"}, []string{"a"})
 	stored.Passphrase = &pass
-	if err := SaveTrust(dir, stored); err != nil {
+	if err := Save(dir, stored); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := LoadTrust(dir)
+	loaded, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

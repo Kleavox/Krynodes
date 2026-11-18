@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type {
   ActionRecord,
+  NetworkLaptop,
   NetworkServer,
   NetworkView,
   NodeRecord,
@@ -73,7 +74,19 @@ import {
   type TestEnd,
   baseOf,
   wrongPortRows,
+  dnsFields,
+  exitDnsLine,
+  exitState,
+  inside,
+  laptopBlocker,
+  laptopJoiner,
+  laptopRow,
+  laptopSeals,
+  joinBlocker,
+  parseDns,
+  serverIds,
 } from "./network";
+import { networkSigners } from "./devices";
 import { b64url } from "./passkeys";
 import { open, recipient } from "./seal-test-utils";
 
@@ -84,6 +97,7 @@ const B = "22222222-2222-4222-8222-222222222222";
 const C = "33333333-3333-4333-8333-333333333333";
 const D = "44444444-4444-4444-8444-444444444444";
 const E = "55555555-5555-4555-8555-555555555555";
+const F = "88888888-8888-4888-8888-888888888888";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Array(32).fill(n)));
 
@@ -144,6 +158,7 @@ function view(extra: Partial<NetworkView> = {}): NetworkView {
     wrongPorts: [],
     members: [vps1, vps2, vps3, serverOne],
     waiting: [],
+    laptops: [],
     links: [
       { a: A, b: B, answering: true, since: "2026-10-26T10:00:00Z" },
       { a: A, b: C, answering: true, since: "2026-10-26T10:00:00Z" },
@@ -164,6 +179,37 @@ function view(extra: Partial<NetworkView> = {}): NetworkView {
     ...extra,
   };
 }
+
+const L = "66666666-6666-4666-8666-666666666666";
+const M = "77777777-7777-4777-8777-777777777777";
+const N = "99999999-9999-4999-8999-999999999999";
+
+const laptopSeat = (
+  nodeId: string,
+  name: string,
+  extra: Partial<NetworkLaptop> = {},
+): NetworkLaptop => ({
+  nodeId,
+  name,
+  address: null,
+  state: "waiting",
+  version: "0.7.24",
+  lastSeen: "2026-10-26T11:59:30Z",
+  sealKey: null,
+  trust: null,
+  applied: 2,
+  ...extra,
+});
+
+const waitingLaptop = (nodeId: string, name: string, n: number) => ({
+  nodeId,
+  name,
+  key: key(n),
+  signer: key(n + 100),
+  port: 51820,
+  mtu: null,
+  since: "2026-10-26T11:00:00Z",
+});
 
 const presence = {
   [A]: { online: true, seenAt: NOW - 30_000 },
@@ -1555,6 +1601,722 @@ describe("the network document", () => {
       members: [start.members[0], { ...start.members[1], name: "db-1" }],
     });
   });
+
+  describe("with laptops", () => {
+    const start = async () => {
+      const { pairs, keys } = await ends([A, B, C, D, L, M]);
+      const first = await buildDocument(
+        null,
+        {
+          kind: "create",
+          range: "10.88.0.0/24",
+          port: 51820,
+          mtu: 1420,
+          join: [joiner(vps1), joiner(vps2), joiner(serverOne)],
+        },
+        keys,
+      );
+      return { pairs, keys, first };
+    };
+    const withLaptops = async () => {
+      const { pairs, keys, first } = await start();
+      const added = await buildDocument(
+        first,
+        {
+          kind: "add",
+          join: [
+            laptopJoiner(waitingLaptop(L, "laptop-1", 60), "10.88.0.9"),
+            laptopJoiner(waitingLaptop(M, "laptop-2", 62), "10.88.0.10"),
+          ],
+        },
+        keys,
+      );
+      return { pairs, keys, first, added };
+    };
+    const pairOf = async (
+      pairs: Record<string, Awaited<ReturnType<typeof recipient>>>,
+      document: NetworkDocument,
+      a: string,
+      b: string,
+    ) => {
+      const [forA, forB] = await Promise.all([
+        opened(pairs[a]!, member(document, a).psk[b]!),
+        opened(pairs[b]!, member(document, b).psk[a]!),
+      ]);
+      expect(forA).toBe(forB);
+      return forA;
+    };
+    const member = (document: NetworkDocument, id: string) =>
+      document.members.find((entry) => entry.node === id)!;
+
+    it("gives a laptop a psk with every server and no laptop", async () => {
+      const { first, added } = await withLaptops();
+      expect(first.members.every((entry) => !("kind" in entry))).toBe(true);
+      expect(Object.keys(member(added, L).psk).sort()).toEqual(
+        [A, B, D].sort(),
+      );
+      expect(member(added, D).psk[L]).toBeDefined();
+      expect(member(added, A).psk[L]).toBeDefined();
+      expect(member(added, L).psk[M]).toBeUndefined();
+      expect(member(added, M).psk[L]).toBeUndefined();
+      expect(member(added, L)).toMatchObject({
+        kind: "laptop",
+        nat: true,
+        endpoint: null,
+        address: "10.88.0.9",
+      });
+    });
+
+    it("seals a laptop's psk to the laptop's key and the server's", async () => {
+      const { pairs } = await ends([A, L]);
+      const keys = { [A]: pairs[A]!.public, [L]: pairs[L]!.public };
+      const first = await buildDocument(
+        null,
+        {
+          kind: "create",
+          range: "10.88.0.0/24",
+          port: 51820,
+          mtu: 1420,
+          join: [joiner(vps1)],
+        },
+        keys,
+      );
+      const next = await buildDocument(
+        first,
+        {
+          kind: "add",
+          join: [laptopJoiner(waitingLaptop(L, "laptop-1", 60), "10.88.0.9")],
+        },
+        keys,
+      );
+      expect(await opened(pairs[A]!, member(next, A).psk[L]!)).toBe(
+        await opened(pairs[L]!, member(next, L).psk[A]!),
+      );
+    });
+
+    it("gives each laptop one relay port for each server behind NAT, and no one else", async () => {
+      const { added } = await withLaptops();
+      expect(member(added, L).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(added, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      for (const id of [A, B, D]) {
+        expect(member(added, id).relay).toBeUndefined();
+      }
+    });
+
+    it("keeps every port and fills the lowest free one as servers behind NAT come and go", async () => {
+      const { keys, added } = await withLaptops();
+      const more = { ...keys, ...(await ends([E, F])).keys };
+      const joined = await buildDocument(
+        added,
+        {
+          kind: "add",
+          join: [joiner(server(E, "server-5", "10.88.0.5", null))],
+        },
+        more,
+      );
+      expect(member(joined, L).relay).toEqual({
+        [D]: NETWORK.relayPort,
+        [E]: NETWORK.relayPort + 2,
+      });
+      expect(member(joined, M).relay).toEqual({
+        [D]: NETWORK.relayPort + 1,
+        [E]: NETWORK.relayPort + 3,
+      });
+      expect(Object.keys(member(joined, E).psk).sort()).toEqual(
+        [A, B, D, L, M].sort(),
+      );
+      const left = await buildDocument(
+        joined,
+        { kind: "remove", nodeId: D },
+        more,
+      );
+      expect(member(left, L).relay).toEqual({ [E]: NETWORK.relayPort + 2 });
+      expect(member(left, M).relay).toEqual({ [E]: NETWORK.relayPort + 3 });
+      const third = await buildDocument(
+        left,
+        {
+          kind: "add",
+          join: [joiner(server(F, "server-6", "10.88.0.6", null))],
+        },
+        more,
+      );
+      expect(member(third, L).relay).toEqual({
+        [E]: NETWORK.relayPort + 2,
+        [F]: NETWORK.relayPort,
+      });
+      expect(member(third, M).relay).toEqual({
+        [E]: NETWORK.relayPort + 3,
+        [F]: NETWORK.relayPort + 1,
+      });
+    });
+
+    it("keeps ports through other changes, frees a removed laptop's and gives them to the next laptop", async () => {
+      const { pairs, keys, added } = await withLaptops();
+      const before = JSON.stringify(added);
+      const renamed = await buildDocument(
+        added,
+        { kind: "rename", nodeId: A, name: "server-9" },
+        keys,
+      );
+      expect(JSON.stringify(added)).toBe(before);
+      expect(member(renamed, L).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(renamed, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      expect(member(renamed, D).psk).toEqual(member(added, D).psk);
+      expect(member(renamed, M).psk).toEqual(member(added, M).psk);
+      const gone = await buildDocument(
+        renamed,
+        { kind: "remove", nodeId: L },
+        keys,
+      );
+      expect(member(gone, L)).toBeUndefined();
+      expect(member(gone, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      const third = await ends([N]);
+      const more = { ...keys, ...third.keys };
+      const next = await buildDocument(
+        gone,
+        {
+          kind: "add",
+          join: [laptopJoiner(waitingLaptop(N, "laptop-3", 64), "10.88.0.11")],
+        },
+        more,
+      );
+      expect(member(next, N).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(next, M).relay).toEqual({ [D]: NETWORK.relayPort + 1 });
+      const all = { ...pairs, ...third.pairs };
+      const fresh = await pairOf(all, next, N, D);
+      expect(fresh).not.toBe(await pairOf(all, added, M, D));
+      expect(member(next, D).psk[M]).toBe(member(added, D).psk[M]);
+      expect(member(next, M).psk[D]).toBe(member(added, M).psk[D]);
+    });
+
+    it("says plainly when the relay ports run out", async () => {
+      const id = (n: number) =>
+        `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
+      const crowd = {
+        v: 1,
+        version: 1,
+        range: "10.88.0.0/24",
+        port: 51820,
+        mtu: 1420,
+        blocked: [],
+        members: [
+          ...Array.from({ length: 16 }, (_, index) => ({
+            node: id(index),
+            nat: true,
+            psk: {},
+          })),
+          ...Array.from({ length: 17 }, (_, index) => ({
+            node: id(100 + index),
+            kind: "laptop",
+            nat: true,
+            psk: {},
+          })),
+        ],
+      } as unknown as NetworkDocument;
+      await expect(buildDocument(crowd, { kind: "again" }, {})).rejects.toThrow(
+        "There is no relay port left for another laptop and server behind NAT. Remove a laptop or a server behind NAT first.",
+      );
+    });
+
+    it("takes a cut server's ports away and gives it new ones when it is released", async () => {
+      const { keys, added } = await withLaptops();
+      const cut = {
+        ...added,
+        members: added.members.map((entry) =>
+          entry.node === D ? { ...entry, cut: true as const } : entry,
+        ),
+      };
+      const held = await buildDocument(cut, { kind: "again" }, keys);
+      expect(member(held, L).relay).toEqual({});
+      expect(member(held, M).relay).toEqual({});
+      expect(Object.keys(member(held, L).psk)).toContain(D);
+      const released = await buildDocument(
+        held,
+        { kind: "release", nodeId: D, key: key(212), signer: key(213) },
+        keys,
+      );
+      expect(member(released, L).relay).toEqual({ [D]: NETWORK.relayPort });
+      expect(member(released, M).relay).toEqual({
+        [D]: NETWORK.relayPort + 1,
+      });
+    });
+
+    it("says a laptop's seal key is missing before it signs anything", async () => {
+      const { keys, first } = await start();
+      const { [L]: _, ...without } = keys;
+      await expect(
+        buildDocument(
+          first,
+          {
+            kind: "add",
+            join: [laptopJoiner(waitingLaptop(L, "laptop-1", 60), "10.88.0.9")],
+          },
+          without,
+        ),
+      ).rejects.toThrow(
+        "laptop-1 has not finished joining yet. Open Krynodes on the laptop and try again.",
+      );
+    });
+
+    it("makes new keys and releases a server with a laptop in the network", async () => {
+      const { pairs, keys, added } = await withLaptops();
+      const fresh = await buildDocument(
+        added,
+        {
+          kind: "rekey",
+          keys: { [A]: key(201), [B]: key(202), [D]: key(203) },
+        },
+        keys,
+      );
+      expect(Object.keys(member(fresh, L).psk).sort()).toEqual(
+        [A, B, D].sort(),
+      );
+      expect(member(fresh, L).rekey).toBe(true);
+      expect(member(fresh, D).psk[L]).not.toBe(member(added, D).psk[L]);
+      expect(member(fresh, L).psk[D]).not.toBe(member(added, L).psk[D]);
+      expect(await pairOf(pairs, fresh, L, D)).not.toBe(
+        await pairOf(pairs, added, L, D),
+      );
+      const cut = {
+        ...added,
+        members: added.members.map((entry) =>
+          entry.node === B ? { ...entry, cut: true as const } : entry,
+        ),
+      };
+      const released = await buildDocument(
+        cut,
+        { kind: "release", nodeId: B, key: key(212), signer: key(213) },
+        keys,
+      );
+      expect(Object.keys(member(released, B).psk).sort()).toEqual(
+        [A, D, L, M].sort(),
+      );
+      expect(Object.keys(member(released, L).psk).sort()).toEqual(
+        [A, B, D].sort(),
+      );
+      expect(await pairOf(pairs, released, L, B)).not.toBe(
+        await pairOf(pairs, added, L, B),
+      );
+      expect(member(released, L).psk[D]).toBe(member(added, L).psk[D]);
+      expect(member(released, D).psk[L]).toBe(member(added, D).psk[L]);
+    });
+
+    it("exit change sets and clears exit on one server", async () => {
+      const { keys, added } = await withLaptops();
+      const on = await buildDocument(
+        added,
+        { kind: "exit", nodeId: A, on: true },
+        keys,
+      );
+      expect(on.version).toBe(added.version + 1);
+      expect(member(on, A).exit).toBe(true);
+      expect(on.members.filter((entry) => entry.exit)).toHaveLength(1);
+      expect(member(on, B)).toEqual(member(added, B));
+      const off = await buildDocument(
+        on,
+        { kind: "exit", nodeId: A, on: false },
+        keys,
+      );
+      expect("exit" in member(off, A)).toBe(false);
+      expect(off.members).toEqual(added.members);
+    });
+
+    it("an exit never goes out without DNS for the laptops", async () => {
+      const { keys, added } = await withLaptops();
+      expect(added.dns).toBeUndefined();
+      const on = await buildDocument(
+        added,
+        { kind: "exit", nodeId: A, on: true },
+        keys,
+      );
+      expect(on.dns).toEqual(["1.1.1.1", "1.0.0.1"]);
+      const chosen = await buildDocument(
+        { ...added, dns: ["10.88.0.5"] },
+        { kind: "exit", nodeId: A, on: true },
+        keys,
+      );
+      expect(chosen.dns).toEqual(["10.88.0.5"]);
+      const off = await buildDocument(
+        added,
+        { kind: "exit", nodeId: A, on: false },
+        keys,
+      );
+      expect(off.dns).toBeUndefined();
+    });
+
+    it("exit is refused for a NAT member and for a laptop", async () => {
+      const { keys, added } = await withLaptops();
+      await expect(
+        buildDocument(added, { kind: "exit", nodeId: D, on: true }, keys),
+      ).rejects.toThrow("server-1 needs a public address");
+      await expect(
+        buildDocument(added, { kind: "exit", nodeId: L, on: true }, keys),
+      ).rejects.toThrow("laptop-1 needs a public address");
+    });
+
+    it("exit is refused for a cut member but may still be turned off there", async () => {
+      const { keys, added } = await withLaptops();
+      const cut = {
+        ...added,
+        members: added.members.map((entry) =>
+          entry.node === B ? { ...entry, cut: true as const } : entry,
+        ),
+      };
+      await expect(
+        buildDocument(cut, { kind: "exit", nodeId: B, on: true }, keys),
+      ).rejects.toThrow(
+        "vps-2 is cut off from the private network. Release it first.",
+      );
+      const on = await buildDocument(
+        added,
+        { kind: "exit", nodeId: B, on: true },
+        keys,
+      );
+      const held = {
+        ...on,
+        members: on.members.map((entry) =>
+          entry.node === B ? { ...entry, cut: true as const } : entry,
+        ),
+      };
+      const off = await buildDocument(
+        held,
+        { kind: "exit", nodeId: B, on: false },
+        keys,
+      );
+      expect("exit" in member(off, B)).toBe(false);
+      expect(member(off, B).cut).toBe(true);
+    });
+
+    it("exit names a node that is not in the network instead of signing nothing", async () => {
+      const { keys, added } = await withLaptops();
+      await expect(
+        buildDocument(added, { kind: "exit", nodeId: E, on: true }, keys),
+      ).rejects.toThrow("That server is not in the private network.");
+      await expect(
+        buildDocument(added, { kind: "exit", nodeId: E, on: false }, keys),
+      ).rejects.toThrow("That server is not in the private network.");
+    });
+
+    it("turning an exit off on a member that cannot be one changes nothing but the version", async () => {
+      const { keys, added } = await withLaptops();
+      const off = await buildDocument(
+        added,
+        { kind: "exit", nodeId: D, on: false },
+        keys,
+      );
+      expect(off.version).toBe(added.version + 1);
+      expect(off.members).toEqual(added.members);
+    });
+
+    it("DNS keeps one or two IPv4 addresses and refuses the rest", async () => {
+      const { keys, added } = await withLaptops();
+      const dns = (list: string[]) =>
+        buildDocument(added, { kind: "dns", dns: list }, keys);
+      expect((await dns(["10.88.0.5"])).dns).toEqual(["10.88.0.5"]);
+      await expect(dns([])).rejects.toThrow();
+      await expect(
+        dns(["203.0.113.1", "203.0.113.2", "203.0.113.3"]),
+      ).rejects.toThrow();
+      await expect(dns(["203.0.113.1", "example.test"])).rejects.toThrow();
+    });
+
+    it("saves the laptops' DNS in the document and keeps it", async () => {
+      const { keys, added } = await withLaptops();
+      expect(added.dns).toBeUndefined();
+      const set = await buildDocument(
+        added,
+        { kind: "dns", dns: ["1.1.1.1", "1.0.0.1"] },
+        keys,
+      );
+      expect(set.dns).toEqual(["1.1.1.1", "1.0.0.1"]);
+      expect(set.members).toEqual(added.members);
+      const next = await buildDocument(set, { kind: "again" }, keys);
+      expect(next.dns).toEqual(["1.1.1.1", "1.0.0.1"]);
+    });
+
+    it("Remove Laptop reads nothing the laptop reports", async () => {
+      const { keys, added } = await withLaptops();
+      const removed = await buildDocument(
+        added,
+        { kind: "remove", nodeId: M },
+        { [A]: keys[A]!, [B]: keys[B]!, [D]: keys[D]! },
+      );
+      expect(removed.members.map((entry) => entry.node)).toEqual([A, B, D, L]);
+      expect(removed.blocked).toEqual([key(62)]);
+    });
+
+    it("Remove Laptop blocks the laptop's key", async () => {
+      const { keys, added } = await withLaptops();
+      const removed = await buildDocument(
+        added,
+        { kind: "remove", nodeId: L },
+        keys,
+      );
+      expect(removed.members.map((entry) => entry.node)).toEqual([A, B, D, M]);
+      expect(removed.blocked).toEqual([key(60)]);
+      expect(member(removed, A).psk[L]).toBeUndefined();
+      expect(member(removed, B).psk[L]).toBeUndefined();
+      await expect(
+        buildDocument(
+          removed,
+          {
+            kind: "add",
+            join: [laptopJoiner(waitingLaptop(L, "laptop-1", 60), "10.88.0.9")],
+          },
+          keys,
+        ),
+      ).rejects.toThrow("laptop-1's key was taken out of the network");
+    });
+  });
+});
+
+describe("laptops on the Network page", () => {
+  const nodes = (second: string) => [
+    { id: A, name: "vps-1", agent_version: "0.7.24" },
+    { id: B, name: "server-1", agent_version: second },
+  ];
+  const withLaptop = (extra: Partial<NetworkView> = {}) =>
+    view({
+      members: [
+        vps1,
+        server(B, "server-1", "10.88.0.2", "198.51.100.11:51821"),
+        server(L, "laptop-1", "10.88.0.9", null),
+      ],
+      laptops: [
+        laptopSeat(L, "laptop-1", { state: "in", address: "10.88.0.9" }),
+      ],
+      ...extra,
+    });
+
+  it("an old agent on a server disables laptop actions with its name", () => {
+    expect(laptopBlocker(withLaptop(), nodes("0.7.23"))).toBe(
+      "Update server-1 to agent 0.7.24 first.",
+    );
+    expect(laptopBlocker(withLaptop(), nodes("0.7.24"))).toBeNull();
+    expect(laptopBlocker(withLaptop(), [nodes("0.7.24")[0]!])).toBe(
+      "Update server-1 to agent 0.7.24 first.",
+    );
+  });
+
+  it("what a laptop reports never blocks anything or picks who signs", () => {
+    const lying = withLaptop({
+      laptops: [
+        laptopSeat(L, "laptop-1", {
+          state: "in",
+          version: "0.7.0",
+          trust: { version: 1, core: [], access: [] },
+        }),
+      ],
+    });
+    expect(laptopBlocker(lying, nodes("0.7.24"))).toBeNull();
+    const devices = [
+      { id: "phone", fingerprint: "p", owner: null, mine: true },
+    ] as Parameters<typeof networkSigners>[0];
+    const trust = new Map([[A, { version: 1, core: ["p"], access: ["p"] }]]);
+    expect(
+      networkSigners(
+        devices,
+        serverIds([A, L], lying.laptops).map((id) => trust.get(id) ?? null),
+      ),
+    ).toEqual(["phone"]);
+    expect(serverIds([A, L, M], lying.laptops)).toEqual([A, M]);
+  });
+
+  it("an older server cannot join a network that uses laptops, an exit or DNS", () => {
+    const plain = { dns: undefined, members: [{ node: A }] };
+    const document = (over: object) =>
+      ({ ...plain, ...over }) as unknown as NetworkDocument;
+    const told = "Update vps-9 to agent 0.7.24 first.";
+    expect(joinBlocker(null, "vps-9", "0.7.23")).toBeNull();
+    expect(joinBlocker(document({}), "vps-9", "0.7.23")).toBeNull();
+    expect(
+      joinBlocker(
+        document({ members: [{ node: L, kind: "laptop" }] }),
+        "vps-9",
+        "0.7.23",
+      ),
+    ).toBe(told);
+    expect(
+      joinBlocker(
+        document({ members: [{ node: A, exit: true }] }),
+        "vps-9",
+        "0.7.23",
+      ),
+    ).toBe(told);
+    expect(joinBlocker(document({ dns: ["1.1.1.1"] }), "vps-9", "0.7.23")).toBe(
+      told,
+    );
+    expect(
+      joinBlocker(document({ dns: ["1.1.1.1"] }), "vps-9", "0.7.24"),
+    ).toBeNull();
+  });
+
+  it("keeps laptops out of the servers' lists and counts", () => {
+    const seen = withLaptop();
+    expect(inside(seen).map((entry) => entry.name)).toEqual([
+      "vps-1",
+      "server-1",
+    ]);
+    expect(networkFacts(seen, presence).at(-1)).toEqual([
+      "Servers",
+      "2 · 2 online",
+    ]);
+  });
+
+  it("offers Exit Node for Laptops only on a public server that is in and not cut", () => {
+    const document = {
+      members: [{ node: A, exit: true }, { node: B }],
+    } as NetworkDocument;
+    const seen = withLaptop({ document });
+    expect(exitState(seen, A)).toBe("on");
+    expect(exitState(seen, B)).toBe("off");
+    expect(exitState(seen, L)).toBeNull();
+    expect(exitState(seen, D)).toBeNull();
+    expect(exitState(withLaptop({ quarantined: [A] }), A)).toBeNull();
+    expect(exitState(withLaptop({ quarantined: [A], document }), A)).toBe("on");
+    expect(exitState(withLaptop({ quarantined: [B], document }), B)).toBeNull();
+    expect(
+      exitState(
+        withLaptop({ members: [server(A, "vps-1", "10.88.0.1", null)] }),
+        A,
+      ),
+    ).toBeNull();
+    expect(exitState(withLaptop({ document: null }), A)).toBe("off");
+  });
+
+  it("says which DNS an exit brings when the document has none yet", () => {
+    const bare = withLaptop({
+      document: { members: [{ node: A }] } as NetworkDocument,
+    });
+    expect(exitDnsLine(bare, true)).toBe(
+      "Laptops on this exit node will ask 1.1.1.1 and 1.0.0.1 for names, which you can change in Settings.",
+    );
+    expect(exitDnsLine(bare, false)).toBeNull();
+    const set = withLaptop({
+      document: {
+        members: [{ node: A }],
+        dns: ["10.88.0.5"],
+      } as NetworkDocument,
+    });
+    expect(exitDnsLine(set, true)).toBeNull();
+  });
+
+  it("turns a waiting laptop into a member with no endpoint", () => {
+    expect(laptopJoiner(waitingLaptop(L, "laptop-1", 60), "10.88.0.9")).toEqual(
+      {
+        node: L,
+        name: "laptop-1",
+        address: "10.88.0.9",
+        key: key(60),
+        signer: key(160),
+        port: 51820,
+        endpoint: null,
+        nat: true,
+        kind: "laptop",
+      },
+    );
+  });
+
+  it("says when a laptop was last seen, and never as zero", () => {
+    expect(
+      laptopRow(
+        laptopSeat(L, "laptop-1", { state: "in", address: "10.88.0.9" }),
+        NOW,
+        2,
+      ),
+    ).toEqual({
+      name: "laptop-1",
+      address: "10.88.0.9",
+      online: true,
+      status: "Online",
+      behind: null,
+    });
+    expect(
+      laptopRow(
+        laptopSeat(L, "laptop-1", { lastSeen: "2026-10-26T10:00:00Z" }),
+        NOW,
+        2,
+      ),
+    ).toMatchObject({ address: "--", online: false, status: "Offline 2h" });
+    expect(
+      laptopRow(laptopSeat(L, "laptop-1", { lastSeen: null }), NOW, 2),
+    ).toMatchObject({ online: false, status: "Not seen yet" });
+  });
+
+  it("says a laptop that has not followed the network is behind, and never a version of zero for unknown", () => {
+    const row = (
+      applied: number | null,
+      state: NetworkLaptop["state"] = "in",
+    ) =>
+      laptopRow(laptopSeat(L, "laptop-1", { state, applied }), NOW, 5).behind;
+    expect(row(5)).toBeNull();
+    expect(row(3)).toBe("Behind · Version 3");
+    expect(row(null)).toBe("Version --");
+    expect(row(0)).toBe("Behind · No Version");
+    expect(row(null, "waiting")).toBeNull();
+    expect(row(3, "waiting")).toBeNull();
+  });
+
+  it("reads the laptops' seal keys for sealing", () => {
+    const seen = withLaptop({
+      laptops: [
+        laptopSeat(L, "laptop-1", { state: "in", sealKey: "seal" }),
+        laptopSeat(M, "laptop-2"),
+      ],
+    });
+    expect(laptopSeals(seen.laptops)).toEqual({ [L]: "seal" });
+  });
+
+  it("starts the DNS fields at 1.1.1.1 and 1.0.0.1 only until a document carries DNS", () => {
+    expect(dnsFields(undefined)).toEqual(["1.1.1.1", "1.0.0.1"]);
+    expect(dnsFields(["10.88.0.5"])).toEqual(["10.88.0.5", ""]);
+    expect(dnsFields(["10.88.0.5", "203.0.113.9"])).toEqual([
+      "10.88.0.5",
+      "203.0.113.9",
+    ]);
+  });
+
+  it("reads one or two different IPv4 addresses and says what is wrong", () => {
+    expect(parseDns(" 1.1.1.1 ", "")).toEqual({
+      dns: ["1.1.1.1"],
+      problem: null,
+    });
+    expect(parseDns("10.88.0.5", "203.0.113.9")).toEqual({
+      dns: ["10.88.0.5", "203.0.113.9"],
+      problem: null,
+    });
+    expect(parseDns("", "").problem).toBe("Enter at least one IPv4 address.");
+    expect(parseDns("", "1.1.1.1").problem).toBe(
+      "Fill the first address before the second.",
+    );
+    expect(parseDns("1.1.1", "").problem).toBe(
+      "1.1.1 is not an IPv4 address such as 203.0.113.53.",
+    );
+    expect(parseDns("1.1.1.1", "256.1.1.1").problem).toBe(
+      "256.1.1.1 is not an IPv4 address such as 203.0.113.53.",
+    );
+    expect(parseDns("1.1.1.1", "1.1.1.1").problem).toBe(
+      "Both addresses are the same. Use two different ones, or leave the second empty.",
+    );
+  });
+
+  it("words the new changes the way History lists them", () => {
+    expect(networkText.addLaptop("laptop-1")).toBe(
+      "Add the laptop laptop-1 to the private network",
+    );
+    expect(networkText.removeLaptop("laptop-1")).toBe(
+      "Remove the laptop laptop-1 from the private network",
+    );
+    expect(networkText.exit("vps-1", true)).toBe(
+      "Turn on Exit Node for Laptops on vps-1",
+    );
+    expect(networkText.exit("vps-1", false)).toBe(
+      "Turn off Exit Node for Laptops on vps-1",
+    );
+    expect(networkText.dns(["1.1.1.1", "1.0.0.1"])).toBe(
+      "Set DNS for Laptops on an Exit Node to 1.1.1.1 and 1.0.0.1",
+    );
+  });
 });
 
 describe("the ends of a member", () => {
@@ -1578,6 +2340,32 @@ describe("the ends of a member", () => {
     );
     expect(missingSeals(view(), { [A]: "a", [B]: "b", [C]: "c" })).toBe(
       "server-1 has not reported its seal key yet. Refresh its services and try again.",
+    );
+  });
+
+  it("counts the laptops in the network when it looks for a missing seal key", () => {
+    const seen = view({
+      laptops: [
+        laptopSeat(L, "laptop-1", { state: "in", address: "10.88.0.9" }),
+        laptopSeat(M, "laptop-2"),
+      ],
+    });
+    const sealed = { [A]: "a", [B]: "b", [C]: "c", [D]: "d" };
+    expect(missingSeals(seen, sealed)).toBe(
+      "laptop-1 has not finished joining yet. Open Krynodes on the laptop and try again.",
+    );
+    expect(missingSeals(seen, { ...sealed, [L]: "l" })).toBeNull();
+    expect(missingSeals(seen, { [A]: "a", [B]: "b", [C]: "c", [L]: "l" })).toBe(
+      "server-1 has not reported its seal key yet. Refresh its services and try again.",
+    );
+  });
+
+  it("says which laptops leave with a deleted network", () => {
+    expect(leavingText(["vps-1", "vps-2"], ["laptop-1"])).toBe(
+      "vps-1 and vps-2 leave it. They stay in Krynodes with their stacks and checks. laptop-1 is removed too, and has to be added again.",
+    );
+    expect(leavingText([], ["laptop-1", "laptop-2"])).toBe(
+      "No server is in it. laptop-1 and laptop-2 are removed too, and have to be added again.",
     );
   });
 

@@ -718,6 +718,73 @@ describe("proposals", () => {
       phone!.id,
     ]);
   });
+
+  const joined = (sqlite: ReturnType<typeof setup>["sqlite"], state: string) =>
+    sqlite
+      .prepare(
+        `INSERT INTO network_members (node_id, state, address, port, key, signer, since)
+         VALUES (?, ?, '10.88.0.9', 51820, 'k', 's', 'now')`,
+      )
+      .run(C, state);
+
+  it("a passkey change leaves a laptop that has not joined, or has left, alone", async () => {
+    for (const state of ["waiting", "leaving"]) {
+      const t = setup();
+      t.sqlite
+        .prepare(
+          "UPDATE nodes SET kind = 'laptop', name = 'laptop-1' WHERE id = ?",
+        )
+        .run(C);
+      joined(t.sqlite, state);
+      const [laptop, phone, tablet] = await fleet(3);
+      for (const key of [laptop!, phone!, tablet!]) await t.register(key);
+      for (const node of [A, C]) {
+        await t.report(node, [laptop!, phone!], [laptop!, phone!]);
+      }
+      const text = t.change({
+        core: [laptop!, phone!, tablet!],
+        access: { [A]: [laptop!, phone!] },
+      });
+      expect(
+        await reply(t.open(text, await t.approval(phone!, text))),
+        state,
+      ).toMatchObject({ status: "applied" });
+    }
+  });
+
+  it("a passkey change reaches an enrolled laptop that is in the network", async () => {
+    const t = setup();
+    t.sqlite
+      .prepare(
+        "UPDATE nodes SET kind = 'laptop', name = 'laptop-1' WHERE id = ?",
+      )
+      .run(C);
+    joined(t.sqlite, "in");
+    const [laptop, phone, tablet] = await fleet(3);
+    for (const key of [laptop!, phone!, tablet!]) await t.register(key);
+    for (const node of [A, C]) {
+      await t.report(node, [laptop!, phone!], [laptop!, phone!]);
+    }
+    const without = t.change({
+      core: [laptop!, phone!, tablet!],
+      access: { [A]: [laptop!, phone!] },
+    });
+    const refused = await reply(
+      t.open(without, await t.approval(phone!, without)),
+    );
+    expect(refused.code).toBe("INCOMPLETE");
+    const text = t.change({
+      version: 3,
+      core: [laptop!, phone!, tablet!],
+      access: { [A]: [laptop!, phone!], [C]: [laptop!, phone!] },
+    });
+    expect(
+      await reply(t.open(text, await t.approval(phone!, text))),
+    ).toMatchObject({ status: "applied" });
+    expect(t.trustActions().map((action) => action.nodeId)).toEqual([A, C]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(t.pokes).toEqual([[A, C]]);
+  });
 });
 
 describe("passkey owners", () => {
@@ -879,6 +946,44 @@ describe("passkey owners", () => {
     );
     expect(second).toMatchObject({ status: "applied" });
     expect(t.account(t.phone)).toBe(FRIEND);
+    const listed = (await (await t.call("GET", "/api/proposals")).json()) as {
+      proposals: { title: string }[];
+    };
+    expect(listed.proposals[0]!.title).toBe("Move Phone to user2");
+  });
+
+  it("names a move from the servers' owners, never a laptop's", async () => {
+    const t = await shared();
+    const prints = await Promise.all(
+      t.trusted.map((key) => fingerprint(key.publicKey)),
+    );
+    t.sqlite
+      .prepare(
+        `INSERT INTO network_members (node_id, state, address, port, key, signer, since)
+         VALUES (?, 'in', '10.88.0.9', 51820, 'k', 's', 'now')`,
+      )
+      .run(C);
+    t.sqlite
+      .prepare(
+        "UPDATE nodes SET kind = 'laptop', name = 'laptop-1', trust_report = ? WHERE id = ?",
+      )
+      .run(
+        JSON.stringify({
+          version: 1,
+          core: prints,
+          access: prints,
+          passphrase: false,
+          requireUv: true,
+          accounts: [ME, FRIEND, FRIEND],
+        }),
+        C,
+      );
+    const text = t.change({
+      core: t.trusted,
+      access: t.everywhere(t.trusted),
+      accounts: { ...OWNERS, Phone: FRIEND },
+    });
+    await reply(t.open(text, await t.approval(t.laptop, text)));
     const listed = (await (await t.call("GET", "/api/proposals")).json()) as {
       proposals: { title: string }[];
     };

@@ -10,12 +10,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Said, SHEET, SignButton } from "@/features/packages/lines";
-import { useServices, useUpdateCheck } from "@/lib/api";
+import {
+  NotFollowing,
+  Said,
+  SHEET,
+  SignButton,
+} from "@/features/packages/lines";
+import { useDevices, useServices, useUpdateCheck } from "@/lib/api";
+import { deleteRefusal } from "@/lib/devices";
 import { errorMessage } from "@/lib/http";
 import {
   deleteLines,
   hostingOf,
+  inside,
   leavingText,
   networkChecks,
   networkText,
@@ -47,6 +54,20 @@ export function DeleteDialog({
   const [off, setOff] = useState(true);
   const [left, setLeft] = useState<string | null>(null);
   const reports = useServices().data?.nodes ?? [];
+  const devices = useDevices().data?.devices ?? [];
+  const refusal = deleteRefusal(
+    devices,
+    members
+      .filter(
+        (member) =>
+          !view.laptops.some((laptop) => laptop.nodeId === member.nodeId),
+      )
+      .map((member) => ({
+        name: member.name,
+        trust:
+          reports.find((entry) => entry.id === member.nodeId)?.trust ?? null,
+      })),
+  );
   const names = Object.fromEntries(nodes.map((node) => [node.id, node.name]));
   const rows = deleteLines(
     view,
@@ -64,6 +85,7 @@ export function DeleteDialog({
         change: { kind: "delete" },
         text: networkText.delete,
         signers: keys.signers,
+        refusal,
       },
       {
         onSuccess: async () => {
@@ -90,7 +112,12 @@ export function DeleteDialog({
         <DialogHeader>
           <DialogTitle>Delete the Private Network?</DialogTitle>
           <DialogDescription>
-            {leavingText(members.map((member) => member.name))}
+            {leavingText(
+              inside(view).map((member) => member.name),
+              view.laptops
+                .filter((laptop) => laptop.state === "in")
+                .map((laptop) => laptop.name),
+            )}
           </DialogDescription>
         </DialogHeader>
         <MarkRows rows={rows.filter((row) => row !== turnOff)} />
@@ -111,6 +138,7 @@ export function DeleteDialog({
             </span>
           </label>
         )}
+        <NotFollowing lines={keys.unfollowed} />
         <Said text={left ?? remove.error?.message ?? null} />
         <DialogFooter>
           <DialogClose asChild>

@@ -1,5 +1,7 @@
 import {
   dnsName,
+  IPV4 as IPV4_ADDRESS,
+  links,
   NETWORK,
   networkDocumentSchema,
   networkPreparedSchema,
@@ -10,12 +12,17 @@ import {
   type NetworkTest,
   type StackNetwork,
 } from "@krynodes/protocol";
+import {
+  agentKnowsMemberKinds,
+  MEMBER_KINDS_AGENT,
+} from "@krynodes/protocol/versions";
 
 import type {
   ActionRecord,
   CheckKind,
   CheckRecord,
   FirewallOpening,
+  NetworkLaptop,
   NetworkServer,
   NetworkView,
   NodeRecord,
@@ -79,10 +86,17 @@ export const listOf = (names: string[]) =>
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
-export const leavingText = (names: string[]) =>
-  names.length > 0
-    ? `${listOf(names)} leave it. They stay in Krynodes with their stacks and checks.`
-    : "No server is in it.";
+export const leavingText = (names: string[], laptops: string[] = []) =>
+  [
+    names.length > 0
+      ? `${listOf(names)} leave it. They stay in Krynodes with their stacks and checks.`
+      : "No server is in it.",
+    ...(laptops.length > 0
+      ? [
+          `${listOf(laptops)} ${laptops.length === 1 ? "is" : "are"} removed too, and ${laptops.length === 1 ? "has" : "have"} to be added again.`,
+        ]
+      : []),
+  ].join(" ");
 
 const kryName = (name: string) => `${dnsName(name)}.kry`;
 
@@ -489,7 +503,10 @@ export function progressLinks(
 
 export const inside = (view: NetworkView) =>
   view.members.filter(
-    (member) => member.state === "in" && member.address !== null,
+    (member) =>
+      member.state === "in" &&
+      member.address !== null &&
+      !view.laptops.some((laptop) => laptop.nodeId === member.nodeId),
   );
 
 const isOnline = (presence: Presence, id: string) =>
@@ -1477,10 +1494,19 @@ export function missingSeals(
   const missing = inside(view)
     .filter((member) => !sealKeys[member.nodeId])
     .map((member) => member.name);
-  if (missing.length === 0) return null;
-  return missing.length === 1
-    ? `${missing[0]} has not reported its seal key yet. Refresh its services and try again.`
-    : `${listOf(missing)} have not reported their seal keys yet. Refresh their services and try again.`;
+  const lines = [
+    ...(missing.length === 0
+      ? []
+      : [
+          missing.length === 1
+            ? `${missing[0]} has not reported its seal key yet. Refresh its services and try again.`
+            : `${listOf(missing)} have not reported their seal keys yet. Refresh their services and try again.`,
+        ]),
+    ...view.laptops
+      .filter((laptop) => laptop.state === "in" && !sealKeys[laptop.nodeId])
+      .map((laptop) => unfinished(laptop.name)),
+  ];
+  return lines.length === 0 ? null : lines.join(" ");
 }
 
 export const waitingLine = (
@@ -1491,11 +1517,153 @@ export const waitingLine = (
   state: `Ready · gets ${address ?? "--"}`,
 });
 
+export const laptopJoiner = (
+  waiting: Pick<
+    NetworkView["waiting"][number],
+    "nodeId" | "name" | "key" | "signer" | "port"
+  >,
+  address: string,
+): Joiner => ({
+  node: waiting.nodeId,
+  name: waiting.name,
+  address,
+  key: waiting.key,
+  signer: waiting.signer,
+  port: waiting.port,
+  endpoint: null,
+  nat: true,
+  kind: "laptop",
+});
+
+const updateFirst = (name: string) =>
+  `Update ${name} to agent ${MEMBER_KINDS_AGENT} first.`;
+
+const unfinished = (name: string) =>
+  `${name} has not finished joining yet. Open Krynodes on the laptop and try again.`;
+
+export const serverIds = (
+  ids: string[],
+  laptops: Pick<NetworkLaptop, "nodeId">[],
+) => ids.filter((id) => !laptops.some((laptop) => laptop.nodeId === id));
+
+export function laptopBlocker(
+  view: NetworkView,
+  nodes: Pick<NodeRecord, "id" | "name" | "agent_version">[],
+): string | null {
+  const old = inside(view).find(
+    (member) =>
+      !agentKnowsMemberKinds(
+        nodes.find((node) => node.id === member.nodeId)?.agent_version ?? null,
+      ),
+  );
+  return old ? updateFirst(old.name) : null;
+}
+
+export function joinBlocker(
+  document: NetworkDocument | null,
+  name: string,
+  version: string | null,
+): string | null {
+  const used =
+    document !== null &&
+    (document.dns !== undefined ||
+      document.members.some((member) => member.kind || member.exit));
+  return used && !agentKnowsMemberKinds(version) ? updateFirst(name) : null;
+}
+
+export function exitState(
+  view: NetworkView,
+  nodeId: string,
+): "on" | "off" | null {
+  const server = inside(view).find((member) => member.nodeId === nodeId);
+  if (!server) return null;
+  if (view.document?.members.find((member) => member.node === nodeId)?.exit) {
+    return "on";
+  }
+  return server.nat ||
+    server.endpoint === null ||
+    view.quarantined.includes(nodeId)
+    ? null
+    : "off";
+}
+
+export function laptopRow(laptop: NetworkLaptop, now: number, current: number) {
+  const seen =
+    laptop.lastSeen === null ? null : parseTimestamp(laptop.lastSeen);
+  const online = seen !== null && now - seen < NETWORK.answerSeconds * 1000;
+  const applied = laptop.applied;
+  return {
+    name: laptop.name,
+    address: laptop.address ?? "--",
+    online,
+    status: online
+      ? "Online"
+      : seen === null
+        ? "Not seen yet"
+        : `Offline ${formatDuration(now - seen)}`,
+    behind:
+      laptop.state !== "in"
+        ? null
+        : applied === null
+          ? "Version --"
+          : applied >= current
+            ? null
+            : applied === 0
+              ? "Behind · No Version"
+              : `Behind · Version ${applied}`,
+  };
+}
+
+export const laptopSeals = (laptops: NetworkLaptop[]): Record<string, string> =>
+  Object.fromEntries(
+    laptops.flatMap((laptop) =>
+      laptop.sealKey ? [[laptop.nodeId, laptop.sealKey]] : [],
+    ),
+  );
+
+const LAPTOP_DNS_START: [string, string] = ["1.1.1.1", "1.0.0.1"];
+
+export const dnsFields = (dns: string[] | undefined): [string, string] =>
+  dns ? [dns[0] ?? "", dns[1] ?? ""] : [...LAPTOP_DNS_START];
+
+export const exitDnsLine = (view: NetworkView, turningOn: boolean) =>
+  turningOn && !view.document?.dns
+    ? `Laptops on this exit node will ask ${listOf(LAPTOP_DNS_START)} for names, which you can change in Settings.`
+    : null;
+
+export function parseDns(
+  first: string,
+  second: string,
+): { dns: string[]; problem: string | null } {
+  const [one, two] = [first.trim(), second.trim()];
+  const dns = [one, two].filter(Boolean);
+  const refuse = (problem: string) => ({ dns, problem });
+  if (dns.length === 0) return refuse("Enter at least one IPv4 address.");
+  if (one === "") return refuse("Fill the first address before the second.");
+  const wrong = dns.find((address) => !IPV4_ADDRESS.test(address));
+  if (wrong) {
+    return refuse(`${wrong} is not an IPv4 address such as 203.0.113.53.`);
+  }
+  if (dns.length === 2 && one === two) {
+    return refuse(
+      "Both addresses are the same. Use two different ones, or leave the second empty.",
+    );
+  }
+  return { dns, problem: null };
+}
+
 export const networkText = {
   create: (names: string[]) =>
     `Create the private network with ${listOf(names)}`,
   add: (names: string[]) => `Add ${listOf(names)} to the private network`,
+  addLaptop: (name: string) => `Add the laptop ${name} to the private network`,
   remove: (name: string) => `Remove ${name} from the private network`,
+  removeLaptop: (name: string) =>
+    `Remove the laptop ${name} from the private network`,
+  exit: (name: string, on: boolean) =>
+    `Turn ${on ? "on" : "off"} Exit Node for Laptops on ${name}`,
+  dns: (dns: string[]) =>
+    `Set DNS for Laptops on an Exit Node to ${listOf(dns)}`,
   delete: "Delete the private network",
   rekey: "Make new network keys",
   test: (a: string, b: string) => `Test ${a} ↔ ${b}`,
@@ -1958,6 +2126,7 @@ export interface Joiner {
   port: number;
   endpoint: string | null;
   nat: boolean;
+  kind?: "laptop";
 }
 
 export type DocumentChange =
@@ -1975,6 +2144,8 @@ export type DocumentChange =
   | { kind: "mtu"; nodeId: string; mtu: number | null }
   | { kind: "rename"; nodeId: string; name: string }
   | { kind: "release"; nodeId: string; key: string; signer: string }
+  | { kind: "exit"; nodeId: string; on: boolean }
+  | { kind: "dns"; dns: string[] }
   | { kind: "again" };
 
 export async function baseOf(
@@ -2010,11 +2181,14 @@ async function pairKey(
   b: NetworkMember,
   sealKeys: Record<string, string>,
 ) {
+  if (!links(a, b)) return;
   const sealFor = (member: NetworkMember) => {
     const key = sealKeys[member.node];
     if (!key) {
       throw new Error(
-        `${member.name} has not reported its seal key yet. Refresh its services and try again.`,
+        member.kind === "laptop"
+          ? unfinished(member.name)
+          : `${member.name} has not reported its seal key yet. Refresh its services and try again.`,
       );
     }
     return key;
@@ -2026,6 +2200,37 @@ async function pairKey(
   ]);
   a.psk[b.node] = forA;
   b.psk[a.node] = forB;
+}
+
+function placeRelays(members: NetworkMember[]) {
+  const behind = members
+    .filter((member) => member.kind !== "laptop" && member.nat && !member.cut)
+    .map((member) => member.node);
+  const laptops = members.filter((member) => member.kind === "laptop");
+  const held = laptops.map((laptop) =>
+    Object.fromEntries(
+      Object.entries(laptop.relay ?? {}).filter(([node]) =>
+        behind.includes(node),
+      ),
+    ),
+  );
+  const used = new Set(held.flatMap((relay) => Object.values(relay)));
+  let next = NETWORK.relayPort;
+  for (const [index, laptop] of laptops.entries()) {
+    const relay = held[index]!;
+    for (const node of behind) {
+      if (relay[node] !== undefined) continue;
+      while (used.has(next)) next++;
+      if (next > NETWORK.lastRelayPort) {
+        throw new Error(
+          "There is no relay port left for another laptop and server behind NAT. Remove a laptop or a server behind NAT first.",
+        );
+      }
+      used.add(next);
+      relay[node] = next;
+    }
+    laptop.relay = relay;
+  }
 }
 
 export async function buildDocument(
@@ -2134,11 +2339,40 @@ export async function buildDocument(
       }
       break;
     }
+    case "exit": {
+      const server = next.members.find(
+        (member) => member.node === change.nodeId,
+      );
+      if (!server) {
+        throw new Error("That server is not in the private network.");
+      }
+      if (!change.on) {
+        delete server.exit;
+        break;
+      }
+      if (server.kind === "laptop" || server.nat || server.endpoint === null) {
+        throw new Error(
+          `${server.name} needs a public address to be an Exit Node for Laptops.`,
+        );
+      }
+      if (server.cut) {
+        throw new Error(
+          `${server.name} is cut off from the private network. Release it first.`,
+        );
+      }
+      server.exit = true;
+      next.dns ??= [...LAPTOP_DNS_START];
+      break;
+    }
+    case "dns":
+      next.dns = [...change.dns];
+      break;
     case "again":
       break;
   }
   if (parent) next.parent = parent;
   else delete next.parent;
   if (knocks && change.kind !== "delete") next.knocks = knocks;
+  placeRelays(next.members);
   return networkDocumentSchema.parse(next);
 }

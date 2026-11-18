@@ -18,6 +18,7 @@ const (
 	KnockChain  = "KRY-KNOCK"
 	PeersChain  = "KRY-PEERS"
 	PortsChain  = "KRY-PORTS"
+	ExitChain   = "KRY-EXIT"
 	logRule     = " -m limit --limit 600/min -j LOG --log-prefix \"%s\" --log-level 6"
 	multiports  = 15
 	Variable    = "KRY_PRIVATE_IP"
@@ -148,7 +149,7 @@ func InputJumps() [][]string {
 	}
 }
 
-func Watch(dropped []string, tcp, udp []int) ([]string, []string) {
+func Watch(dropped []string, tcp, udp []int, laptops []string) ([]string, []string) {
 	drop := []string{}
 	for _, address := range dropped {
 		drop = append(drop, fmt.Sprintf("-A %s -s %s/32 -j DROP", DropChain, address))
@@ -166,6 +167,9 @@ func Watch(dropped []string, tcp, udp []int) ([]string, []string) {
 			knock = append(knock, fmt.Sprintf("-A %s -p %s -m multiport --dports %s -j RETURN", KnockChain, open.protocol, strings.Join(numbers, ",")))
 		}
 	}
+	for _, address := range laptops {
+		knock = append(knock, fmt.Sprintf("-A %s -s %s/32 -j RETURN", KnockChain, address))
+	}
 	return drop, append(knock, "-A "+KnockChain+fmt.Sprintf(logRule, KnockPrefix))
 }
 
@@ -175,6 +179,9 @@ func Rules(own string, members []Member, stacks []StackRules) ([]string, []strin
 		addresses[entry.Node] = entry.Address
 	}
 	serve := []string{}
+	for _, laptop := range Laptops(members) {
+		serve = append(serve, fmt.Sprintf("-A %s -s %s/32 -j RETURN", ServeChain, laptop.Address))
+	}
 	reach := []string{replyReturn}
 	for _, stack := range stacks {
 		for _, entry := range stack.Serves {
@@ -202,6 +209,23 @@ func Rules(own string, members []Member, stacks []StackRules) ([]string, []strin
 		}
 	}
 	return serve, append(reach, "-A "+ReachChain+" -j DROP")
+}
+
+func Exit(self Member, members []Member, uplink string, family int) ([]string, []string) {
+	if !self.Exit || self.Cut || self.NAT || self.IsLaptop() || (family != 4 && family != 6) {
+		return nil, nil
+	}
+	forward := []string{fmt.Sprintf("-A %s -i %s -o %s -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT", ExitChain, uplink, Interface)}
+	var nat []string
+	for _, laptop := range Laptops(members) {
+		source := laptop.Address + "/32"
+		if family == 6 {
+			source = Address6(laptop.Address) + "/128"
+		}
+		forward = append(forward, fmt.Sprintf("-A %s -s %s -i %s -o %s -j ACCEPT", ExitChain, source, Interface, uplink))
+		nat = append(nat, fmt.Sprintf("-A POSTROUTING -s %s -o %s -j MASQUERADE", source, uplink))
+	}
+	return append(forward, fmt.Sprintf("-A %s -i %s -o %s -j DROP", ExitChain, Interface, uplink), fmt.Sprintf("-A %s -i %s -o %s -j DROP", ExitChain, uplink, Interface)), nat
 }
 
 func Restore(serve, reach, drop, knock []string) string {

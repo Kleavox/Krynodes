@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CloudflareSettings } from "@/features/settings/cloudflare-settings";
 import { EnrollDefaultsSettings } from "@/features/settings/enroll-defaults-settings";
+import { LaptopDnsSettings } from "@/features/settings/laptop-dns-settings";
 import { QuarantineSettings } from "@/features/settings/quarantine-settings";
 import { PrivateAddressesSettings } from "@/features/settings/private-addresses-settings";
 import { UsageSettings } from "@/features/settings/usage-settings";
@@ -60,6 +61,7 @@ createRoot(document.getElementById("root")!).render(
                       element={<PrivateAddressesSettings />}
                     />
                     <Route path="quarantine" element={<QuarantineSettings />} />
+                    <Route path="laptop-dns" element={<LaptopDnsSettings />} />
                     <Route path="enroll" element={<EnrollDefaultsSettings />} />
                     <Route path="usage" element={<UsageSettings />} />
                     <Route

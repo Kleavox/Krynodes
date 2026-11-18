@@ -23,6 +23,7 @@ import {
   useNetworkKeys,
   useSignChange,
 } from "@/features/network/use-network-sign";
+import { NotFollowing } from "@/features/packages/lines";
 import { removalReady } from "@/lib/agent";
 import {
   useCloudflare,
@@ -62,7 +63,10 @@ export function DeleteNodeDialog({
     (entry) => entry.nodeId === node.id && entry.state === "in",
   );
   const leave = useSignChange();
-  const keys = useNetworkKeys(network?.members ?? []);
+  const keys = useNetworkKeys(network?.members ?? [], [], {
+    nodeId: node.id,
+    name: node.name,
+  });
   const operate = useSignedOperation(false);
   const run = useSignedAction(false);
   const quarantined = !!node.quarantine;
@@ -287,6 +291,7 @@ export function DeleteNodeDialog({
             Remove Krynodes from the server
           </label>
         )}
+        {member && <NotFollowing lines={keys.unfollowed} />}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(error)}
