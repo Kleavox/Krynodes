@@ -20,7 +20,7 @@ catalog:
   "react-dom": "^19.3.1"
   "typescript": "^7.0.2"
   "vite": "^8.3.8"
-  "vitest": "^4.1.12"
+  "vitest": "^5.1.0"
   "wrangler": "^4.162.0"
   "zod": "^4.6.7"
 
