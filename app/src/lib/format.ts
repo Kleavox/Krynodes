@@ -1,53 +1,8 @@
-import type { CheckRecord, CheckStatus, NodeRecord } from "../types";
-
-export type NodeState = "disabled" | "pending" | "online" | "offline";
-
 export function parseTimestamp(value: string): number {
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/u.test(value)
     ? `${value.replace(" ", "T")}Z`
     : value;
   return Date.parse(normalized);
-}
-
-export function graceSeconds(intervalSeconds: number): number {
-  return Math.max(90, intervalSeconds * 3);
-}
-
-export function nodeState(
-  node: Pick<
-    NodeRecord,
-    "disabled_at" | "enrolled_at" | "last_seen_at" | "interval_seconds"
-  > & { grace_seconds?: number },
-  now = Date.now(),
-): NodeState {
-  if (node.disabled_at) return "disabled";
-  if (!node.enrolled_at) return "pending";
-  if (!node.last_seen_at) return "pending";
-  return now - parseTimestamp(node.last_seen_at) <=
-    (node.grace_seconds ?? graceSeconds(node.interval_seconds)) * 1000
-    ? "online"
-    : "offline";
-}
-
-export type CheckDisplay = CheckStatus | "OFFLINE" | "STALE" | "PAUSED";
-
-export function checkDisplayStatus(
-  status: CheckStatus,
-  node: NodeState,
-  enabled: boolean | number = true,
-): CheckDisplay {
-  if (!enabled) return "PAUSED";
-  if (status === "UNTRUSTED") return status;
-  if (node === "offline") return "OFFLINE";
-  if (node === "online" || status === "UNKNOWN") return status;
-  return "STALE";
-}
-
-export function publicLabel(
-  check: Pick<CheckRecord, "public" | "enabled">,
-): string | null {
-  if (!check.public) return null;
-  return check.enabled ? "Public" : "Public · Paused";
 }
 
 export function percentage(
@@ -94,7 +49,7 @@ export function formatUptime(seconds: number | null): string {
   return seconds === null ? "--" : formatDuration(seconds * 1000);
 }
 
-export function capitalize(text: string): string {
+function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -195,9 +150,3 @@ export function displayHandle(
   const local = email?.split("@")[0];
   return local || "Account";
 }
-
-export const incidentReason = (summary: string | null): string | null => {
-  if (summary === null) return null;
-  const down = /^.+? is down(?:: |$)/u.exec(summary);
-  return down ? summary.slice(down[0].length) || null : summary;
-};

@@ -1,6 +1,5 @@
 {
   "endpoint": "https://kry.example.com",
   "node_id": "created-by-enrollment",
-  "token": "created-by-enrollment",
-  "interval_seconds": 60
+  "token": "created-by-enrollment"
 }

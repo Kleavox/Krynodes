@@ -1,21 +1,13 @@
-import { agentSupported, MIN_AGENT_VERSION } from "@krynodes/protocol";
+import { agentSupported, MIN_AGENT } from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
+import { z } from "zod";
 
-import type { AgentNode } from "../agent/ingest";
-import { hubFor, pokeSoon, streamsOn } from "../fleet/client";
-import { familyOf, readInterfaces, type Interface } from "../lib/addresses";
+import type { KrynodesApp, KrynodesEnv } from "../env";
+import { announce, upgradeInto } from "../fleet/client";
 import { randomToken, readBearerToken, sha256 } from "../lib/crypto";
-import { enrollSchema } from "../schemas";
-import { loadFleet, trustTokens } from "../trust/fleet";
-import { changeStatement } from "./network";
-import {
-  readJson,
-  type KrynodesApp,
-  type KrynodesContext,
-  type KrynodesEnv,
-} from "./shared";
+import { isUnique, readJson } from "./shared";
 
-export const agentRateLimit: MiddlewareHandler<KrynodesEnv> = async (
+const agentRateLimit: MiddlewareHandler<KrynodesEnv> = async (
   context,
   next,
 ) => {
@@ -33,8 +25,17 @@ export const agentRateLimit: MiddlewareHandler<KrynodesEnv> = async (
   await next();
 };
 
+const enrollSchema = z.strictObject({
+  hostname: z.string().min(1).max(255),
+  os: z.string().min(1).max(64),
+  arch: z.string().min(1).max(64),
+  kernel: z.string().min(1).max(128),
+  version: z.string().min(1).max(64),
+});
+
 export function registerAgentRoutes(app: KrynodesApp): void {
   app.use("/api/agent/*", agentRateLimit);
+  app.use("/i/*", agentRateLimit);
 
   app.post("/api/agent/enroll", async (context) => {
     const token = readBearerToken(context.req.header("authorization"));
@@ -42,269 +43,89 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     if (!token || !host.success) {
       return context.json({ code: "INVALID_ENROLLMENT" }, 400);
     }
-
+    if (!agentSupported(host.data.version)) {
+      return context.json(
+        {
+          code: "AGENT_UPDATE_REQUIRED",
+          message: `Agents before ${MIN_AGENT} are no longer supported. Update the agent on the server.`,
+        },
+        426,
+      );
+    }
     const db = context.env.DB;
+    const now = new Date().toISOString();
     const invite = await db
       .prepare(
-        `SELECT id, owner_user_id, interval_seconds,
-                json_extract(setup, '$.laptop') IS 1 AS laptop
-         FROM enrollment_tokens
-         WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+        "SELECT id, name FROM enrollments WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
       )
-      .bind(await sha256(token), new Date().toISOString())
-      .first<{
-        id: string;
-        owner_user_id: string;
-        interval_seconds: number;
-        laptop: number;
-      }>();
+      .bind(await sha256(token), now)
+      .first<{ id: string; name: string }>();
     if (!invite) return context.json({ code: "INVALID_ENROLLMENT" }, 401);
-    const laptop = host.data.laptop;
-    if ((invite.laptop === 1) !== (laptop !== undefined)) {
-      return context.json({ code: "INVALID_ENROLLMENT" }, 400);
-    }
-
     const nodeId = crypto.randomUUID();
     const agentToken = randomToken();
-    const now = new Date().toISOString();
-    const [created] = await db.batch([
-      db
-        .prepare(
-          `INSERT INTO nodes (
-           id, owner_user_id, name, agent_token_hash, interval_seconds,
-           enrolled_at, hostname, operating_system, architecture,
-           agent_version, kind, seal_key
-         )
-         SELECT ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?
-         WHERE EXISTS (
-           SELECT 1 FROM enrollment_tokens WHERE id = ? AND used_at IS NULL
-         )`,
-        )
-        .bind(
-          nodeId,
-          invite.owner_user_id,
-          host.data.hostname.slice(0, 100),
-          await sha256(agentToken),
-          invite.interval_seconds,
-          host.data.hostname,
-          host.data.operatingSystem,
-          host.data.architecture,
-          host.data.agentVersion,
-          laptop ? "laptop" : "server",
-          laptop?.sealKey ?? null,
-          invite.id,
-        ),
-      ...(laptop
-        ? [
-            db
-              .prepare(
-                `INSERT INTO network_members (node_id, state, port, key, signer, since)
-                 SELECT ?1, 'waiting', ?2, ?3, ?4, ?5
-                 WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?1)`,
-              )
-              .bind(nodeId, laptop.port, laptop.key, laptop.signer, now),
-          ]
-        : []),
-      db
-        .prepare(
-          `UPDATE enrollment_tokens SET used_at = ?, node_id = ?
-         WHERE id = ? AND used_at IS NULL`,
-        )
-        .bind(now, nodeId, invite.id),
-    ]);
-    if (!created?.meta.changes) {
+    let created: D1Result[];
+    try {
+      created = await db.batch([
+        db
+          .prepare(
+            `INSERT INTO nodes (id, name, agent_token_hash, enrolled_at, hostname, os, arch, kernel, version)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+             WHERE EXISTS (SELECT 1 FROM enrollments WHERE id = ?10 AND used_at IS NULL)`,
+          )
+          .bind(
+            nodeId,
+            invite.name,
+            await sha256(agentToken),
+            now,
+            host.data.hostname,
+            host.data.os,
+            host.data.arch,
+            host.data.kernel,
+            host.data.version,
+            invite.id,
+          ),
+        db
+          .prepare(
+            "UPDATE enrollments SET used_at = ?, node_id = ? WHERE id = ? AND used_at IS NULL",
+          )
+          .bind(now, nodeId, invite.id),
+      ]);
+    } catch (error) {
+      if (!isUnique(error)) throw error;
+      return context.json(
+        {
+          code: "NAME_TAKEN",
+          message: `${invite.name} is already a server. Create a new install command with another name.`,
+        },
+        409,
+      );
+    }
+    if (!created[0]?.meta.changes) {
       return context.json({ code: "INVALID_ENROLLMENT" }, 401);
     }
-
-    return context.json({
-      nodeId,
-      token: agentToken,
-      intervalSeconds: invite.interval_seconds,
-      ...(laptop
-        ? {
-            trust: trustTokens(await loadFleet(db, invite.owner_user_id)),
-          }
-        : {}),
-    });
+    await announce(context.env, ["fleet"]);
+    return context.json({ nodeId, token: agentToken });
   });
-
-  app.get("/api/agent/held", async (context) => {
-    const node = await authenticateAgent(context);
-    if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
-    const open = await context.env.DB.prepare(
-      "SELECT 1 AS held FROM quarantines WHERE node_id = ? AND released_at IS NULL LIMIT 1",
-    )
-      .bind(node.id)
-      .first<{ held: number }>();
-    return context.json({ held: open !== null });
-  });
-
-  app.get("/api/agent/address", (context) => seenAddress(context, null));
-  app.post("/api/agent/address", async (context) =>
-    seenAddress(context, readInterfaces(await readJson(context))),
-  );
-
-  for (const path of [
-    "/api/agent/heartbeat",
-    "/api/agent/config",
-    "/api/agent/actions",
-  ]) {
-    app.all(path, (context) => updateRequired(context, 410));
-  }
 
   app.get("/api/agent/stream", async (context) => {
-    if (!streamsOn(context.env)) {
-      return context.json({ code: "STREAM_OFF" }, 404);
-    }
     if (context.req.header("upgrade")?.toLowerCase() !== "websocket") {
       return context.json({ code: "UPGRADE_REQUIRED" }, 426);
     }
-    const announced = /^kry-agent\/(\S+)/u.exec(
-      context.req.header("user-agent") ?? "",
-    )?.[1];
-    if (announced && !agentSupported(announced)) {
-      return updateRequired(context, 426);
-    }
-    const node = await authenticateAgent(context);
-    if (!node?.owner_user_id) {
-      return context.json({ code: "UNAUTHORIZED" }, 401);
-    }
-    const headers = new Headers();
-    for (const [name, value] of context.req.raw.headers) {
-      const key = name.toLowerCase();
-      if (key === "authorization" || key.startsWith("x-kry-")) continue;
-      headers.set(name, value);
-    }
-    headers.set("x-kry-node", node.id);
-    headers.set("x-kry-owner", node.owner_user_id);
-    headers.set("x-kry-interval", String(node.interval_seconds));
-    headers.set("x-kry-version", announced ?? "");
-    headers.set("x-kry-kind", node.kind ?? "server");
-    return hubFor(context.env, node.owner_user_id).fetch(
-      new Request("https://fleet/connect", { headers }),
-    );
+    const token = readBearerToken(context.req.header("authorization"));
+    const node = token
+      ? await context.env.DB.prepare(
+          "SELECT id FROM nodes WHERE agent_token_hash = ?",
+        )
+          .bind(await sha256(token))
+          .first<{ id: string }>()
+      : null;
+    if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
+    const version =
+      /^kry-agent\/(\S+)/u.exec(context.req.header("user-agent") ?? "")?.[1] ??
+      "";
+    return upgradeInto(context.env, context.req.raw, "/connect", {
+      "x-kry-node": node.id,
+      "x-kry-version": version,
+    });
   });
-}
-
-async function seenAddress(
-  context: KrynodesContext,
-  interfaces: Interface[] | null,
-) {
-  const node = await authenticateAgent(context);
-  if (!node || node.kind === "laptop") {
-    return context.json({ code: "UNAUTHORIZED" }, 401);
-  }
-  const address = context.req.header("cf-connecting-ip") ?? "";
-  const family = familyOf(address);
-  if (!family) return context.json({ address: null });
-  const column = family === 4 ? "ipv4" : "ipv6";
-  const network = (context.req.raw as { cf?: { asOrganization?: unknown } }).cf
-    ?.asOrganization;
-  await context.env.DB.prepare(
-    `UPDATE nodes SET ${column} = ?, ${column}_at = ?, ${column}_network = ?,
-       interfaces = COALESCE(?, interfaces)
-     WHERE id = ?`,
-  )
-    .bind(
-      address,
-      new Date().toISOString(),
-      typeof network === "string" ? network.slice(0, 100) : null,
-      interfaces === null ? null : JSON.stringify(interfaces),
-      node.id,
-    )
-    .run();
-  if (family === 4 && node.owner_user_id) {
-    await movedEndpoint(context, node.id, node.owner_user_id, address);
-  }
-  return context.json({ address, family });
-}
-
-async function movedEndpoint(
-  context: KrynodesContext,
-  nodeId: string,
-  owner: string,
-  address: string,
-) {
-  const db = context.env.DB;
-  const member = await db
-    .prepare(
-      `SELECT m.endpoint, m.port, n.name FROM network_members m JOIN nodes n ON n.id = m.node_id
-       WHERE m.node_id = ? AND m.state = 'in' AND m.nat = 0 AND NOT EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL)`,
-    )
-    .bind(nodeId)
-    .first<{ endpoint: string | null; port: number; name: string }>();
-  const endpoint = `${address}:${member?.port}`;
-  if (!member || member.endpoint === endpoint) return;
-  if (member.endpoint?.startsWith("[")) return;
-  const before = member.endpoint?.slice(0, member.endpoint.lastIndexOf(":"));
-  await db.batch([
-    db
-      .prepare("UPDATE network_members SET endpoint = ? WHERE node_id = ?")
-      .bind(endpoint, nodeId),
-    db
-      .prepare("UPDATE network SET stamp = ? WHERE owner_user_id = ?")
-      .bind(crypto.randomUUID(), owner),
-    changeStatement(db, {
-      owner,
-      at: new Date().toISOString(),
-      change: `Update the public address of ${member.name}`,
-      detail: before ? `${before} → ${address}` : address,
-      requestedBy: "Krynodes",
-      deviceId: null,
-      nodes: [nodeId],
-      joins: [],
-      leaves: [],
-    }),
-  ]);
-  const others = await db
-    .prepare(
-      `SELECT m.node_id FROM network_members m JOIN nodes n ON n.id = m.node_id
-       WHERE n.owner_user_id = ? AND m.state = 'in' AND m.node_id <> ?`,
-    )
-    .bind(owner, nodeId)
-    .all<{ node_id: string }>();
-  pokeSoon(
-    context,
-    owner,
-    others.results.map((row) => row.node_id),
-  );
-}
-
-const updateRequired = (context: KrynodesContext, status: 410 | 426) =>
-  context.json(
-    {
-      code: "AGENT_UPDATE_REQUIRED",
-      message: `Agents before ${MIN_AGENT_VERSION} are no longer supported. Update the agent on the server.`,
-    },
-    status,
-  );
-
-async function authenticateAgent(
-  context: KrynodesContext,
-): Promise<AgentNode | null> {
-  const token = readBearerToken(context.req.header("authorization"));
-  if (!token) return null;
-  const db = context.env.DB;
-  const hash = await sha256(token);
-  const node = await db
-    .prepare(
-      `SELECT id, owner_user_id, interval_seconds, kind
-       FROM nodes
-       WHERE agent_token_hash = ? AND enrolled_at IS NOT NULL
-         AND disabled_at IS NULL LIMIT 1`,
-    )
-    .bind(hash)
-    .first<AgentNode>();
-  if (node) return node;
-  const released = await db
-    .prepare(
-      `UPDATE nodes SET agent_token_hash = ?1, release = NULL
-       WHERE json_extract(release, '$.released') = 1
-         AND json_extract(release, '$.token') = ?1
-         AND enrolled_at IS NOT NULL AND disabled_at IS NULL
-       RETURNING id, owner_user_id, interval_seconds, kind`,
-    )
-    .bind(hash)
-    .first<AgentNode>();
-  return released ?? null;
 }

@@ -1,393 +1,181 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { app } from "../app";
-import type { Env } from "../env";
-import { LAPTOP, PHONE } from "../test/keys";
-import { createTestDb } from "../test/sqlite-d1";
+import { sha256 } from "../lib/crypto";
+import {
+  addDevice,
+  addEnrollment,
+  addNode,
+  AGENT,
+  ORIGIN,
+  testEnv,
+} from "../test/env";
 
-const INSTALLER = readFileSync(
-  new URL("../../../app/public/install.sh", import.meta.url),
-  "utf8",
-);
+const PIN =
+  "https://github.com/Kleavox/Krynodes/releases/download/agent-v0.7.90";
 
-const blob = (line: string) => line.split(" ")[1];
-const ADMIN = `--admin user1 --admin-key ${blob(LAPTOP)}:user1-laptop`;
-
-function fleet(extra: Partial<Env> = {}) {
-  const { db, sqlite } = createTestDb();
-  sqlite
+async function release(db: D1Database, version = "0.7.90") {
+  await db
     .prepare(
-      "INSERT INTO settings (key, value, updated_at) VALUES ('enroll_defaults', ?, 'now')",
+      "INSERT INTO agent_release (id, version, checked_at) VALUES (1, ?, '2026-11-22T00:00:00.000Z')",
     )
-    .run(
-      JSON.stringify({ docker: true, hour: 3, network: false, keys: [LAPTOP] }),
-    );
-  const env = {
-    DB: db,
-    PUBLIC_ORIGIN: "https://kry.example.test",
-    ASSETS: {
-      fetch: async (request: Request) =>
-        new URL(request.url).pathname === "/install.sh"
-          ? new Response(INSTALLER)
-          : new Response("not found", { status: 404 }),
-    },
-    ...extra,
-  } as unknown as Env;
-  const request = (
-    method: string,
-    path: string,
-    body?: unknown,
-    token?: string,
-  ) =>
-    app.request(
-      `https://kry.example.test${path}`,
-      {
-        method,
-        headers: {
-          "content-type": "application/json",
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      },
-      env,
-    );
-  const create = async (setup: object = {}) => {
-    const response = await request("POST", "/api/enrollments", {
-      rebootHour: 3,
-      adminName: "user1",
-      ...setup,
+    .bind(version)
+    .run();
+}
+
+async function ready() {
+  const harness = testEnv();
+  await addDevice(harness.db, "d1", "pk1");
+  await addDevice(harness.db, "d2", "pk2");
+  await release(harness.db);
+  return harness;
+}
+
+describe("creating an enrollment", () => {
+  it("makes a one-hour token and the install command", async () => {
+    const { db, send } = await ready();
+    const before = Date.now();
+    const response = await send("POST", "/api/enrollments", {
+      name: "server-1",
+      trust: ["d1", "d2"],
     });
     expect(response.status).toBe(201);
     const body = (await response.json()) as {
       id: string;
       command: string;
-      enrollmentToken: string;
+      expiresAt: string;
     };
-    return { id: body.id, command: body.command, token: body.enrollmentToken };
+    const token = /^curl -fsSL (\S+)\/i\/(\S+) \| sudo sh$/u.exec(body.command);
+    expect(token?.[1]).toBe(AGENT);
+    expect(token?.[2]).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(Date.parse(body.expiresAt) - before).toBeGreaterThan(3_599_000);
+    expect(Date.parse(body.expiresAt) - before).toBeLessThan(3_601_000);
+    expect(
+      await db
+        .prepare("SELECT id, token_hash, name, trust, used_at FROM enrollments")
+        .first(),
+    ).toEqual({
+      id: body.id,
+      token_hash: await sha256(token![2]!),
+      name: "server-1",
+      trust: '["d1","d2"]',
+      used_at: null,
+    });
+  });
+
+  it("refuses what it cannot install", async () => {
+    const { db, send } = await ready();
+    await addNode(db, "n1", "taken");
+    const refused = async (body: unknown) =>
+      (await send("POST", "/api/enrollments", body)).status;
+    expect(await refused({ name: "", trust: ["d1"] })).toBe(400);
+    expect(await refused({ name: "server-1", trust: [] })).toBe(400);
+    expect(await refused({ name: "server-1" })).toBe(400);
+    expect(await refused({ name: "server-1", trust: ["d1", "d1"] })).toBe(400);
+    expect(await refused({ name: "server-1", trust: ["ghost"] })).toBe(422);
+    expect(await refused({ name: "taken", trust: ["d1"] })).toBe(409);
+    expect(await db.prepare("SELECT id FROM enrollments").first()).toBeNull();
+  });
+});
+
+describe("waiting for the server", () => {
+  it("answers no node until the agent enrolls, then its id", async () => {
+    const { db, call } = await ready();
+    await addEnrollment(db, "tok", { id: "e1" });
+    const waiting = await call("/api/enrollments/e1");
+    expect(await waiting.json()).toEqual({ nodeId: null });
+    await addNode(db, "n1");
+    await db.prepare("UPDATE enrollments SET node_id = 'n1'").run();
+    expect(await (await call("/api/enrollments/e1")).json()).toEqual({
+      nodeId: "n1",
+    });
+    expect((await call("/api/enrollments/ghost")).status).toBe(404);
+  });
+});
+
+describe("the installer", () => {
+  const script = async (token: string, harness = testEnv()) => {
+    const response = await harness.call(`/i/${token}`);
+    return { response, text: await response.text() };
   };
-  const script = async (token: string) => {
-    const response = await request("GET", `/i/${token}`);
-    return { status: response.status, text: await response.text() };
-  };
-  const enroll = (token: string, hostname: string) =>
-    request(
-      "POST",
-      "/api/agent/enroll",
-      {
-        hostname,
-        operatingSystem: "linux",
-        architecture: "amd64",
-        agentVersion: "0.6.0",
-      },
-      token,
-    );
-  const status = async (id: string) =>
-    (await request("GET", `/api/enrollments/${id}`)).json();
-  const nodes = () =>
-    sqlite
-      .prepare(
-        "SELECT id, name, interval_seconds, owner_user_id, enrolled_at, last_seen_at FROM nodes",
-      )
-      .all() as {
-      id: string;
-      name: string;
-      interval_seconds: number;
-      owner_user_id: string;
-      enrolled_at: string | null;
-      last_seen_at: string | null;
-    }[];
-  return { sqlite, request, create, script, enroll, status, nodes };
-}
 
-const tail = (text: string) => text.split("\n").slice(-5).join("\n");
-
-describe("enrollment tokens", () => {
-  it("creates no node until an agent enrolls, only a short install command", async () => {
-    const { create, nodes, status } = fleet();
-    const { id, command, token } = await create();
-    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-    expect(command).toBe(
-      `curl -fsSL https://kry.example.test/i/${token} | sudo sh`,
-    );
-    expect(nodes()).toEqual([]);
-    expect(await status(id)).toEqual({ status: "pending" });
-  });
-
-  it("has the installer update every package and restart once at the end when needed", () => {
-    expect(INSTALLER).toContain(
-      'upgrade) setup_flags="$setup_flags --upgrade" ;;',
-    );
-    expect(INSTALLER).toContain(
-      'restart) setup_flags="$setup_flags --restart" ;;',
-    );
-    const finish = INSTALLER.indexOf('"$bin" setup --finish');
-    expect(finish).toBeGreaterThan(
-      INSTALLER.indexOf('echo "Check it with: sudo systemctl status krynodes"'),
-    );
-    expect(INSTALLER.slice(finish - 200, finish)).toContain("*,restart,*");
-  });
-
-  it("has the installer mark setup as started before the agent starts, so it waits to report", () => {
-    const begin = INSTALLER.indexOf(
-      '"$bin" setup $setup_flags --begin || true',
-    );
-    expect(begin).toBeGreaterThan(-1);
-    expect(begin).toBeLessThan(INSTALLER.indexOf('"$bin" install-service'));
-  });
-
-  it("points the command and the installer at AGENT_ORIGIN when it is set", async () => {
-    const { create, script } = fleet({
-      AGENT_ORIGIN: "https://kry.example.workers.dev",
+  it("is the real installer with its arguments filled in", async () => {
+    const harness = await ready();
+    await addEnrollment(harness.db, "tok-".padEnd(43, "x"), {
+      trust: ["d1", "d2"],
     });
-    const { command, token } = await create();
-    expect(command).toBe(
-      `curl -fsSL https://kry.example.workers.dev/i/${token} | sudo sh`,
+    const { response, text } = await script("tok-".padEnd(43, "x"), harness);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/plain");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(text.startsWith("#!/bin/sh\nset -eu\n")).toBe(true);
+    expect(text).not.toContain('main "$@"');
+    const tail = text.slice(text.lastIndexOf("\nKRY_DOWNLOAD_BASE="));
+    const [pin, run] = tail.trim().split("\n");
+    expect(pin).toBe(`KRY_DOWNLOAD_BASE='${PIN}'`);
+    expect(run).toBe(
+      `main --endpoint ${AGENT} --token ${"tok-".padEnd(43, "x")} --origin ${ORIGIN} --trust d1.-7.pk1,d2.-7.pk2`,
     );
-    const served = await script(token);
-    expect(served.status).toBe(200);
-    expect(served.text.startsWith("#!/bin/sh\n")).toBe(true);
-    expect(tail(served.text)).toBe(
-      `{\n  kry_args='https://kry.example.workers.dev ${token} --setup recommended,confine,upgrade,restart --reboot-hour 3 ${ADMIN}'\n  main $kry_args\n}\n`,
-    );
-    expect(served.text).not.toContain('main "$@"');
-  });
-
-  it("serves the chosen setup and lets it change until the server enrolls", async () => {
-    const { create, script, request, enroll } = fleet();
-    const { id, token } = await create({ docker: true, rebootHour: 20 });
-    expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 20 ${ADMIN}'\n  main $kry_args\n}\n`,
-    );
-    const changed = await request("PATCH", `/api/enrollments/${id}`, {
-      docker: false,
-      rebootHour: 5,
-    });
-    expect(changed.status).toBe(200);
-    expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,confine,upgrade,restart --reboot-hour 5 ${ADMIN}'\n  main $kry_args\n}\n`,
-    );
-    for (const rebootHour of [24, null, undefined]) {
-      expect(
-        (
-          await request("PATCH", `/api/enrollments/${id}`, {
-            docker: true,
-            rebootHour,
-          })
-        ).status,
-        String(rebootHour),
-      ).toBe(400);
-    }
-    await enroll(token, "web-01");
-    expect(
-      (
-        await request("PATCH", `/api/enrollments/${id}`, {
-          docker: true,
-          rebootHour: 3,
-        })
-      ).status,
-    ).toBe(409);
-  });
-
-  it("snapshots the admin user when the command is made and never lets a change replace or drop it", async () => {
-    const { create, script, request } = fleet();
-    expect(
-      (
-        await request("PUT", "/api/settings/enroll-defaults", {
-          docker: true,
-          hour: 3,
-          keys: [LAPTOP, PHONE],
-        })
-      ).status,
-    ).toBe(200);
-    const { id, token } = await create({ docker: true });
-    const flags = `--admin user1 --admin-key ${blob(LAPTOP)}:user1-laptop --admin-key ${blob(PHONE)}:phone`;
-    expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 3 ${flags}'\n  main $kry_args\n}\n`,
-    );
-    await request("PUT", "/api/settings/enroll-defaults", {
-      docker: true,
-      hour: 3,
-      keys: [PHONE],
-    });
-    expect(
-      (
-        await request("PATCH", `/api/enrollments/${id}`, {
-          docker: true,
-          rebootHour: 3,
-          adminName: "intruder",
-          admin: { name: "intruder", keys: [PHONE] },
-        })
-      ).status,
-    ).toBe(200);
-    expect(tail((await script(token)).text)).toContain(`3 ${flags}'`);
-    await request("PATCH", `/api/enrollments/${id}`, {
-      docker: true,
-      rebootHour: 3,
-      adminUser: false,
-    });
-    expect(tail((await script(token)).text)).toContain(`3 ${flags}'`);
-  });
-
-  it("turns on the protections and SELinux or AppArmor on every new server, whatever is sent or stored", async () => {
-    const { create, script, request } = fleet();
-    const { token } = await create({ recommended: false, confine: false });
-    expect(tail((await script(token)).text)).toContain(
-      "--setup recommended,confine,upgrade,restart --reboot-hour 3 ",
-    );
-    expect(
-      (
-        await request("PUT", "/api/settings/enroll-defaults", {
-          recommended: false,
-          docker: true,
-          hour: 3,
-          confine: false,
-          keys: [LAPTOP],
-        })
-      ).status,
-    ).toBe(200);
-    const shown = await (
-      await request("GET", "/api/settings/enroll-defaults")
-    ).json();
-    expect(shown).not.toHaveProperty("confine");
-    expect(shown).not.toHaveProperty("recommended");
-  });
-
-  it("makes no command while Enroll Defaults holds no SSH key for the admin user", async () => {
-    const { request, sqlite } = fleet();
-    sqlite.exec("DELETE FROM settings");
-    const refused = await request("POST", "/api/enrollments", {
-      rebootHour: 3,
-      adminName: "user1",
-    });
-    expect(refused.status).toBe(409);
-    expect(await refused.json()).toEqual({
-      code: "NO_ADMIN_KEYS",
-      message: "Add an SSH public key in Settings, Enroll Defaults first.",
-    });
-    expect(
-      sqlite.prepare("SELECT COUNT(*) AS n FROM enrollment_tokens").get(),
-    ).toEqual({ n: 0 });
-  });
-
-  it("refuses a command without a usable admin name or restart hour", async () => {
-    const { request } = fleet();
-    for (const adminName of [undefined, "", "root", "User1", "bad name"]) {
-      expect(
-        (
-          await request("POST", "/api/enrollments", {
-            rebootHour: 3,
-            adminName,
-          })
-        ).status,
-        String(adminName),
-      ).toBe(400);
-    }
-    for (const rebootHour of [undefined, null, 24, 1.5]) {
-      expect(
-        (
-          await request("POST", "/api/enrollments", {
-            rebootHour,
-            adminName: "user1",
-          })
-        ).status,
-        String(rebootHour),
-      ).toBe(400);
+    for (const argument of run!.split(" ").slice(1)) {
+      expect(argument).toMatch(/^(--[a-z]+|[A-Za-z0-9:/._,-]+)$/u);
     }
   });
 
-  it("gets the server ready for the private network only while one exists", async () => {
-    const { create, script, sqlite } = fleet();
-    const { token } = await create({ docker: true, network: true });
-    expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 3 ${ADMIN}'\n  main $kry_args\n}\n`,
-    );
-    sqlite.exec(
-      `INSERT INTO network (owner_user_id, cidr, port, mtu, version, document, stamp, created_at, created_by)
-       VALUES ('standalone', '10.88.4.0/24', 51820, 1420, 1, '{}', 'x', 'now', 'owner')`,
-    );
-    expect(tail((await script(token)).text)).toBe(
-      `{\n  kry_args='https://kry.example.test ${token} --setup recommended,docker,confine,upgrade,restart --reboot-hour 3 --network 10.88.4.0/24 ${ADMIN}'\n  main $kry_args\n}\n`,
-    );
-    sqlite.exec("UPDATE network SET deleted = 1");
-    expect(tail((await script(token)).text)).not.toContain("--network");
-  });
-
-  it("answers a used or unknown command with a script that says why and stops", async () => {
-    const { create, script, enroll } = fleet();
-    const { token } = await create();
-    await enroll(token, "web-01");
-    for (const code of [token, "x".repeat(43)]) {
-      const served = await script(code);
-      expect(served.status).toBe(200);
-      expect(served.text).toBe(
+  it("an expired or used token gets the refusing script", async () => {
+    const harness = await ready();
+    const old = "o".repeat(43);
+    const spent = "s".repeat(43);
+    await addEnrollment(harness.db, old, {
+      id: "e1",
+      expiresAt: "2026-11-22T00:00:01.000Z",
+    });
+    await addEnrollment(harness.db, spent, {
+      id: "e2",
+      usedAt: "2026-11-22T00:00:00.000Z",
+    });
+    for (const token of [old, spent, "z".repeat(43), "short", "bad token!"]) {
+      const { response, text } = await script(token, harness);
+      expect(response.status).toBe(200);
+      expect(text).toBe(
         '#!/bin/sh\necho "This install command was already used or has expired. Create a new one in Krynodes." >&2\nexit 1\n',
       );
     }
   });
 
-  it("creates the node from the hostname when the agent enrolls", async () => {
-    const { create, enroll, nodes, status } = fleet();
-    const { id, token } = await create();
-
-    const response = await enroll(token, "web-01");
+  it("refuses with a clear message while no release is known", async () => {
+    const harness = testEnv();
+    await addDevice(harness.db, "d1", "pk1");
+    await addEnrollment(harness.db, "t".repeat(43));
+    const { response, text } = await script("t".repeat(43), harness);
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { nodeId: string; token: string };
-
-    const [node] = nodes();
-    expect(node).toMatchObject({
-      id: body.nodeId,
-      name: "web-01",
-      interval_seconds: 60,
-      owner_user_id: "standalone",
-    });
-    expect(node!.enrolled_at).not.toBeNull();
-    expect(node!.last_seen_at).toBeNull();
-    expect(await status(id)).toEqual({
-      status: "used",
-      node: { id: body.nodeId, name: "web-01" },
-    });
+    expect(text).toContain("has not found an agent release yet");
+    expect(text).toContain("exit 1");
+    expect(text).not.toContain("main --endpoint");
   });
 
-  it("lets a token enroll exactly one server", async () => {
-    const { create, enroll, nodes } = fleet();
-    const { token } = await create();
-    expect((await enroll(token, "web-01")).status).toBe(200);
-    expect((await enroll(token, "intruder")).status).toBe(401);
-    expect(nodes().map((node) => node.name)).toEqual(["web-01"]);
+  it("refuses when every passkey it trusted is gone", async () => {
+    const harness = await ready();
+    await addEnrollment(harness.db, "t".repeat(43), { trust: ["ghost"] });
+    const { text } = await script("t".repeat(43), harness);
+    expect(text).toContain("exit 1");
+    expect(text).not.toContain("main --endpoint");
   });
 
-  it("cuts a long hostname to the 100-character name limit", async () => {
-    const { create, enroll, nodes } = fleet();
-    const { token } = await create();
-    await enroll(token, "h".repeat(180));
-    expect(nodes()[0]!.name).toBe("h".repeat(100));
+  it("is not served when an argument could break the shell", async () => {
+    const harness = await ready();
+    await addDevice(harness.db, "d3", "pk'; rm -rf /; '");
+    await addEnrollment(harness.db, "t".repeat(43), { trust: ["d3"] });
+    const { response, text } = await script("t".repeat(43), harness);
+    expect(response.status).toBe(503);
+    expect(text).toContain("cannot serve the installer");
   });
 
-  it("refuses an expired token and reports it as expired", async () => {
-    const { sqlite, create, enroll, nodes, status } = fleet();
-    const { id, token } = await create();
-    sqlite
-      .prepare("UPDATE enrollment_tokens SET expires_at = ? WHERE id = ?")
-      .run(new Date(Date.now() - 60_000).toISOString(), id);
-    expect((await enroll(token, "web-01")).status).toBe(401);
-    expect(nodes()).toEqual([]);
-    expect(await status(id)).toEqual({ status: "expired" });
-  });
-
-  it("does not show another owner's enrollment", async () => {
-    const { sqlite, request } = fleet();
-    sqlite
-      .prepare(
-        `INSERT INTO enrollment_tokens (id, owner_user_id, token_hash, expires_at)
-         VALUES ('other', 'someone-else', 'hash', ?)`,
-      )
-      .run(new Date(Date.now() + 60_000).toISOString());
-    expect((await request("GET", "/api/enrollments/other")).status).toBe(404);
-  });
-
-  it("no longer creates nodes directly", async () => {
-    const { request } = fleet();
-    expect((await request("POST", "/api/nodes", {})).status).toBe(404);
+  it("is not served when the installer lost its tail", async () => {
+    const harness = await ready();
+    harness.env.ASSETS = {
+      fetch: async () => new Response("#!/bin/sh\nmain\n"),
+    } as unknown as Fetcher;
+    await addEnrollment(harness.db, "t".repeat(43));
+    const { response } = await script("t".repeat(43), harness);
+    expect(response.status).toBe(503);
   });
 });

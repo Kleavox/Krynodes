@@ -1,34 +1,31 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
-	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
-	"os/user"
-	"path"
 	"path/filepath"
 	"runtime"
-	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/Kleavox/krynodes/agent/internal/actions"
-	"github.com/Kleavox/krynodes/agent/internal/address"
 	"github.com/Kleavox/krynodes/agent/internal/config"
-	"github.com/Kleavox/krynodes/agent/internal/cycle"
+	"github.com/Kleavox/krynodes/agent/internal/daemon"
 	"github.com/Kleavox/krynodes/agent/internal/host"
-	"github.com/Kleavox/krynodes/agent/internal/metrics"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/internal/safefile"
+	"github.com/Kleavox/krynodes/agent/internal/seal"
 	"github.com/Kleavox/krynodes/agent/internal/stream"
 	"github.com/Kleavox/krynodes/agent/internal/trust"
 	"github.com/Kleavox/krynodes/agent/internal/update"
@@ -37,28 +34,39 @@ import (
 var version = "dev"
 
 const (
-	accountName       = "kry"
-	unitName          = "krynodes"
-	defaultConfigPath = "/etc/kry/config.json"
-	unitPath          = "/etc/systemd/system/krynodes.service"
-	updaterPath       = "/etc/systemd/system/krynodes-update.service"
-	watcherPath       = "/etc/systemd/system/krynodes-update.path"
-	execPath          = "/etc/systemd/system/krynodes-exec.service"
-	execWatcherPath   = "/etc/systemd/system/krynodes-exec.path"
-	execTimerPath     = "/etc/systemd/system/krynodes-exec.timer"
-	hostPath          = "/etc/systemd/system/krynodes-host.service"
-	hostWatcherPath   = "/etc/systemd/system/krynodes-host.path"
-	guardPath         = "/etc/systemd/system/krynodes-guard.service"
-	containersPath    = "/etc/systemd/system/krynodes-containers.service"
-	stateDirectory    = "/var/lib/kry"
+	configDir   = "/etc/kry"
+	configPath  = configDir + "/config.json"
+	stateDir    = "/var/lib/kry"
+	unitPath    = "/etc/systemd/system/krynodes.service"
+	binPath     = "/usr/local/bin/kry"
+	sudoLink    = "/usr/bin/kry"
+	unitName    = "krynodes.service"
+	ackWait     = 10 * time.Second
+	updateGrace = 10 * time.Second
+	usage       = "usage: kry run | enroll --endpoint <url> --token <code> --origin <dashboard> --trust <id.alg.key,...> | install-service | uninstall-service | self-update | trust --reset --origin <dashboard> --trust <id.alg.key,...> | version"
 )
+
+const unit = `[Unit]
+Description=Krynodes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=` + binPath + ` run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`
+
+var removed = []string{unitPath, configDir, stateDir, binPath, binPath + ".previous", binPath + ".new"}
 
 func main() {
 	os.Setenv("PATH", systemFirst(os.Getenv("PATH")))
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func systemFirst(path string) string {
@@ -73,708 +81,340 @@ func systemFirst(path string) string {
 	return strings.Join(append(system, local...), ":")
 }
 
-func run(args []string) error {
-	command := "run"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		command = args[0]
-		args = args[1:]
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, usage)
+		return 2
 	}
-
-	switch command {
-	case "run":
-		return runDaemon(args, false)
-	case "once":
-		return runDaemon(args, true)
-	case "enroll":
-		return enroll(args)
-	case "status":
-		return status(args)
-	case "metrics":
-		return printMetrics()
-	case "install-service":
-		return installService(args)
-	case "uninstall-service":
-		return uninstallService(args)
-	case "self-update":
-		return selfUpdate()
-	case "exec":
-		return execActions()
-	case "host-apply":
-		return hostApply()
-	case "release-code":
-		return releaseCode()
-	case "guard":
-		return guardCommand()
-	case "watch-containers":
-		return watchContainers()
-	case "setup":
-		return setupCommand(args)
-	case "trust":
-		return trustDevices(args)
-	case "admin-user":
-		return adminUserCommand(args)
-	case "version":
-		fmt.Println(version)
-		return nil
+	bare := len(args) == 1
+	var err error
+	switch {
+	case args[0] == "version" && bare:
+		fmt.Fprintln(stdout, version)
+		return 0
+	case args[0] == "run":
+		err = runDaemon(args[1:])
+	case args[0] == "enroll":
+		err = enroll(args[1:], stdout)
+	case args[0] == "install-service" && bare:
+		err = installService(stdout)
+	case args[0] == "uninstall-service" && bare:
+		err = uninstallService(stdout)
+	case args[0] == "self-update" && bare:
+		err = selfUpdate()
+	case args[0] == "trust":
+		err = resetTrust(args[1:], stdout)
 	default:
-		return fmt.Errorf("unknown command %q", command)
+		fmt.Fprintln(stderr, usage)
+		return 2
 	}
-}
-
-type trustOptions struct {
-	initial bool
-	reset   bool
-	origin  string
-	config  string
-	keys    []string
-	grant   bool
-	access  string
-}
-
-func parseTrust(args []string) (trustOptions, error) {
-	var options trustOptions
-	flags := flag.NewFlagSet("trust", flag.ContinueOnError)
-	flags.BoolVar(&options.initial, "initial", false, "trust the first devices")
-	flags.BoolVar(&options.reset, "reset", false, "forget every trusted device")
-	flags.BoolVar(&options.grant, "grant", false, "let the trusted devices reach this server")
-	flags.StringVar(&options.access, "access", "", "let this one trusted device reach this server")
-	flags.StringVar(&options.origin, "origin", "", "your dashboard's origin")
-	flags.StringVar(&options.config, "config", defaultConfigPath, "path to the agent config")
-	if err := flags.Parse(args); err != nil {
-		return trustOptions{}, err
-	}
-	options.keys = flags.Args()
-	return options, nil
-}
-
-func trustDevices(args []string) error {
-	options, err := parseTrust(args)
 	if err != nil {
-		return err
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
+	return 0
+}
+
+func asRoot(command string) error {
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("trust must run as root on Linux")
+		return fmt.Errorf("kry %s must run as root on Linux", command)
 	}
-	if options.reset {
-		if err := trust.Save(actions.StateDir, trust.Trust{}); err != nil {
-			return err
+	return nil
+}
+
+type facts struct {
+	Hostname, OS, Arch, Kernel string
+}
+
+func currentFacts() facts {
+	hostname, _ := os.Hostname()
+	kernel, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	return facts{hostname, host.OperatingSystem(), runtime.GOARCH, strings.TrimSpace(string(kernel))}.known()
+}
+
+func (f facts) known() facts {
+	for _, value := range []*string{&f.Hostname, &f.OS, &f.Arch, &f.Kernel} {
+		if strings.TrimSpace(*value) == "" {
+			*value = "unknown"
 		}
-		fmt.Println("This server trusts no device now.")
+	}
+	return f
+}
+
+func hello(f facts, sealKey string, current trust.Trust) reporter.Hello {
+	message := reporter.Hello{Type: "hello", V: 1, Version: version, Hostname: f.Hostname, OS: f.OS, Arch: f.Arch, Kernel: f.Kernel, SealKey: sealKey}
+	if len(current.Core) > 0 {
+		report := current.Report()
+		message.Trust = &report
+	}
+	return message
+}
+
+func tokens(list string) []string {
+	if list == "" {
 		return nil
 	}
-	if !options.initial {
-		return fmt.Errorf("use --initial --origin <origin> -- <device>... or --reset")
-	}
-	current, err := trust.Load(actions.StateDir)
-	if err != nil {
-		return err
-	}
-	if len(current.Core) > 0 {
-		return fmt.Errorf("this server already trusts devices; run kry trust --reset first")
-	}
-	cfg, err := config.Load(options.config)
-	if err != nil {
-		return err
-	}
-	first, err := trust.ParseTrustArgs(options.origin, options.keys, options.grant, options.access)
-	if err != nil {
-		return err
-	}
-	first.NodeID = cfg.NodeID
-	if err := trust.Save(actions.StateDir, first); err != nil {
-		return err
-	}
-	fmt.Printf("This server trusts %d devices; %d reach it.\n", len(first.Core), len(first.Access))
-	return nil
+	return strings.Split(list, ",")
 }
 
-func printMetrics() error {
-	snapshot, err := metrics.Collect()
-	if err != nil {
-		return err
-	}
-	encoded, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(encoded))
-	return nil
+type enrollOptions struct {
+	endpoint, token, origin string
+	trust                   []string
 }
 
-func enroll(args []string) error {
+func enroll(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("enroll", flag.ContinueOnError)
-	endpoint := flags.String("endpoint", "https://kry.example.com", "Krynodes endpoint")
-	token := flags.String("token", "", "one-time enrollment token")
-	configPath := flags.String("config", defaultConfigPath, "configuration path")
+	var options enrollOptions
+	var list string
+	flags.StringVar(&options.endpoint, "endpoint", "", "Krynodes endpoint")
+	flags.StringVar(&options.token, "token", "", "one-time enrollment code")
+	flags.StringVar(&options.origin, "origin", "", "your dashboard's origin")
+	flags.StringVar(&list, "trust", "", "the passkeys to trust, as id.alg.key separated by commas")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if strings.TrimSpace(*token) == "" {
-		return fmt.Errorf("--token is required")
+	if flags.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q", flags.Arg(0))
 	}
-	if _, err := os.Stat(*configPath); err == nil {
-		enrolled := "another node"
-		if cfg, err := config.Load(*configPath); err == nil {
+	if err := asRoot("enroll"); err != nil {
+		return err
+	}
+	options.trust = tokens(list)
+	node, err := enrollWith(secureClient(), options, currentFacts(), configPath, stateDir)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Enrolled as server %s.\n", node)
+	return nil
+}
+
+func enrollWith(client *http.Client, options enrollOptions, f facts, configPath, state string) (string, error) {
+	if _, err := os.Stat(configPath); err == nil {
+		enrolled := "another server"
+		if cfg, err := config.Load(configPath); err == nil {
 			enrolled = cfg.NodeID
 		}
-		return fmt.Errorf("this server is already enrolled as %s; to enroll it again, remove Krynodes first with: sudo kry uninstall-service", enrolled)
+		return "", fmt.Errorf("this server is already enrolled as %s; to enroll it again, remove Krynodes first with: sudo kry uninstall-service", enrolled)
 	}
-
-	host, err := currentHost()
+	if strings.TrimSpace(options.token) == "" {
+		return "", errors.New("--token is required")
+	}
+	if err := config.Valid(config.Config{Endpoint: options.endpoint, NodeID: "-", Token: "-"}); err != nil {
+		return "", err
+	}
+	if _, err := trust.FirstTrust("-", options.origin, options.trust); err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(map[string]string{"hostname": f.Hostname, "os": f.OS, "arch": f.Arch, "kernel": f.Kernel, "version": version})
 	if err != nil {
-		return err
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	enrollment, err := reporter.New(*endpoint, *token, version).Enroll(ctx, host)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(options.endpoint, "/")+"/api/agent/enroll", bytes.NewReader(body))
 	if err != nil {
-		return describeResponseError("enrollment", err)
+		return "", err
 	}
-
-	cfg := config.Config{
-		Endpoint:        *endpoint,
-		NodeID:          enrollment.NodeID,
-		Token:           enrollment.Token,
-		IntervalSeconds: enrollment.IntervalSeconds,
+	request.Header.Set("Authorization", "Bearer "+options.token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "kry-agent/"+version)
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("enrollment failed: %w", err)
 	}
-	if err := config.Save(*configPath, cfg); err != nil {
-		return err
+	defer response.Body.Close()
+	answer, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return "", fmt.Errorf("enrollment failed with HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(answer[:min(len(answer), 512)])))
 	}
-	fmt.Printf("Enrolled node %s and wrote %s\n", enrollment.NodeID, *configPath)
-	return nil
+	var enrolled struct {
+		NodeID string `json:"nodeId"`
+		Token  string `json:"token"`
+	}
+	if err := json.Unmarshal(answer, &enrolled); err != nil || enrolled.NodeID == "" || enrolled.Token == "" {
+		return "", errors.New("enrollment failed: Krynodes answered without a server id and token")
+	}
+	if err := config.Save(configPath, config.Config{Endpoint: options.endpoint, NodeID: enrolled.NodeID, Token: enrolled.Token}); err != nil {
+		return "", err
+	}
+	first, err := trust.FirstTrust(enrolled.NodeID, options.origin, options.trust)
+	if err != nil {
+		return "", err
+	}
+	if err := trust.Save(state, first); err != nil {
+		return "", err
+	}
+	if _, err := seal.Load(state); err != nil {
+		return "", err
+	}
+	return enrolled.NodeID, nil
 }
 
-func runDaemon(args []string, once bool) error {
+func runDaemon(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
-	configPath := flags.String("config", defaultConfigPath, "configuration path")
+	path := flags.String("config", configPath, "configuration path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(*configPath)
+	if err := asRoot("run"); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*path)
 	if err != nil {
 		return err
 	}
-	host, err := currentHost()
+	key, err := seal.Load(stateDir)
+	if err != nil {
+		return err
+	}
+	executable, err := self()
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	client := stream.New(cfg.Endpoint, cfg.Token, version)
-	relay := &actions.Relay{
-		RequestDir: actions.RequestDir,
-		StateDir:   actions.StateDir,
-		NodeID:     cfg.NodeID,
-		Server:     client,
-		Now:        time.Now,
-		Dir:        stateDirectory,
-		Beat:       make(chan struct{}, 1),
-		Boot: func() string {
-			id, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
-			return string(id)
+	d := &daemon.Daemon{
+		State: stateDir,
+		Trust: func() trust.Trust {
+			current, err := trust.Load(stateDir)
+			if err != nil {
+				log.Print(err)
+			}
+			return current
 		},
+		SaveTrust: func(next trust.Trust) error { return trust.Save(stateDir, next) },
+		Send:      client.Send,
+		Now:       time.Now,
+		Resume:    daemon.Resume(version, updateFailure),
 	}
-	client.Deliver = relay.Enqueue
-	client.Gone = func(gone bool) {
-		mark := filepath.Join(stateDirectory, actions.GoneFile)
-		if gone {
-			_ = os.WriteFile(mark, nil, 0o640)
-		} else {
-			_ = os.Remove(mark)
-		}
+	d.Handlers = map[string]daemon.Handler{
+		"trust/apply":  d.ApplyTrust,
+		"agent/update": daemon.Update(version, updateGrace, updater(executable)),
+		"host/restart": daemon.AfterAck(d, ackWait, "Restarting now.", func() { runLogged("systemctl", "reboot") }),
+		"agent/remove": daemon.AfterAck(d, ackWait, "Removing Krynodes from this server.", func() {
+			runLogged("systemd-run", "--unit=krynodes-remove", "--collect", "--quiet", executable, "uninstall-service")
+		}),
 	}
-	connection, closeConnection := context.WithCancel(ctx)
-	closed := make(chan struct{})
-	go func() {
-		client.Run(connection)
-		close(closed)
-	}()
-	defer func() {
-		closeConnection()
-		select {
-		case <-closed:
-		case <-time.After(3 * time.Second):
-		}
-	}()
-	monitoringCycle := cycle.New(client, host, requestFile{}, relay)
-
-	if once {
-		if err := client.WaitConnected(ctx, 30*time.Second); err != nil {
-			return fmt.Errorf("connect to Krynodes: %w", err)
-		}
-		_, err := monitoringCycle.Execute(ctx, cfg.NodeID)
-		return err
-	}
-
-	log.Printf("%s %s started for node %s", unitName, version, cfg.NodeID)
-	go relay.Watch(ctx, 2*time.Second)
-	go address.Prober{Endpoint: cfg.Endpoint, Token: cfg.Token, Version: version}.Watch(ctx, addressEvery)
-	if err := client.WaitConnected(ctx, 15*time.Second); err == nil {
-		select {
-		case <-client.Ready():
-		default:
-		}
-	}
-	interval := cfg.Interval
-	for {
-		nextInterval, err := monitoringCycle.Execute(ctx, cfg.NodeID)
-		if err != nil {
-			log.Printf("monitoring cycle failed: %v", err)
-		} else if nextInterval >= 15 && nextInterval <= 3600 {
-			interval = time.Duration(nextInterval) * time.Second
-		}
-		if err == nil && monitoringCycle.ConfigChanged() {
-			continue
-		}
-		timer := time.NewTimer(untilNextTick(time.Now(), interval))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			log.Printf("%s stopped", unitName)
-			return nil
-		case <-timer.C:
-		case <-client.Pokes():
-			timer.Stop()
-		case <-client.Ready():
-			timer.Stop()
-		case <-relay.Beat:
-			timer.Stop()
-		}
-	}
-}
-
-const tickOffset = 2 * time.Second
-
-const addressEvery = 6 * time.Hour
-
-const (
-	linksEvery = 30 * time.Second
-	pairsEvery = 2 * time.Second
-)
-
-func untilNextTick(now time.Time, interval time.Duration) time.Duration {
-	since := time.Duration(now.UnixNano()) - tickOffset
-	return interval - since%interval
-}
-
-func status(args []string) error {
-	flags := flag.NewFlagSet("status", flag.ContinueOnError)
-	configPath := flags.String("config", defaultConfigPath, "configuration path")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Node: %s\nEndpoint: %s\nInterval: %s\n", cfg.NodeID, cfg.Endpoint, cfg.Interval)
+	sealKey := seal.Public(key)
+	client.Hello = func() any { return hello(currentFacts(), sealKey, d.Trust()) }
+	client.Connected = d.Resend
+	client.Command = func(command reporter.Command) { go d.Handle(ctx, command) }
+	client.Ack = d.Ack
+	go d.Start(ctx)
+	log.Printf("krynodes %s started for server %s", version, cfg.NodeID)
+	client.Run(ctx)
+	log.Printf("krynodes stopped")
 	return nil
 }
 
-func installService(args []string) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("systemd installation is supported only on Linux")
+func runLogged(name string, args ...string) {
+	if output, err := exec.Command(name, args...).CombinedOutput(); err != nil {
+		log.Printf("%s %s: %v %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("install-service must run as root")
-	}
-	flags := flag.NewFlagSet("install-service", flag.ContinueOnError)
-	configPath := flags.String("config", defaultConfigPath, "configuration path")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if _, err := config.Load(*configPath); err != nil {
-		return err
-	}
-	uid, gid, err := ensureServiceUser(*configPath)
-	if err != nil {
-		return err
-	}
-	if err := prepareActionDirectories(uid, gid); err != nil {
-		return err
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return err
-	}
+}
 
-	units := map[string]string{
-		unitPath:        serviceUnit(executable, *configPath),
-		updaterPath:     updaterUnit(executable),
-		watcherPath:     pathUnit(),
-		execPath:        execUnit(executable),
-		execWatcherPath: execPathUnit(),
-		execTimerPath:   execTimerUnit(),
-		hostPath:        hostUnit(executable),
-		hostWatcherPath: hostPathUnit(),
-		guardPath:       guardUnit(executable),
-		containersPath:  containersUnit(executable),
-	}
-	for path, unit := range units {
-		if err := writeUnit(path, unit); err != nil {
+func updater(executable string) func(context.Context, string) error {
+	return func(ctx context.Context, target string) error {
+		_ = os.Remove(update.StatusPath)
+		if _, err := update.WriteRequest(update.RequestPath, target, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
+		output, err := exec.CommandContext(ctx, "systemd-run", "--unit=krynodes-update", "--collect", "--quiet", "--wait", executable, "self-update").CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		if status, ok := update.ReadStatus(update.StatusPath, version); ok {
+			return errors.New(status.Message)
+		}
+		if said := strings.TrimSpace(string(output)); said != "" {
+			return fmt.Errorf("the update did not run: %s", said)
+		}
+		return fmt.Errorf("the update did not run: %w", err)
+	}
+}
+
+func updateFailure() string {
+	for range 450 {
+		if exec.Command("systemctl", "is-active", "--quiet", "krynodes-update.service").Run() != nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if status, ok := update.ReadStatus(update.StatusPath, version); ok {
+		return status.Message
+	}
+	return "the update did not finish; this server still runs " + version
+}
+
+func self() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(executable)
+}
+
+func installService(stdout io.Writer) error {
+	if err := asRoot("install-service"); err != nil {
+		return err
+	}
+	if _, err := config.Load(configPath); err != nil {
+		return err
+	}
+	installed, _ := filepath.EvalSymlinks(binPath)
+	if executable, err := self(); err != nil || executable != installed {
+		return fmt.Errorf("install-service runs the agent from %s; install it there first", binPath)
+	}
+	if err := safefile.Write(unitPath, []byte(unit), 0o644); err != nil {
+		return err
 	}
 	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-		return err
+		return fmt.Errorf("systemctl daemon-reload: %w", err)
 	}
-	for _, name := range enabledUnits() {
-		if err := exec.Command("systemctl", "enable", "--now", name).Run(); err != nil {
-			return fmt.Errorf("enable %s: %w", name, err)
+	if err := exec.Command("systemctl", "enable", "--now", unitName).Run(); err != nil {
+		return fmt.Errorf("enable %s: %w", unitName, err)
+	}
+	if _, err := os.Lstat(sudoLink); os.IsNotExist(err) {
+		if err := os.Symlink(binPath, sudoLink); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not link %s (%v); run sudo %s instead of sudo kry.\n", sudoLink, err, binPath)
 		}
 	}
-	for _, name := range restartedUnits() {
-		if err := exec.Command("systemctl", "restart", name).Run(); err != nil {
-			return fmt.Errorf("restart %s: %w", name, err)
+	fmt.Fprintf(stdout, "Installed and started %s.\n", unitName)
+	return nil
+}
+
+func uninstallService(stdout io.Writer) error {
+	if err := asRoot("uninstall-service"); err != nil {
+		return err
+	}
+	_ = exec.Command("systemctl", "disable", "--now", unitName).Run()
+	if target, err := os.Readlink(sudoLink); err == nil && target == binPath {
+		_ = os.Remove(sudoLink)
+	}
+	var problems []string
+	for _, path := range removed {
+		if err := os.RemoveAll(path); err != nil {
+			problems = append(problems, fmt.Sprintf("remove %s: %v", path, err))
 		}
 	}
-	if err := linkForSudo(sudoLink, executable); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not link %s (%v); run sudo %s instead of sudo kry.\n", sudoLink, err, executable)
+	_ = exec.Command("systemctl", "daemon-reload").Run()
+	if len(problems) > 0 {
+		return fmt.Errorf("some parts need a look:\n  %s", strings.Join(problems, "\n  "))
 	}
-	fmt.Printf("Installed and started %s.service\n", unitName)
+	fmt.Fprintln(stdout, "Krynodes is removed from this server. If it is still in the dashboard, delete it there too.")
 	return nil
-}
-
-func writeUnit(path, unit string) error {
-	if current, err := os.ReadFile(path); err == nil && string(current) == unit {
-		return nil
-	}
-	temporary := path + ".tmp"
-	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := file.WriteString(unit); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		os.Remove(temporary)
-		return err
-	}
-	if directory, err := os.Open(filepath.Dir(path)); err == nil {
-		directory.Sync()
-		directory.Close()
-	}
-	return nil
-}
-
-func enabledUnits() []string {
-	return []string{unitName + ".service", unitName + "-update.path", unitName + "-exec.path", unitName + "-exec.timer", unitName + "-host.path", unitName + "-guard.service", unitName + "-containers.service"}
-}
-
-func restartedUnits() []string {
-	return []string{unitName + "-containers.service", unitName + "-exec.path"}
-}
-
-func guardUnit(executable string) string {
-	return fmt.Sprintf(`[Unit]
-Description=Krynodes containment for Contained stacks
-Before=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=%s guard
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-`, executable)
-}
-
-func hostUnit(executable string) string {
-	return fmt.Sprintf(`[Unit]
-Description=Krynodes server recipes
-StartLimitIntervalSec=0
-
-[Service]
-Type=oneshot
-ExecStart=%s host-apply
-TimeoutStartSec=120min
-PrivateTmp=true
-Environment=DOCKER_CONFIG=%s/docker
-`, executable, actions.StateDir)
-}
-
-func hostPathUnit() string {
-	return fmt.Sprintf(`[Unit]
-Description=Watch for Krynodes server recipe requests
-
-[Path]
-DirectoryNotEmpty=%s/host
-Unit=%s-host.service
-
-[Install]
-WantedBy=multi-user.target
-`, actions.StateDir, unitName)
-}
-
-func serviceUnit(executable, configPath string) string {
-	return fmt.Sprintf(`[Unit]
-Description=Krynodes Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=%[1]s
-Group=%[1]s
-ExecStart=%[2]s run --config %[3]s
-Restart=always
-RestartSec=15
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-StateDirectory=%[1]s
-ReadWritePaths=-%[4]s/%[5]s
-
-[Install]
-WantedBy=multi-user.target
-`, accountName, executable, configPath, actions.StateDir, actions.WakeDir)
-}
-
-func updaterUnit(executable string) string {
-	return fmt.Sprintf(`[Unit]
-Description=Krynodes Agent updater
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=%s self-update
-PrivateTmp=true
-ProtectHome=true
-NoNewPrivileges=true
-`, executable)
-}
-
-func pathUnit() string {
-	return fmt.Sprintf(`[Unit]
-Description=Watch for Krynodes Agent update requests
-
-[Path]
-PathChanged=%s
-Unit=%s-update.service
-
-[Install]
-WantedBy=multi-user.target
-`, update.RequestPath, unitName)
-}
-
-func execUnit(executable string) string {
-	return fmt.Sprintf(`[Unit]
-Description=Krynodes service actions
-StartLimitIntervalSec=0
-
-[Service]
-Type=oneshot
-Group=%s
-ExecStart=%s exec
-TimeoutStartSec=60min
-PrivateTmp=true
-ProtectHome=read-only
-ProtectSystem=strict
-ReadWritePaths=%s
-Environment=DOCKER_CONFIG=%s/docker
-`, accountName, executable, actions.StateDir, actions.StateDir)
-}
-
-func containersUnit(executable string) string {
-	return fmt.Sprintf(`[Unit]
-Description=Krynodes container states
-After=docker.service
-
-[Service]
-Type=simple
-Group=%s
-ExecStart=%s watch-containers
-Restart=always
-RestartSec=10
-PrivateTmp=true
-ProtectHome=read-only
-ProtectSystem=strict
-ReadWritePaths=%s
-Environment=DOCKER_CONFIG=%s/docker
-
-[Install]
-WantedBy=multi-user.target
-`, accountName, executable, actions.StateDir, actions.StateDir)
-}
-
-func watchContainers() error {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("watch-containers must run as root on Linux")
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	watcher := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, QuarantineMark: filepath.Join(stateDirectory, "quarantined")}
-	go watcher.WatchLinks(ctx, linksEvery)
-	go watcher.CarryPairs(ctx, pairsEvery)
-	actions.NewWatcher().Watch(ctx)
-	return nil
-}
-
-func execPathUnit() string {
-	return fmt.Sprintf(`[Unit]
-Description=Watch for Krynodes service action requests
-
-[Path]
-PathChanged=%s
-DirectoryNotEmpty=%s/%s
-Unit=%s-exec.service
-
-[Install]
-WantedBy=multi-user.target
-`, actions.RequestDir, actions.StateDir, actions.WakeDir, unitName)
-}
-
-func execTimerUnit() string {
-	return fmt.Sprintf(`[Unit]
-Description=Refresh the Krynodes service inventory
-
-[Timer]
-OnBootSec=1min
-OnUnitActiveSec=5min
-Unit=%s-exec.service
-
-[Install]
-WantedBy=timers.target
-`, unitName)
-}
-
-func execActions() error {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("exec must run as root on Linux")
-	}
-	executor := actions.Executor{
-		RequestDir: actions.RequestDir,
-		StateDir:   actions.StateDir,
-		Now:        time.Now,
-		Run:        actions.RunCommand,
-		Collect: func(ctx context.Context, remembered []string) (actions.Snapshot, error) {
-			return actions.Collect(ctx, actions.RunCommand, remembered)
-		},
-		Audit:          true,
-		QuarantineMark: filepath.Join(stateDirectory, "quarantined"),
-		Held:           actions.WorkerHeld(actions.StateDir, defaultConfigPath, version, &http.Client{Timeout: 10 * time.Second}),
-	}
-	return executor.Execute(context.Background())
-}
-
-func guardCommand() error {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("guard must run as root on Linux")
-	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, QuarantineMark: filepath.Join(stateDirectory, "quarantined")}
-	executor.Contain(context.Background())
-	return nil
-}
-
-func hostApply() error {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("host-apply must run as root on Linux")
-	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand, Stream: actions.StreamCommand, ConfigPath: defaultConfigPath, QuarantineMark: filepath.Join(stateDirectory, "quarantined")}
-	return executor.HostApply(context.Background())
-}
-
-func releaseCode() error {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("release-code must run as root on Linux")
-	}
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
-	code, err := executor.ReleaseCode(filepath.Join(stateDirectory, "quarantined"))
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Release code: %s · works for 10 minutes\n", code)
-	return nil
-}
-
-func prepareActionDirectories(uid, gid int) error {
-	if err := claimDirectory(actions.RequestDir, uid, gid, 0o750); err != nil {
-		return fmt.Errorf("prepare action request directory: %w", err)
-	}
-	modes := stateDirectoryModes()
-	for _, directory := range slices.Sorted(maps.Keys(modes)) {
-		if err := claimDirectory(directory, 0, gid, modes[directory]); err != nil {
-			return fmt.Errorf("prepare %s: %w", directory, err)
-		}
-	}
-	for _, file := range agentReadFiles() {
-		if err := claimFile(file, 0, gid, 0o644); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("share %s with the agent: %w", file, err)
-		}
-	}
-	return nil
-}
-
-func agentReadFiles() []string {
-	return []string{
-		filepath.Join(actions.StateDir, "events.json"),
-		filepath.Join(actions.StateDir, "network.json"),
-		filepath.Join(actions.StateDir, "setup.json"),
-	}
-}
-
-func stateDirectoryModes() map[string]os.FileMode {
-	return map[string]os.FileMode{
-		actions.StateDir: 0o750,
-		filepath.Join(actions.StateDir, "results"):       0o750 | os.ModeSetgid,
-		filepath.Join(actions.StateDir, "progress"):      0o750 | os.ModeSetgid,
-		filepath.Join(actions.StateDir, actions.WakeDir): 0o770 | os.ModeSticky,
-	}
-}
-
-type requestFile struct{}
-
-func (requestFile) Failure() *reporter.UpdateFailure {
-	status, ok := update.ReadStatus(update.StatusPath, version)
-	if !ok {
-		return nil
-	}
-	return &reporter.UpdateFailure{Version: status.Version, Message: status.Message}
-}
-
-func (requestFile) Request(version, requestedAt string) error {
-	changed, err := update.WriteRequest(update.RequestPath, version, requestedAt)
-	if changed {
-		log.Printf("requested an update to %s", version)
-	}
-	return err
 }
 
 func selfUpdate() error {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("self-update must run as root on Linux")
+	if err := asRoot("self-update"); err != nil {
+		return err
 	}
 	key, err := update.PublicKey()
 	if err != nil {
 		return err
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	executable, err = filepath.EvalSymlinks(executable)
+	executable, err := self()
 	if err != nil {
 		return err
 	}
@@ -786,7 +426,7 @@ func selfUpdate() error {
 		Arch:           runtime.GOARCH,
 		CurrentVersion: version,
 		PublicKey:      key,
-		Client:         updateClient(),
+		Client:         secureClient(),
 		Run: func(name string, args ...string) error {
 			return exec.Command(name, args...).Run()
 		},
@@ -803,192 +443,48 @@ func selfUpdate() error {
 	return err
 }
 
-func ensureServiceUser(configPath string) (int, int, error) {
-	account, err := user.Lookup(accountName)
+func resetTrust(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("trust", flag.ContinueOnError)
+	reset := flags.Bool("reset", false, "trust only the given passkeys from now on")
+	origin := flags.String("origin", "", "your dashboard's origin")
+	list := flags.String("trust", "", "the passkeys to trust, as id.alg.key separated by commas")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if !*reset || flags.NArg() > 0 {
+		return errors.New("usage: kry trust --reset --origin <dashboard> --trust <id.alg.key,...>")
+	}
+	if err := asRoot("trust"); err != nil {
+		return err
+	}
+	next, err := reseed(configPath, stateDir, *origin, tokens(*list))
 	if err != nil {
-		if createErr := exec.Command(
-			"useradd", "--system", "--home-dir", "/nonexistent",
-			"--shell", "/usr/sbin/nologin", accountName,
-		).Run(); createErr != nil {
-			return 0, 0, fmt.Errorf("create %s user: %w", accountName, createErr)
-		}
-		account, err = user.Lookup(accountName)
-		if err != nil {
-			return 0, 0, fmt.Errorf("lookup %s user: %w", accountName, err)
-		}
+		return err
 	}
-	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return 0, 0, err
-	}
-	gid, err := strconv.Atoi(account.Gid)
-	if err != nil {
-		return 0, 0, err
-	}
-	if err := os.MkdirAll(stateDirectory, 0o755); err != nil {
-		return 0, 0, fmt.Errorf("create state directory: %w", err)
-	}
-	if err := os.Chown(stateDirectory, uid, gid); err != nil {
-		return 0, 0, fmt.Errorf("set state directory ownership: %w", err)
-	}
-	if err := os.Chown(filepath.Dir(configPath), uid, gid); err != nil {
-		return 0, 0, fmt.Errorf("set config directory ownership: %w", err)
-	}
-	if err := claimFile(configPath, uid, gid, 0o600); err != nil {
-		return 0, 0, fmt.Errorf("set config ownership: %w", err)
-	}
-	return uid, gid, nil
-}
-
-func uninstallService(args []string) error {
-	deleteApps := false
-	for _, arg := range args {
-		if arg != "--delete-apps" {
-			return fmt.Errorf("unknown flag %q; the only one is --delete-apps", arg)
-		}
-		deleteApps = true
-	}
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		return fmt.Errorf("uninstall-service must run as root on Linux")
-	}
-	if actions.SetupRunning(actions.StateDir, time.Now()) {
-		return errors.New("kry setup is still running on this server. Wait for it to finish, or stop it with Ctrl+C in its terminal, then run this again")
-	}
-	commands := uninstallCommands()
-	_ = exec.Command(commands[0][0], commands[0][1:]...).Run()
-	working := func() bool {
-		output, _ := exec.Command("systemctl", append([]string{"is-active"}, busyUnits...)...).Output()
-		return unitsBusy(string(output))
-	}
-	idle := waitFor(working, time.Sleep, time.Hour, "Waiting for Krynodes to finish changing this server…")
-	_ = exec.Command(commands[1][0], commands[1][1:]...).Run()
-	waitFor(func() bool { return unreported(actions.RequestDir, actions.StateDir) }, time.Sleep, 2*time.Minute, "Waiting for the dashboard to hear the last results…")
-	_ = exec.Command(commands[2][0], commands[2][1:]...).Run()
-	executor := actions.Executor{StateDir: actions.StateDir, Now: time.Now, Run: actions.RunCommand}
-	removal := executor.Uninstall(context.Background(), deleteApps)
-	if !idle {
-		removal.Problems = append(removal.Problems, "Krynodes was still working on this server after an hour and was stopped; check the package manager with: sudo dpkg --configure -a (Debian, Ubuntu) or sudo dnf check (RHEL family), and the stacks with docker compose ps")
-	}
-	binary, _ := os.Executable()
-	unlinkForSudo(sudoLink, binary)
-	for _, path := range leftovers(binary) {
-		if err := os.RemoveAll(path); err != nil {
-			removal.Problems = append(removal.Problems, fmt.Sprintf("remove %s: %v", path, err))
-		}
-	}
-	_ = exec.Command("userdel", accountName).Run()
-	_ = exec.Command("systemctl", "daemon-reload").Run()
-	fmt.Println("Krynodes is removed from this server.")
-	for _, line := range removal.TurnedOff {
-		fmt.Println("  Turned off: " + line)
-	}
-	for _, line := range removal.Apps {
-		fmt.Println("  " + line)
-	}
-	if removal.Docker != "" {
-		fmt.Println("  " + removal.Docker)
-	}
-	if removal.Token != "" {
-		fmt.Println("  " + removal.Token)
-	}
-	fmt.Println("If this server is still in the dashboard, delete it there too; that also removes its Cloudflare tunnel, DNS records and login.")
-	if len(removal.Problems) > 0 {
-		return fmt.Errorf("some parts need a look:\n  %s", strings.Join(removal.Problems, "\n  "))
-	}
+	_ = exec.Command("systemctl", "try-restart", unitName).Run()
+	fmt.Fprintf(stdout, "This server trusts %d passkeys now (version %d).\n", len(next.Core), next.Version)
 	return nil
 }
 
-var busyUnits = []string{unitName + "-exec.service", unitName + "-host.service", unitName + "-update.service"}
-
-func unitsBusy(states string) bool {
-	return slices.ContainsFunc(strings.Fields(states), func(state string) bool {
-		return state == "active" || state == "activating" || state == "reloading"
-	})
-}
-
-func unreported(requestDir, stateDir string) bool {
-	entries, _ := os.ReadDir(requestDir)
-	return slices.ContainsFunc(entries, func(entry os.DirEntry) bool {
-		id, ok := strings.CutSuffix(entry.Name(), ".json")
-		if !ok {
-			return false
-		}
-		_, err := os.Stat(filepath.Join(stateDir, "results", id+".json"))
-		return err == nil
-	})
-}
-
-func waitFor(busy func() bool, sleep func(time.Duration), limit time.Duration, message string) bool {
-	told := false
-	for waited := time.Duration(0); ; waited += 2 * time.Second {
-		if !busy() {
-			return true
-		}
-		if waited >= limit {
-			return false
-		}
-		if !told {
-			fmt.Println(message)
-			told = true
-		}
-		sleep(2 * time.Second)
-	}
-}
-
-const sudoLink = "/usr/bin/kry"
-
-func linkForSudo(link, executable string) error {
-	if _, err := os.Lstat(link); !os.IsNotExist(err) {
-		return nil
-	}
-	return os.Symlink(executable, link)
-}
-
-func unlinkForSudo(link, executable string) {
-	if target, err := os.Readlink(link); err == nil && target == executable {
-		os.Remove(link)
-	}
-}
-
-func leftovers(binary string) []string {
-	paths := []string{containersPath, guardPath, hostWatcherPath, hostPath, execTimerPath, execWatcherPath, execPath, watcherPath, updaterPath, unitPath, stateDirectory, path.Dir(defaultConfigPath)}
-	if binary != "" {
-		paths = append(paths, binary)
-	}
-	return paths
-}
-
-func uninstallCommands() [][]string {
-	return [][]string{
-		{"systemctl", "disable", "--now", unitName + "-host.path", unitName + "-exec.timer", unitName + "-exec.path", unitName + "-update.path", unitName + "-guard.service", unitName + "-containers.service"},
-		{"systemctl", "stop", unitName + "-exec.service", unitName + "-host.service"},
-		{"systemctl", "disable", "--now", unitName + ".service"},
-	}
-}
-
-func currentHost() (reporter.Host, error) {
-	hostname, err := os.Hostname()
+func reseed(configPath, state, origin string, tokens []string) (trust.Trust, error) {
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		return reporter.Host{}, fmt.Errorf("read hostname: %w", err)
+		return trust.Trust{}, err
 	}
-	return reporter.Host{
-		Hostname: hostname, OperatingSystem: host.OperatingSystem(),
-		Architecture: runtime.GOARCH, AgentVersion: version,
-	}, nil
+	next, err := trust.FirstTrust(cfg.NodeID, origin, tokens)
+	if err != nil {
+		return trust.Trust{}, err
+	}
+	if current, err := trust.Load(state); err == nil {
+		next.Version = current.Version + 1
+	}
+	return next, trust.Save(state, next)
 }
 
-func describeResponseError(action string, err error) error {
-	var responseError *reporter.ResponseError
-	if errors.As(err, &responseError) {
-		return fmt.Errorf("%s failed with HTTP %d: %s", action, responseError.Status, strings.TrimSpace(responseError.Body))
-	}
-	return fmt.Errorf("%s failed: %w", action, err)
-}
-
-func updateClient() *http.Client {
+func secureClient() *http.Client {
 	return &http.Client{Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		TLSClientConfig:       reporter.TLSConfig(),
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS13},
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: time.Minute,
 	}}

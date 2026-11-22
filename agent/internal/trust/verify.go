@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,14 +20,13 @@ import (
 )
 
 const (
-	sessionLimit       = 15 * time.Minute
-	commandGrace       = 60 * time.Minute
-	clockSkew          = time.Minute
-	flagPresent        = 0x01
-	flagVerified       = 0x04
-	flagBackupEligible = 0x08
-	algES256           = -7
-	algRS256           = -257
+	sessionLimit = 15 * time.Minute
+	commandGrace = 60 * time.Minute
+	clockSkew    = time.Minute
+	flagPresent  = 0x01
+	flagVerified = 0x04
+	algES256     = -7
+	algRS256     = -257
 )
 
 var b64 = base64.RawURLEncoding
@@ -38,38 +36,18 @@ type TrustKey struct {
 	Name      string `json:"name"`
 	Alg       int    `json:"alg"`
 	PublicKey string `json:"publicKey"`
-	Account   string `json:"account,omitempty"`
-}
-
-type PassphraseKey struct {
-	Salt       string `json:"salt"`
-	Iterations int    `json:"iterations"`
-	PublicKey  string `json:"publicKey"`
 }
 
 type Trust struct {
-	V          int            `json:"v"`
-	NodeID     string         `json:"nodeId"`
-	Origin     string         `json:"origin"`
-	RPID       string         `json:"rpId"`
-	Version    int            `json:"version"`
-	Core       []TrustKey     `json:"core"`
-	Access     []string       `json:"access"`
-	Passphrase *PassphraseKey `json:"passphrase"`
-	RequireUV  bool           `json:"requireUv,omitempty"`
-}
-
-func (t Trust) coreIDs() []string {
-	ids := make([]string, 0, len(t.Core))
-	for _, key := range t.Core {
-		ids = append(ids, key.ID)
-	}
-	return ids
-}
-
-func deviceBound(assertion Assertion) bool {
-	data, err := b64.DecodeString(assertion.AuthenticatorData)
-	return err == nil && len(data) > 32 && data[32]&flagBackupEligible == 0
+	V         int        `json:"v"`
+	NodeID    string     `json:"nodeId"`
+	Origin    string     `json:"origin"`
+	RPID      string     `json:"rpId"`
+	Version   int        `json:"version"`
+	Keys      []TrustKey `json:"keys"`
+	Core      []string   `json:"core"`
+	Access    []string   `json:"access"`
+	RequireUV bool       `json:"requireUv,omitempty"`
 }
 
 func verified(uv bool) error {
@@ -77,14 +55,6 @@ func verified(uv bool) error {
 		return nil
 	}
 	return errors.New("the passkey was opened without a fingerprint, face or PIN; every server requires one")
-}
-
-func settled(t Trust) Trust {
-	t.Passphrase = nil
-	if len(t.Core) > 0 {
-		t.RequireUV = true
-	}
-	return t
 }
 
 type Assertion struct {
@@ -97,7 +67,6 @@ type Assertion struct {
 type SignedGrant struct {
 	Grant string `json:"grant"`
 	Assertion
-	Proof string `json:"proof,omitempty"`
 }
 
 type SignedCommand struct {
@@ -124,10 +93,6 @@ type Command struct {
 	Action    string            `json:"action"`
 	IssuedAt  string            `json:"issuedAt"`
 	ExpiresAt string            `json:"expiresAt"`
-	Compose   string            `json:"compose,omitempty"`
-	Access    string            `json:"access,omitempty"`
-	Secrets   string            `json:"secrets,omitempty"`
-	Piece     string            `json:"piece,omitempty"`
 	Args      map[string]string `json:"args,omitempty"`
 }
 
@@ -190,23 +155,15 @@ func parseKey(key TrustKey) (crypto.PublicKey, error) {
 	return nil, fmt.Errorf("algorithm %d is not allowed", key.Alg)
 }
 
-func Fingerprint(key TrustKey) string {
-	der, err := b64.DecodeString(key.PublicKey)
-	if err != nil {
-		der = []byte(key.PublicKey)
-	}
-	return hex.EncodeToString(digest(der))[:16]
-}
-
-func verifyAssertion(trust Trust, allowed []string, assertion Assertion, challenge []byte) (bool, error) {
-	index := slices.IndexFunc(trust.Core, func(key TrustKey) bool { return key.ID == assertion.CredentialID })
+func verifyAssertion(trust Trust, allowed []string, outside string, assertion Assertion, challenge []byte) (bool, error) {
+	index := slices.IndexFunc(trust.Keys, func(key TrustKey) bool { return key.ID == assertion.CredentialID })
 	if index < 0 {
 		return false, errors.New("passkey is not trusted")
 	}
 	if !slices.Contains(allowed, assertion.CredentialID) {
-		return false, errors.New("the passkey has no access to this server")
+		return false, errors.New(outside)
 	}
-	public, err := parseKey(trust.Core[index])
+	public, err := parseKey(trust.Keys[index])
 	if err != nil {
 		return false, err
 	}
@@ -266,12 +223,12 @@ func verifyAssertion(trust Trust, allowed []string, assertion Assertion, challen
 	return authData[32]&flagVerified != 0, nil
 }
 
-func verifySession(trust Trust, approval SignedGrant, payload, signed, name string, now time.Time) ([]byte, time.Time, error) {
-	grantBytes, err := decode("grant", approval.Grant)
+func verifySession(trust Trust, signed SignedCommand, now time.Time) ([]byte, time.Time, error) {
+	grantBytes, err := decode("grant", signed.Grant.Grant)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	uv, err := verifyAssertion(trust, trust.Access, approval.Assertion, digest(grantBytes))
+	uv, err := verifyAssertion(trust, trust.Access, "the passkey has no access to this server", signed.Grant.Assertion, digest(grantBytes))
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -308,52 +265,34 @@ func verifySession(trust Trust, approval SignedGrant, payload, signed, name stri
 	if err != nil || !ok || sessionKey.Curve != elliptic.P256() {
 		return nil, time.Time{}, errors.New("the session key is not P-256")
 	}
-	payloadBytes, err := decode(name, payload)
+	commandBytes, err := decode("command", signed.Command)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	signature, err := decode(name+" signature", signed)
+	signature, err := decode("command signature", signed.Signature)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
 	if len(signature) != 64 {
-		return nil, time.Time{}, fmt.Errorf("the %s signature is not P1363", name)
+		return nil, time.Time{}, errors.New("the command signature is not P1363")
 	}
 	r := new(big.Int).SetBytes(signature[:32])
 	s := new(big.Int).SetBytes(signature[32:])
-	if !ecdsa.Verify(sessionKey, digest(payloadBytes), r, s) {
-		return nil, time.Time{}, fmt.Errorf("the %s signature is invalid", name)
+	if !ecdsa.Verify(sessionKey, digest(commandBytes), r, s) {
+		return nil, time.Time{}, errors.New("the command signature is invalid")
 	}
-	return payloadBytes, expires, nil
+	return commandBytes, expires, nil
 }
 
-type SignedDocument struct {
-	Grant     SignedGrant `json:"grant"`
-	Document  string      `json:"document"`
-	Signature string      `json:"signature"`
-}
-
-func VerifyDocument(trust Trust, raw []byte, now time.Time) ([]byte, error) {
-	if len(raw) == 0 {
-		return nil, errors.New("the network document is not signed")
-	}
-	var signed SignedDocument
-	if err := strict(raw, &signed); err != nil {
-		return nil, fmt.Errorf("the signature is malformed: %w", err)
-	}
-	document, _, err := verifySession(trust, signed.Grant, signed.Document, signed.Signature, "document", now)
-	return document, err
-}
-
-func VerifyCommand(trust Trust, request reporter.ActionRequest, now time.Time) (Command, error) {
-	if len(request.Signed) == 0 {
-		return Command{}, errors.New("the request is not signed")
+func VerifyCommand(trust Trust, request reporter.Command, now time.Time) (Command, error) {
+	if request.Signed == "" {
+		return Command{}, errors.New("the command is not signed")
 	}
 	var signed SignedCommand
-	if err := strict(request.Signed, &signed); err != nil {
+	if err := strict([]byte(request.Signed), &signed); err != nil {
 		return Command{}, fmt.Errorf("the signature is malformed: %w", err)
 	}
-	commandBytes, expires, err := verifySession(trust, signed.Grant, signed.Command, signed.Signature, "command", now)
+	commandBytes, expires, err := verifySession(trust, signed, now)
 	if err != nil {
 		return Command{}, err
 	}

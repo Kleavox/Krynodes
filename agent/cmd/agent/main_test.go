@@ -1,529 +1,236 @@
 package main
 
 import (
-	"crypto/tls"
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/Kleavox/krynodes/agent/internal/actions"
+	"github.com/Kleavox/krynodes/agent/internal/config"
+	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
-func TestCyclesStartTwoSecondsAfterEachIntervalOnTheClock(t *testing.T) {
-	boundary := time.Unix(1_800_000_000, 0)
-	for _, test := range []struct {
-		now  time.Time
-		want time.Duration
-	}{
-		{boundary.Add(time.Second), time.Second},
-		{boundary.Add(10 * time.Second), 52 * time.Second},
-		{boundary.Add(2 * time.Second), time.Minute},
-		{boundary.Add(2*time.Second + 300*time.Millisecond), time.Minute - 300*time.Millisecond},
-	} {
-		if got := untilNextTick(test.now, time.Minute); got != test.want {
-			t.Errorf("untilNextTick(boundary+%s) = %s, want %s", test.now.Sub(boundary), got, test.want)
-		}
+const (
+	testOrigin = "https://kry.example.org"
+	testToken  = "AAECAwQFBgcICQoLDA0ODw.-7.MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-PtWtv5mJmKoB5xyNWMR7Y35X3nExwYY-JikK-JBEoMi-YcVwu1KZAed2Kgp8bz5chBIoRR-wGCQlnICVTcp3w"
+	testNode   = "11111111-1111-4111-8111-111111111111"
+)
+
+func TestVersionPrintsTheBuildVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"version"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("version exited %d", code)
 	}
-	if got := untilNextTick(boundary.Add(4*time.Minute), 5*time.Minute); got != 62*time.Second {
-		t.Errorf("five-minute interval waits %s, want 62s", got)
+	if got := stdout.String(); got != version+"\n" {
+		t.Fatalf("version printed %q", got)
 	}
 }
 
-func TestServiceUnitRunsAsKrynodes(t *testing.T) {
-	unit := serviceUnit("/usr/local/bin/kry", defaultConfigPath)
-	for _, want := range []string{
-		"Description=Krynodes Agent",
-		"User=kry\n",
-		"Group=kry\n",
-		"ExecStart=/usr/local/bin/kry run --config /etc/kry/config.json",
-	} {
-		if !strings.Contains(unit, want) {
-			t.Fatalf("unit is missing %q:\n%s", want, unit)
+func TestAnythingElseIsRefusedWithExitTwo(t *testing.T) {
+	for _, args := range [][]string{nil, {"bogus"}, {"version", "extra"}, {"--version"}, {"install-service", "--config", "x"}, {"self-update", "now"}} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 2 {
+			t.Errorf("run(%q) exited %d, want 2", args, code)
 		}
-	}
-	if strings.Contains(strings.ToLower(unit), "kleavox") {
-		t.Fatalf("unit still uses an old name:\n%s", unit)
-	}
-	if unitPath != "/etc/systemd/system/krynodes.service" {
-		t.Fatalf("unit path is %s", unitPath)
-	}
-}
-
-func TestAgentUnitCanWriteItsUpdateRequest(t *testing.T) {
-	unit := serviceUnit("/usr/local/bin/kry", defaultConfigPath)
-	if !strings.Contains(unit, "StateDirectory=kry\n") {
-		t.Fatalf("agent unit has no state directory:\n%s", unit)
-	}
-}
-
-func TestUpdaterUnitsRunSelfUpdateWhenAskedTo(t *testing.T) {
-	updater := updaterUnit("/usr/local/bin/kry")
-	for _, want := range []string{
-		"Type=oneshot",
-		"ExecStart=/usr/local/bin/kry self-update",
-	} {
-		if !strings.Contains(updater, want) {
-			t.Fatalf("updater unit is missing %q:\n%s", want, updater)
-		}
-	}
-	if strings.Contains(updater, "User=") {
-		t.Fatalf("updater must run as root:\n%s", updater)
-	}
-	path := pathUnit()
-	for _, want := range []string{
-		"PathChanged=/var/lib/kry/update-request",
-		"Unit=krynodes-update.service",
-		"WantedBy=multi-user.target",
-	} {
-		if !strings.Contains(path, want) {
-			t.Fatalf("path unit is missing %q:\n%s", want, path)
+		if stdout.Len() != 0 || stderr.Len() == 0 {
+			t.Errorf("run(%q) wrote stdout %q, stderr %q", args, stdout.String(), stderr.String())
 		}
 	}
 }
 
-func TestAnEnrolledServerIsNotEnrolledAgain(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	before := []byte(`{"endpoint":"https://kry.example","node_id":"node-old","token":"tok","interval_seconds":60}`)
-	if err := os.WriteFile(path, before, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := run([]string{"enroll", "--endpoint", "https://127.0.0.1:1", "--token", "fresh", "--config", path})
-	if err == nil || !strings.Contains(err.Error(), "already enrolled as node-old") || !strings.Contains(err.Error(), "kry uninstall-service") {
-		t.Fatalf("err %v", err)
-	}
-	if after, _ := os.ReadFile(path); string(after) != string(before) {
-		t.Fatalf("the config must stay: %s", after)
-	}
+type enrollServer struct {
+	calls atomic.Int32
+	body  map[string]string
+	auth  string
+	agent string
 }
 
-func TestAUnitIsWrittenWholeAndOnlyWhenItChanges(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "krynodes.service")
-	if err := writeUnit(path, "first\n"); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := before.ModTime().Add(-time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeUnit(path, "first\n"); err != nil {
-		t.Fatal(err)
-	}
-	if same, _ := os.Stat(path); !same.ModTime().Equal(old) {
-		t.Fatal("an unchanged unit is left as it is")
-	}
-	if err := writeUnit(path, "second\n"); err != nil {
-		t.Fatal(err)
-	}
-	if body, _ := os.ReadFile(path); string(body) != "second\n" {
-		t.Fatalf("unit %q", body)
-	}
-	if leftovers, _ := filepath.Glob(path + "*.tmp"); len(leftovers) != 0 {
-		t.Fatalf("left %v", leftovers)
-	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o644 && runtime.GOOS != "windows" {
-		t.Fatalf("mode %v", info.Mode())
-	}
-}
-
-func TestTheExecutorUnitRunsAsRootInASandbox(t *testing.T) {
-	unit := execUnit("/usr/local/bin/kry")
-	for _, want := range []string{
-		"StartLimitIntervalSec=0\n",
-		"Type=oneshot\n",
-		"Group=kry\n",
-		"ExecStart=/usr/local/bin/kry exec\n",
-		"ProtectSystem=strict\n",
-		"ReadWritePaths=/var/lib/kry-exec\n",
-		"Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n",
-		"TimeoutStartSec=60min\n",
-	} {
-		if !strings.Contains(unit, want) {
-			t.Errorf("executor unit is missing %q", want)
+func (s *enrollServer) start(t *testing.T, status int, answer string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.calls.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/api/agent/enroll" {
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
-	}
-	if strings.Contains(unit, "User=") {
-		t.Error("the executor must run as root")
-	}
-	if strings.Contains(unit, "NoNewPrivileges") {
-		t.Error("NoNewPrivileges makes SELinux refuse the domain change of every docker and ping the executor runs")
-	}
-}
-
-func TestTheExecutorCanReadStacksUnderHomeDirectories(t *testing.T) {
-	unit := execUnit("/usr/local/bin/kry")
-	if !strings.Contains(unit, "ProtectHome=read-only\n") || strings.Contains(unit, "ProtectHome=true") {
-		t.Fatalf("compose files under /root or /home must stay readable:\n%s", unit)
-	}
-}
-
-func TestTrustArgumentsMayStartWithADash(t *testing.T) {
-	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.example.org", "--", "-abc.-7.KEY", "def.-257.KEY"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !options.initial || options.origin != "https://kry.example.org" || len(options.keys) != 2 || options.keys[0] != "-abc.-7.KEY" {
-		t.Fatalf("options %+v", options)
-	}
-}
-
-func TestTrustArgumentsCarryTheGrant(t *testing.T) {
-	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.example.org", "--grant", "--", "-abc.-7.KEY"})
-	if err != nil || !options.grant || len(options.keys) != 1 {
-		t.Fatalf("options %+v err %v", options, err)
-	}
-	if _, err := parseTrust([]string{"--initial", "--passphrase", "SALT.600000.KEY"}); err == nil {
-		t.Fatal("the passphrase flag is gone")
-	}
-}
-
-func TestTrustArgumentsCarryTheDeviceThatEnrolled(t *testing.T) {
-	options, err := parseTrust([]string{"--initial", "--origin", "https://kry.example.org", "--access", "-abc", "--", "-abc.-7.KEY", "def.-7.KEY"})
-	if err != nil || options.access != "-abc" || options.grant || len(options.keys) != 2 {
-		t.Fatalf("options %+v err %v", options, err)
-	}
-}
-
-func TestTheExecutorIsStartedByRequestsAndATimer(t *testing.T) {
-	path := execPathUnit()
-	for _, want := range []string{"PathChanged=/var/lib/kry/actions\n", "Unit=krynodes-exec.service\n", "WantedBy=multi-user.target\n"} {
-		if !strings.Contains(path, want) {
-			t.Errorf("path unit is missing %q", want)
+		s.auth, s.agent = r.Header.Get("Authorization"), r.Header.Get("User-Agent")
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&s.body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
-	}
-	timer := execTimerUnit()
-	for _, want := range []string{"OnBootSec=1min\n", "OnUnitActiveSec=5min\n", "Unit=krynodes-exec.service\n", "WantedBy=timers.target\n"} {
-		if !strings.Contains(timer, want) {
-			t.Errorf("timer unit is missing %q", want)
-		}
-	}
+		w.WriteHeader(status)
+		io.WriteString(w, answer)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
-func TestUninstallStopsTheExecutorBeforeRemovingItsState(t *testing.T) {
-	commands := uninstallCommands()
-	if len(commands) != 3 || strings.Join(commands[1], " ") != "systemctl stop krynodes-exec.service krynodes-host.service" {
-		t.Fatalf("unexpected commands %#v", commands)
-	}
-	if slices.Contains(commands[0], "krynodes.service") || strings.Join(commands[2], " ") != "systemctl disable --now krynodes.service" {
-		t.Fatalf("the agent itself stops last, after it reported: %#v", commands)
-	}
-	all := strings.Join(append(append(slices.Clone(commands[0]), commands[1]...), commands[2]...), " ")
-	for _, unit := range enabledUnits() {
-		if !strings.Contains(all, unit) {
-			t.Fatalf("%s stays enabled: %#v", unit, commands)
-		}
-	}
-}
-
-func TestTheContainmentUnitRunsBeforeDocker(t *testing.T) {
-	unit := guardUnit("/usr/local/bin/kry")
-	for _, want := range []string{"Before=docker.service\n", "Type=oneshot\n", "ExecStart=/usr/local/bin/kry guard\n", "WantedBy=multi-user.target\n"} {
-		if !strings.Contains(unit, want) {
-			t.Errorf("guard unit is missing %q", want)
-		}
-	}
-	if !slices.Contains(enabledUnits(), "krynodes-guard.service") || !slices.Contains(leftovers("/usr/local/bin/kry"), guardPath) {
-		t.Fatalf("enabled %v leftovers %v", enabledUnits(), leftovers("/usr/local/bin/kry"))
-	}
-}
-
-func TestTheContainerWatcherRunsAsRootInTheExecutorSandbox(t *testing.T) {
-	unit := containersUnit("/usr/local/bin/kry")
-	for _, want := range []string{
-		"Type=simple\n",
-		"Group=kry\n",
-		"ExecStart=/usr/local/bin/kry watch-containers\n",
-		"Restart=always\n",
-		"ProtectHome=read-only\n",
-		"ProtectSystem=strict\n",
-		"ReadWritePaths=/var/lib/kry-exec\n",
-		"Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n",
-		"WantedBy=multi-user.target\n",
-	} {
-		if !strings.Contains(unit, want) {
-			t.Errorf("watcher unit is missing %q", want)
-		}
-	}
-	if strings.Contains(unit, "User=") {
-		t.Error("the watcher needs Docker, so it runs as root")
-	}
-	if strings.Contains(unit, "NoNewPrivileges") {
-		t.Error("NoNewPrivileges makes SELinux refuse the domain change of every docker and ping the watcher runs")
-	}
-	if !slices.Contains(enabledUnits(), "krynodes-containers.service") || !slices.Contains(leftovers("/usr/local/bin/kry"), containersPath) {
-		t.Fatalf("enabled %v leftovers %v", enabledUnits(), leftovers("/usr/local/bin/kry"))
-	}
-	if !slices.Contains(restartedUnits(), "krynodes-containers.service") {
-		t.Fatal("an update must restart the watcher onto the new binary")
-	}
-}
-
-func TestUninstallWaitsForEveryResultToBeReported(t *testing.T) {
-	requests, state := t.TempDir(), t.TempDir()
-	const id = "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01"
-	if unreported(requests, state) {
-		t.Fatal("nothing waits")
-	}
-	if err := os.WriteFile(filepath.Join(requests, id+".json"), []byte("{}"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	if unreported(requests, state) {
-		t.Fatal("a request without a result never gets one once the executor stopped")
-	}
-	if err := os.MkdirAll(filepath.Join(state, "results"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(state, "results", id+".json"), []byte("{}"), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	if !unreported(requests, state) {
-		t.Fatal("a result the dashboard has not heard of waits")
-	}
-}
-
-func TestUninstallWaitsForHostWorkBeforeStoppingIt(t *testing.T) {
-	answers := []string{"inactive\nactivating\n", "active\ninactive\n", "inactive\ninactive\n"}
-	waited := time.Duration(0)
-	sleep := func(d time.Duration) { waited += d }
-	next := func() string {
-		answer := answers[0]
-		answers = answers[1:]
-		return answer
-	}
-	if !waitFor(func() bool { return unitsBusy(next()) }, sleep, time.Minute, "waiting") || waited != 4*time.Second || len(answers) != 0 {
-		t.Fatalf("waited %s, answers left %q", waited, answers)
-	}
-	waited = 0
-	if waitFor(func() bool { return unitsBusy("activating\n") }, sleep, 10*time.Second, "waiting") || waited != 10*time.Second {
-		t.Fatalf("gives up after the limit: waited %s", waited)
-	}
-	if !strings.Contains(strings.Join(uninstallCommands()[0], " "), "krynodes-host.path") {
-		t.Fatal("new host work is stopped before the wait")
-	}
-	if !slices.Equal(busyUnits, []string{"krynodes-exec.service", "krynodes-host.service", "krynodes-update.service"}) {
-		t.Fatalf("waits for %v", busyUnits)
-	}
-}
-
-func TestUninstallLeavesNothingOfKrynodesBehind(t *testing.T) {
-	paths := leftovers("/usr/local/bin/kry")
-	for _, want := range []string{unitPath, updaterPath, watcherPath, execPath, execWatcherPath, execTimerPath, hostPath, hostWatcherPath, "/var/lib/kry", "/etc/kry", "/usr/local/bin/kry"} {
-		if !slices.Contains(paths, want) {
-			t.Errorf("uninstall leaves %s behind", want)
-		}
-	}
-	if err := run([]string{"uninstall-service", "--everything"}); err == nil || !strings.Contains(err.Error(), "--delete-apps") {
-		t.Fatalf("an unknown flag must name the one there is: %v", err)
-	}
-	if err := run([]string{"uninstall-service", "--delete-apps"}); err == nil || !strings.Contains(err.Error(), "root") {
-		t.Fatalf("--delete-apps is accepted and still needs root: %v", err)
-	}
-}
-
-func TestSetupChecksItsFlagsBeforeAnythingElse(t *testing.T) {
-	for args, want := range map[string]string{
-		"--everything":                    "flag provided but not defined",
-		"":                                "choose --recommended, --confine, --docker, --network or more",
-		"--confine":                       "root",
-		"--confine --check":               "root",
-		"--check":                         "--check goes with --confine alone",
-		"--recommended --confine --check": "--check goes with --confine alone",
-		"--confine --check --upgrade":     "--check goes with --confine alone",
-		"--upgrade":                       "root",
-		"--restart":                       "root",
-		"--finish":                        "root",
-		"--finish --upgrade":              "--finish goes alone",
-		"--begin":                         "--begin goes with the setup flags",
-		"--begin --finish":                "--finish goes alone",
-		"--begin --confine --check":       "--check goes with --confine alone",
-		"--begin --recommended --restart": "root",
-		"--network 10.0.0.0/24":           "--network takes a /24 of 10.88.0.0/16",
-		"--network 10.88.3.0/24":          "root",
-		"--recommended --reboot-hour 24":  "--reboot-hour is 0 to 23",
-		"--docker extra":                  `unexpected argument "extra"`,
-		"--recommended --docker":          "root",
-		"--admin root --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "--admin takes your user name, not root",
-		"--admin user1":                  "--admin needs one to four --admin-key",
-		"--admin user1 --admin-key AAAA": "is not a key written as",
-		"--admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop":               "--admin-key needs --admin",
-		"--admin user1 --admin-key AAAAC3NzaC1lZDI1NTE5AAAAIDVFg4Wx2NViu9ZffqPwSTCUsSzH60Im/4s1noczsx+q:laptop": "root",
-	} {
-		err := run(append([]string{"setup"}, strings.Fields(args)...))
-		if err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%q: %v", args, err)
-		}
-	}
-}
-
-func TestSetupRefusesTheOldAnywayFlag(t *testing.T) {
-	if err := setupCommand([]string{"--recommended", "--anyway"}); err == nil || !strings.Contains(err.Error(), "anyway") {
-		t.Fatalf("err %v", err)
-	}
-}
-
-func TestUpdatesNeedTLS13(t *testing.T) {
-	transport := updateClient().Transport.(*http.Transport)
-	if transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
-		t.Fatal("release downloads must need TLS 1.3")
-	}
-}
-
-func TestResultsInheritTheAgentGroupWhoeverWritesThem(t *testing.T) {
-	modes := stateDirectoryModes()
-	for _, name := range []string{"results", "progress"} {
-		if mode := modes[filepath.Join(actions.StateDir, name)]; mode&os.ModeSetgid == 0 || mode.Perm() != 0o750 {
-			t.Fatalf("%s is %v; the root host unit writes there and the agent must read it", name, mode)
-		}
-	}
-	if state := modes[actions.StateDir]; state&os.ModeSetgid != 0 || state.Perm() != 0o750 {
-		t.Fatalf("state directory is %v", state)
-	}
-}
-
-func TestTheHostUnitRunsOnlyTheFixedRecipesWhenAsked(t *testing.T) {
-	unit := hostUnit("/usr/local/bin/kry")
-	for _, want := range []string{"Type=oneshot\n", "ExecStart=/usr/local/bin/kry host-apply\n", "TimeoutStartSec=120min\n", "Environment=DOCKER_CONFIG=/var/lib/kry-exec/docker\n", "PrivateTmp=true\n"} {
-		if !strings.Contains(unit, want) {
-			t.Errorf("host unit is missing %q", want)
-		}
-	}
-	if strings.Contains(unit, "User=") || strings.Contains(unit, "ProtectSystem") {
-		t.Errorf("recipes change system files as root:\n%s", unit)
-	}
-	path := hostPathUnit()
-	for _, want := range []string{"DirectoryNotEmpty=/var/lib/kry-exec/host\n", "Unit=krynodes-host.service\n", "WantedBy=multi-user.target\n"} {
-		if !strings.Contains(path, want) {
-			t.Errorf("host path unit is missing %q", want)
-		}
-	}
-	if !slices.Contains(enabledUnits(), "krynodes-host.path") || !slices.Contains(uninstallCommands()[0], "krynodes-host.path") {
-		t.Fatalf("enabled %v uninstall %v", enabledUnits(), uninstallCommands())
-	}
-}
-
-func TestAdminUserIsACommandForOneName(t *testing.T) {
-	if err := run([]string{"admin-user"}); err == nil || err.Error() != "usage: kry admin-user <name>" {
-		t.Fatalf("err %v", err)
-	}
-	if err := run([]string{"admin-user", "user1"}); err == nil || !strings.Contains(err.Error(), "root") {
-		t.Fatalf("admin-user must need root on Linux: %v", err)
-	}
-}
-
-func TestHostApplyIsACommand(t *testing.T) {
-	if err := run([]string{"host-apply"}); err == nil || strings.Contains(err.Error(), "unknown command") {
-		t.Fatalf("host-apply must exist and need root on Linux: %v", err)
-	}
-}
-
-func TestTheExecutorIsStartedAgainForARequestThatCameWhileItRan(t *testing.T) {
-	wake := "/var/lib/kry-exec/wake"
-	path := execPathUnit()
-	for _, want := range []string{"PathChanged=/var/lib/kry/actions\n", "DirectoryNotEmpty=" + wake + "\n"} {
-		if !strings.Contains(path, want) {
-			t.Errorf("path unit is missing %q", want)
-		}
-	}
-	if agent := serviceUnit("/usr/local/bin/kry", defaultConfigPath); !strings.Contains(agent, "ReadWritePaths=-"+wake+"\n") {
-		t.Errorf("the agent cannot leave a wake marker:\n%s", agent)
-	}
-	if mode := stateDirectoryModes()[filepath.Join(actions.StateDir, actions.WakeDir)]; mode&os.ModeSticky == 0 || mode.Perm() != 0o770 {
-		t.Errorf("wake folder is %v; the agent writes there and only root may remove what it did not write", mode)
-	}
-	if !slices.Contains(restartedUnits(), "krynodes-exec.path") {
-		t.Error("an updated server must watch the wake folder without a reboot")
-	}
-}
-
-func TestAFailingCommandPrintsOnlyItsError(t *testing.T) {
-	if os.Getenv("KRY_MAIN") == "1" {
-		os.Args = []string{"kry", "setup", "--check"}
-		main()
-		return
-	}
-	command := exec.Command(os.Args[0], "-test.run=^TestAFailingCommandPrintsOnlyItsError$")
-	command.Env = append(os.Environ(), "KRY_MAIN=1")
-	output, err := command.CombinedOutput()
-	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
-		t.Fatalf("exit %v, output %q", err, output)
-	}
-	if string(output) != "--check goes with --confine alone\n" {
-		t.Fatalf("output %q", output)
-	}
-}
-
-func TestInstallServiceSharesTheRelayFiles(t *testing.T) {
-	want := []string{
-		filepath.Join(actions.StateDir, "events.json"),
-		filepath.Join(actions.StateDir, "network.json"),
-		filepath.Join(actions.StateDir, "setup.json"),
-	}
-	if got := agentReadFiles(); !slices.Equal(got, want) {
-		t.Fatalf("got %v", got)
-	}
-}
-
-func TestSudoFindsKryThroughItsOwnLink(t *testing.T) {
-	link := filepath.Join(t.TempDir(), "kry")
-	if err := linkForSudo(link, "/usr/local/bin/kry"); err != nil {
-		t.Skipf("symlinks need privileges here: %v", err)
-	}
-	if target, _ := os.Readlink(link); target != "/usr/local/bin/kry" {
-		t.Fatalf("link points at %q", target)
-	}
-	if err := linkForSudo(link, "/usr/local/bin/kry"); err != nil {
-		t.Fatalf("a second install: %v", err)
-	}
-	unlinkForSudo(link, "/usr/local/bin/kry")
-	if _, err := os.Lstat(link); !os.IsNotExist(err) {
-		t.Fatalf("uninstall left the link: %v", err)
-	}
-}
-
-func TestTheSudoLinkLeavesWhatKrynodesDidNotPutThere(t *testing.T) {
+func enrollIn(t *testing.T, endpoint string, tokens ...string) (string, string, error) {
+	t.Helper()
 	dir := t.TempDir()
-	file := filepath.Join(dir, "kry")
-	if err := os.WriteFile(file, []byte("another kry"), 0o755); err != nil {
+	configPath := filepath.Join(dir, "etc", "config.json")
+	state := filepath.Join(dir, "state")
+	_, err := enrollWith(http.DefaultClient, enrollOptions{endpoint: endpoint, token: "code-1", origin: testOrigin, trust: tokens}, facts{"server-1", "Debian GNU/Linux 12", "amd64", "6.1.0-28-amd64"}, configPath, state)
+	return configPath, state, err
+}
+
+func TestEnrollSendsTheFactsAndKeepsTheTrust(t *testing.T) {
+	server := &enrollServer{}
+	endpoint := server.start(t, http.StatusOK, `{"nodeId":"`+testNode+`","token":"agent-token"}`)
+	configPath, state, err := enrollIn(t, endpoint, testToken)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := linkForSudo(file, "/usr/local/bin/kry"); err != nil {
-		t.Fatal(err)
+	want := map[string]string{"hostname": "server-1", "os": "Debian GNU/Linux 12", "arch": "amd64", "kernel": "6.1.0-28-amd64", "version": version}
+	if len(server.body) != len(want) {
+		t.Fatalf("body %v", server.body)
 	}
-	unlinkForSudo(file, "/usr/local/bin/kry")
-	if body, _ := os.ReadFile(file); string(body) != "another kry" {
-		t.Fatalf("touched someone else's file: %q", body)
+	for key, value := range want {
+		if server.body[key] != value {
+			t.Fatalf("body %v", server.body)
+		}
 	}
-	other := filepath.Join(dir, "other")
-	if err := os.Symlink("/opt/kry", other); err != nil {
-		t.Skipf("symlinks need privileges here: %v", err)
+	if server.auth != "Bearer code-1" || server.agent != "kry-agent/"+version {
+		t.Fatalf("auth %q agent %q", server.auth, server.agent)
 	}
-	if err := linkForSudo(other, "/usr/local/bin/kry"); err != nil {
-		t.Fatal(err)
+	cfg, err := config.Load(configPath)
+	if err != nil || cfg.NodeID != testNode || cfg.Token != "agent-token" || cfg.Endpoint != endpoint {
+		t.Fatalf("config %+v %v", cfg, err)
 	}
-	unlinkForSudo(other, "/usr/local/bin/kry")
-	if target, _ := os.Readlink(other); target != "/opt/kry" {
-		t.Fatalf("changed someone else's link to %q", target)
+	stored, err := trust.Load(state)
+	if err != nil || stored.NodeID != testNode || stored.Origin != testOrigin || stored.Version != 1 || len(stored.Core) != 1 || len(stored.Access) != 1 {
+		t.Fatalf("trust %+v %v", stored, err)
+	}
+	if _, err := os.Stat(filepath.Join(state, "seal.key")); err != nil {
+		t.Fatalf("no seal key: %v", err)
 	}
 }
 
-func TestSystemToolsComeBeforeLocalCopies(t *testing.T) {
-	for _, test := range []struct{ path, want string }{
-		{"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin", "/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin"},
-		{"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin", "/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/usr/local/sbin:/usr/local/bin"},
-		{"/usr/sbin:/usr/bin:/sbin:/bin", "/usr/sbin:/usr/bin:/sbin:/bin"},
-		{"", ""},
-	} {
-		if got := systemFirst(test.path); got != test.want {
-			t.Errorf("systemFirst(%q) = %q, want %q", test.path, got, test.want)
+func TestEnrollChecksTheTrustBeforeItSpendsTheCode(t *testing.T) {
+	server := &enrollServer{}
+	endpoint := server.start(t, http.StatusOK, `{"nodeId":"`+testNode+`","token":"agent-token"}`)
+	for _, tokens := range [][]string{nil, {"not-a-token"}, {testToken, testToken}} {
+		if _, _, err := enrollIn(t, endpoint, tokens...); err == nil {
+			t.Fatalf("%q was accepted", tokens)
 		}
+	}
+	if _, _, err := enrollIn(t, "http://kry.example.org", testToken); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("a plain HTTP endpoint: %v", err)
+	}
+	if server.calls.Load() != 0 {
+		t.Fatalf("the code was sent %d times", server.calls.Load())
+	}
+}
+
+func TestEnrollLeavesAnEnrolledServerAlone(t *testing.T) {
+	server := &enrollServer{}
+	endpoint := server.start(t, http.StatusOK, `{"nodeId":"`+testNode+`","token":"agent-token"}`)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Config{Endpoint: endpoint, NodeID: "node-0", Token: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := enrollWith(http.DefaultClient, enrollOptions{endpoint: endpoint, token: "code-1", origin: testOrigin, trust: []string{testToken}}, facts{}, configPath, filepath.Join(dir, "state"))
+	if err == nil || !strings.Contains(err.Error(), "already enrolled as node-0") || server.calls.Load() != 0 {
+		t.Fatalf("err %v calls %d", err, server.calls.Load())
+	}
+}
+
+func TestAnEnrollRefusalShowsTheAnswer(t *testing.T) {
+	server := &enrollServer{}
+	endpoint := server.start(t, http.StatusUpgradeRequired, `{"code":"AGENT_TOO_OLD"}`)
+	configPath, _, err := enrollIn(t, endpoint, testToken)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 426") || !strings.Contains(err.Error(), "AGENT_TOO_OLD") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("a refused enrollment wrote %s", configPath)
+	}
+	server = &enrollServer{}
+	endpoint = server.start(t, http.StatusOK, `{"nodeId":"","token":"agent-token"}`)
+	if _, _, err := enrollIn(t, endpoint, testToken); err == nil {
+		t.Fatal("an answer without a node id was taken")
+	}
+}
+
+func TestMissingFactsAreSentAsUnknown(t *testing.T) {
+	got := facts{Arch: "arm64"}.known()
+	if got != (facts{"unknown", "unknown", "arm64", "unknown"}) {
+		t.Fatalf("facts %+v", got)
+	}
+}
+
+func TestHelloCarriesTheTrustOnlyOnceThereIsOne(t *testing.T) {
+	message := hello(facts{"server-1", "Debian GNU/Linux 12", "amd64", "6.1.0"}, "seal", trust.Trust{})
+	if message.Type != "hello" || message.V != 1 || message.Version != version || message.SealKey != "seal" || message.Trust != nil {
+		t.Fatalf("hello %+v", message)
+	}
+	first, err := trust.FirstTrust(testNode, testOrigin, []string{testToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message = hello(facts{}.known(), "seal", first)
+	if message.Trust == nil || message.Trust.Version != 1 || len(message.Trust.Core) != 1 || message.Hostname != "unknown" {
+		t.Fatalf("hello %+v", message)
+	}
+	encoded, _ := json.Marshal(hello(facts{}, "seal", trust.Trust{}))
+	if !strings.Contains(string(encoded), `"trust":null`) {
+		t.Fatalf("hello %s", encoded)
+	}
+}
+
+func TestTheUnitRunsTheDaemonAsRootAndComesBack(t *testing.T) {
+	for _, line := range []string{"User=root\n", "Restart=always\n", "RestartSec=5\n", "ExecStart=/usr/local/bin/kry run\n", "WantedBy=multi-user.target\n"} {
+		if !strings.Contains(unit, line) {
+			t.Fatalf("the unit has no %q:\n%s", line, unit)
+		}
+	}
+}
+
+func TestUninstallRemovesEveryPartKrynodesPutThere(t *testing.T) {
+	want := []string{"/etc/systemd/system/krynodes.service", "/etc/kry", "/var/lib/kry", "/usr/local/bin/kry", "/usr/local/bin/kry.previous", "/usr/local/bin/kry.new"}
+	if strings.Join(removed, " ") != strings.Join(want, " ") {
+		t.Fatalf("removes %v", removed)
+	}
+}
+
+func TestATrustResetSeedsTheTokensAboveTheStoredVersion(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	if err := config.Save(configPath, config.Config{Endpoint: testOrigin, NodeID: testNode, Token: "agent-token"}); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "state")
+	first, err := trust.FirstTrust(testNode, testOrigin, []string{testToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Version = 7
+	if err := trust.Save(state, first); err != nil {
+		t.Fatal(err)
+	}
+	next, err := reseed(configPath, state, testOrigin, []string{testToken})
+	if err != nil || next.Version != 8 || next.NodeID != testNode {
+		t.Fatalf("next %+v %v", next, err)
+	}
+	if stored, _ := trust.Load(state); stored.Version != 8 {
+		t.Fatalf("stored %+v", stored)
+	}
+	if err := os.WriteFile(filepath.Join(state, "trust.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := reseed(configPath, state, testOrigin, []string{testToken}); err != nil || next.Version != 1 {
+		t.Fatalf("an unreadable store: %+v %v", next, err)
+	}
+	if _, err := reseed(configPath, state, testOrigin, []string{"bad"}); err == nil {
+		t.Fatal("a bad token was taken")
 	}
 }

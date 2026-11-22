@@ -3,11 +3,11 @@
   "ignoreBinaries": ["go"],
   "workspaces": {
     "worker": {
-      "entry": ["src/index.ts", "src/stats/index.ts"],
+      "entry": ["src/index.ts"],
       "ignoreDependencies": ["@krynodes/app"]
     },
     "app": {
-      "ignore": ["src/components/ui/**"]
+      "entry": ["src/main.tsx", "src/components/ui/**"]
     }
   },
   "ignoreDependencies": ["wrangler"]

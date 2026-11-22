@@ -76,5 +76,38 @@
         },
       ],
     },
+    "test": {
+      "name": "kry-test",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [{ "pattern": "kry-test.kleavox.xyz", "custom_domain": true }],
+      "vars": {
+        "ENVIRONMENT": "production",
+        "PUBLIC_ORIGIN": "https://kry-test.kleavox.xyz",
+        "FROM_EMAIL": "kry@kleavox.xyz",
+        "AGENT_ORIGIN": "https://kry-test.deau.workers.dev",
+        "RELEASES": "any",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "kry-test",
+          "database_id": "__KRY_TEST_D1_ID__",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "send_email": [{ "name": "EMAIL" }],
+      "durable_objects": {
+        "bindings": [{ "name": "FLEET", "class_name": "FleetHub" }],
+      },
+      "migrations": [{ "tag": "fleet-v1", "new_sqlite_classes": ["FleetHub"] }],
+      "ratelimits": [
+        {
+          "name": "AGENT_RATE_LIMIT",
+          "namespace_id": "4103",
+          "simple": { "limit": 60, "period": 60 },
+        },
+      ],
+    },
   },
 }

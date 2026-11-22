@@ -12,11 +12,3 @@ export function toB64url(bytes: Uint8Array): string {
     .replaceAll("/", "_")
     .replace(/=+$/u, "");
 }
-
-export function decodeJson(text: string): unknown {
-  try {
-    return JSON.parse(new TextDecoder().decode(fromB64url(text))) as unknown;
-  } catch {
-    return null;
-  }
-}

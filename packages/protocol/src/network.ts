@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import { OFFER_ENTRY, PEER_ENTRY } from "./bridges";
-
 export const NETWORK = {
   interface: "kry0",
   port: 51820,
@@ -350,8 +348,6 @@ export const stackNetworkSchema = z.strictObject({
   serves: z.array(serveSchema).max(16),
   reaches: z.array(placeSchema).max(NETWORK.places),
   private: z.array(portName).max(64),
-  offers: z.array(z.string().regex(OFFER_ENTRY)).max(64).optional(),
-  peers: z.array(z.string().regex(PEER_ENTRY)).max(64).optional(),
 });
 
 export type NetworkDocument = z.infer<typeof networkDocumentSchema>;

@@ -1,1 +1,0 @@
-ALTER TABLE devices ADD COLUMN synced INTEGER;

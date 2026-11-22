@@ -1,15 +1,4 @@
-import {
-  Activity,
-  Boxes,
-  History,
-  Network,
-  Server,
-  Shield,
-  type LucideIcon,
-} from "lucide-react";
-
-import { isPending } from "@/lib/services";
-import type { Overview, ServicesResponse } from "@/types";
+import { History, KeyRound, Server, type LucideIcon } from "lucide-react";
 
 interface Section {
   to: string;
@@ -20,30 +9,6 @@ interface Section {
 
 export const SECTIONS: readonly Section[] = [
   { to: "/", label: "Fleet", icon: Server, end: true },
-  { to: "/services", label: "Services", icon: Boxes },
-  { to: "/network", label: "Network", icon: Network },
-  { to: "/checks", label: "Checks", icon: Activity },
-  { to: "/security", label: "Security", icon: Shield },
-];
-
-export const PAGES: readonly Section[] = [
-  ...SECTIONS,
+  { to: "/passkeys", label: "Passkeys", icon: KeyRound },
   { to: "/history", label: "History", icon: History },
 ];
-
-export const alsoActive = (to: string, pathname: string) =>
-  to === "/checks" && pathname.startsWith("/incidents/");
-
-export function navCounts(
-  overview: Overview | undefined,
-  services: ServicesResponse | undefined,
-  networkProblems = 0,
-): Record<string, number> {
-  return {
-    "/checks":
-      overview?.incidents.filter((incident) => incident.status === "OPEN")
-        .length ?? 0,
-    "/services": services?.actions.filter(isPending).length ?? 0,
-    "/network": networkProblems,
-  };
-}

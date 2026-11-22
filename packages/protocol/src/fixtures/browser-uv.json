@@ -1,77 +1,25 @@
 {
-  "origin": "http://localhost:8791",
-  "rpId": "localhost",
+  "origin": "https://kry.example.org",
+  "rpId": "kry.example.org",
   "nodeId": "11111111-1111-4111-8111-111111111111",
-  "now": "2026-10-01T09:31:08.656Z",
-  "first": {
-    "id": "d912f65b-34ef-49a9-9b94-e2ed16d7681b",
+  "now": "2026-11-22T10:00:30.000Z",
+  "tokens": [
+    "AAECAwQFBgcICQoLDA0ODw.-7.MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE-PtWtv5mJmKoB5xyNWMR7Y35X3nExwYY-JikK-JBEoMi-YcVwu1KZAed2Kgp8bz5chBIoRR-wGCQlnICVTcp3w"
+  ],
+  "change": {
+    "type": "command",
+    "id": "6c1f5a52-30de-4c1e-9d1b-0d7c3f6f2a01",
     "kind": "trust",
-    "name": "devices",
-    "action": "trust",
-    "expiresAt": "2026-10-01T09:38:56.581Z",
-    "signed": {
-      "change": "eyJ2IjoyLCJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0Ojg3OTEiLCJycElkIjoibG9jYWxob3N0IiwidmVyc2lvbiI6MSwiaXNzdWVkQXQiOiIyMDI2LTEwLTAxVDA5OjI4OjU2LjU3NFoiLCJleHBpcmVzQXQiOiIyMDI2LTEwLTAyVDA5OjI4OjU2LjU3NFoiLCJjb3JlIjpbeyJpZCI6IjhxX256TUwxZ2Zlc0UyOURlYThtUlAwZzhsS3FTYTRYVW1zLXI1b3Vnd00iLCJuYW1lIjoiTGFwdG9wIiwiYWxnIjotNywicHVibGljS2V5IjoiTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFMkFFZUpaT25HdExZZnVNTnhoRXlSSkx4Y3JFYVpMQWVBNHh0QVJwVmpUckpnQWxLRXAyQjZLNVo5ZXpWZEVhTW1CbVNXSU1EVnJQaDdadm82dHhqNFEifV0sInBhc3NwaHJhc2UiOm51bGwsImFjY2VzcyI6eyIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiOlsiOHFfbnpNTDFnZmVzRTI5RGVhOG1SUDBnOGxLcVNhNFhVbXMtcjVvdWd3TSJdfX0",
-      "approvals": []
-    }
+    "name": "server-1",
+    "action": "apply",
+    "signed": "{\"change\":\"eyJ2IjoxLCJvcmlnaW4iOiJodHRwczovL2tyeS5leGFtcGxlLm9yZyIsInJwSWQiOiJrcnkuZXhhbXBsZS5vcmciLCJ2ZXJzaW9uIjoyLCJpc3N1ZWRBdCI6IjIwMjYtMTEtMjJUMTA6MDA6MDAuMDAwWiIsImV4cGlyZXNBdCI6IjIwMjYtMTEtMjJUMTA6MTA6MDAuMDAwWiIsImNvcmUiOlt7ImlkIjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EdyIsIm5hbWUiOiJMYXB0b3AiLCJhbGciOi03LCJwdWJsaWNLZXkiOiJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUUtUHRXdHY1bUptS29CNXh5TldNUjdZMzVYM25FeHdZWS1KaWtLLUpCRW9NaS1ZY1Z3dTFLWkFlZDJLZ3A4Yno1Y2hCSW9SUi13R0NRbG5JQ1ZUY3AzdyJ9LHsiaWQiOiJFQkVTRXhRVkZoY1lHUm9iSEIwZUh3IiwibmFtZSI6IlBob25lIiwiYWxnIjotNywicHVibGljS2V5IjoiTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFX2k3X1JFWXc1MGl6REUwN19tTG40NlYxaTVyTTFvd1pCcUVkSW04eFpQU2ROejh3UUZXZm90THlISWVlYUhUQUFXWTRFajcxZXBzZ3Y1RUFaVEVJRUEifV0sInJlcXVpcmVVdiI6dHJ1ZSwiYWNjZXNzIjp7IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSI6WyJBQUVDQXdRRkJnY0lDUW9MREEwT0R3IiwiRUJFU0V4UVZGaGNZR1JvYkhCMGVIdyJdfX0\",\"approvals\":[{\"credentialId\":\"AAECAwQFBgcICQoLDA0ODw\",\"authenticatorData\":\"se2QFv6A5SYtE9zmq_9JOgZGEdM7cKaCdAc792GW_TYBAAAAAQ\",\"clientDataJSON\":\"eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiU3VyeVZGUGZpWU1wRTVHWWMycFV1TVpPdG81MU9PaTRQUG9neFpzWG5VcyIsIm9yaWdpbiI6Imh0dHBzOi8va3J5LmV4YW1wbGUub3JnIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ\",\"signature\":\"MEUCIQDUBRoncSyxvOZpg_nE3tRLRePY7tHowZtuy7vqxpx5EAIgPpUOYMt0c_5z9Qdg6IFMuZkUe_AyyTeJ_cbvAe33cxQ\"}]}"
   },
-  "admit": {
-    "id": "ae2e99d7-71f4-449a-8c98-bc33e58762ce",
-    "kind": "trust",
-    "name": "devices",
-    "action": "trust",
-    "expiresAt": "2026-10-01T09:39:25.841Z",
-    "signed": {
-      "change": "eyJ2IjoyLCJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0Ojg3OTEiLCJycElkIjoibG9jYWxob3N0IiwidmVyc2lvbiI6MiwiaXNzdWVkQXQiOiIyMDI2LTEwLTAxVDA5OjI5OjI0Ljc4M1oiLCJleHBpcmVzQXQiOiIyMDI2LTEwLTAyVDA5OjI5OjI0Ljc4M1oiLCJjb3JlIjpbeyJpZCI6IjhxX256TUwxZ2Zlc0UyOURlYThtUlAwZzhsS3FTYTRYVW1zLXI1b3Vnd00iLCJuYW1lIjoiTGFwdG9wIiwiYWxnIjotNywicHVibGljS2V5IjoiTUZrd0V3WUhLb1pJemowQ0FRWUlLb1pJemowREFRY0RRZ0FFMkFFZUpaT25HdExZZnVNTnhoRXlSSkx4Y3JFYVpMQWVBNHh0QVJwVmpUckpnQWxLRXAyQjZLNVo5ZXpWZEVhTW1CbVNXSU1EVnJQaDdadm82dHhqNFEifSx7ImlkIjoiVXR3U0hmRlpYVkZNUmUyc2ItSUViUFZTREVycjNXUW5MTUk4MnFJc0tvWSIsIm5hbWUiOiJQaG9uZSIsImFsZyI6LTcsInB1YmxpY0tleSI6Ik1Ga3dFd1lIS29aSXpqMENBUVlJS29aSXpqMERBUWNEUWdBRUtadkxzdUtHdU1mTVdNNlZ3Y193dk0xUXh2T3pCcFVySzNQcXVxU0dwVmx5TGZsaWVSQ042cE1aZnpVVlBORG1hMEVLY2JTSGlINnlzc0o3SzluS2pBIn1dLCJwYXNzcGhyYXNlIjpudWxsLCJhY2Nlc3MiOnsiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIjpbIjhxX256TUwxZ2Zlc0UyOURlYThtUlAwZzhsS3FTYTRYVW1zLXI1b3Vnd00iLCJVdHdTSGZGWlhWRk1SZTJzYi1JRWJQVlNERXJyM1dRbkxNSTgycUlzS29ZIl0sIjIyMjIyMjIyLTIyMjItNDIyMi04MjIyLTIyMjIyMjIyMjIyMiI6WyI4cV9uek1MMWdmZXNFMjlEZWE4bVJQMGc4bEtxU2E0WFVtcy1yNW91Z3dNIiwiVXR3U0hmRlpYVkZNUmUyc2ItSUViUFZTREVycjNXUW5MTUk4MnFJc0tvWSJdLCIzMzMzMzMzMy0zMzMzLTQzMzMtODMzMy0zMzMzMzMzMzMzMzMiOlsiOHFfbnpNTDFnZmVzRTI5RGVhOG1SUDBnOGxLcVNhNFhVbXMtcjVvdWd3TSIsIlV0d1NIZkZaWFZGTVJlMnNiLUlFYlBWU0RFcnIzV1FuTE1JODJxSXNLb1kiXX19",
-      "approvals": [
-        {
-          "credentialId": "8q_nzML1gfesE29Dea8mRP0g8lKqSa4XUms-r5ougwM",
-          "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MBAAAAAg",
-          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiMmkyS1Y0SmdBUnBPV2lKLXlMckVlaFpWRnFSTWswOTNpSmRucTdLQVVRZyIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODc5MSIsImNyb3NzT3JpZ2luIjpmYWxzZSwib3RoZXJfa2V5c19jYW5fYmVfYWRkZWRfaGVyZSI6ImRvIG5vdCBjb21wYXJlIGNsaWVudERhdGFKU09OIGFnYWluc3QgYSB0ZW1wbGF0ZS4gU2VlIGh0dHBzOi8vZ29vLmdsL3lhYlBleCJ9",
-          "signature": "MEQCID1UWAiLXTpk59COPeh_g2tLYmvrs94NfTUb8T4uix4JAiAmY5FAfx4ub9TmvijyGm0CFboCwydlH3S19x7T9jIuVw"
-        }
-      ]
-    }
-  },
-  "enable": {
-    "id": "61ed5686-4455-49f7-9115-f3ab2d7d59ea",
-    "kind": "trust",
-    "name": "devices",
-    "action": "trust",
-    "expiresAt": "2026-10-01T09:39:55.811Z",
-    "signed": {
-      "change": "eyJ2IjoyLCJvcmlnaW4iOiJodHRwOi8vbG9jYWxob3N0Ojg3OTEiLCJycElkIjoibG9jYWxob3N0IiwidmVyc2lvbiI6MywiaXNzdWVkQXQiOiIyMDI2LTEwLTAxVDA5OjI5OjUwLjMxMloiLCJleHBpcmVzQXQiOiIyMDI2LTEwLTAyVDA5OjI5OjUwLjMxMloiLCJjb3JlIjpbeyJpZCI6IlV0d1NIZkZaWFZGTVJlMnNiLUlFYlBWU0RFcnIzV1FuTE1JODJxSXNLb1kiLCJuYW1lIjoiUGhvbmUiLCJhbGciOi03LCJwdWJsaWNLZXkiOiJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVLWnZMc3VLR3VNZk1XTTZWd2Nfd3ZNMVF4dk96QnBVckszUHF1cVNHcFZseUxmbGllUkNONnBNWmZ6VVZQTkRtYTBFS2NiU0hpSDZ5c3NKN0s5bktqQSJ9XSwicGFzc3BocmFzZSI6bnVsbCwicmVxdWlyZVV2Ijp0cnVlLCJhY2Nlc3MiOnsiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIjpbIlV0d1NIZkZaWFZGTVJlMnNiLUlFYlBWU0RFcnIzV1FuTE1JODJxSXNLb1kiXSwiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIjpbIlV0d1NIZkZaWFZGTVJlMnNiLUlFYlBWU0RFcnIzV1FuTE1JODJxSXNLb1kiXSwiMzMzMzMzMzMtMzMzMy00MzMzLTgzMzMtMzMzMzMzMzMzMzMzIjpbIlV0d1NIZkZaWFZGTVJlMnNiLUlFYlBWU0RFcnIzV1FuTE1JODJxSXNLb1kiXX19",
-      "approvals": [
-        {
-          "credentialId": "8q_nzML1gfesE29Dea8mRP0g8lKqSa4XUms-r5ougwM",
-          "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MBAAAABA",
-          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZjVKMDJfUHRKUzZtYWJleG9lak13VmZSMzVld0xUN2hsMEE2TWdTQy16USIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODc5MSIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
-          "signature": "MEQCIAt9D86nMkdsyC43qUPPEKWHLyfvG-4JLwau2ULQvbI2AiADg-rLINGRWWCaXRw9JNVkAkCcodBwZ2C86UmiwFYsXg"
-        },
-        {
-          "credentialId": "UtwSHfFZXVFMRe2sb-IEbPVSDErr3WQnLMI82qIsKoY",
-          "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAg",
-          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiZjVKMDJfUHRKUzZtYWJleG9lak13VmZSMzVld0xUN2hsMEE2TWdTQy16USIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODc5MSIsImNyb3NzT3JpZ2luIjpmYWxzZX0",
-          "signature": "MEUCIQDj51JdrCv5IGBkfxLGnGOu_rybDyQIX_cq8hE8fgornwIgbTykji10znHTC-taK6jK6SESRLipKRWShvOSNQnqoOM"
-        }
-      ]
-    }
-  },
-  "deploy": {
-    "id": "a6978ea4-57ea-421e-be17-00a8cc921937",
-    "kind": "compose",
-    "name": "listmonk",
-    "action": "deploy",
-    "expiresAt": "2026-10-01T09:40:33.263Z",
-    "signed": {
-      "grant": {
-        "credentialId": "UtwSHfFZXVFMRe2sb-IEbPVSDErr3WQnLMI82qIsKoY",
-        "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAw",
-        "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiMko0UjZVeU1keFRURTdoeXo1Wkh0empKRzMxQm5BNWdIaDV5YW55UkNubyIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODc5MSIsImNyb3NzT3JpZ2luIjpmYWxzZSwib3RoZXJfa2V5c19jYW5fYmVfYWRkZWRfaGVyZSI6ImRvIG5vdCBjb21wYXJlIGNsaWVudERhdGFKU09OIGFnYWluc3QgYSB0ZW1wbGF0ZS4gU2VlIGh0dHBzOi8vZ29vLmdsL3lhYlBleCJ9",
-        "signature": "MEYCIQDt59hWov_dHyPPmuiZWekjeWxYljWbV-df-glPhSQggQIhALm0OOib0aMHMrm8_GwJZ4QqHnG6vns_PVEVsB_2IJ_Q",
-        "grant": "eyJ2IjoxLCJycElkIjoibG9jYWxob3N0Iiwic2Vzc2lvbktleSI6Ik1Ga3dFd1lIS29aSXpqMENBUVlJS29aSXpqMERBUWNEUWdBRUVTY1QtaU5CUmg0WF9tOVd6ZlRBNktwbG1MYUtnT0UyM1l1cTNuN0g4WlZSTGJpd0lpbEhIMHJWcUhsWUh0UmFvSHFSa0NwSDQ3aXVFdkk0RmVweElnIiwiaXNzdWVkQXQiOiIyMDI2LTEwLTAxVDA5OjMwOjMzLjIzNVoiLCJleHBpcmVzQXQiOiIyMDI2LTEwLTAxVDA5OjQ1OjMzLjIzNVoiLCJub25jZSI6InhxbGVGMFI0UWVWeEpOZXBudFZLSHcifQ"
-      },
-      "command": "eyJ2IjoxLCJpZCI6ImE2OTc4ZWE0LTU3ZWEtNDIxZS1iZTE3LTAwYThjYzkyMTkzNyIsIm5vZGVJZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsImtpbmQiOiJjb21wb3NlIiwibmFtZSI6Imxpc3Rtb25rIiwiYWN0aW9uIjoiZGVwbG95IiwiaXNzdWVkQXQiOiIyMDI2LTEwLTAxVDA5OjMwOjMzLjI0OFoiLCJleHBpcmVzQXQiOiIyMDI2LTEwLTAxVDEwOjQ1OjMzLjIzNVoifQ",
-      "signature": "WvffBkHaSOIIKovzD_AK8d1c6AiABTYDzw71E1wi09A7adeLAwxYJO7Riu0tbOApUzUe0hCqOaMsuGyfuVNdaw"
-    }
+  "command": {
+    "type": "command",
+    "id": "6c1f5a52-30de-4c1e-9d1b-0d7c3f6f2a02",
+    "kind": "host",
+    "name": "server-1",
+    "action": "restart",
+    "signed": "{\"grant\":{\"grant\":\"eyJ2IjoxLCJycElkIjoia3J5LmV4YW1wbGUub3JnIiwic2Vzc2lvbktleSI6Ik1Ga3dFd1lIS29aSXpqMENBUVlJS29aSXpqMERBUWNEUWdBRURWWlNFbWNKVXhESkJWZkJlaUFOcHNRTW9KTXRqa0VrYmw0NHdaTERRNjZVQl8wSzh1ZEZVdUtEZk5jVlhMRk5Lb1BXaUtxMm5fcVJoN3lxWldPeWtnIiwiaXNzdWVkQXQiOiIyMDI2LTExLTIyVDEwOjAwOjAwLjAwMFoiLCJleHBpcmVzQXQiOiIyMDI2LTExLTIyVDEwOjA1OjAwLjAwMFoiLCJub25jZSI6IlptbDRkSFZ5WlMxdWIyNWpaUSJ9\",\"credentialId\":\"AAECAwQFBgcICQoLDA0ODw\",\"authenticatorData\":\"se2QFv6A5SYtE9zmq_9JOgZGEdM7cKaCdAc792GW_TYBAAAAAQ\",\"clientDataJSON\":\"eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoieDlrZngzaF9OTHcwak1DdlVYRnFGSlo4QnpScDlad0JVV2F0d3NHTDdNOCIsIm9yaWdpbiI6Imh0dHBzOi8va3J5LmV4YW1wbGUub3JnIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ\",\"signature\":\"MEUCIQCEmY8VJkgr6VnIOHEv5wpi0AhQ8Zjb2AntkCrBIj80mgIgdmUKuQlSG63arCN01gV56cCKIwmq7ZZlx4YrBDnNjpw\"},\"command\":\"eyJ2IjoxLCJpZCI6IjZjMWY1YTUyLTMwZGUtNGMxZS05ZDFiLTBkN2MzZjZmMmEwMiIsIm5vZGVJZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsImtpbmQiOiJob3N0IiwibmFtZSI6InNlcnZlci0xIiwiYWN0aW9uIjoicmVzdGFydCIsImlzc3VlZEF0IjoiMjAyNi0xMS0yMlQxMDowMDoxMC4wMDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0yMlQxMTowNTowMC4wMDBaIn0\",\"signature\":\"LmGVwkXdJrTk7bAI8sUajtH_NHnVnpNEe_Nh-BgyuG5DEmbB6JTdFuFSN7qUHIp7f7a_ipY-axtpmuR4rbNcJQ\"}"
   }
 }

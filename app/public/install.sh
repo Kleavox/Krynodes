@@ -3,124 +3,49 @@ set -eu
 
 main() {
   trap '' HUP
-  mode="enroll"
-  if [ "${1:-}" = "--update" ]; then
-    mode="update"
-  fi
-  endpoint="${1:-}"
-  token="${2:-}"
+  endpoint=""
+  token=""
+  origin=""
   trust=""
-  trust_origin=""
-  setup=""
-  reboot_hour=""
-  network=""
-  admin=""
-  admin_keys=""
-  if [ "$mode" = "enroll" ] && [ $# -ge 2 ]; then
-    shift 2
-    if [ "${1:-}" = "--trust" ]; then
-      trust="yes"
-      trust_origin="${2:-}"
-      shift
-      if [ $# -gt 0 ]; then
-        shift
-      fi
-    fi
-    count=$#
-    index=0
-    while [ "$index" -lt "$count" ]; do
-      arg="$1"
-      shift
-      index=$((index + 1))
-      case "$arg" in
-        --setup | --reboot-hour | --network | --admin | --admin-key)
-          if [ "$index" -ge "$count" ]; then
-            echo "$arg needs a value" >&2
-            exit 1
-          fi
-          case "$arg" in
-            --setup) setup="$1" ;;
-            --reboot-hour) reboot_hour="$1" ;;
-            --admin) admin="$1" ;;
-            --admin-key)
-              case "$1" in
-                "" | *[!A-Za-z0-9+/=:._-]*)
-                  echo "--admin-key takes a key written as key:name" >&2
-                  exit 1
-                  ;;
-              esac
-              admin_keys="$admin_keys --admin-key $1"
-              ;;
-            *) network="$1" ;;
-          esac
-          shift
-          index=$((index + 1))
-          ;;
-        *) set -- "$@" "$arg" ;;
-      esac
-    done
-    if [ -n "$trust" ]; then
-      case "$trust_origin" in
-        "" | --*)
-          echo "--trust needs the dashboard origin and at least one device" >&2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --endpoint | --token | --origin | --trust)
+        if [ $# -lt 2 ]; then
+          echo "$1 needs a value" >&2
           exit 1
-          ;;
-      esac
-      if [ $# -eq 0 ]; then
-        echo "--trust needs the dashboard origin and at least one device" >&2
-        exit 1
-      fi
-    elif [ $# -gt 0 ]; then
-      echo "Unexpected argument: $1" >&2
-      exit 1
-    fi
-  else
-    set --
-  fi
-  setup_flags=""
-  for item in $(echo "$setup" | tr ',' ' '); do
-    case "$item" in
-      recommended) setup_flags="$setup_flags --recommended" ;;
-      confine) setup_flags="$setup_flags --confine" ;;
-      docker) setup_flags="$setup_flags --docker" ;;
-      upgrade) setup_flags="$setup_flags --upgrade" ;;
-      restart) setup_flags="$setup_flags --restart" ;;
+        fi
+        case "$2" in
+          "" | *[!A-Za-z0-9:/._,-]*)
+            echo "$1 has characters it cannot carry" >&2
+            exit 1
+            ;;
+        esac
+        case "$1" in
+          --endpoint) endpoint="$2" ;;
+          --token) token="$2" ;;
+          --origin) origin="$2" ;;
+          *) trust="$2" ;;
+        esac
+        shift 2
+        ;;
       *)
-        echo "--setup takes recommended, confine, docker or more" >&2
+        echo "Unexpected argument: $1" >&2
         exit 1
         ;;
     esac
   done
-  if [ -n "$reboot_hour" ]; then
-    case "$reboot_hour" in
-      [0-9] | 1[0-9] | 2[0-3]) setup_flags="$setup_flags --reboot-hour $reboot_hour" ;;
-      *)
-        echo "--reboot-hour is 0 to 23" >&2
-        exit 1
-        ;;
-    esac
+  if [ -z "$endpoint" ] || [ -z "$token" ] || [ -z "$origin" ] || [ -z "$trust" ]; then
+    echo "Usage: curl -fsSL <kry>/i/<code> | sudo sh" >&2
+    echo "Copy the full command from the Krynodes dashboard." >&2
+    exit 1
   fi
-  if [ -n "$network" ]; then
-    third="${network#10.88.}"
-    third="${third%.0/24}"
-    case "$third" in
-      "" | *[!0-9]* | ????*) third="" ;;
-    esac
-    if [ -z "$third" ] || [ "$network" != "10.88.$third.0/24" ] || [ "$third" -gt 255 ]; then
-      echo "--network takes a /24 of 10.88.0.0/16" >&2
+  case "$origin" in
+    https://* | http://localhost* | http://127.0.0.1*) ;;
+    *)
+      echo "--origin takes the dashboard's address" >&2
       exit 1
-    fi
-    setup_flags="$setup_flags --network $network"
-  fi
-  if [ -n "$admin" ]; then
-    case "$admin" in
-      root | kry | [!a-z_]* | *[!a-z0-9_-]*)
-        echo "--admin takes your user name, not root or kry" >&2
-        exit 1
-        ;;
-    esac
-    setup_flags="$setup_flags --admin $admin$admin_keys"
-  fi
+      ;;
+  esac
   base="${KRY_DOWNLOAD_BASE:-https://github.com/Kleavox/Krynodes/releases/latest/download}"
   bin="${KRY_BIN:-/usr/local/bin/kry}"
   config="${KRY_CONFIG:-/etc/kry/config.json}"
@@ -129,24 +54,13 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
 -----END PUBLIC KEY-----
 "
 
-  if [ "$mode" = "enroll" ] && { [ -z "$endpoint" ] || [ -z "$token" ]; }; then
-    echo "Usage: curl -fsSL <kry>/i/<code> | sudo sh" >&2
-    echo "   or: curl -fsSL <kry>/install.sh | sudo sh -s -- --update" >&2
-    echo "Copy the full command from the Krynodes dashboard." >&2
-    exit 1
-  fi
-
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "Run it as root: pipe the script into 'sudo sh -s --'." >&2
-    exit 1
-  fi
-
-  if [ "$mode" = "update" ] && [ ! -f "$config" ]; then
-    echo "No enrolled agent here ($config is missing). Use the Enroll server command instead." >&2
-    exit 1
-  fi
-  if [ "$mode" = "enroll" ] && [ -f "$config" ]; then
+  if [ -f "$config" ]; then
     echo "This server is already enrolled ($config exists). To enroll it again, remove Krynodes first: sudo $bin uninstall-service" >&2
+    exit 1
+  fi
+
+  if [ "$(id -u)" != 0 ]; then
+    echo "Run it as root: pipe the script into 'sudo sh'." >&2
     exit 1
   fi
 
@@ -186,57 +100,16 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
   if ! checked=$(openssl pkeyutl -verify -pubin -inkey "$tmp/release.pem" -rawin -in "$tmp/$artifact" -sigfile "$tmp/$artifact.sig" 2>&1); then
     echo "The download could not be checked against the Krynodes release key, so nothing was installed." >&2
     echo "This check needs OpenSSL 3.0 or newer; this server has: $(openssl version 2>/dev/null || echo none)." >&2
-    printf '%s
-' "$checked" | tail -n 3 >&2
+    printf '%s\n' "$checked" | tail -n 3 >&2
     exit 1
-  fi
-  if [ -x "$bin" ]; then
-    chmod 0755 "$tmp/$artifact"
-    have="$("$bin" version 2>/dev/null || true)"
-    got="$("$tmp/$artifact" version 2>/dev/null || true)"
-    if [ -n "$have" ] && [ -n "$got" ] && [ "$have" != "$got" ] &&
-      [ "$(printf '%s\n%s\n' "$have" "$got" | sort -V | tail -n 1)" = "$have" ]; then
-      echo "The download is agent $got, older than the $have on this server, so nothing was installed." >&2
-      exit 1
-    fi
   fi
   install -m 0755 "$tmp/$artifact" "$bin"
 
-  case ",$setup," in
-    *,confine,*)
-      if ! "$bin" setup --confine --check; then
-        echo "The server was not added." >&2
-        exit 1
-      fi
-      ;;
-  esac
-  if [ "$mode" = "enroll" ]; then
-    "$bin" enroll --endpoint "$endpoint" --token "$token"
-  fi
-  if [ -n "$setup" ] || [ -n "$network" ] || [ -n "$admin" ]; then
-    "$bin" setup $setup_flags --begin || true
-  fi
+  "$bin" enroll --endpoint "$endpoint" --token "$token" --origin "$origin" --trust "$trust"
   "$bin" install-service
-  if [ -n "$trust_origin" ]; then
-    "$bin" trust --initial --origin "$trust_origin" "$@"
-  fi
-  if [ -n "$setup" ] || [ -n "$network" ] || [ -n "$admin" ]; then
-    if ! "$bin" setup $setup_flags; then
-      echo "Setup did not finish; turn the rest on from the dashboard."
-    fi
-  fi
-  systemctl restart krynodes.service
-  systemctl start --no-block krynodes-exec.service || true
 
-  if [ "$mode" = "update" ]; then
-    echo "Krynodes agent updated to $("$bin" version)."
-  else
-    echo "Krynodes agent $("$bin" version) is running."
-  fi
+  echo "Krynodes agent $("$bin" version) is running."
   echo "Check it with: sudo systemctl status krynodes"
-  case ",$setup," in
-    *,restart,*) "$bin" setup --finish || true ;;
-  esac
 }
 
 main "$@"

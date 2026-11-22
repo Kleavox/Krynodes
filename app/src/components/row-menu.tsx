@@ -13,12 +13,7 @@ export function RowMenu({
   items,
 }: {
   label: string;
-  items: {
-    label: string;
-    onSelect?: () => void;
-    destructive?: boolean;
-    disabled?: boolean;
-  }[];
+  items: { label: string; onSelect?: () => void; destructive?: boolean }[];
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -37,7 +32,7 @@ export function RowMenu({
           <DropdownMenuItem
             key={item.label}
             variant={item.destructive ? "destructive" : "default"}
-            disabled={item.disabled || !item.onSelect}
+            disabled={!item.onSelect}
             onSelect={item.onSelect}
           >
             {item.label}

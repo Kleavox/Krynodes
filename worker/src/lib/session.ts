@@ -1,7 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 
-import type { Env } from "../env";
-import type { KrynodesEnv } from "../routes/shared";
+import type { Env, KrynodesEnv } from "../env";
 import { verifyAccessToken } from "./access";
 
 export interface Identity {

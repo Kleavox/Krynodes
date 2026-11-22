@@ -5,8 +5,9 @@ export class FakeSocket {
   attachment: unknown = null;
   sent: string[] = [];
   closed: { code: number; reason: string } | null = null;
-  lingers = false;
-  pinged: number | null = null;
+  get readyState() {
+    return this.closed ? 3 : 1;
+  }
   serializeAttachment(value: unknown) {
     this.attachment = structuredClone(value);
   }
@@ -27,26 +28,6 @@ export class FakeSocket {
   }
 }
 
-export class FakeStorage {
-  values = new Map<string, unknown>();
-  alarm: number | null = null;
-  async get(key: string) {
-    return structuredClone(this.values.get(key));
-  }
-  async put(key: string, value: unknown) {
-    this.values.set(key, structuredClone(value));
-  }
-  async delete(key: string) {
-    return this.values.delete(key);
-  }
-  async setAlarm(at: number) {
-    this.alarm = at;
-  }
-  async deleteAlarm() {
-    this.alarm = null;
-  }
-}
-
 class AutoResponse {
   request: string;
   response: string;
@@ -56,64 +37,79 @@ class AutoResponse {
   }
 }
 
-export function hubHarness(env: Partial<Env>) {
+export function hubHarness(db: D1Database) {
   if (!("WebSocketRequestResponsePair" in globalThis)) {
     Object.assign(globalThis, { WebSocketRequestResponsePair: AutoResponse });
   }
   const accepted: { ws: FakeSocket; tags: string[] }[] = [];
+  const autoResponses: AutoResponse[] = [];
+  const pings = new Map<FakeSocket, number>();
+  const joins: Promise<void>[] = [];
+  let alarm: number | null = null;
   const ctx = {
-    acceptWebSocket(ws: FakeSocket, tags: string[]) {
+    acceptWebSocket(ws: FakeSocket, tags: string[] = []) {
       accepted.push({ ws, tags });
     },
     getWebSockets(tag?: string) {
       return accepted
-        .filter(
-          (entry) =>
-            (!entry.ws.closed || entry.ws.lingers) &&
-            (!tag || entry.tags.includes(tag)),
-        )
+        .filter((entry) => !tag || entry.tags.includes(tag))
         .map((entry) => entry.ws);
     },
-    getWebSocketAutoResponseTimestamp(ws: FakeSocket) {
-      return ws.pinged === null ? null : new Date(ws.pinged);
+    setWebSocketAutoResponse(pair: AutoResponse) {
+      autoResponses.push(pair);
     },
-    setWebSocketAutoResponse() {},
-    storage: new FakeStorage(),
+    getWebSocketAutoResponseTimestamp(ws: FakeSocket) {
+      const at = pings.get(ws);
+      return at === undefined ? null : new Date(at);
+    },
+    storage: {
+      async getAlarm() {
+        return alarm;
+      },
+      async setAlarm(at: number) {
+        alarm = at;
+      },
+    },
   };
-  const hub = new FleetHub(
-    ctx as unknown as DurableObjectState,
-    { PUBLIC_ORIGIN: "https://kry.example.test", ...env } as unknown as Env,
-  );
-  let requests = 0;
-  const connect = async (
-    nodeId: string,
-    ownerId = "standalone",
-    interval = 60,
-    laptop = false,
-  ) => {
+  const env = { DB: db } as unknown as Env;
+  const fresh = () => new FleetHub(ctx as unknown as DurableObjectState, env);
+  let hub = fresh();
+  const connect = (nodeId: string, version: string | null = "0.7.90") => {
     const ws = new FakeSocket();
-    await hub.accept(
-      ws as unknown as WebSocket,
-      nodeId,
-      ownerId,
-      interval,
-      null,
-      laptop,
-    );
+    joins.push(hub.join(ws as unknown as WebSocket, nodeId, version));
     return ws;
   };
-  const request = async (
-    ws: FakeSocket,
-    type: string,
-    fields: Record<string, unknown> = {},
-  ) => {
-    requests += 1;
-    const id = requests;
-    await hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({ id, type, ...fields }),
-    );
-    return ws.replies().find((reply) => reply.id === id) ?? null;
+  const watch = () => {
+    const ws = new FakeSocket();
+    hub.watch(ws as unknown as WebSocket);
+    return ws;
   };
-  return { hub, accepted, connect, request, storage: ctx.storage };
+  const say = (ws: FakeSocket, message: Record<string, unknown> | string) =>
+    hub.webSocketMessage(
+      ws as unknown as WebSocket,
+      typeof message === "string" ? message : JSON.stringify(message),
+    );
+  return {
+    get hub() {
+      return hub;
+    },
+    forget() {
+      hub = fresh();
+    },
+    alarmAt: () => alarm,
+    async settled() {
+      await Promise.all(joins.splice(0));
+    },
+    async fire() {
+      alarm = null;
+      await hub.alarm();
+    },
+    ping(ws: FakeSocket) {
+      pings.set(ws, Date.now());
+    },
+    autoResponses,
+    connect,
+    watch,
+    say,
+  };
 }

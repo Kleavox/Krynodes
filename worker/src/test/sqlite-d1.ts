@@ -1,9 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { fileURLToPath } from "node:url";
-
-const MIGRATIONS = fileURLToPath(new URL("../../migrations", import.meta.url));
 
 interface TestDb {
   db: D1Database;
@@ -25,12 +20,6 @@ function positional(
 export function createTestDb(): TestDb {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
-  const files = readdirSync(MIGRATIONS)
-    .filter((name) => name.endsWith(".sql"))
-    .sort();
-  for (const file of files) {
-    sqlite.exec(readFileSync(join(MIGRATIONS, file), "utf8"));
-  }
 
   const size = () => {
     const pages = sqlite.prepare("PRAGMA page_count").get() as {

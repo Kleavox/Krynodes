@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  checkDisplayStatus,
   clockTime,
   countdown,
   dayLabel,
@@ -9,12 +8,9 @@ import {
   formatBytes,
   formatDuration,
   formatUptime,
-  graceSeconds,
   metricText,
-  nodeState,
   parseTimestamp,
   percentage,
-  publicLabel,
   shortDate,
   stampTime,
   timeAgo,
@@ -34,64 +30,6 @@ describe("parseTimestamp", () => {
     expect(parseTimestamp("2026-09-27T08:00:00.000Z")).toBe(
       Date.parse("2026-09-27T08:00:00Z"),
     );
-  });
-});
-
-describe("nodeState", () => {
-  const base = {
-    disabled_at: null,
-    enrolled_at: "2026-09-01 00:00:00",
-    last_seen_at: "2026-09-27 11:58:00",
-    interval_seconds: 60,
-  };
-
-  it("checks disabled, then pending, then liveness", () => {
-    expect(
-      nodeState({ ...base, disabled_at: "2026-09-02 00:00:00" }, NOW),
-    ).toBe("disabled");
-    expect(nodeState({ ...base, enrolled_at: null }, NOW)).toBe("pending");
-    expect(nodeState({ ...base, last_seen_at: null }, NOW)).toBe("pending");
-  });
-
-  it("never calls a server offline before its first report, however long it takes", () => {
-    const fresh = { ...base, last_seen_at: null };
-    for (const enrolled of ["2026-09-27 11:59:00", "2026-09-20 10:59:00"]) {
-      expect(nodeState({ ...fresh, enrolled_at: enrolled }, NOW)).toBe(
-        "pending",
-      );
-    }
-  });
-
-  it("is online within max(90s, 3 x interval) and offline after", () => {
-    expect(
-      nodeState({ ...base, last_seen_at: "2026-09-27 11:57:01" }, NOW),
-    ).toBe("online");
-    expect(
-      nodeState({ ...base, last_seen_at: "2026-09-27 11:56:59" }, NOW),
-    ).toBe("offline");
-    expect(graceSeconds(15)).toBe(90);
-    expect(graceSeconds(600)).toBe(1800);
-  });
-
-  it("honours a wider grace the server sends for a live connection", () => {
-    expect(
-      nodeState(
-        { ...base, last_seen_at: "2026-09-27 11:54:00", grace_seconds: 420 },
-        NOW,
-      ),
-    ).toBe("online");
-    expect(
-      nodeState(
-        { ...base, last_seen_at: "2026-09-27 11:52:59", grace_seconds: 420 },
-        NOW,
-      ),
-    ).toBe("offline");
-  });
-
-  it("treats a last_seen_at slightly in the future as online", () => {
-    expect(
-      nodeState({ ...base, last_seen_at: "2026-09-27 12:00:04" }, NOW),
-    ).toBe("online");
   });
 });
 
@@ -176,26 +114,11 @@ describe("dates", () => {
   });
 });
 
-describe("checkDisplayStatus", () => {
-  it("trusts a check result only while its node is online", () => {
-    expect(checkDisplayStatus("UP", "online")).toBe("UP");
-    expect(checkDisplayStatus("DOWN", "online")).toBe("DOWN");
-    expect(checkDisplayStatus("UP", "offline")).toBe("OFFLINE");
-    expect(checkDisplayStatus("UNKNOWN", "offline")).toBe("OFFLINE");
-    expect(checkDisplayStatus("DOWN", "disabled")).toBe("STALE");
-    expect(checkDisplayStatus("UNKNOWN", "pending")).toBe("UNKNOWN");
-  });
-
+describe("titleCase", () => {
   it("title-cases a short label, leaving the small words low", () => {
     expect(titleCase("roll back by you")).toBe("Roll Back by You");
     expect(titleCase("open server →")).toBe("Open Server →");
     expect(titleCase("in the last hour")).toBe("In the Last Hour");
-  });
-
-  it("shows a paused check as paused whatever it last reported", () => {
-    expect(checkDisplayStatus("DOWN", "online", false)).toBe("PAUSED");
-    expect(checkDisplayStatus("UP", "offline", false)).toBe("PAUSED");
-    expect(checkDisplayStatus("UP", "online", true)).toBe("UP");
   });
 });
 
@@ -212,13 +135,5 @@ describe("displayHandle", () => {
   it("falls back to a generic label", () => {
     expect(displayHandle(null, null)).toBe("Account");
     expect(displayHandle(undefined, undefined)).toBe("Account");
-  });
-});
-
-describe("publicLabel", () => {
-  it("marks public checks and says when the page hides a paused one", () => {
-    expect(publicLabel({ public: 0, enabled: 1 })).toBeNull();
-    expect(publicLabel({ public: 1, enabled: 1 })).toBe("Public");
-    expect(publicLabel({ public: 1, enabled: 0 })).toBe("Public · Paused");
   });
 });

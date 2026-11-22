@@ -1,1 +1,0 @@
-ALTER TABLE nodes ADD COLUMN setup TEXT;

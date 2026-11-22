@@ -1,1462 +1,348 @@
-import { receiveReport, type Finding } from "../actions/report";
 import {
-  healStatements,
-  heartbeatActions,
-  plannedNodes,
-  REBOOT_MS,
-  stoppedChecks,
-  workingChecks,
-} from "../actions/store";
-import {
-  acceptResults,
-  commit,
-  heartbeatResponse,
-  heartbeatStatements,
-  insertWindow,
-  updateRetry,
-  loadAgentConfig,
-  resultStatements,
-  type AgentNode,
-} from "../agent/ingest";
-import { restartOf } from "../agent/quiet";
-import { windowStart } from "../agent/windows";
-import type { Env } from "../env";
-import {
-  loadBox,
-  receive,
-  type IncidentNotice,
-  keyOf,
-  type MailBox,
-  type ServerChanges,
-} from "../incident/notify";
-import {
-  sendFleetEmail,
-  sendQuarantineEmail,
-  sendSecurityEmail,
-  sendServerEmail,
-  sendStoppedEmail,
-  sendWarningEmail,
-  type StoppedMail,
-  type WarningMail,
-} from "../lib/mail";
-import { actionsSchema, heartbeatSchema } from "../schemas";
-import {
-  actionResultSchema,
-  agentConfigResponseSchema,
   agentSupported,
-  setupSchema,
-  type Denials,
-  type Setup,
+  hubMessageSchema,
+  MIN_AGENT,
+  parseAgentMessage,
+  type AgentMessage,
+  type TrustReport,
 } from "@krynodes/protocol";
-import {
-  drain,
-  fold,
-  liveView,
-  newState,
-  resumeWindow,
-  type Flush,
-  type StoredWindow,
-  type StreamState,
-} from "./stream";
-import { HubNetwork } from "./network";
-import {
-  cutOffWarning,
-  intake,
-  warningStatement,
-  type Cutoff,
-  type Intake,
-} from "../quarantine/events";
-import {
-  holdStatement,
-  QUARANTINE_ACTOR,
-  quarantine,
-  quarantineReport,
-} from "../quarantine/quarantine";
-import { readSettings } from "../quarantine/settings";
 
-const NODE_SQL = `SELECT id, interval_seconds, agent_version, update_requested_version, update_requested_at,
-         update_attempts, update_error, inventory_hash, refresh_requested_at, security,
-         boot, reports, release, setup,
-         EXISTS (SELECT 1 FROM quarantines q
-                 WHERE q.node_id = nodes.id AND q.released_at IS NULL) AS quarantined,
-         EXISTS (SELECT 1 FROM network_members m
-                 WHERE m.node_id = nodes.id AND m.state = 'leaving') AS leaving
-  FROM nodes
-  WHERE id = ? AND enrolled_at IS NOT NULL AND disabled_at IS NULL`;
+import type { Env } from "../env";
 
-const CUTOFFS = "cutoffs";
-const QUIET_HANDSHAKE_S = 180;
-const CLONED = "Reported from two machines at once";
-
-type Reply = (message: Record<string, unknown>) => void;
-
+const AGENT = "agent";
 const WATCH = "watch";
-const MAIL = "mail";
-const ROSTER = "roster";
-const MAIL_STATE = "mailState";
-const MESSAGES_PER_MINUTE = 60;
-const STOPPED_MS = 10 * 60_000;
-const CHECKS_KEPT_MS = 10 * 60_000;
-const MAILS_AT_ONCE = 5;
-const WATCHDOG_RETRY_MS = 60_000;
-const RECHECK_MS = 60_000;
-const PUSH_HEARD_MS = 60_000;
-const CUTOFFS_AT_ONCE = 10;
-const SETUP_SILENT_MS = 5 * 60_000;
-const SETUP_RESTART_MS = 20 * 60_000;
+const SEEN_EVERY_MS = 10 * 60_000;
+const PING_EVERY_MS = 25_000;
+const SILENT_AFTER_MS = 3 * PING_EVERY_MS;
+const SWEEP_EVERY_MS = 60_000;
+const SILENT_CODE = 4408;
 
-interface RosterEntry {
-  interval: number;
-  lastSeen?: number;
-  offline?: boolean;
-  checkedAt?: number;
-  disk?: boolean;
+interface Attachment {
+  nodeId: string;
+  version: string;
+  since: number;
+  heard: number;
 }
 
-const DISK_FULL = 95;
-const DISK_CLEAR = 90;
-
-type Roster = Record<string, RosterEntry>;
-
-const offlineAfterMs = (interval: number) => Math.max(90, 3 * interval) * 1000;
-
-function finishingSetup(setup: string | null, seen: number, now: number) {
-  if (!setup || now - seen >= REBOOT_MS) return false;
-  try {
-    const { phase, stopped } = JSON.parse(setup) as {
-      phase?: string;
-      stopped?: boolean;
-    };
-    return phase === "restart" && !stopped;
-  } catch {
-    return false;
-  }
+interface Facts {
+  hostname: string | null;
+  os: string | null;
+  arch: string | null;
+  kernel: string | null;
+  version: string | null;
+  seal_key: string | null;
+  last_seen_at: string | null;
 }
 
-function failedSetup(setup: string | null, seen: number, now: number) {
-  let stored: Setup | null = null;
-  try {
-    stored = JSON.parse(setup ?? "null") as Setup | null;
-  } catch {
-    return null;
-  }
-  if (!stored?.phase || stored.failed || stored.stopped) return null;
-  const silent =
-    stored.phase === "restart" ? SETUP_RESTART_MS : SETUP_SILENT_MS;
-  return now - seen >= silent
-    ? JSON.stringify({ ...stored, failed: true })
-    : null;
-}
+type Hello = Extract<AgentMessage, { type: "hello" }>;
+type Result = Extract<AgentMessage, { type: "result" }>;
 
-function restarting(security: string | null, seen: number, now: number) {
-  const restart = restartOf(security);
-  return (
-    now - seen < REBOOT_MS &&
-    restart.hour === new Date(seen).getUTCHours() &&
-    restart.pending
-  );
-}
-
-const watching = (ws: WebSocket) =>
-  (ws.deserializeAttachment() as { watch?: boolean } | null)?.watch === true;
-
-export class FleetHub {
+export class FleetHub implements DurableObject {
   private readonly ctx: DurableObjectState;
   private readonly env: Env;
-  private readonly spent = new Map<string, { since: number; count: number }>();
-  private readonly network: HubNetwork;
-  private readonly stopped = new Map<
-    string,
-    { at: number; checks: Set<string> }
-  >();
-  private readonly version = {
-    epoch: crypto.randomUUID().slice(0, 8),
-    count: 0,
-  };
-  private readonly denials = new Map<string, Denials & { at: number }>();
-  private readonly checks = new Map<
-    string,
-    {
-      at: number;
-      interval: number;
-      agent: Awaited<ReturnType<typeof loadAgentConfig>>;
-    }
-  >();
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
     this.env = env;
-    this.network = new HubNetwork(env.DB, ctx.storage);
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair("ping", "pong"),
     );
   }
 
   async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname === "/version") {
-      return Response.json({
-        version: `${this.version.epoch}-${this.version.count}`,
-      });
-    }
-    if (request.method !== "GET") this.version.count += 1;
-    if (url.pathname === "/connect") {
+    const { pathname } = new URL(request.url);
+    const post = request.method === "POST";
+    if (pathname === "/connect") {
       const nodeId = request.headers.get("x-kry-node");
-      const ownerId = request.headers.get("x-kry-owner");
-      const interval = Number(request.headers.get("x-kry-interval") ?? "60");
-      if (!nodeId || !ownerId) return new Response(null, { status: 400 });
+      if (!nodeId) return new Response(null, { status: 400 });
       const [client, server] = Object.values(new WebSocketPair());
-      await this.accept(
-        server!,
-        nodeId,
-        ownerId,
-        interval,
-        request.headers.get("x-kry-version"),
-        request.headers.get("x-kry-kind") === "laptop",
-      );
+      await this.join(server!, nodeId, request.headers.get("x-kry-version"));
       return new Response(null, { status: 101, webSocket: client });
     }
-    if (url.pathname === "/watch") {
+    if (pathname === "/watch") {
       const [client, server] = Object.values(new WebSocketPair());
-      await this.watch(server!);
+      this.watch(server!);
       return new Response(null, { status: 101, webSocket: client });
     }
-    if (url.pathname === "/announce" && request.method === "POST") {
+    if (pathname === "/online") return Response.json(this.online());
+    if (pathname === "/command" && post) return this.command(request);
+    if (pathname === "/drop" && post) return this.drop(request);
+    if (pathname === "/announce" && post) {
       const body = (await request.json().catch(() => null)) as {
         topics?: unknown;
       } | null;
       const topics = Array.isArray(body?.topics)
-        ? body.topics.filter(
-            (topic): topic is string => typeof topic === "string",
-          )
+        ? body.topics.filter((topic) => typeof topic === "string")
         : [];
       if (topics.length > 0) this.announce(topics);
-      return Response.json({ announced: topics.length > 0 });
-    }
-    if (url.pathname === "/live") {
-      return Response.json({
-        nodes: liveView(
-          this.ctx
-            .getWebSockets()
-            .filter((ws) => !watching(ws))
-            .map((ws) => ws.deserializeAttachment() as StreamState),
-        ),
-        mail: (await this.ctx.storage.get(MAIL_STATE)) ?? null,
-      });
-    }
-    if (url.pathname === "/network") {
-      const served = Object.fromEntries(this.network.latest);
-      for (const ws of this.ctx.getWebSockets()) {
-        const state = ws.deserializeAttachment() as StreamState | null;
-        if (!state?.laptop || state.left) continue;
-        const at = this.heard(ws, state);
-        const known = served[state.nodeId];
-        if (!known || known.at < at) {
-          served[state.nodeId] = { at, links: known?.links ?? [] };
-        }
-      }
-      return Response.json(served);
-    }
-    if (url.pathname === "/denials") {
-      return Response.json(
-        this.denials.get(url.searchParams.get("node") ?? "") ?? null,
-      );
-    }
-    if (url.pathname === "/poke" && request.method === "POST") {
-      const body = (await request.json().catch(() => null)) as {
-        nodeIds?: unknown;
-      } | null;
-      const nodeIds = Array.isArray(body?.nodeIds)
-        ? body.nodeIds.filter((id): id is string => typeof id === "string")
-        : [];
-      const poked = await this.poke(nodeIds);
-      await this.laptopNews();
-      return Response.json({ poked });
+      return new Response(null, { status: 204 });
     }
     return new Response(null, { status: 404 });
   }
 
-  private async poke(nodeIds: string[]): Promise<number> {
-    if (nodeIds.length > 0) this.version.count += 1;
-    let poked = 0;
-    let pushed = false;
-    for (const nodeId of nodeIds) {
-      this.checks.delete(nodeId);
-      const sockets = this.ctx.getWebSockets(nodeId);
-      const live = new Set(
-        sockets.filter((ws) => {
-          const state = ws.deserializeAttachment() as StreamState | null;
-          return (
-            state?.push &&
-            !state.away &&
-            Date.now() - this.heard(ws, state) < PUSH_HEARD_MS
-          );
-        }),
-      );
-      const actions =
-        live.size > 0
-          ? await heartbeatActions(this.env.DB, nodeId, Date.now()).catch(
-              (error: unknown) => {
-                console.error("[kry fleet]", error);
-                return [];
-              },
-            )
-          : [];
-      for (const ws of sockets) {
-        const push = actions.length > 0 && live.has(ws);
-        try {
-          ws.send(
-            JSON.stringify(push ? { type: "poke", actions } : { type: "poke" }),
-          );
-          poked += 1;
-          pushed ||= Boolean(push);
-        } catch {
-          continue;
-        }
-      }
-    }
-    if (pushed) this.announce(["actions"]);
-    return poked;
-  }
-
-  private streams(): StreamState[] {
-    return this.ctx
-      .getWebSockets()
-      .filter((ws) => !watching(ws))
-      .map((ws) => ws.deserializeAttachment() as StreamState | null)
-      .filter((state): state is StreamState => state !== null && !state.left);
-  }
-
-  private online(): Set<string> {
-    return new Set(
-      this.streams()
-        .filter((state) => !state.laptop && !state.away)
-        .map((state) => state.nodeId),
-    );
-  }
-
-  private async laptopNews(): Promise<void> {
-    const laptops = this.streams().filter((state) => state.laptop);
-    const owner = laptops[0]?.ownerId;
-    if (owner && (await this.network.laptopNewsMoved(owner, this.online()))) {
-      await this.poke(laptops.map((state) => state.nodeId));
-    }
-  }
-
-  async accept(
+  async join(
     ws: WebSocket,
     nodeId: string,
-    ownerId: string,
-    interval: number,
-    version: string | null = null,
-    laptop = false,
+    version: string | null,
   ): Promise<void> {
-    for (const old of this.ctx.getWebSockets(nodeId)) {
-      await this.leave(old);
+    if (!version || !agentSupported(version)) {
+      this.ctx.acceptWebSocket(ws);
+      ws.close(
+        4426,
+        `Agents before ${MIN_AGENT} are no longer supported. Update the agent.`,
+      );
+      return;
+    }
+    for (const old of this.agents(nodeId)) {
       try {
-        old.close(4000, "Replaced by a newer connection");
+        old.ws.close(4000, "replaced");
       } catch {
         continue;
       }
     }
-    this.ctx.acceptWebSocket(ws, [nodeId]);
+    this.ctx.acceptWebSocket(ws, [AGENT, nodeId]);
+    const now = Date.now();
     ws.serializeAttachment({
-      ...newState(nodeId, ownerId, interval),
-      ...(agentSupported(version) ? { push: true } : {}),
-      ...(laptop ? { laptop: true } : {}),
-    });
-    this.checks.delete(nodeId);
-    this.network.forget(nodeId);
-    if (laptop) return;
-    const roster = await this.roster();
-    roster[nodeId] = {
-      interval,
-      offline: roster[nodeId]?.offline,
-      disk: roster[nodeId]?.disk,
-    };
-    await this.ctx.storage.put(ROSTER, roster);
-    await this.schedule(Date.now());
-    await this.laptopNews();
-  }
-
-  async watch(ws: WebSocket): Promise<void> {
-    this.ctx.acceptWebSocket(ws, [WATCH]);
-    ws.serializeAttachment({ watch: true });
-  }
-
-  announce(topics: string[]): void {
-    this.version.count += 1;
-    const message = JSON.stringify({ type: "changed", topics });
-    for (const ws of this.ctx.getWebSockets(WATCH)) {
-      try {
-        ws.send(message);
-      } catch {
-        continue;
-      }
+      nodeId,
+      version,
+      since: now,
+      heard: now,
+    } satisfies Attachment);
+    this.announce(["fleet"]);
+    if ((await this.ctx.storage.getAlarm()) === null) {
+      await this.ctx.storage.setAlarm(now + SWEEP_EVERY_MS);
     }
+  }
+
+  watch(ws: WebSocket): void {
+    this.ctx.acceptWebSocket(ws, [WATCH]);
   }
 
   async webSocketMessage(
     ws: WebSocket,
-    message: string | ArrayBuffer,
+    raw: string | ArrayBuffer,
   ): Promise<void> {
-    if (watching(ws)) return;
-    const now = Date.now();
-    const sender =
-      (ws.deserializeAttachment() as StreamState | null)?.nodeId ?? "";
-    const spent = this.spent.get(sender);
-    if (!spent || now - spent.since >= 60_000) {
-      this.spent.set(sender, { since: now, count: 1 });
-    } else if (++spent.count > MESSAGES_PER_MINUTE) {
-      if (spent.count === MESSAGES_PER_MINUTE + 1) {
-        ws.send(JSON.stringify({ type: "error", code: "TOO_MANY_MESSAGES" }));
-      }
-      return;
-    }
-    let body: unknown;
-    try {
-      body = JSON.parse(
-        typeof message === "string"
-          ? message
-          : new TextDecoder().decode(message),
-      );
-    } catch {
+    const agent = ws.deserializeAttachment() as Attachment | null;
+    if (!agent) return;
+    ws.serializeAttachment({
+      ...agent,
+      heard: Date.now(),
+    } satisfies Attachment);
+    const message = typeof raw === "string" ? parseAgentMessage(raw) : null;
+    if (!message) {
       ws.send(JSON.stringify({ type: "error", code: "INVALID_MESSAGE" }));
       return;
     }
-    const envelope = (body ?? {}) as {
-      id?: unknown;
-      type?: unknown;
-      heartbeat?: unknown;
-      report?: unknown;
-      setup?: unknown;
-    };
-    if (typeof envelope.id !== "number") {
-      ws.send(JSON.stringify({ type: "error", code: "INVALID_MESSAGE" }));
-      return;
+    if (message.type === "hello") await this.hello(ws, agent.nodeId, message);
+    else if (message.type === "result") {
+      await this.result(ws, agent.nodeId, message);
+    } else {
+      this.toWatchers({ type: "progress", id: message.id, line: message.line });
     }
-    const id = envelope.id;
-    const reply: Reply = (answer) => {
-      try {
-        ws.send(JSON.stringify({ id, ...answer }));
-      } catch {
-        return;
-      }
-    };
-    const invalid = () => reply({ type: "error", code: "INVALID_MESSAGE" });
-    const state = ws.deserializeAttachment() as StreamState;
-    try {
-      if (envelope.type === "heartbeat") {
-        const parsed = heartbeatSchema.safeParse(envelope.heartbeat);
-        if (!parsed.success || parsed.data.nodeId !== state.nodeId) {
-          invalid();
-          return;
-        }
-        if (state.laptop) {
-          await this.laptopBeat(ws, state, parsed.data, reply);
-        } else {
-          await this.heartbeat(ws, state, parsed.data, reply);
-        }
-      } else if (envelope.type === "setup") {
-        const parsed = setupSchema.safeParse(envelope.setup);
-        if (!parsed.success || state.laptop) {
-          invalid();
-          return;
-        }
-        const setup = JSON.stringify(parsed.data);
-        const written = await this.env.DB.prepare(
-          `UPDATE nodes SET setup = ?1 WHERE id = ?2
-           AND last_seen_at IS NULL AND setup IS NOT ?1`,
-        )
-          .bind(setup, state.nodeId)
-          .run();
-        await this.returned(state.nodeId);
-        reply({ type: "setup" });
-        if ((written.meta.changes ?? 0) > 0) this.announce(["nodes"]);
-      } else if (envelope.type === "config") {
-        const node = await this.node(ws, state);
-        if (!node) return;
-        const agent = await loadAgentConfig(this.env.DB, node);
-        reply({
-          type: "config",
-          config: agentConfigResponseSchema.parse({
-            ...agent.config,
-            configVersion: agent.configVersion,
-          }),
-        });
-      } else if (envelope.type === "actions") {
-        let parsed = actionsSchema.safeParse(envelope.report);
-        if (!parsed.success) {
-          console.error("[kry fleet] report refused", parsed.error.issues[0]);
-          const report = (envelope.report ?? {}) as {
-            nodeId?: unknown;
-            results?: unknown;
-          };
-          parsed = actionsSchema.safeParse({
-            nodeId: report.nodeId,
-            results: Array.isArray(report.results)
-              ? report.results.filter(
-                  (result) => actionResultSchema.safeParse(result).success,
-                )
-              : report.results,
-          });
-        }
-        if (!parsed.success || parsed.data.nodeId !== state.nodeId) {
-          invalid();
-          return;
-        }
-        const node = await this.node(ws, state);
-        if (!node) return;
-        this.stopped.delete(node.id);
-        this.checks.delete(node.id);
-        const { nodeId, results, progress, inventory } = parsed.data;
-        const { alerts, next, deleted, ...response } = await receiveReport(
-          this.env.DB,
-          node,
-          state.laptop ? { nodeId, results, progress } : parsed.data,
-          Date.now(),
-        );
-        if (state.laptop && inventory) {
-          if (inventory.trust) {
-            await this.env.DB.prepare(
-              "UPDATE nodes SET trust_report = ?1 WHERE id = ?2 AND trust_report IS NOT ?1",
-            )
-              .bind(JSON.stringify(inventory.trust), node.id)
-              .run();
-          }
-          response.inventoryHash = inventory.hash;
-        }
-        reply({ type: "actions", response });
-        await this.poke(next);
-        if (!state.laptop && parsed.data.results?.length) {
-          await this.laptopNews();
-        }
-        this.announce(
-          deleted
-            ? ["all"]
-            : parsed.data.results || parsed.data.inventory
-              ? ["actions", "services"]
-              : ["actions"],
-        );
-        if (alerts.length > 0) await this.securityMail(node.id, alerts);
-      } else {
-        invalid();
-      }
-    } catch (error) {
-      console.error("[kry fleet]", error);
-      reply({ type: "error", code: "SERVER_ERROR" });
-    }
-  }
-
-  private async node(ws: WebSocket, state: StreamState) {
-    const node = await this.env.DB.prepare(NODE_SQL)
-      .bind(state.nodeId)
-      .first<AgentNode>();
-    if (!node) ws.close(4401, "Unknown or disabled server");
-    return node;
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    if (watching(ws)) return;
-    await this.leave(ws);
-    this.announce(["nodes"]);
-    await this.laptopNews();
+    const agent = ws.deserializeAttachment() as Attachment | null;
+    if (!agent) return;
+    await this.env.DB.prepare("UPDATE nodes SET last_seen_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), agent.nodeId)
+      .run();
+    this.announce(["fleet"]);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    if (watching(ws)) return;
-    await this.leave(ws);
-    this.announce(["nodes"]);
-    await this.laptopNews();
-  }
-
-  private async box() {
-    return loadBox(await this.ctx.storage.get<MailBox>(MAIL));
-  }
-
-  private async roster() {
-    return (await this.ctx.storage.get<Roster>(ROSTER)) ?? {};
-  }
-
-  private heard(ws: WebSocket, state: StreamState) {
-    return Math.max(
-      state.lastSeen ?? state.connectedAt,
-      this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0,
-    );
-  }
-
-  private pulse(nodeId: string, entry: RosterEntry) {
-    let pulse: { seen?: number; limit: number } = {
-      seen: entry.lastSeen,
-      limit: offlineAfterMs(entry.interval),
-    };
-    for (const socket of this.ctx.getWebSockets(nodeId)) {
-      const state = socket.deserializeAttachment() as StreamState;
-      const seen = this.heard(socket, state);
-      if (seen > (pulse.seen ?? 0)) {
-        pulse = { seen, limit: offlineAfterMs(state.interval) };
-      }
-    }
-    return pulse;
-  }
-
-  private async cutoffs() {
-    return (await this.ctx.storage.get<Record<string, number>>(CUTOFFS)) ?? {};
-  }
-
-  private async keepCutoffs(cutoffs: Cutoff[]) {
-    if (cutoffs.length === 0) return;
-    const stored = await this.cutoffs();
-    for (const cutoff of cutoffs) {
-      stored[`${cutoff.nodeId}|${cutoff.id}`] = cutoff.at;
-    }
-    await this.ctx.storage.put(CUTOFFS, stored);
-  }
-
-  private async cutOff(now: number) {
-    const stored = await this.cutoffs();
-    const due = Object.entries(stored).filter(([, at]) => at <= now);
-    if (due.length === 0) return;
-    const poke: string[] = [];
-    const quarantined: string[] = [];
-    const waiting = new Map<string, [string, number][]>();
-    for (const entry of due.sort((a, b) => a[1] - b[1])) {
-      const nodeId = entry[0].split("|")[0]!;
-      waiting.set(nodeId, [...(waiting.get(nodeId) ?? []), entry]);
-    }
-    const turn: [string, number][] = [];
-    while (turn.length < CUTOFFS_AT_ONCE && waiting.size > 0) {
-      for (const [nodeId, entries] of waiting) {
-        turn.push(entries.shift()!);
-        if (entries.length === 0) waiting.delete(nodeId);
-        if (turn.length === CUTOFFS_AT_ONCE) break;
-      }
-    }
-    const done: [string, number][] = [];
-    try {
-      for (const entry of turn) {
-        const [nodeId, id] = entry[0].split("|") as [string, string];
-        const cut = await cutOffWarning(this.env.DB, nodeId, id);
-        poke.push(...cut.nodes);
-        quarantined.push(...cut.quarantined);
-        done.push(entry);
-      }
-    } catch (error) {
-      console.error("[kry fleet] cut off", error);
-    }
-    const kept = await this.cutoffs();
-    for (const [key, at] of done) if (kept[key] === at) delete kept[key];
-    await this.ctx.storage.put(CUTOFFS, kept);
-    await this.poke(poke);
-    await this.laptopNews();
-    this.announce(["all"]);
-    await this.tell({ quarantined });
-  }
-
-  private async tell(told: {
-    warned?: WarningMail[];
-    stopped?: StoppedMail[];
-    quarantined?: string[];
-  }) {
-    const { warned = [], stopped = [], quarantined = [] } = told;
-    if (warned.length + stopped.length + quarantined.length === 0) return;
-    try {
-      for (const mail of warned) await sendWarningEmail(this.env, mail);
-      for (const mail of stopped) await sendStoppedEmail(this.env, mail);
-      for (const nodeId of quarantined) {
-        const report = await quarantineReport(this.env.DB, nodeId);
-        if (report) await sendQuarantineEmail(this.env, report);
-      }
-      await this.noteMail(this.mailSetup());
-    } catch (error) {
-      console.error("[kry mail]", error);
-      await this.noteMail(error);
-    }
-  }
-
-  private async quiet(silent: { nodeId: string; seen: number }[], now: number) {
-    if (silent.length === 0) return;
-    const db = this.env.DB;
-    const everyone = (
-      await db
-        .prepare(
-          `SELECT m.node_id, m.key, n.owner_user_id AS owner, n.name, EXISTS (SELECT 1 FROM quarantines q WHERE q.node_id = m.node_id AND q.released_at IS NULL) AS quarantined
-           FROM network_members m
-           JOIN nodes n ON n.id = m.node_id
-           WHERE m.state = 'in' AND n.kind = 'server' AND n.owner_user_id IN (
-             SELECT owner_user_id FROM nodes WHERE id IN (SELECT value FROM json_each(?)))`,
-        )
-        .bind(JSON.stringify(silent.map((item) => item.nodeId)))
-        .all<{
-          node_id: string;
-          key: string;
-          owner: string;
-          name: string;
-          quarantined: number;
-        }>()
-    ).results;
-    const members = everyone.filter((member) =>
-      silent.some((item) => item.nodeId === member.node_id),
-    );
-    const cutoffs: Cutoff[] = [];
-    const warned: WarningMail[] = [];
-    for (const member of members) {
-      const peers = everyone.filter(
-        (peer) =>
-          peer.owner === member.owner &&
-          peer.node_id !== member.node_id &&
-          peer.quarantined === 0,
-      );
-      const seenBy = peers
-        .filter((peer) => {
-          const entry = this.network.latest.get(peer.node_id);
-          return (
-            entry !== undefined &&
-            now - entry.at < QUIET_HANDSHAKE_S * 1000 &&
-            this.ctx
-              .getWebSockets(peer.node_id)
-              .some(
-                (ws) => !(ws.deserializeAttachment() as StreamState).away,
-              ) &&
-            entry.links.some(
-              (link) =>
-                link.key === member.key &&
-                link.handshake !== null &&
-                link.handshake <= now / 1000 + 60 &&
-                now / 1000 - link.handshake < QUIET_HANDSHAKE_S,
-            )
-          );
-        })
-        .map((peer) => peer.node_id);
-      if (seenBy.length < Math.min(2, peers.length) || seenBy.length === 0) {
-        continue;
-      }
-      const names = (
-        await db
-          .prepare(
-            "SELECT name FROM nodes WHERE id IN (SELECT value FROM json_each(?)) ORDER BY name",
-          )
-          .bind(JSON.stringify(seenBy))
-          .all<{ name: string }>()
-      ).results.map((row) => row.name);
-      const seen = silent.find((item) => item.nodeId === member.node_id)!.seen;
-      const settings = await readSettings(db, member.owner);
-      const cutAt =
-        settings.cutoff === null ? null : now + settings.cutoff * 60_000;
-      const id = `quiet:${seen}`;
-      const detail = {
-        lastReport: new Date(seen).toISOString(),
-        seenBy: names.join(", "),
-      };
-      const at = new Date(now).toISOString();
-      const written = await warningStatement(db, {
-        nodeId: member.node_id,
-        id,
-        kind: "quiet",
-        detail,
-        at,
-        cutAt,
-      }).run();
-      if ((written.meta.changes ?? 0) === 0) continue;
-      warned.push({
-        nodeId: member.node_id,
-        nodeName: member.name,
-        kind: "quiet",
-        detail,
-        at,
-        cutAt,
-      });
-      if (cutAt !== null) {
-        cutoffs.push({ nodeId: member.node_id, id, at: cutAt });
-      }
-    }
-    await this.keepCutoffs(cutoffs);
-    await this.tell({ warned });
-  }
-
-  private async schedule(now: number) {
-    const times: number[] = Object.values(await this.cutoffs());
-    for (const [nodeId, entry] of Object.entries(await this.roster())) {
-      if (entry.offline) continue;
-      const { seen, limit } = this.pulse(nodeId, entry);
-      times.push(
-        Math.max((seen ?? now) + limit, (entry.checkedAt ?? 0) + RECHECK_MS),
-      );
-    }
-    if (times.length === 0) await this.ctx.storage.deleteAlarm();
-    else
-      await this.ctx.storage.setAlarm(
-        Math.max(Math.min(...times), now + 1_000),
-      );
-  }
-
-  private async notify(notices: IncidentNotice[], now: number) {
-    const { box, send } = receive(await this.box(), notices, now);
-    await this.ctx.storage.put(MAIL, box);
-    return send;
-  }
-
-  private async watchdog(now: number): Promise<IncidentNotice[]> {
-    const db = this.env.DB;
-    const notices: IncidentNotice[] = [];
-    const silentIn = (roster: Record<string, RosterEntry>) => {
-      const unseen: string[] = [];
-      const silent: { nodeId: string; entry: RosterEntry; seen: number }[] = [];
-      for (const [nodeId, entry] of Object.entries(roster)) {
-        if (entry.offline) continue;
-        const { seen, limit } = this.pulse(nodeId, entry);
-        if (seen === undefined) unseen.push(nodeId);
-        else if (
-          now - seen > limit &&
-          now - (entry.checkedAt ?? 0) >= RECHECK_MS
-        ) {
-          silent.push({ nodeId, entry, seen });
-        }
-      }
-      return { unseen, silent };
-    };
-    const first = silentIn(await this.roster());
-    const asked = new Set(first.silent.map((item) => item.nodeId));
-    const silent = first.silent;
-    const ids = JSON.stringify(silent.map((item) => item.nodeId));
-    const rows =
-      silent.length === 0
-        ? []
-        : (
-            await db
-              .prepare(
-                `SELECT id, security, setup, last_seen_at FROM nodes WHERE id IN (SELECT value FROM json_each(?))
-                 AND enrolled_at IS NOT NULL AND disabled_at IS NULL`,
-              )
-              .bind(ids)
-              .all<{
-                id: string;
-                security: string | null;
-                setup: string | null;
-                last_seen_at: string | null;
-              }>()
-          ).results;
-    const known = new Map(rows.map((row) => [row.id, row]));
-    const planned = await plannedNodes(db, [...known.keys()], now);
-    const quiet: { nodeId: string; seen: number }[] = [];
-    const failed: D1PreparedStatement[] = [];
-    const roster = await this.roster();
-    const latest = silentIn(roster);
-    let changed = latest.unseen.length > 0;
-    for (const nodeId of latest.unseen) {
-      (roster[nodeId] as RosterEntry).lastSeen = now;
-    }
-    for (const { nodeId, entry, seen } of latest.silent) {
-      if (!asked.has(nodeId)) continue;
-      changed = true;
-      const setup =
-        known.get(nodeId)?.last_seen_at === null
-          ? failedSetup(known.get(nodeId)?.setup ?? null, seen, now)
-          : null;
-      if (!known.has(nodeId)) {
-        delete roster[nodeId];
-      } else if (setup) {
-        entry.offline = true;
-        delete entry.checkedAt;
-        failed.push(
-          db
-            .prepare(
-              "UPDATE nodes SET setup = ? WHERE id = ? AND last_seen_at IS NULL",
-            )
-            .bind(setup, nodeId),
-        );
-      } else if (
-        known.get(nodeId)?.last_seen_at === null ||
-        restarting(known.get(nodeId)?.security ?? null, seen, now) ||
-        finishingSetup(known.get(nodeId)?.setup ?? null, seen, now) ||
-        planned.has(nodeId)
-      ) {
-        entry.checkedAt = now;
-      } else {
-        entry.offline = true;
-        delete entry.checkedAt;
-        quiet.push({ nodeId, seen });
-        for (const socket of this.ctx.getWebSockets(nodeId)) {
-          const state = socket.deserializeAttachment() as StreamState;
-          socket.serializeAttachment({ ...state, away: true });
-        }
-        notices.push({
-          nodeId,
-          checkId: null,
-          checkName: null,
-          kind: "opened",
-          summary: "Stopped reporting",
-          occurredAt: new Date(seen).toISOString(),
-        });
-      }
-    }
-    if (changed) await this.ctx.storage.put(ROSTER, roster);
-    if (failed.length > 0) {
-      await db.batch(failed);
-      this.announce(["nodes"]);
-    }
-    await this.quiet(quiet, now);
-    if (quiet.length > 0) await this.laptopNews();
-    return notices;
+    await this.webSocketClose(ws);
   }
 
   async alarm(): Promise<void> {
-    const now = Date.now();
-    this.version.count += 1;
-    let send: ServerChanges[] = [];
-    try {
-      const offline = await this.watchdog(now);
-      send = offline.length > 0 ? await this.notify(offline, now) : [];
-      await this.cutOff(now);
-      await this.ctx.storage.delete("tailnet");
-      await this.schedule(now);
-    } catch (error) {
-      console.error("[kry fleet] watchdog", error);
-      await this.ctx.storage.setAlarm(now + WATCHDOG_RETRY_MS);
-    }
-    await this.mail(send);
-  }
-
-  private async securityMail(nodeId: string, findings: Finding[]) {
-    try {
-      const row = await this.env.DB.prepare(
-        "SELECT name FROM nodes WHERE id = ?",
-      )
-        .bind(nodeId)
-        .first<{ name: string }>();
-      if (row) {
-        await sendSecurityEmail(this.env, {
-          nodeId,
-          nodeName: row.name,
-          findings,
-        });
-        await this.noteMail(this.mailSetup());
+    const cutoff = Date.now() - SILENT_AFTER_MS;
+    const silent = this.agents()
+      .filter(({ ws, agent }) => this.heardAt(ws, agent) < cutoff)
+      .map(({ ws }) => ws);
+    for (const ws of silent) {
+      try {
+        ws.close(SILENT_CODE, "silent");
+      } catch {
+        continue;
       }
-    } catch (error) {
-      console.error("[kry mail]", error);
-      await this.noteMail(error);
     }
+    if (this.agents().length > 0) {
+      await this.ctx.storage.setAlarm(Date.now() + SWEEP_EVERY_MS);
+    }
+    await Promise.all(silent.map((ws) => this.webSocketClose(ws)));
   }
 
-  private mailSetup() {
-    return this.env.EMAIL && this.env.ALERT_EMAIL
-      ? null
-      : new Error("the Worker has no ALERT_EMAIL or EMAIL binding.");
+  private heardAt(ws: WebSocket, agent: Attachment): number {
+    const pinged = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime();
+    return Math.max(agent.heard, pinged ?? 0);
   }
 
-  private async noteMail(error: unknown) {
-    if (error === null) {
-      if (await this.ctx.storage.get(MAIL_STATE)) {
-        await this.ctx.storage.delete(MAIL_STATE);
-      }
-      return;
-    }
-    await this.ctx.storage.put(MAIL_STATE, {
-      failedAt: new Date(Date.now()).toISOString(),
-      error: (error instanceof Error ? error.message : String(error)).slice(
-        0,
-        300,
-      ),
+  private agents(tag = AGENT) {
+    return this.ctx.getWebSockets(tag).flatMap((ws) => {
+      const agent = ws.deserializeAttachment() as Attachment | null;
+      return agent && ws.readyState === WebSocket.OPEN ? [{ ws, agent }] : [];
     });
   }
 
-  private async forgetMail(servers: ServerChanges[]) {
-    const box = await this.box();
-    for (const server of servers) {
-      for (const notice of server.down) delete box.failures[keyOf(notice)];
-    }
-    await this.ctx.storage.put(MAIL, box);
+  private heard(tag = AGENT) {
+    const cutoff = Date.now() - SILENT_AFTER_MS;
+    return this.agents(tag).filter(
+      ({ ws, agent }) => this.heardAt(ws, agent) >= cutoff,
+    );
   }
 
-  private async mail(send: ServerChanges[]) {
-    if (send.length === 0) return;
-    try {
-      const rows = await this.env.DB.prepare(
-        "SELECT id, name FROM nodes WHERE id IN (SELECT value FROM json_each(?))",
-      )
-        .bind(JSON.stringify(send.map((server) => server.nodeId)))
-        .all<{ id: string; name: string }>();
-      const names = new Map(rows.results.map((row) => [row.id, row.name]));
-      const named = send.flatMap((server) => {
-        const nodeName = names.get(server.nodeId);
-        return nodeName ? [{ nodeName, ...server }] : [];
-      });
-      if (named.length > MAILS_AT_ONCE) {
-        try {
-          await sendFleetEmail(this.env, named);
-        } catch (error) {
-          await this.forgetMail(named);
-          throw error;
-        }
-      } else {
-        let failure: unknown = null;
-        for (const server of named) {
-          try {
-            await sendServerEmail(this.env, server);
-          } catch (error) {
-            failure = error;
-            await this.forgetMail([server]);
-          }
-        }
-        if (failure !== null) throw failure;
+  private online(): string[] {
+    return [...new Set(this.heard().map(({ agent }) => agent.nodeId))];
+  }
+
+  private async command(request: Request): Promise<Response> {
+    const body = (await request.json().catch(() => null)) as {
+      nodeId?: unknown;
+      command?: unknown;
+    } | null;
+    const parsed = hubMessageSchema.safeParse(body?.command);
+    if (
+      typeof body?.nodeId !== "string" ||
+      !parsed.success ||
+      parsed.data.type !== "command"
+    ) {
+      return Response.json({ code: "INVALID_COMMAND" }, { status: 400 });
+    }
+    for (const { ws } of this.heard(body.nodeId)) {
+      try {
+        ws.send(JSON.stringify(parsed.data));
+        return Response.json({ sent: true });
+      } catch {
+        continue;
       }
-      await this.noteMail(this.mailSetup());
-    } catch (error) {
-      console.error("[kry mail]", error);
-      await this.noteMail(error);
     }
+    return Response.json({ code: "OFFLINE" }, { status: 409 });
   }
 
-  private async heartbeat(
-    ws: WebSocket,
-    current: StreamState,
-    beat: Parameters<typeof fold>[1],
-    reply: Reply,
-  ) {
+  private async drop(request: Request): Promise<Response> {
+    const body = (await request.json().catch(() => null)) as {
+      nodeId?: unknown;
+    } | null;
+    if (typeof body?.nodeId !== "string") {
+      return new Response(null, { status: 400 });
+    }
+    for (const { ws } of this.agents(body.nodeId)) {
+      try {
+        ws.close(4001, "removed");
+      } catch {
+        continue;
+      }
+    }
+    return new Response(null, { status: 204 });
+  }
+
+  private async hello(ws: WebSocket, nodeId: string, hello: Hello) {
     const db = this.env.DB;
-    const now = Date.now();
-    const known = await this.node(ws, current);
-    if (!known) return;
-    const poked: string[] = [];
-    const cloned: string[] = [];
-    if (
-      !known.quarantined &&
-      beat.boot &&
-      known.boot &&
-      beat.boot.id !== known.boot &&
-      beat.boot.count <= (known.reports ?? 0)
-    ) {
-      const started = await quarantine(db, {
-        nodeId: known.id,
-        why: CLONED,
-        now,
-      });
-      poked.push(...started.nodes);
-      if (started.started) cloned.push(known.id);
-      known.quarantined = 1;
-    }
-    const trusted = !known.quarantined;
-    const retried = updateRetry(db, known, beat, now);
-    const node = retried.node;
-    let state: StreamState = { ...current, interval: node.interval_seconds };
-    if (state.lastSeen === null) {
-      const row = await db
-        .prepare(
-          `SELECT window_start, samples, cpu_percent, memory_used_bytes,
-                  memory_total_bytes, disk_used_bytes, disk_total_bytes, load_1,
-                  load_5, load_15, uptime_seconds, checks
-           FROM node_windows WHERE node_id = ? AND window_start = ?`,
-        )
-        .bind(node.id, windowStart(now, node.interval_seconds))
-        .first<StoredWindow>();
-      state = resumeWindow(state, row, now);
-    }
-    const disk = await this.disk(node.id, current, beat.metrics, now);
-    state = { ...state, diskFull: disk.full };
-    const agent = await this.agentConfig(node, now);
-    const accepted = trusted
-      ? acceptResults(agent.checks, beat.results ?? [])
-      : [];
-    const owned = {
-      id: node.id,
-      ownerId: current.ownerId,
-      connectedAt: current.connectedAt,
-    };
-    const working = accepted.some((result) => result.status === "DOWN")
-      ? new Set([
-          ...(await workingChecks(db, owned, agent.checks, now)),
-          ...(await this.stoppedChecks(owned, agent.checks, now)),
-        ])
-      : new Set<string>();
-    const ingestion = resultStatements(
-      db,
-      agent.checks,
-      accepted,
-      now,
-      working,
-    );
-    if (ingestion.statements.length > 0) this.checks.delete(node.id);
-    const folded = fold(state, beat, accepted, now);
-    const leading: D1PreparedStatement[] = [];
-    if (folded.flushed)
-      leading.push(this.flushStatement(node.id, folded.flushed));
-    if (folded.writeNode) {
-      leading.push(...heartbeatStatements(db, node, beat, now));
-    }
-    leading.push(...retried.statements);
-    const reported = beat.release ? JSON.stringify(beat.release) : null;
-    const pending = known.release ?? null;
-    if (
-      reported !== pending &&
-      !(JSON.parse(pending ?? "null") as { released?: boolean } | null)
-        ?.released
-    ) {
-      leading.push(
-        db
-          .prepare(
-            `UPDATE nodes SET release = ? WHERE id = ?
-             AND (release IS NULL OR json_extract(release, '$.released') IS NULL)`,
-          )
-          .bind(reported, node.id),
-      );
-    }
-    if (!beat.network && known.leaving) {
-      leading.push(
-        db
-          .prepare(
-            "DELETE FROM network_members WHERE node_id = ? AND state = 'leaving'",
-          )
-          .bind(node.id),
-      );
-    }
-    const setup = beat.setup ? JSON.stringify(beat.setup) : null;
-    const setupMoved = setup !== (known.setup ?? null);
-    if (setupMoved) {
-      leading.push(
-        db
-          .prepare("UPDATE nodes SET setup = ? WHERE id = ?")
-          .bind(setup, node.id),
-      );
-    }
-    if (current.lastSeen === null || current.away) {
-      await this.returned(node.id);
-    }
-    const notices = await commit(this.env, node.id, leading, ingestion);
-    const heals = await healStatements(
-      db,
-      { id: node.id, agent_version: beat.agentVersion ?? null },
-      notices
-        .filter((notice) => notice.kind === "opened" && notice.checkId)
-        .map((notice) => notice.checkId!),
-      now,
-    );
-    if (
-      leading.length > 0 ||
-      ingestion.statements.length > 0 ||
-      ingestion.transitions.length > 0 ||
-      heals.length > 0
-    ) {
-      this.version.count += 1;
-    }
-    const healing = new Set<string>();
-    if (heals.length > 0) {
-      const done = await db.batch(heals.map((heal) => heal.statement));
-      heals.forEach((heal, index) => {
-        if ((done[index]?.meta.changes ?? 0) > 0) {
-          for (const id of heal.checkIds) healing.add(id);
-        }
-      });
-    }
-    const marked = [
-      ...notices.map((notice) =>
-        notice.checkId && healing.has(notice.checkId)
-          ? { ...notice, healing: true }
-          : notice,
-      ),
-      ...disk.notices,
-    ];
-    const mails = marked.length > 0 ? await this.notify(marked, now) : [];
-    await disk.store?.();
-    if (beat.denials) this.denials.set(node.id, { ...beat.denials, at: now });
-    else this.denials.delete(node.id);
-    let taken: Intake | null = null;
-    try {
-      const network =
-        beat.network && trusted
-          ? await this.network.beat(
-              node.id,
-              current.ownerId,
-              current.networkStamp,
-              beat.network,
-              now,
-            )
-          : null;
-      taken = !beat.events?.length
-        ? null
-        : trusted
-          ? await intake(db, { nodeId: node.id, events: beat.events, now })
-          : {
-              acked: beat.events.map((event) => event.id),
-              cutoffs: [],
-              nodes: [],
-              quarantined: [],
-              warned: [],
-              stopped: [],
-            };
-      if (taken || network?.changed || !trusted) this.version.count += 1;
-      if (taken) {
-        await this.keepCutoffs(taken.cutoffs);
-        poked.push(...taken.nodes);
-        if (taken.cutoffs.length > 0) await this.schedule(now);
-      }
-      if (!trusted) {
-        await holdStatement(db, node.id, new Date(now).toISOString()).run();
-      }
-      const actions = await heartbeatActions(db, node.id, now);
-      ws.serializeAttachment({
-        ...folded.state,
-        away: false,
-        networkStamp: network?.stamp ?? current.networkStamp,
-      });
-      if (current.lastSeen === null || current.away || notices.length > 0) {
-        await this.schedule(now);
-      }
-      reply({
-        type: "heartbeat",
-        response: {
-          ...heartbeatResponse(
-            node,
-            agent.configVersion,
-            beat.agentVersion,
-            actions,
-          ),
-          ...(network?.reply ? { network: network.reply } : {}),
-          ...(taken ? { acked: taken.acked } : {}),
-          ...(trusted ? {} : { quarantined: true }),
-        },
-      });
-      if (network) await this.poke(network.poke);
-      if (poked.length > 0) {
-        await this.poke(poked.filter((id) => id !== node.id));
-        this.announce(["all"]);
-      }
-      if (poked.length > 0 || current.away) await this.laptopNews();
-      const topics = [
-        ...(current.lastSeen === null || setupMoved ? ["nodes"] : []),
-        ...(ingestion.statements.length > 0 || ingestion.transitions.length > 0
-          ? ["checks"]
-          : []),
-        ...(actions.length > 0 ? ["actions"] : []),
-      ];
-      if (topics.length > 0) this.announce(topics);
-    } finally {
-      await this.mail(mails);
-      await this.tell({
-        warned: taken?.warned,
-        stopped: taken?.stopped,
-        quarantined: [...cloned, ...(taken?.quarantined ?? [])],
-      });
-    }
-  }
-
-  private async laptopBeat(
-    ws: WebSocket,
-    current: StreamState,
-    beat: Parameters<typeof fold>[1],
-    reply: Reply,
-  ) {
-    const now = Date.now();
-    const node = await this.node(ws, current);
-    if (!node) return;
-    if (node.agent_version !== beat.agentVersion) {
-      const at = new Date(now).toISOString().replace("T", " ").slice(0, 19);
-      await this.env.DB.prepare(
-        `UPDATE nodes SET agent_version = ?, hostname = ?, operating_system = ?,
-           architecture = ?, last_seen_at = ?, updated_at = ? WHERE id = ?`,
+    const stored = await db
+      .prepare(
+        "SELECT hostname, os, arch, kernel, version, seal_key, last_seen_at FROM nodes WHERE id = ?",
       )
+      .bind(nodeId)
+      .first<Facts>();
+    if (!stored) {
+      ws.close(4401, "Unknown server");
+      return;
+    }
+    const now = new Date();
+    const facts = {
+      hostname: hello.hostname,
+      os: hello.os,
+      arch: hello.arch,
+      kernel: hello.kernel,
+      version: hello.version,
+      seal_key: hello.sealKey,
+    };
+    const changed = Object.entries(facts).some(
+      ([key, value]) => stored[key as keyof Facts] !== value,
+    );
+    const due =
+      !stored.last_seen_at ||
+      now.getTime() - Date.parse(stored.last_seen_at) >= SEEN_EVERY_MS;
+    if (changed || due) {
+      await db
+        .prepare(
+          "UPDATE nodes SET hostname = ?, os = ?, arch = ?, kernel = ?, version = ?, seal_key = ?, last_seen_at = ? WHERE id = ?",
+        )
         .bind(
-          beat.agentVersion,
-          beat.hostname,
-          beat.operatingSystem,
-          beat.architecture,
-          at,
-          at,
-          node.id,
+          ...Object.values(facts),
+          due ? now.toISOString() : stored.last_seen_at,
+          nodeId,
         )
         .run();
-      this.announce(["nodes"]);
     }
-    const network = beat.network
-      ? await this.network.beat(
-          node.id,
-          current.ownerId,
-          current.networkStamp,
-          beat.network,
-          now,
-          true,
-          this.online(),
-        )
-      : null;
-    if (network?.changed) this.version.count += 1;
-    const agent = await this.agentConfig(node, now);
-    const actions = await heartbeatActions(this.env.DB, node.id, now);
-    ws.serializeAttachment({
-      ...current,
-      lastSeen: now,
-      away: false,
-      networkStamp: network?.stamp ?? current.networkStamp,
-    });
-    reply({
-      type: "heartbeat",
-      response: {
-        ...heartbeatResponse(
-          node,
-          agent.configVersion,
-          beat.agentVersion,
-          actions,
-        ),
-        ...(network?.reply ? { network: network.reply } : {}),
-      },
-    });
-    if (network) await this.poke(network.poke);
-    if (actions.length > 0) this.announce(["actions"]);
+    const trusted = hello.trust
+      ? await this.storeTrust(nodeId, hello.trust)
+      : false;
+    if (changed || trusted) this.announce(["fleet"]);
   }
 
-  private async agentConfig(node: AgentNode, now: number) {
-    const kept = this.checks.get(node.id);
-    if (
-      kept &&
-      kept.interval === node.interval_seconds &&
-      now - kept.at < CHECKS_KEPT_MS
-    ) {
-      return kept.agent;
-    }
-    const agent = await loadAgentConfig(this.env.DB, node);
-    this.checks.set(node.id, {
-      at: now,
-      interval: node.interval_seconds,
-      agent,
-    });
-    return agent;
-  }
-
-  private async stoppedChecks(
-    node: { id: string; ownerId: string },
-    checks: { id: string; kind: string; target: string }[],
-    now: number,
-  ) {
-    const kept = this.stopped.get(node.id);
-    if (kept && now - kept.at < STOPPED_MS) return kept.checks;
-    const found = await stoppedChecks(this.env.DB, node, checks);
-    this.stopped.set(node.id, { at: now, checks: found });
-    return found;
-  }
-
-  private async disk(
-    nodeId: string,
-    current: StreamState,
-    metrics: Parameters<typeof fold>[1]["metrics"],
-    now: number,
-  ): Promise<{
-    full?: boolean;
-    notices: IncidentNotice[];
-    store?: () => Promise<void>;
-  }> {
-    const { diskUsedBytes: used, diskTotalBytes: total } = metrics;
-    if (used === null || !total) return { full: current.diskFull, notices: [] };
-    const percent = Math.round((used / total) * 100);
-    const full =
-      percent >= DISK_FULL ? true : percent < DISK_CLEAR ? false : undefined;
-    if (full === undefined || full === current.diskFull) {
-      return { full: current.diskFull, notices: [] };
-    }
-    const roster = await this.roster();
-    const entry = roster[nodeId];
-    if (!entry || Boolean(entry.disk) === full) {
-      return { full, notices: [] };
-    }
-    const store = async () => {
-      const latest = await this.roster();
-      if (latest[nodeId]) {
-        latest[nodeId] = { ...latest[nodeId], disk: full };
-        await this.ctx.storage.put(ROSTER, latest);
-      }
-    };
-    return {
-      full,
-      store,
-      notices: full
-        ? [
-            {
-              nodeId,
-              checkId: null,
-              checkName: null,
-              kind: "opened",
-              summary: `${percent}% full`,
-              occurredAt: new Date(now).toISOString(),
-              disk: true,
-            },
-          ]
-        : [],
-    };
-  }
-
-  private async returned(nodeId: string) {
-    const roster = await this.roster();
-    const entry = roster[nodeId];
-    if (!entry?.offline) return;
-    roster[nodeId] = { interval: entry.interval, disk: entry.disk };
-    await this.ctx.storage.put(ROSTER, roster);
-    await this.env.DB.prepare(
-      `UPDATE warnings SET answer = 'back', answered_at = ?, answered_by = ?
-       WHERE node_id = ? AND kind = 'quiet' AND answer IS NULL`,
-    )
-      .bind(new Date(Date.now()).toISOString(), QUARANTINE_ACTOR, nodeId)
-      .run();
-  }
-
-  private flushStatement(nodeId: string, flush: Flush) {
-    return insertWindow(
-      this.env.DB,
-      nodeId,
-      flush.start,
-      flush.samples,
-      flush.metrics,
-      flush.checks,
-    );
-  }
-
-  private async leave(ws: WebSocket) {
-    const state = ws.deserializeAttachment() as StreamState | null;
-    if (!state || state.left) return;
-    if (state.laptop) {
-      ws.serializeAttachment({ ...state, left: true });
-      if (state.lastSeen === null) return;
-      try {
-        await this.env.DB.prepare(
-          "UPDATE nodes SET last_seen_at = ? WHERE id = ?",
-        )
-          .bind(
-            new Date(state.lastSeen)
-              .toISOString()
-              .replace("T", " ")
-              .slice(0, 19),
-            state.nodeId,
-          )
-          .run();
-      } catch (error) {
-        console.error("[kry fleet]", error);
-      }
+  private async result(ws: WebSocket, nodeId: string, result: Result) {
+    const known = await this.env.DB.prepare("SELECT 1 FROM nodes WHERE id = ?")
+      .bind(nodeId)
+      .first();
+    if (!known) {
+      ws.close(4401, "Unknown server");
       return;
     }
-    const drained = drain(state);
-    ws.serializeAttachment({ ...drained.state, left: true });
-    const statements: D1PreparedStatement[] = [];
-    if (drained.flushed) {
-      statements.push(this.flushStatement(state.nodeId, drained.flushed));
+    const finished = await this.env.DB.prepare(
+      "UPDATE actions SET status = ?, message = ?, finished_at = ? WHERE id = ? AND node_id = ? AND status IN ('sent', 'running')",
+    )
+      .bind(
+        result.ok ? "done" : "failed",
+        result.message,
+        new Date().toISOString(),
+        result.id,
+        nodeId,
+      )
+      .run();
+    const trusted = result.trust
+      ? await this.storeTrust(nodeId, result.trust)
+      : false;
+    ws.send(JSON.stringify({ type: "ack", id: result.id }));
+    if (finished.meta.changes > 0 || trusted) this.announce(["fleet"]);
+  }
+
+  private async storeTrust(nodeId: string, trust: TrustReport) {
+    const db = this.env.DB;
+    const core = JSON.stringify(trust.core);
+    const access = JSON.stringify(trust.access);
+    const stored = await db
+      .prepare("SELECT version, core, access FROM node_trust WHERE node_id = ?")
+      .bind(nodeId)
+      .first<{ version: number; core: string; access: string }>();
+    if (
+      stored?.version === trust.version &&
+      stored.core === core &&
+      stored.access === access
+    ) {
+      return false;
     }
-    const roster = await this.roster();
-    roster[state.nodeId] = {
-      ...roster[state.nodeId],
-      interval: state.interval,
-      lastSeen: this.heard(ws, state),
-    };
-    await this.ctx.storage.put(ROSTER, roster);
-    if (state.beat && state.lastSeen !== null) {
-      statements.push(
-        ...heartbeatStatements(
-          this.env.DB,
-          { id: state.nodeId, interval_seconds: state.interval },
-          state.beat,
-          state.lastSeen,
-        ),
-      );
-    }
-    if (statements.length === 0) return;
-    try {
-      await this.env.DB.batch(statements);
-    } catch (error) {
-      console.error("[kry fleet]", error);
+    await db
+      .prepare(
+        "INSERT INTO node_trust (node_id, version, core, access, reported_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (node_id) DO UPDATE SET version = excluded.version, core = excluded.core, access = excluded.access, reported_at = excluded.reported_at",
+      )
+      .bind(nodeId, trust.version, core, access, new Date().toISOString())
+      .run();
+    return true;
+  }
+
+  private announce(topics: string[]): void {
+    this.toWatchers({ type: "changed", topics });
+  }
+
+  private toWatchers(message: object): void {
+    const text = JSON.stringify(message);
+    for (const ws of this.ctx.getWebSockets(WATCH)) {
+      try {
+        ws.send(text);
+      } catch {
+        continue;
+      }
     }
   }
 }

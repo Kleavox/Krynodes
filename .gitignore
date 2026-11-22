@@ -5,6 +5,7 @@ node_modules/
 .pnpm-store/
 .agents/
 .dev.vars
+worker/wrangler.local.jsonc
 .env
 .env.*
 !.env.example

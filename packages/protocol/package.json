@@ -8,18 +8,6 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./owner": {
-      "types": "./dist/owner.d.ts",
-      "default": "./dist/owner.js"
-    },
-    "./quorum": {
-      "types": "./dist/quorum.d.ts",
-      "default": "./dist/quorum.js"
-    },
-    "./summary": {
-      "types": "./dist/summary.d.ts",
-      "default": "./dist/summary.js"
-    },
     "./targets": {
       "types": "./dist/targets.d.ts",
       "default": "./dist/targets.js"

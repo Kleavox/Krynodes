@@ -1,9 +1,9 @@
 package trust
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,66 +11,74 @@ import (
 )
 
 type browserFixture struct {
-	Origin     string                 `json:"origin"`
-	RPID       string                 `json:"rpId"`
-	NodeID     string                 `json:"nodeId"`
-	Now        string                 `json:"now"`
-	First      reporter.ActionRequest `json:"first"`
-	Admit      reporter.ActionRequest `json:"admit"`
-	Passphrase reporter.ActionRequest `json:"passphrase"`
+	Origin  string           `json:"origin"`
+	RPID    string           `json:"rpId"`
+	NodeID  string           `json:"nodeId"`
+	Now     string           `json:"now"`
+	Tokens  []string         `json:"tokens"`
+	Change  reporter.Command `json:"change"`
+	Command reporter.Command `json:"command"`
 }
 
-func loadBrowserFixture(t *testing.T) browserFixture {
+func loadBrowserFixture(t *testing.T, name string) (browserFixture, time.Time) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "protocol", "src", "fixtures", "browser-signed.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "protocol", "src", "fixtures", name))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
 	var fixture browserFixture
-	if err := json.Unmarshal(raw, &fixture); err != nil {
+	if err := strict(raw, &fixture); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	return fixture
-}
-
-func issuedAt(t *testing.T, request reporter.ActionRequest) time.Time {
-	t.Helper()
-	var signed signedTrust
-	if err := json.Unmarshal(request.Signed, &signed); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := b64.DecodeString(signed.Change)
+	now, err := time.Parse(time.RFC3339Nano, fixture.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var change trustChange
-	if err := json.Unmarshal(raw, &change); err != nil {
-		t.Fatal(err)
-	}
-	at, err := time.Parse(time.RFC3339Nano, change.IssuedAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return at.Add(time.Second)
+	return fixture, now
 }
 
 func TestTheBrowsersFirstTrustApplies(t *testing.T) {
-	fixture := loadBrowserFixture(t)
-	trust, err := ApplyTrustChange(Trust{}, fixture.First, issuedAt(t, fixture.First))
+	fixture, now := loadBrowserFixture(t, "browser-signed.json")
+	first, err := FirstTrust(fixture.NodeID, fixture.Origin, fixture.Tokens)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if trust.NodeID != fixture.NodeID || trust.Origin != fixture.Origin || trust.RPID != fixture.RPID || len(trust.Core) != 1 || len(trust.Access) != 1 {
-		t.Fatalf("trust %+v", trust)
+	if first.NodeID != fixture.NodeID || first.Origin != fixture.Origin || first.RPID != fixture.RPID || first.Version != 1 || len(first.Core) != 1 || len(first.Access) != 1 {
+		t.Fatalf("first %+v", first)
+	}
+
+	next, err := ApplyTrustChange(first, []byte(fixture.Change.Signed), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Version != 2 || len(next.Keys) != 2 || len(next.Core) != 2 || len(next.Access) != 2 || !slices.Equal(next.Core, next.Access) {
+		t.Fatalf("next %+v", next)
+	}
+
+	command, err := VerifyCommand(next, fixture.Command, now)
+	if err != nil || command.ID != fixture.Command.ID || command.Action != fixture.Command.Action {
+		t.Fatalf("command %+v err %v", command, err)
 	}
 }
 
-func TestTheBrowsersPassphraseChangeIsRefused(t *testing.T) {
-	fixture := loadBrowserFixture(t)
-	trust, err := ApplyTrustChange(Trust{}, fixture.First, issuedAt(t, fixture.First))
+func TestTheBrowsersCommandNeedsTheTrustItWasSignedFor(t *testing.T) {
+	fixture, now := loadBrowserFixture(t, "browser-signed.json")
+	first, err := FirstTrust(fixture.NodeID, fixture.Origin, fixture.Tokens)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ApplyTrustChange(trust, fixture.Passphrase, issuedAt(t, fixture.Passphrase))
-	refused(t, err, "no longer use a passphrase")
+	_, err = VerifyCommand(first, fixture.Command, now)
+	refused(t, err, "passkey is not trusted")
+}
+
+func TestTheBrowsersTouchOnlyAnswersAreRefused(t *testing.T) {
+	fixture, now := loadBrowserFixture(t, "browser-uv.json")
+	first, err := FirstTrust(fixture.NodeID, fixture.Origin, fixture.Tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ApplyTrustChange(first, []byte(fixture.Change.Signed), now)
+	refused(t, err, "was opened without a fingerprint, face or PIN")
+	_, err = VerifyCommand(first, fixture.Command, now)
+	refused(t, err, "was opened without a fingerprint, face or PIN")
 }

@@ -1,182 +1,128 @@
-import {
-  ACCOUNTS_AGENT,
-  MIN_AGENT_VERSION,
-  agentKnowsAccounts,
-  trustChangeSchema,
-  type TrustChange,
-} from "@krynodes/protocol";
-import type { MiddlewareHandler } from "hono";
+import { assertionSchema } from "@krynodes/protocol";
 import { z } from "zod";
 
-import { createBatch, sweepStatements } from "../actions/store";
-import { quarantineRefusal } from "../quarantine/quarantine";
-import { pokeSoon } from "../fleet/client";
+import type { KrynodesApp } from "../env";
 import { fromB64url } from "../lib/b64url";
-import { notYours } from "../trust/approval";
-import { agentCurrent, loadFleet, type Fleet } from "../trust/fleet";
-import {
-  invalidRequest,
-  readJson,
-  type KrynodesApp,
-  type KrynodesContext,
-  type KrynodesEnv,
-} from "./shared";
+import { randomToken } from "../lib/crypto";
+import { assertionSynced, verifyAssertion } from "../lib/webauthn";
+import { invalidRequest, isUnique, readJson } from "./shared";
 
-const b64url = z
-  .string()
-  .min(1)
-  .max(65536)
-  .regex(/^[A-Za-z0-9_-]+$/u);
+const CHALLENGE_MS = 5 * 60_000;
 
-const deviceSchema = z.strictObject({
-  id: z
-    .string()
-    .min(1)
-    .max(1400)
-    .regex(/^[A-Za-z0-9_-]+$/u),
+const b64url = (max: number) =>
+  z.string().regex(new RegExp(`^[A-Za-z0-9_-]{1,${max}}$`, "u"));
+
+const registerSchema = z.strictObject({
+  id: b64url(1400),
   name: z.string().trim().min(1).max(40),
   alg: z.union([z.literal(-7), z.literal(-257)]),
-  publicKey: b64url,
-  verifies: z.boolean().optional(),
-  synced: z.boolean().optional(),
+  publicKey: b64url(2048),
+  challenge: b64url(128),
+  assertion: assertionSchema,
 });
 
-const renameSchema = z.strictObject({
-  name: z.string().trim().min(1).max(40),
-});
+const renameSchema = z.strictObject({ name: z.string().trim().min(1).max(40) });
 
-const firstSchema = z.strictObject({
-  changes: z.array(b64url).min(1).max(100),
-});
+const TRUSTED = `EXISTS (
+  SELECT 1 FROM node_trust t
+  WHERE EXISTS (SELECT 1 FROM json_each(t.core) WHERE value = d.id)
+     OR EXISTS (SELECT 1 FROM json_each(t.access) WHERE value = d.id))`;
 
-function readChange(text: string): TrustChange | null {
-  try {
-    const parsed = trustChangeSchema.safeParse(
-      JSON.parse(new TextDecoder().decode(fromB64url(text))),
+interface DeviceRow {
+  id: string;
+  name: string;
+  alg: string;
+  public_key: string;
+  synced: number;
+  created_at: string;
+  trusted: number;
+}
+
+const SELECT = `SELECT d.id, d.name, d.alg, d.public_key, d.synced, d.created_at, ${TRUSTED} AS trusted FROM devices d`;
+
+export function registerDeviceRoutes(app: KrynodesApp): void {
+  app.get("/api/devices", async (context) => {
+    const rows = await context.env.DB.prepare(
+      `${SELECT} ORDER BY d.id`,
+    ).all<DeviceRow>();
+    return context.json(
+      rows.results.map((row) => ({
+        id: row.id,
+        name: row.name,
+        alg: Number(row.alg),
+        publicKey: row.public_key,
+        synced: row.synced === 1,
+        createdAt: row.created_at,
+        trusted: row.trusted === 1,
+      })),
     );
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
+  });
 
-const sameIds = (a: string[], b: string[]) =>
-  a.length === b.length && a.every((id) => b.includes(id));
-
-function firstTrustAllowed(fleet: Fleet, change: TrustChange): boolean {
-  const [nodeId, ...others] = Object.keys(change.access);
-  if (!nodeId || others.length > 0 || !change.core) return false;
-  const core = change.core.map((key) => key.id);
-  const access = change.access[nodeId] ?? [];
-  const active = fleet.devices.filter((device) => device.removedAt === null);
-  const known = change.core.every((key) =>
-    active.some(
-      (device) =>
-        device.id === key.id &&
-        device.publicKey === key.publicKey &&
-        device.alg === key.alg &&
-        (key.account === undefined || key.account === device.account),
-    ),
-  );
-  if (!known) return false;
-  const owned = change.core.filter((key) => key.account !== undefined).length;
-  if (owned !== (fleet.labelled || owned > 0 ? change.core.length : 0)) {
-    return false;
-  }
-  const expected =
-    fleet.core.length > 0 ? fleet.core : core.length === 1 ? core : null;
-  if (!expected || !sameIds(core, expected)) return false;
-  const founding = expected.length < 2;
-  if (!sameIds(access, founding ? core : [])) return false;
-  return change.requireUv === true && change.passphrase === null;
-}
-
-export function registerDeviceRoutes(
-  app: KrynodesApp,
-  requireOperator: MiddlewareHandler<KrynodesEnv>,
-): void {
-  app.get("/api/devices", requireOperator, async (context) => {
-    const identity = context.get("identity");
-    const fleet = await loadFleet(context.env.DB, identity.id);
+  app.post("/api/devices/register/options", async (context) => {
+    const db = context.env.DB;
+    const challenge = randomToken();
+    const now = Date.now();
+    const expiresAt = new Date(now + CHALLENGE_MS).toISOString();
+    const [, , existing] = await Promise.all([
+      db
+        .prepare(
+          "DELETE FROM settings WHERE key LIKE 'challenge:%' AND value <= ?",
+        )
+        .bind(new Date(now).toISOString())
+        .run(),
+      db
+        .prepare("INSERT INTO settings (key, value) VALUES (?, ?)")
+        .bind(`challenge:${challenge}`, expiresAt)
+        .run(),
+      db.prepare("SELECT id FROM devices ORDER BY id").all<{ id: string }>(),
+    ]);
+    const { id, email } = context.get("identity");
     return context.json({
-      devices: fleet.devices
-        .filter((device) => device.removedAt === null)
-        .map((device) => ({
-          id: device.id,
-          name: device.name,
-          alg: device.alg,
-          publicKey: device.publicKey,
-          createdAt: device.createdAt,
-          lastUsedAt: device.lastUsedAt,
-          verifies: device.verifies,
-          synced: device.synced,
-          fingerprint: device.fingerprint,
-          core: fleet.core.includes(device.id),
-          owner: device.account,
-          mine: device.account === identity.email,
-        })),
-      removing: fleet.devices
-        .filter((device) => device.removedAt !== null)
-        .map((device) => ({
-          id: device.id,
-          name: device.name,
-          servers: fleet.nodes
-            .filter(
-              (node) =>
-                node.report?.core.includes(device.fingerprint) ||
-                node.report?.access.includes(device.fingerprint),
-            )
-            .map((node) => node.name),
-        }))
-        .filter((device) => device.servers.length > 0),
+      challenge,
+      rpId: new URL(context.env.PUBLIC_ORIGIN).hostname,
+      user: { id, name: email },
+      exclude: existing.results.map((row) => row.id),
+      expiresAt,
     });
   });
 
-  const ownDevice = async (context: KrynodesContext) => {
-    const identity = context.get("identity");
-    const fleet = await loadFleet(context.env.DB, identity.id);
-    const device = fleet.devices.find(
-      (entry) =>
-        entry.id === context.req.param("id") && entry.removedAt === null,
-    );
-    if (!device) {
-      return {
-        fleet,
-        refused: context.json(
-          { code: "NOT_FOUND", message: "The passkey was not found." },
-          404,
-        ),
-      };
-    }
-    const other = notYours(device, identity.email);
-    return {
-      fleet,
-      refused: other
-        ? context.json({ code: other.code, message: other.message }, 403)
-        : null,
-    };
-  };
-
-  app.post("/api/devices", requireOperator, async (context) => {
-    const parsed = deviceSchema.safeParse(await readJson(context));
-    if (!parsed.success) return invalidRequest(context);
-    const device = parsed.data;
-    const fleet = await loadFleet(context.env.DB, context.get("identity").id);
-    const twin = fleet.devices.find(
-      (entry) =>
-        entry.removedAt === null &&
-        (entry.id === device.id || entry.publicKey === device.publicKey),
-    );
-    if (twin) {
+  app.post("/api/devices/register", async (context) => {
+    const body = registerSchema.safeParse(await readJson(context));
+    if (!body.success) return invalidRequest(context);
+    const { id, name, alg, publicKey, challenge, assertion } = body.data;
+    const db = context.env.DB;
+    const spent = await db
+      .prepare("DELETE FROM settings WHERE key = ? AND value > ?")
+      .bind(`challenge:${challenge}`, new Date().toISOString())
+      .run();
+    if (!spent.meta.changes) {
       return context.json(
         {
-          code: "DEVICE_EXISTS",
-          message: `This passkey is already registered as ${twin.name}.`,
+          code: "INVALID_CHALLENGE",
+          message: "The passkey request expired. Try again.",
         },
-        409,
+        400,
       );
     }
-    if (device.verifies !== true) {
+    const origin = new URL(context.env.PUBLIC_ORIGIN);
+    let verified: { uv: boolean };
+    try {
+      if (assertion.credentialId !== id) throw new Error("another credential");
+      verified = await verifyAssertion({ alg, publicKey }, assertion, {
+        origin: origin.origin,
+        rpId: origin.hostname,
+        challenge: fromB64url(challenge),
+      });
+    } catch {
+      return context.json(
+        {
+          code: "INVALID_PROOF",
+          message: "The passkey did not prove it holds its key. Try again.",
+        },
+        400,
+      );
+    }
+    if (!verified.uv) {
       return context.json(
         {
           code: "CANNOT_VERIFY",
@@ -186,186 +132,74 @@ export function registerDeviceRoutes(
         422,
       );
     }
+    const twin = await db
+      .prepare("SELECT name FROM devices WHERE id = ? OR public_key = ?")
+      .bind(id, publicKey)
+      .first<{ name: string }>();
+    const exists = {
+      code: "DEVICE_EXISTS",
+      message: `This passkey is already registered${twin ? ` as ${twin.name}` : ""}.`,
+    };
+    if (twin) return context.json(exists, 409);
     try {
-      await context.env.DB.prepare(
-        `INSERT INTO devices (id, owner_user_id, name, alg, public_key, created_at, verifies, synced, account)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
+      await db
+        .prepare(
+          "INSERT INTO devices (id, name, alg, public_key, synced, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
         .bind(
-          device.id,
-          context.get("identity").id,
-          device.name,
-          device.alg,
-          device.publicKey,
+          id,
+          name,
+          String(alg),
+          publicKey,
+          assertionSynced(assertion.authenticatorData) ? 1 : 0,
           new Date().toISOString(),
-          device.verifies === undefined ? null : device.verifies ? 1 : 0,
-          device.synced === undefined ? null : device.synced ? 1 : 0,
-          context.get("identity").email,
         )
         .run();
     } catch (error) {
-      if (!String(error).includes("UNIQUE")) throw error;
-      return context.json(
-        {
-          code: "DEVICE_EXISTS",
-          message: "This passkey is already registered.",
-        },
-        409,
-      );
+      if (!isUnique(error)) throw error;
+      return context.json(exists, 409);
     }
-    return context.json({ id: device.id }, 201);
+    return context.json({ id }, 201);
   });
 
-  app.patch("/api/devices/:id", requireOperator, async (context) => {
-    const parsed = renameSchema.safeParse(await readJson(context));
-    if (!parsed.success) return invalidRequest(context);
-    const { refused } = await ownDevice(context);
-    if (refused) return refused;
-    const result = await context.env.DB.prepare(
-      "UPDATE devices SET name = ? WHERE id = ? AND owner_user_id = ? AND removed_at IS NULL",
+  app.patch("/api/devices/:id", async (context) => {
+    const body = renameSchema.safeParse(await readJson(context));
+    if (!body.success) return invalidRequest(context);
+    const renamed = await context.env.DB.prepare(
+      "UPDATE devices SET name = ? WHERE id = ?",
     )
-      .bind(
-        parsed.data.name,
-        context.req.param("id"),
-        context.get("identity").id,
-      )
+      .bind(body.data.name, context.req.param("id"))
       .run();
-    if (result.meta.changes === 0) {
-      return context.json(
-        { code: "NOT_FOUND", message: "The passkey was not found." },
-        404,
-      );
-    }
-    return context.json({ name: parsed.data.name });
-  });
-
-  app.delete("/api/devices/:id", requireOperator, async (context) => {
-    const ownerId = context.get("identity").id;
-    const id = context.req.param("id");
-    const { fleet, refused } = await ownDevice(context);
-    if (refused) return refused;
-    if (fleet.core.includes(id)) {
-      return context.json(
-        {
-          code: "CORE_DEVICE",
-          message: "A trusted passkey leaves only through an approved change.",
-        },
-        409,
-      );
-    }
-    const result = await context.env.DB.prepare(
-      "UPDATE devices SET removed_at = ? WHERE id = ? AND owner_user_id = ? AND removed_at IS NULL",
-    )
-      .bind(new Date().toISOString(), id, ownerId)
-      .run();
-    if (result.meta.changes === 0) {
-      return context.json(
-        { code: "NOT_FOUND", message: "The passkey was not found." },
-        404,
-      );
-    }
-    return context.json({ removed: true });
-  });
-
-  app.post("/api/trust", requireOperator, async (context) => {
-    const parsed = firstSchema.safeParse(await readJson(context));
-    if (!parsed.success) return invalidRequest(context);
-    const db = context.env.DB;
-    const identity = context.get("identity");
-    const now = Date.now();
-    const fleet = await loadFleet(db, identity.id);
-    const origin = new URL(context.env.PUBLIC_ORIGIN);
-    const changes = parsed.data.changes.map((text) => ({
-      text,
-      change: readChange(text),
-    }));
-    if (
-      changes.some(
-        ({ change }) =>
-          !change ||
-          change.origin !== origin.origin ||
-          change.rpId !== origin.hostname ||
-          !firstTrustAllowed(fleet, change),
-      )
-    ) {
-      return invalidRequest(context);
-    }
-    const nodeIds = changes.map(
-      ({ change }) => Object.keys(change!.access)[0]!,
-    );
-    if (new Set(nodeIds).size !== nodeIds.length) {
-      return invalidRequest(context);
-    }
-    for (const nodeId of nodeIds) {
-      const node = fleet.nodes.find((entry) => entry.id === nodeId);
-      if (!node) {
-        return context.json(
-          { code: "NOT_FOUND", message: "A server was not found." },
+    return renamed.meta.changes
+      ? context.json({ name: body.data.name })
+      : context.json(
+          { code: "NOT_FOUND", message: "The passkey was not found." },
           404,
         );
-      }
-      if (!agentCurrent(node)) {
-        return context.json(
-          {
-            code: "NEEDS_AGENT",
-            message: `${node.name} needs agent ${MIN_AGENT_VERSION} or later.`,
-          },
-          422,
-        );
-      }
-      if (
-        !agentKnowsAccounts(node.agentVersion) &&
-        changes.some(({ change }) =>
-          change!.core?.some((key) => key.account !== undefined),
-        )
-      ) {
-        return context.json(
-          {
-            code: "NEEDS_AGENT",
-            message: `Update ${node.name} to agent ${ACCOUNTS_AGENT} first.`,
-          },
-          422,
-        );
-      }
-      if ((node.report?.core.length ?? 0) > 0) {
-        return context.json(
-          {
-            code: "TRUST_EXISTS",
-            message:
-              "A server already trusts devices. Change them with an approved change.",
-          },
-          409,
-        );
-      }
+  });
+
+  app.delete("/api/devices/:id", async (context) => {
+    const row = await context.env.DB.prepare(`${SELECT} WHERE d.id = ?`)
+      .bind(context.req.param("id"))
+      .first<DeviceRow>();
+    if (!row) {
+      return context.json(
+        { code: "NOT_FOUND", message: "The passkey was not found." },
+        404,
+      );
     }
-    const held = await quarantineRefusal(db, nodeIds, "trust");
-    if (held) return context.json(held, 409);
-    const batch = createBatch(db, {
-      action: "trust",
-      mode: "parallel",
-      targets: changes.map(({ text }, index) => ({
-        nodeId: nodeIds[index]!,
-        kind: "trust" as const,
-        name: "devices",
-        signed: { change: text, approvals: [] },
-      })),
-      requestedBy: identity.email,
-      now,
-    });
-    await db.batch(sweepStatements(db, now));
-    try {
-      await db.batch(batch.statements);
-    } catch (error) {
-      if (!String(error).includes("UNIQUE")) throw error;
+    if (row.trusted === 1) {
       return context.json(
         {
-          code: "ACTION_PENDING",
-          message: "A passkey change is still on its way to a server.",
+          code: "STILL_TRUSTED",
+          message: `${row.name} is trusted by a server. Take it out of the trust first.`,
         },
         409,
       );
     }
-    pokeSoon(context, identity.id, nodeIds);
-    return context.json({ queued: changes.length }, 202);
+    await context.env.DB.prepare("DELETE FROM devices WHERE id = ?")
+      .bind(row.id)
+      .run();
+    return context.json({ removed: true });
   });
 }

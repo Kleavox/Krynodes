@@ -1,7 +1,4 @@
-export const MIN_AGENT_VERSION = "0.7.20";
-export const SEAL_AGENT = "0.7.21";
-export const ACCOUNTS_AGENT = "0.7.22";
-export const MEMBER_KINDS_AGENT = "0.7.24";
+export const MIN_AGENT = "0.7.90";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 
@@ -15,18 +12,6 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-const reaches = (version: string | null | undefined, floor: string) =>
-  Boolean(version) &&
-  (!RELEASE.test(version!) || compareVersions(version!, floor) >= 0);
-
 export const agentSupported = (version: string | null | undefined) =>
-  reaches(version, MIN_AGENT_VERSION);
-
-export const agentSealsFromSender = (version: string | null | undefined) =>
-  reaches(version, SEAL_AGENT);
-
-export const agentKnowsAccounts = (version: string | null | undefined) =>
-  reaches(version, ACCOUNTS_AGENT);
-
-export const agentKnowsMemberKinds = (version: string | null | undefined) =>
-  reaches(version, MEMBER_KINDS_AGENT);
+  Boolean(version) &&
+  (!RELEASE.test(version!) || compareVersions(version!, MIN_AGENT) >= 0);

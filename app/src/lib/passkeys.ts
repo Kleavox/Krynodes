@@ -1,9 +1,5 @@
-import type { ActionKind } from "../types";
-import { serverNow } from "./http";
-
-export const SESSION_MS = 5 * 60_000;
-const COMMAND_GRACE_MS = 60 * 60_000;
-const BROWSER_KEY = "kry.devices";
+import type { RegisterOptions } from "../types";
+import { errorMessage } from "./http";
 
 export interface Approval {
   credentialId: string;
@@ -12,35 +8,16 @@ export interface Approval {
   signature: string;
 }
 
-interface SignedGrant extends Approval {
-  grant: string;
-}
-
-export interface SignedCommand {
-  grant: SignedGrant;
-  command: string;
-  signature: string;
-}
-
-export interface Session {
-  key: CryptoKey;
-  grant: SignedGrant;
-  issuedAt: number;
-  expiresAt: number;
-  offset: number;
-}
-
-export interface DeviceInput {
+export interface RegisterBody {
   id: string;
   name: string;
   alg: number;
   publicKey: string;
-  verifies: boolean;
-  synced: boolean;
+  challenge: string;
+  assertion: Approval;
 }
 
 const encoder = new TextEncoder();
-const iso = (ms: number) => new Date(ms).toISOString();
 
 export function b64url(bytes: ArrayBuffer | Uint8Array): string {
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -58,11 +35,8 @@ export function fromB64url(text: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-const sha256 = async (bytes: Uint8Array<ArrayBuffer>) =>
+export const sha256 = async (bytes: Uint8Array<ArrayBuffer>) =>
   new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-
-const random = (length: number) =>
-  crypto.getRandomValues(new Uint8Array(length));
 
 const NOT_TOUCHED =
   "The passkey was not touched. Try again and confirm on your device.";
@@ -70,7 +44,20 @@ const NOT_TOUCHED =
 const NOT_UNLOCKED =
   "This passkey was opened without your fingerprint, face or PIN. Open it with one of those, or choose Use a phone or a security key.";
 
+const NOT_CONFIRMED =
+  "The passkey was not confirmed. If this device cannot open it, choose Use a phone in the passkey window.";
+
 const HINTS = ["client-device", "security-key", "hybrid"];
+
+export function failure(error: unknown): string {
+  if (error instanceof DOMException && error.name === "InvalidStateError") {
+    return "This passkey is already registered.";
+  }
+  if (!(error instanceof DOMException && error.name === "NotAllowedError")) {
+    return errorMessage(error);
+  }
+  return NOT_CONFIRMED;
+}
 
 export function nameFor(transports: string[], fallback: string): string {
   if (transports.includes("hybrid")) return "Phone";
@@ -95,48 +82,50 @@ function requireUnlock(
   if ((flags & 0x04) !== 0x04) throw new Error(NOT_UNLOCKED);
 }
 
-export function thisBrowser(): string[] {
-  try {
-    const stored: unknown = JSON.parse(
-      localStorage.getItem(BROWSER_KEY) ?? "[]",
-    );
-    return Array.isArray(stored)
-      ? stored.filter((id): id is string => typeof id === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function remember(id: string) {
-  try {
-    const known = thisBrowser();
-    if (known.includes(id)) return;
-    localStorage.setItem(
-      BROWSER_KEY,
-      JSON.stringify([...known, id].slice(-10)),
-    );
-  } catch {
-    return;
-  }
+export async function assert(
+  challenge: Uint8Array<ArrayBuffer>,
+  rpId: string,
+  allowed: string[],
+): Promise<Approval> {
+  const credential = (await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      rpId,
+      allowCredentials: allowed.map((id) => ({
+        type: "public-key" as const,
+        id: fromB64url(id),
+      })),
+      userVerification: "required",
+      hints: HINTS,
+      timeout: 120_000,
+    },
+  })) as PublicKeyCredential | null;
+  if (!credential) throw new Error("The passkey did not answer.");
+  const response = credential.response as AuthenticatorAssertionResponse;
+  requireUnlock(response.authenticatorData, credential.authenticatorAttachment);
+  return {
+    credentialId: credential.id,
+    authenticatorData: b64url(response.authenticatorData),
+    clientDataJSON: b64url(response.clientDataJSON),
+    signature: b64url(response.signature),
+  };
 }
 
 export async function registerDevice(
+  options: RegisterOptions,
   name: string,
-  rpId: string,
-  user: { id: string; name: string },
-  existing: string[],
-  options: { guessed?: boolean } = {},
-): Promise<DeviceInput> {
+  { guessed = false } = {},
+): Promise<RegisterBody> {
+  const challenge = fromB64url(options.challenge);
   const credential = (await navigator.credentials.create({
     publicKey: {
-      rp: { id: rpId, name: "Krynodes" },
+      rp: { id: options.rpId, name: "Krynodes" },
       user: {
-        id: encoder.encode(user.id),
-        name: user.name,
-        displayName: user.name,
+        id: encoder.encode(options.user.id),
+        name: options.user.name,
+        displayName: options.user.name,
       },
-      challenge: random(32),
+      challenge,
       pubKeyCredParams: [
         { type: "public-key", alg: -7 },
         { type: "public-key", alg: -257 },
@@ -147,7 +136,7 @@ export async function registerDevice(
       },
       hints: HINTS,
       attestation: "none",
-      excludeCredentials: existing.map((id) => ({
+      excludeCredentials: options.exclude.map((id) => ({
         type: "public-key" as const,
         id: fromB64url(id),
       })),
@@ -161,189 +150,16 @@ export async function registerDevice(
     credential.authenticatorAttachment,
   );
   const publicKey = response.getPublicKey();
-  if (!publicKey)
+  if (!publicKey) {
     throw new Error("This browser does not share the passkey's public key.");
-  if (credential.authenticatorAttachment !== "cross-platform") {
-    remember(credential.id);
   }
+  const assertion = await assert(challenge, options.rpId, [credential.id]);
   return {
     id: credential.id,
-    name: options.guessed
-      ? nameFor(response.getTransports?.() ?? [], name)
-      : name,
+    name: guessed ? nameFor(response.getTransports?.() ?? [], name) : name,
     alg: response.getPublicKeyAlgorithm(),
     publicKey: b64url(publicKey),
-    verifies: true,
-    synced:
-      ((new Uint8Array(response.getAuthenticatorData())[32] ?? 0) & 0x08) !== 0,
+    challenge: options.challenge,
+    assertion,
   };
-}
-
-async function assert(
-  bytes: Uint8Array<ArrayBuffer>,
-  rpId: string,
-  devices: string[],
-): Promise<Approval> {
-  const credential = (await navigator.credentials.get({
-    publicKey: {
-      challenge: await sha256(bytes),
-      rpId,
-      allowCredentials: devices.map((id) => ({
-        type: "public-key" as const,
-        id: fromB64url(id),
-      })),
-      userVerification: "required",
-      hints: HINTS,
-      timeout: 120_000,
-    },
-  })) as PublicKeyCredential | null;
-  if (!credential) throw new Error("The passkey did not answer.");
-  const response = credential.response as AuthenticatorAssertionResponse;
-  requireUnlock(response.authenticatorData, credential.authenticatorAttachment);
-  if (credential.authenticatorAttachment !== "cross-platform") {
-    remember(credential.id);
-  }
-  return {
-    credentialId: credential.id,
-    authenticatorData: b64url(response.authenticatorData),
-    clientDataJSON: b64url(response.clientDataJSON),
-    signature: b64url(response.signature),
-  };
-}
-
-export function approveChange(
-  change: string,
-  devices: string[],
-  rpId: string,
-): Promise<Approval> {
-  return assert(fromB64url(change), rpId, devices);
-}
-
-export async function createSession(
-  devices: string[],
-  rpId: string,
-  now = Date.now(),
-): Promise<Session> {
-  const pair = await crypto.subtle.generateKey(
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign", "verify"],
-  );
-  const spki = await crypto.subtle.exportKey("spki", pair.publicKey);
-  const expiresAt = now + SESSION_MS;
-  const offset = serverNow(now) - now;
-  const grantBytes = encoder.encode(
-    JSON.stringify({
-      v: 1,
-      rpId,
-      sessionKey: b64url(spki),
-      issuedAt: iso(now + offset),
-      expiresAt: iso(expiresAt + offset),
-      nonce: b64url(random(16)),
-    }),
-  );
-  const approval = await assert(grantBytes, rpId, devices);
-  return {
-    key: pair.privateKey,
-    grant: { grant: b64url(grantBytes), ...approval },
-    issuedAt: now,
-    expiresAt,
-    offset,
-  };
-}
-
-export interface CommandTarget {
-  nodeId: string;
-  kind: ActionKind;
-  name: string;
-  compose?: string;
-  access?: "contained" | "full";
-  secrets?: string;
-  piece?: string;
-  args?: Record<string, string>;
-}
-
-export function actionCommand(
-  target: CommandTarget & { id: string; action: string },
-  session: Session,
-  now = Date.now(),
-) {
-  return {
-    v: 1,
-    id: target.id,
-    nodeId: target.nodeId,
-    kind: target.kind,
-    name: target.name,
-    action: target.action,
-    issuedAt: iso(now + session.offset),
-    expiresAt: iso(session.expiresAt + session.offset + COMMAND_GRACE_MS),
-    ...(target.compose ? { compose: target.compose } : {}),
-    ...(target.access ? { access: target.access } : {}),
-    ...(target.secrets ? { secrets: target.secrets } : {}),
-    ...(target.piece ? { piece: target.piece } : {}),
-    ...(target.args ? { args: target.args } : {}),
-  };
-}
-
-export async function signCommand(
-  session: Session,
-  command: object,
-): Promise<SignedCommand> {
-  const bytes = encoder.encode(JSON.stringify(command));
-  const signature = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    session.key,
-    bytes,
-  );
-  return {
-    grant: session.grant,
-    command: b64url(bytes),
-    signature: b64url(signature),
-  };
-}
-
-export async function signIntent(
-  session: Session,
-  op: string,
-  target: string,
-  origin: string,
-  now = Date.now(),
-): Promise<string> {
-  const signed = await signCommand(session, {
-    v: 1,
-    op,
-    target,
-    at: iso(now + session.offset),
-    origin,
-  });
-  return b64url(encoder.encode(JSON.stringify(signed)));
-}
-
-export interface SignedTarget extends CommandTarget {
-  id: string;
-  signed: SignedCommand;
-}
-
-export function signTargets(
-  session: Session,
-  action: string,
-  targets: CommandTarget[],
-  now = Date.now(),
-): Promise<SignedTarget[]> {
-  return Promise.all(
-    targets.map(async (target) => {
-      const id = crypto.randomUUID();
-      const { nodeId, kind, name } = target;
-      return {
-        id,
-        nodeId,
-        kind,
-        name,
-        signed: await signCommand(
-          session,
-          actionCommand({ ...target, id, action }, session, now),
-        ),
-      };
-    }),
-  );
 }

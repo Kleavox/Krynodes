@@ -64,9 +64,6 @@ async function verifySignature(
   return crypto.subtle.verify("RSASSA-PKCS1-v1_5", imported, signature, data);
 }
 
-export const assertionUv = (authenticatorData: string) =>
-  ((fromB64url(authenticatorData)[32] ?? 0) & 0x04) !== 0;
-
 export const assertionSynced = (authenticatorData: string) =>
   ((fromB64url(authenticatorData)[32] ?? 0) & 0x08) !== 0;
 

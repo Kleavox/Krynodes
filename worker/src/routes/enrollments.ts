@@ -1,107 +1,22 @@
-import { ADMIN_NAME } from "@krynodes/protocol";
-import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
-import type { Env } from "../env";
+import { readAgentRelease } from "../agent/releases";
+import type { KrynodesApp } from "../env";
 import { randomToken, sha256 } from "../lib/crypto";
-import { parseKeyLine } from "../lib/ssh";
-import { liveRange, readNetwork } from "../network/document";
-import { loadFleet, trustTokens, type Fleet } from "../trust/fleet";
-import { confirmed, confirmingDevice } from "../trust/intent";
-import { agentRateLimit } from "./agent";
-import { readEnrollDefaults } from "./settings";
-import {
-  agentOrigin,
-  invalidRequest,
-  readJson,
-  type KrynodesApp,
-  type KrynodesEnv,
-} from "./shared";
+import { agentOrigin, invalidRequest, readJson } from "./shared";
 
-const ENROLLMENT_TTL_MS = 30 * 60_000;
-
-const HOUR = z.number().int().min(0).max(23);
-
-const setupSchema = z.object({
-  docker: z.boolean().default(false),
-  rebootHour: HOUR,
-  network: z.boolean().default(false),
-});
-
-const createSchema = setupSchema.extend({
-  adminName: z
-    .string()
-    .regex(ADMIN_NAME)
-    .refine((name) => name !== "root"),
-});
-
-const storedSchema = setupSchema.extend({
-  rebootHour: HOUR.nullable().default(null),
-  admin: z
-    .object({ name: z.string(), keys: z.array(z.string()) })
-    .nullable()
-    .default(null),
-});
-
-type Setup = z.infer<typeof storedSchema>;
-
-const SHELL_SAFE = /^[A-Za-z0-9._:/,=+-]+$/u;
+const ENROLLMENT_TTL_MS = 60 * 60_000;
+const SHELL_SAFE = /^[A-Za-z0-9:/._,-]+$/u;
 const TAIL = /\nmain "\$@"\n$/u;
+const DOWNLOADS = "https://github.com/Kleavox/Krynodes/releases/download";
 
-const REFUSED =
-  '#!/bin/sh\necho "This install command was already used or has expired. Create a new one in Krynodes." >&2\nexit 1\n';
+const createSchema = z.strictObject({
+  name: z.string().trim().min(1).max(64),
+  trust: z.array(z.string().min(1).max(1400)).min(1).max(20),
+});
 
-const commandFor = (env: Env, token: string) =>
-  `curl -fsSL ${agentOrigin(env)}/i/${token} | sudo sh`;
-
-function readSetup(text: string | null): Setup {
-  try {
-    const parsed = storedSchema.safeParse(JSON.parse(text ?? "{}"));
-    return parsed.success ? parsed.data : storedSchema.parse({});
-  } catch {
-    return storedSchema.parse({});
-  }
-}
-
-function installArgs(
-  env: Env,
-  token: string,
-  fleet: Fleet,
-  setup: Setup,
-  device: string | null,
-  range: string | null,
-): string[] {
-  const args = [agentOrigin(env), token];
-  const trust = trustTokens(fleet);
-  if (trust.length > 0) {
-    args.push("--trust", env.PUBLIC_ORIGIN);
-    if (trust.length < 2) args.push("--grant");
-    else if (device && fleet.core.includes(device)) {
-      args.push("--access", device);
-    }
-    args.push("--", ...trust);
-  }
-  const steps = [
-    "recommended",
-    ...(setup.docker ? ["docker"] : []),
-    "confine",
-    "upgrade",
-    "restart",
-  ];
-  args.push("--setup", steps.join(","));
-  if (setup.rebootHour !== null) {
-    args.push("--reboot-hour", String(setup.rebootHour));
-  }
-  if (setup.network && range) args.push("--network", range);
-  if (setup.admin) {
-    args.push("--admin", setup.admin.name);
-    setup.admin.keys.forEach((line, index) => {
-      const key = parseKeyLine(line, index);
-      if (key) args.push("--admin-key", `${key.blob}:${key.label}`);
-    });
-  }
-  return args;
-}
+const refusal = (message: string) =>
+  `#!/bin/sh\necho "${message}" >&2\nexit 1\n`;
 
 const script = (body: string, status = 200) =>
   new Response(body, {
@@ -112,158 +27,152 @@ const script = (body: string, status = 200) =>
     },
   });
 
-export function registerEnrollmentRoutes(
-  app: KrynodesApp,
-  requireOperator: MiddlewareHandler<KrynodesEnv>,
-): void {
-  app.post("/api/enrollments", requireOperator, async (context) => {
-    const body = createSchema.safeParse((await readJson(context)) ?? {});
-    if (!body.success) return invalidRequest(context);
-    const { adminName, ...setup } = body.data;
-    const { keys } = await readEnrollDefaults(context.env.DB);
-    if (keys.length === 0) {
+export function registerEnrollmentRoutes(app: KrynodesApp): void {
+  app.post("/api/enrollments", async (context) => {
+    const body = createSchema.safeParse(await readJson(context));
+    if (
+      !body.success ||
+      new Set(body.data.trust).size !== body.data.trust.length
+    ) {
+      return invalidRequest(context);
+    }
+    const { name, trust } = body.data;
+    const db = context.env.DB;
+    const known = await db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM devices WHERE id IN (SELECT value FROM json_each(?))",
+      )
+      .bind(JSON.stringify(trust))
+      .first<{ count: number }>();
+    if (known?.count !== trust.length) {
       return context.json(
         {
-          code: "NO_ADMIN_KEYS",
-          message: "Add an SSH public key in Settings, Enroll Defaults first.",
+          code: "UNKNOWN_DEVICE",
+          message: "A passkey to trust is not registered here.",
+        },
+        422,
+      );
+    }
+    if (
+      await db.prepare("SELECT 1 FROM nodes WHERE name = ?").bind(name).first()
+    ) {
+      return context.json(
+        {
+          code: "NAME_TAKEN",
+          message: `${name} is already a server. Choose another name.`,
         },
         409,
       );
     }
-    const fleet = await loadFleet(context.env.DB, context.get("identity").id);
-    const refused = await confirmed(context, "enrollment.create", "new", fleet);
-    if (refused) return refused;
     const id = crypto.randomUUID();
     const token = randomToken();
-    const expiresAt = new Date(Date.now() + ENROLLMENT_TTL_MS).toISOString();
-    await context.env.DB.prepare(
-      `INSERT INTO enrollment_tokens (id, owner_user_id, token_hash, expires_at, setup, device_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
+    const now = Date.now();
+    const expiresAt = new Date(now + ENROLLMENT_TTL_MS).toISOString();
+    await db
+      .prepare(
+        "INSERT INTO enrollments (id, token_hash, name, trust, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      )
       .bind(
         id,
-        context.get("identity").id,
         await sha256(token),
+        name,
+        JSON.stringify(trust),
+        new Date(now).toISOString(),
         expiresAt,
-        JSON.stringify({ ...setup, admin: { name: adminName, keys } }),
-        confirmingDevice(context),
       )
       .run();
     return context.json(
       {
         id,
-        enrollmentToken: token,
-        enrollmentExpiresAt: expiresAt,
-        command: commandFor(context.env, token),
+        command: `curl -fsSL ${agentOrigin(context.env)}/i/${token} | sudo sh`,
+        expiresAt,
       },
       201,
     );
   });
 
-  app.patch("/api/enrollments/:id", requireOperator, async (context) => {
-    const setup = setupSchema.safeParse(await readJson(context));
-    if (!setup.success) return invalidRequest(context);
-    const db = context.env.DB;
-    const owner = context.get("identity").id;
-    const result = await db
-      .prepare(
-        `UPDATE enrollment_tokens
-         SET setup = json_set(?, '$.admin', json(json_extract(setup, '$.admin')))
-         WHERE id = ? AND owner_user_id = ? AND used_at IS NULL AND expires_at > ?
-           AND json_extract(setup, '$.laptop') IS NULL`,
-      )
-      .bind(
-        JSON.stringify(setup.data),
-        context.req.param("id"),
-        owner,
-        new Date().toISOString(),
-      )
-      .run();
-    if (result.meta.changes > 0) return context.json({ ok: true });
-    const known = await db
-      .prepare(
-        "SELECT id FROM enrollment_tokens WHERE id = ? AND owner_user_id = ?",
-      )
-      .bind(context.req.param("id"), owner)
-      .first();
-    return known
-      ? context.json(
-          {
-            code: "ENROLLMENT_CLOSED",
-            message: "This install command was already used or has expired.",
-          },
-          409,
-        )
+  app.get("/api/enrollments/:id", async (context) => {
+    const row = await context.env.DB.prepare(
+      "SELECT node_id FROM enrollments WHERE id = ?",
+    )
+      .bind(context.req.param("id"))
+      .first<{ node_id: string | null }>();
+    return row
+      ? context.json({ nodeId: row.node_id })
       : context.json({ code: "NOT_FOUND" }, 404);
   });
 
-  app.get("/i/:token", agentRateLimit, async (context) => {
+  app.get("/i/:token", async (context) => {
     const token = context.req.param("token");
-    if (!/^[A-Za-z0-9_-]{20,128}$/u.test(token)) return script(REFUSED);
+    const refused = script(
+      refusal(
+        "This install command was already used or has expired. Create a new one in Krynodes.",
+      ),
+    );
+    if (!/^[A-Za-z0-9_-]{20,128}$/u.test(token)) return refused;
     const db = context.env.DB;
     const row = await db
       .prepare(
-        `SELECT owner_user_id, setup, device_id FROM enrollment_tokens
-         WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
-           AND json_extract(setup, '$.laptop') IS NULL`,
+        "SELECT trust FROM enrollments WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
       )
       .bind(await sha256(token), new Date().toISOString())
-      .first<{
-        owner_user_id: string;
-        setup: string | null;
-        device_id: string | null;
-      }>();
-    if (!row) return script(REFUSED);
-    const args = installArgs(
-      context.env,
+      .first<{ trust: string }>();
+    if (!row) return refused;
+    const { version } = await readAgentRelease(db);
+    if (!version) {
+      return script(
+        refusal(
+          "Krynodes has not found an agent release yet. Check for one in Krynodes, then create a new install command.",
+        ),
+      );
+    }
+    const devices = await db
+      .prepare(
+        "SELECT id, alg, public_key FROM devices WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+      )
+      .bind(row.trust)
+      .all<{ id: string; alg: string; public_key: string }>();
+    if (devices.results.length === 0) {
+      return script(
+        refusal(
+          "None of the passkeys for this install command are registered any more. Create a new one in Krynodes.",
+        ),
+      );
+    }
+    const args = [
+      "--endpoint",
+      agentOrigin(context.env),
+      "--token",
       token,
-      await loadFleet(db, row.owner_user_id),
-      readSetup(row.setup),
-      row.device_id,
-      liveRange(await readNetwork(db, row.owner_user_id)),
-    );
+      "--origin",
+      context.env.PUBLIC_ORIGIN,
+      "--trust",
+      devices.results
+        .map((device) => `${device.id}.${device.alg}.${device.public_key}`)
+        .join(","),
+    ];
     const installer = await context.env.ASSETS.fetch(
       new Request(new URL("/install.sh", context.req.url)),
     );
     const text = installer.ok ? await installer.text() : "";
-    if (!TAIL.test(text) || !args.every((arg) => SHELL_SAFE.test(arg))) {
+    const pinned = `${DOWNLOADS}/agent-v${version}`;
+    if (
+      !TAIL.test(text) ||
+      ![pinned, ...args].every((value) => SHELL_SAFE.test(value))
+    ) {
       console.error("[kry] the installer cannot be served");
       return script(
-        '#!/bin/sh\necho "Krynodes cannot serve the installer now. Try again in a minute." >&2\nexit 1\n',
+        refusal(
+          "Krynodes cannot serve the installer now. Try again in a minute.",
+        ),
         503,
       );
     }
     return script(
       text.replace(
         TAIL,
-        () => `\n{\n  kry_args='${args.join(" ")}'\n  main $kry_args\n}\n`,
+        () => `\nKRY_DOWNLOAD_BASE='${pinned}'\nmain ${args.join(" ")}\n`,
       ),
     );
-  });
-
-  app.get("/api/enrollments/:id", requireOperator, async (context) => {
-    const row = await context.env.DB.prepare(
-      `SELECT e.expires_at, e.used_at, n.id AS node_id, n.name AS node_name
-       FROM enrollment_tokens e
-       LEFT JOIN nodes n ON n.id = e.node_id
-       WHERE e.id = ? AND e.owner_user_id = ?`,
-    )
-      .bind(context.req.param("id"), context.get("identity").id)
-      .first<{
-        expires_at: string;
-        used_at: string | null;
-        node_id: string | null;
-        node_name: string | null;
-      }>();
-    if (!row) return context.json({ code: "NOT_FOUND" }, 404);
-    if (row.used_at) {
-      return context.json({
-        status: "used",
-        node: row.node_id ? { id: row.node_id, name: row.node_name } : null,
-      });
-    }
-    return context.json({
-      status: Date.parse(row.expires_at) > Date.now() ? "pending" : "expired",
-    });
   });
 }

@@ -181,7 +181,7 @@ jobs:
         run: pnpm turbo run build --filter=@krynodes/worker^...
 
       - name: Point the production configs at the D1 database
-        run: sed -i "s/__KRY_D1_ID__/${KRY_D1_ID}/" worker/wrangler.jsonc worker/wrangler.stats.jsonc
+        run: sed -i "s/__KRY_D1_ID__/${KRY_D1_ID}/" worker/wrangler.jsonc
 
       - name: Apply D1 migrations
         run: pnpm exec wrangler d1 migrations apply DB --remote --env production --config worker/wrangler.jsonc
@@ -222,6 +222,3 @@ jobs:
             exit 1
           fi
           echo "/health ok; the dashboard API refuses requests without an Access token."
-
-      - name: Deploy the status page
-        run: pnpm exec wrangler deploy --config worker/wrangler.stats.jsonc --env production

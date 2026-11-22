@@ -3,11 +3,6 @@ import { describe, expect, it } from "vitest";
 import document from "./fixtures/network-document.json";
 import laptopDocument from "./fixtures/network-document-laptop.json";
 import {
-  agentActionSchema,
-  agentHeartbeatSchema,
-  stackEntrySchema,
-} from "./index";
-import {
   dnsName,
   laptopAddress6,
   links,
@@ -489,33 +484,22 @@ describe("laptops on the network", () => {
 });
 
 describe("stacks on the network", () => {
-  const stack = {
-    project: "tracker",
-    directory: "/var/lib/krynodes/compose/tracker",
-    running: 1,
-    total: 1,
-    compose: true,
-    rollback: false,
-    access: "contained",
-  };
   const serve = (value: unknown) =>
-    stackEntrySchema.safeParse({
-      ...stack,
-      network: { serves: [value], reaches: [], private: [] },
+    stackNetworkSchema.safeParse({
+      serves: [value],
+      reaches: [],
+      private: [],
     }).success;
 
   it("reports what a stack serves and reaches", () => {
     expect(
-      stackEntrySchema.safeParse({
-        ...stack,
-        network: {
-          serves: [
-            { port: "5432/tcp", all: true },
-            { port: "9090/tcp", to: [A, B] },
-          ],
-          reaches: ["10.88.0.2:5432/tcp"],
-          private: ["5432/tcp"],
-        },
+      stackNetworkSchema.safeParse({
+        serves: [
+          { port: "5432/tcp", all: true },
+          { port: "9090/tcp", to: [A, B] },
+        ],
+        reaches: ["10.88.0.2:5432/tcp"],
+        private: ["5432/tcp"],
       }).success,
     ).toBe(true);
     expect(NETWORK).toMatchObject({ variable: "KRY_PRIVATE_IP", places: 32 });
@@ -540,55 +524,9 @@ describe("stacks on the network", () => {
       }).success,
     ).toBe(false);
   });
-
-  it("changes a stack's reach only with a signature", () => {
-    const reach = {
-      id: "55555555-5555-4555-8555-555555555555",
-      kind: "compose",
-      name: "shop",
-      action: "reach",
-      expiresAt: "2026-10-26T10:00:00.000Z",
-    };
-    const signed = {
-      grant: {
-        grant: "Z3JhbnQ",
-        credentialId: "Y3JlZA",
-        authenticatorData: "YXV0aA",
-        clientDataJSON: "Y2xpZW50",
-        signature: "c2ln",
-      },
-      command: "Y29tbWFuZA",
-      signature: "c2lnbmF0dXJl",
-    };
-    expect(agentActionSchema.safeParse({ ...reach, signed }).success).toBe(
-      true,
-    );
-    expect(agentActionSchema.safeParse(reach).success).toBe(false);
-  });
 });
 
 describe("network actions", () => {
-  const action = (name: string, verb: string, signed?: unknown) => ({
-    id: "44444444-4444-4444-8444-444444444444",
-    kind: "network",
-    name,
-    action: verb,
-    expiresAt: "2026-10-26T10:00:00.000Z",
-    ...(signed === undefined ? {} : { signed }),
-  });
-
-  it("reads kry0 without a signature and changes it only with one", () => {
-    expect(agentActionSchema.safeParse(action("kry0", "inspect")).success).toBe(
-      true,
-    );
-    expect(agentActionSchema.safeParse(action("kry0", "prepare")).success).toBe(
-      false,
-    );
-    expect(agentActionSchema.safeParse(action("wg0", "inspect")).success).toBe(
-      false,
-    );
-  });
-
   it("limits a probe to 31 peers on the network's ports", () => {
     const peers = (count: number, port = 51820) =>
       Array.from(
@@ -618,41 +556,5 @@ describe("network actions", () => {
     expect(
       networkArgsValid("test", { peer: A, address: "8.8.8.8", mtu: "1420" }),
     ).toBe(false);
-  });
-
-  it("carries the links on the heartbeat", () => {
-    const beat = {
-      nodeId: A,
-      hostname: "vps-1",
-      operatingSystem: "linux",
-      architecture: "amd64",
-      agentVersion: "0.7.20",
-      metrics: {
-        cpuPercent: null,
-        memoryUsedBytes: null,
-        memoryTotalBytes: null,
-        diskUsedBytes: null,
-        diskTotalBytes: null,
-        load1: null,
-        load5: null,
-        load15: null,
-        uptimeSeconds: null,
-      },
-      network: {
-        version: 3,
-        key: document.members[0]!.key,
-        links: [
-          {
-            key: document.members[1]!.key,
-            handshake: 1_793_000_000,
-            rx: 310,
-            tx: 1200,
-            endpoint: null,
-            ms: 4,
-          },
-        ],
-      },
-    };
-    expect(agentHeartbeatSchema.safeParse(beat).success).toBe(true);
   });
 });

@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
@@ -22,40 +21,25 @@ const (
 	trustChangeLimit = 24 * time.Hour
 	maxTrustedKeys   = 20
 	trustVersionStep = 1000
-	maxAccount       = 254
 )
 
 var credentialID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 type trustChange struct {
-	V          int                 `json:"v"`
-	Origin     string              `json:"origin"`
-	RPID       string              `json:"rpId"`
-	Version    int                 `json:"version"`
-	IssuedAt   string              `json:"issuedAt"`
-	ExpiresAt  string              `json:"expiresAt"`
-	Core       []TrustKey          `json:"core"`
-	Passphrase *PassphraseKey      `json:"passphrase"`
-	RequireUV  *bool               `json:"requireUv,omitempty"`
-	Access     map[string][]string `json:"access"`
-}
-
-type approval struct {
-	Assertion
-	Proof string `json:"proof,omitempty"`
+	V         int                 `json:"v"`
+	Origin    string              `json:"origin"`
+	RPID      string              `json:"rpId"`
+	Version   int                 `json:"version"`
+	IssuedAt  string              `json:"issuedAt"`
+	ExpiresAt string              `json:"expiresAt"`
+	Core      []TrustKey          `json:"core"`
+	RequireUV *bool               `json:"requireUv,omitempty"`
+	Access    map[string][]string `json:"access"`
 }
 
 type signedTrust struct {
-	Change    string     `json:"change"`
-	Approvals []approval `json:"approvals"`
-}
-
-type trustV1 struct {
-	NodeID  string     `json:"nodeId"`
-	Origin  string     `json:"origin"`
-	RPID    string     `json:"rpId"`
-	Version int        `json:"version"`
-	Keys    []TrustKey `json:"keys"`
+	Change    string      `json:"change"`
+	Approvals []Assertion `json:"approvals"`
 }
 
 func Load(stateDir string) (Trust, error) {
@@ -67,39 +51,26 @@ func Load(stateDir string) (Trust, error) {
 		return Trust{}, err
 	}
 	var trust Trust
-	if err := strict(raw, &trust); err == nil && (trust.V == 2 || len(trust.Core) == 0) {
-		return settled(trust), nil
-	}
-	var old trustV1
-	if err := strict(raw, &old); err != nil {
+	if err := strict(raw, &trust); err != nil || trust.V != 1 {
 		return Trust{}, errors.New("the trust store is unreadable; reset it with kry trust --reset")
 	}
-	if len(old.Keys) == 0 {
-		return Trust{}, nil
-	}
-	upgraded := Trust{V: 2, NodeID: old.NodeID, Origin: old.Origin, RPID: old.RPID, Version: old.Version, Core: old.Keys}
-	upgraded.Access = upgraded.coreIDs()
-	return settled(upgraded), nil
+	return trust, nil
 }
 
 func Save(stateDir string, trust Trust) error {
-	return writeJSON(stateDir, "trust.json", trust, 0o600)
-}
-
-func writeJSON(directory, name string, value any, mode os.FileMode) error {
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(trust)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(directory, 0o750); err != nil {
+	if err := os.MkdirAll(stateDir, 0o750); err != nil {
 		return err
 	}
-	temporary := filepath.Join(directory, "."+name+".tmp")
-	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	temporary := filepath.Join(stateDir, ".trust.json.tmp")
+	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
-	if err := file.Chmod(mode); err != nil {
+	if err := file.Chmod(0o600); err != nil {
 		file.Close()
 		return err
 	}
@@ -114,10 +85,10 @@ func writeJSON(directory, name string, value any, mode os.FileMode) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporary, filepath.Join(directory, name)); err != nil {
+	if err := os.Rename(temporary, filepath.Join(stateDir, "trust.json")); err != nil {
 		return err
 	}
-	return syncDirectory(directory)
+	return syncDirectory(stateDir)
 }
 
 func syncDirectory(path string) error {
@@ -133,43 +104,15 @@ func syncDirectory(path string) error {
 }
 
 func (t Trust) Report() reporter.TrustReport {
-	core := make([]string, 0, len(t.Core))
-	access := make([]string, 0, len(t.Access))
-	for _, key := range t.Core {
-		core = append(core, Fingerprint(key))
-		if slices.Contains(t.Access, key.ID) {
-			access = append(access, Fingerprint(key))
-		}
-	}
-	var accounts []string
-	if len(accountsOf(t.Core)) == len(t.Core) && len(t.Core) > 0 {
-		for _, key := range t.Core {
-			accounts = append(accounts, key.Account)
-		}
-	}
-	return reporter.TrustReport{Version: t.Version, Core: core, Access: access, Passphrase: t.Passphrase != nil, RequireUV: t.RequireUV, Accounts: accounts}
+	return reporter.TrustReport{Version: t.Version, Core: append([]string{}, t.Core...), Access: append([]string{}, t.Access...)}
 }
 
-func accountsOf(keys []TrustKey) map[string]string {
-	accounts := map[string]string{}
+func idsOf(keys []TrustKey) []string {
+	ids := make([]string, 0, len(keys))
 	for _, key := range keys {
-		if key.Account != "" {
-			accounts[key.ID] = key.Account
-		}
+		ids = append(ids, key.ID)
 	}
-	return accounts
-}
-
-func isAccount(account string) bool {
-	if !utf8.ValidString(account) || utf8.RuneCountInString(account) > maxAccount {
-		return false
-	}
-	for _, letter := range account {
-		if (letter < 0x21 || letter > 0x7e) && letter < 0xa0 {
-			return false
-		}
-	}
-	return account != ""
+	return ids
 }
 
 func originHost(origin string) (string, error) {
@@ -182,32 +125,26 @@ func originHost(origin string) (string, error) {
 
 func checkKeys(keys []TrustKey) error {
 	if len(keys) == 0 {
-		return errors.New("a change needs at least one device")
+		return errors.New("at least one passkey must stay trusted")
 	}
 	if len(keys) > maxTrustedKeys {
-		return errors.New("too many devices")
+		return errors.New("too many passkeys")
 	}
 	var seen, held []string
 	for _, key := range keys {
 		if len(key.ID) > 1400 || !credentialID.MatchString(key.ID) {
-			return errors.New("a device id is not base64url")
+			return errors.New("a passkey id is not base64url")
 		}
 		if slices.Contains(seen, key.ID) {
-			return errors.New("a device is listed twice")
+			return errors.New("a passkey is listed twice")
 		}
 		if slices.Contains(held, key.PublicKey) {
-			return errors.New("two devices carry the same key")
+			return errors.New("two passkeys carry the same key")
 		}
 		seen, held = append(seen, key.ID), append(held, key.PublicKey)
 		if _, err := parseKey(key); err != nil {
 			return err
 		}
-		if key.Account != "" && !isAccount(key.Account) {
-			return errors.New("an account is not an address")
-		}
-	}
-	if named := len(accountsOf(keys)); named != 0 && named != len(keys) {
-		return errors.New("every passkey needs its account")
 	}
 	return nil
 }
@@ -216,27 +153,30 @@ func checkAccess(access, core []string) error {
 	var seen []string
 	for _, id := range access {
 		if !slices.Contains(core, id) {
-			return errors.New("access names a device the servers do not trust")
+			return errors.New("access names a passkey the servers do not trust")
 		}
 		if slices.Contains(seen, id) {
-			return errors.New("access lists a device twice")
+			return errors.New("access lists a passkey twice")
 		}
 		seen = append(seen, id)
+	}
+	if len(seen) == 0 {
+		return errors.New("this server needs at least one passkey with access")
 	}
 	return nil
 }
 
-func ApplyTrustChange(current Trust, request reporter.ActionRequest, now time.Time) (Trust, error) {
-	var signed signedTrust
-	if err := strict(request.Signed, &signed); err != nil {
+func ApplyTrustChange(current Trust, signed []byte, now time.Time) (Trust, error) {
+	var envelope signedTrust
+	if err := strict(signed, &envelope); err != nil {
 		return Trust{}, fmt.Errorf("the change is malformed: %w", err)
 	}
-	changeBytes, err := decode("change", signed.Change)
+	changeBytes, err := decode("change", envelope.Change)
 	if err != nil {
 		return Trust{}, err
 	}
 	var change trustChange
-	if err := strict(changeBytes, &change); err != nil || change.V != 2 || change.Version < 1 || (change.RequireUV != nil && !*change.RequireUV) {
+	if err := strict(changeBytes, &change); err != nil || change.V != 1 || change.Version < 1 || (change.RequireUV != nil && !*change.RequireUV) {
 		return Trust{}, errors.New("the change is malformed")
 	}
 	issued, err := stamp("change issuedAt", change.IssuedAt)
@@ -247,7 +187,10 @@ func ApplyTrustChange(current Trust, request reporter.ActionRequest, now time.Ti
 	if err != nil {
 		return Trust{}, err
 	}
-	if !expires.After(issued) || expires.Sub(issued) > trustChangeLimit {
+	if !expires.After(issued) {
+		return Trust{}, errors.New("the change ends before it begins")
+	}
+	if expires.Sub(issued) > trustChangeLimit {
 		return Trust{}, errors.New("the change lasts longer than 24 hours")
 	}
 	if now.After(expires.Add(clockSkew)) {
@@ -260,15 +203,11 @@ func ApplyTrustChange(current Trust, request reporter.ActionRequest, now time.Ti
 	if change.RPID != host {
 		return Trust{}, errors.New("the rp id is not the host of the origin")
 	}
-	if change.Passphrase != nil {
-		return Trust{}, errors.New("servers no longer use a passphrase")
-	}
-	current = settled(current)
 	if len(current.Core) == 0 {
-		return firstTrust(change, signed)
+		return Trust{}, errors.New("no passkey is trusted yet; install the server with its passkeys first")
 	}
-	if len(signed.Approvals) == 0 {
-		return Trust{}, errors.New("the change must be approved by trusted devices")
+	if len(envelope.Approvals) == 0 {
+		return Trust{}, errors.New("the change must be approved by a trusted passkey")
 	}
 	if change.Version <= current.Version {
 		return Trust{}, errors.New("the version is not newer than the stored one")
@@ -283,110 +222,56 @@ func ApplyTrustChange(current Trust, request reporter.ActionRequest, now time.Ti
 	if !ok {
 		return Trust{}, errors.New("the change is not for this server")
 	}
-	core := change.Core
-	if core == nil {
-		core = current.Core
-	}
-	if err := checkKeys(core); err != nil {
-		return Trust{}, err
-	}
-	for _, key := range core {
-		if at := slices.IndexFunc(current.Core, func(known TrustKey) bool { return known.ID == key.ID }); at >= 0 && (current.Core[at].Alg != key.Alg || current.Core[at].PublicKey != key.PublicKey) {
-			return Trust{}, errors.New("a change cannot give a trusted device another key; remove it and add it again")
-		}
-	}
-	next := Trust{V: 2, NodeID: current.NodeID, Origin: current.Origin, RPID: current.RPID, Version: change.Version, Core: core, Access: access, Passphrase: current.Passphrase, RequireUV: current.RequireUV || change.RequireUV != nil}
-	if err := checkAccess(access, next.coreIDs()); err != nil {
-		return Trust{}, err
-	}
-	input := quorumInput{}
-	input.Current.Core = current.coreIDs()
-	input.Current.Access = current.Access
-	input.Current.Accounts = accountsOf(current.Core)
+	next := Trust{V: 1, NodeID: current.NodeID, Origin: current.Origin, RPID: current.RPID, Version: change.Version, Keys: current.Keys, Core: current.Core, Access: access, RequireUV: true}
 	if change.Core != nil {
-		input.Change.Core = next.coreIDs()
-		input.Change.Accounts = accountsOf(core)
+		if err := checkKeys(change.Core); err != nil {
+			return Trust{}, err
+		}
+		for _, key := range change.Core {
+			if at := slices.IndexFunc(current.Keys, func(known TrustKey) bool { return known.ID == key.ID }); at >= 0 && (current.Keys[at].Alg != key.Alg || current.Keys[at].PublicKey != key.PublicKey) {
+				return Trust{}, errors.New("a change cannot give a trusted passkey another key; remove it and add it again")
+			}
+		}
+		next.Keys, next.Core = change.Core, idsOf(change.Core)
 	}
-	input.Change.Access = access
+	if err := checkAccess(access, next.Core); err != nil {
+		return Trust{}, err
+	}
 	challenge := digest(changeBytes)
-	for _, item := range signed.Approvals {
-		uv, err := verifyAssertion(current, input.Current.Core, item.Assertion, challenge)
+	for _, approval := range envelope.Approvals {
+		uv, err := verifyAssertion(current, current.Core, "the passkey cannot approve a change", approval, challenge)
 		if err != nil {
 			return Trust{}, err
 		}
 		if err := verified(uv); err != nil {
 			return Trust{}, err
 		}
-		input.Approvals = append(input.Approvals, item.CredentialID)
-		if deviceBound(item.Assertion) {
-			input.Unsynced = append(input.Unsynced, item.CredentialID)
-		}
-	}
-	if err := evaluateQuorum(input); err != nil {
-		return Trust{}, err
 	}
 	return next, nil
 }
 
-func firstTrust(change trustChange, signed signedTrust) (Trust, error) {
-	if len(signed.Approvals) != 0 {
-		return Trust{}, errors.New("no device is trusted yet")
-	}
-	if len(change.Access) != 1 {
-		return Trust{}, errors.New("a first trust must name exactly one server")
-	}
-	if err := checkKeys(change.Core); err != nil {
-		return Trust{}, err
-	}
-	var nodeID string
-	var access []string
-	for id, list := range change.Access {
-		nodeID, access = id, list
-	}
-	next := Trust{V: 2, NodeID: nodeID, Origin: change.Origin, RPID: change.RPID, Version: change.Version, Core: change.Core, Access: access, RequireUV: true}
-	if err := checkAccess(access, next.coreIDs()); err != nil {
-		return Trust{}, err
-	}
-	return next, nil
-}
-
-func ParseTrustArgs(origin string, tokens []string, grant bool, access string) (Trust, error) {
+func FirstTrust(nodeID, origin string, tokens []string) (Trust, error) {
 	host, err := originHost(origin)
 	if err != nil {
 		return Trust{}, err
 	}
+	if nodeID == "" {
+		return Trust{}, errors.New("a server id is needed")
+	}
 	keys := make([]TrustKey, 0, len(tokens))
 	for _, token := range tokens {
 		parts := strings.Split(token, ".")
-		if len(parts) != 3 && len(parts) != 4 {
+		if len(parts) != 3 {
 			return Trust{}, fmt.Errorf("%q is not <id>.<alg>.<key>", token)
 		}
 		alg, err := strconv.Atoi(parts[1])
 		if err != nil {
 			return Trust{}, fmt.Errorf("%q has no algorithm number", token)
 		}
-		key := TrustKey{ID: parts[0], Alg: alg, PublicKey: parts[2]}
-		if len(parts) == 4 {
-			account, err := b64.DecodeString(parts[3])
-			if err != nil || !isAccount(string(account)) {
-				return Trust{}, fmt.Errorf("%q names an account that is not an address", token)
-			}
-			key.Account = string(account)
-		}
-		keys = append(keys, key)
+		keys = append(keys, TrustKey{ID: parts[0], Alg: alg, PublicKey: parts[2]})
 	}
 	if err := checkKeys(keys); err != nil {
 		return Trust{}, err
 	}
-	trust := Trust{V: 2, Origin: origin, RPID: host, Version: 1, Core: keys, Access: []string{}, RequireUV: true}
-	switch {
-	case grant:
-		trust.Access = trust.coreIDs()
-	case access != "":
-		if !slices.Contains(trust.coreIDs(), access) {
-			return Trust{}, fmt.Errorf("%q is not one of the trusted devices", access)
-		}
-		trust.Access = []string{access}
-	}
-	return trust, nil
+	return Trust{V: 1, NodeID: nodeID, Origin: origin, RPID: host, Version: 1, Keys: keys, Core: idsOf(keys), Access: idsOf(keys), RequireUV: true}, nil
 }

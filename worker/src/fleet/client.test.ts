@@ -1,271 +1,105 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { app } from "../app";
 import type { Env } from "../env";
-import { sha256 } from "../lib/crypto";
-import { seedNode } from "../test/seed";
-import { createTestDb } from "../test/sqlite-d1";
+import { announce, dropNode, onlineNodes, sendCommand } from "./client";
 
-const NODE = "11111111-1111-4111-8111-111111111111";
-const OTHER = "33333333-3333-4333-8333-333333333333";
-const TOKEN = "agent-token";
-
-const live = (nodes: object) => JSON.stringify({ nodes, mail: null });
-
-function fleet(handler: (request: Request) => Response | Promise<Response>) {
-  const calls: { name: string; request: Request }[] = [];
-  return {
-    calls,
-    binding: {
-      idFromName: (name: string) => ({ name }),
-      get: (id: { name: string }) => ({
-        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-          const request = new Request(input, init);
-          calls.push({ name: id.name, request });
-          return handler(request);
-        },
+const envWith = (fetch: (request: Request) => Promise<Response>) =>
+  ({
+    FLEET: {
+      idFromName: (name: string) => name,
+      get: (id: string) => ({
+        fetch: (input: string, init?: RequestInit) =>
+          fetch(new Request(`${input}?hub=${id}`, init)),
       }),
     },
-  };
-}
+  }) as unknown as Env;
 
-async function setup(env: Partial<Env> = {}) {
-  const { db, sqlite } = createTestDb();
-  seedNode(sqlite, { id: NODE });
-  seedNode(sqlite, { id: OTHER });
-  sqlite
-    .prepare("UPDATE nodes SET agent_token_hash = ? WHERE id = ?")
-    .run(await sha256(TOKEN), NODE);
-  const full = { DB: db, ...env } as unknown as Env;
-  const call = (path: string, headers: Record<string, string> = {}) =>
-    app.request(`https://kry.example.test${path}`, { headers }, full);
-  return { sqlite, call };
-}
-
-const upgrade = {
-  upgrade: "websocket",
-  authorization: `Bearer ${TOKEN}`,
-};
-
-describe("agent stream route", () => {
-  it("answers 404 when the hub is not bound", async () => {
-    const unbound = await setup();
-    expect((await unbound.call("/api/agent/stream", upgrade)).status).toBe(404);
+describe("announce", () => {
+  it("posts the topics to the one hub", async () => {
+    const seen: Request[] = [];
+    await announce(
+      envWith(async (request) => {
+        seen.push(request);
+        return new Response(null, { status: 204 });
+      }),
+      ["fleet"],
+    );
+    expect(seen.map((request) => request.url)).toEqual([
+      "https://fleet/announce?hub=fleet",
+    ]);
+    expect(await seen[0]!.json()).toEqual({ topics: ["fleet"] });
   });
 
-  it("wants a WebSocket upgrade and a valid agent token", async () => {
-    const hub = fleet(() => new Response("hub"));
-    const t = await setup({
-      FLEET: hub.binding as unknown as DurableObjectNamespace,
-    });
-    expect(
-      (
-        await t.call("/api/agent/stream", {
-          authorization: `Bearer ${TOKEN}`,
-        })
-      ).status,
-    ).toBe(426);
-    expect(
-      (
-        await t.call("/api/agent/stream", {
-          upgrade: "websocket",
-          authorization: "Bearer wrong",
-        })
-      ).status,
-    ).toBe(401);
-    expect(hub.calls).toHaveLength(0);
-  });
-
-  it("hands the upgrade to the owner's hub with the node it proved to be", async () => {
-    const hub = fleet(() => new Response("from hub"));
-    const t = await setup({
-      FLEET: hub.binding as unknown as DurableObjectNamespace,
-    });
-    const response = await t.call("/api/agent/stream", {
-      ...upgrade,
-      "user-agent": "kry-agent/0.7.26",
-      "x-kry-node": OTHER,
-      "x-kry-owner": "intruder",
-      "x-kry-version": "9.9.9",
-    });
-    expect(await response.text()).toBe("from hub");
-    const [{ name, request }] = hub.calls as [
-      { name: string; request: Request },
-    ];
-    expect(name).toBe("standalone");
-    expect(new URL(request.url).pathname).toBe("/connect");
-    expect(request.headers.get("x-kry-node")).toBe(NODE);
-    expect(request.headers.get("x-kry-owner")).toBe("standalone");
-    expect(request.headers.get("x-kry-interval")).toBe("60");
-    expect(request.headers.get("x-kry-version")).toBe("0.7.26");
-    expect(request.headers.get("authorization")).toBeNull();
+  it("logs a hub that cannot be reached instead of failing the route", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(
+      announce(
+        envWith(async () => {
+          throw new Error("down");
+        }),
+        ["fleet"],
+      ),
+    ).resolves.toBeUndefined();
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });
 
-describe("overview with live connections", () => {
-  const LAST_SEEN = Date.parse("2026-10-01T08:04:30.000Z");
+const answer = (status: number, body: unknown = null) =>
+  new Response(body === null ? null : JSON.stringify(body), { status });
 
-  it("takes live sightings and metrics from the hub for streaming servers", async () => {
-    const hub = fleet(
-      () =>
-        new Response(
-          live({
-            [NODE]: {
-              lastSeen: LAST_SEEN,
-              connectedAt: LAST_SEEN - 600_000,
-              agentVersion: "0.3.0",
-              hostname: "server-1",
-              metrics: {
-                cpuPercent: 42,
-                memoryUsedBytes: 5,
-                memoryTotalBytes: 8,
-                diskUsedBytes: 1,
-                diskTotalBytes: 2,
-                load1: 1,
-                load5: 1,
-                load15: 1,
-                uptimeSeconds: 900,
-              },
-            },
-          }),
-        ),
-    );
-    const t = await setup({
-      FLEET: hub.binding as unknown as DurableObjectNamespace,
+describe("onlineNodes", () => {
+  it("reads the node ids the hub holds sockets for", async () => {
+    const env = envWith(async (request) => {
+      expect(new URL(request.url).pathname).toBe("/online");
+      return answer(200, ["n1", "n2"]);
     });
-    const body = (await (await t.call("/api/overview")).json()) as {
-      nodes: Record<string, unknown>[];
-    };
-    const node = body.nodes.find((entry) => entry.id === NODE)!;
-    expect(node).toMatchObject({
-      last_seen_at: "2026-10-01 08:04:30",
-      connected_at: "2026-10-01T07:54:30.000Z",
-      cpu_percent: 42,
-      uptime_seconds: 900,
-      agent_version: "0.3.0",
-    });
-    expect(node.grace_seconds).toBeUndefined();
-    expect(
-      body.nodes.find((entry) => entry.id === OTHER)?.grace_seconds,
-    ).toBeUndefined();
-  });
-
-  it("still answers for a connection that opened before connectedAt existed", async () => {
-    const hub = fleet(
-      () =>
-        new Response(
-          live({
-            [NODE]: {
-              lastSeen: LAST_SEEN,
-              agentVersion: "0.3.0",
-              hostname: "server-1",
-              metrics: {
-                cpuPercent: 42,
-                memoryUsedBytes: 5,
-                memoryTotalBytes: 8,
-                diskUsedBytes: 1,
-                diskTotalBytes: 2,
-                load1: 1,
-                load5: 1,
-                load15: 1,
-                uptimeSeconds: 900,
-              },
-            },
-          }),
-        ),
-    );
-    const t = await setup({
-      FLEET: hub.binding as unknown as DurableObjectNamespace,
-    });
-    const response = await t.call("/api/overview");
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      nodes: Record<string, unknown>[];
-    };
-    const node = body.nodes.find((entry) => entry.id === NODE)!;
-    expect(node.last_seen_at).toBe("2026-10-01 08:04:30");
-    expect(node).not.toHaveProperty("connected_at");
-  });
-
-  it("widens the offline grace of streaming servers when the hub cannot answer", async () => {
-    const hub = fleet(() => {
-      throw new Error("hub down");
-    });
-    const errors = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const t = await setup({
-      FLEET: hub.binding as unknown as DurableObjectNamespace,
-    });
-    const body = (await (await t.call("/api/overview")).json()) as {
-      nodes: Record<string, unknown>[];
-    };
-    expect(body.nodes.map((entry) => entry.grace_seconds)).toEqual([420, 420]);
-    errors.mockRestore();
+    expect(await onlineNodes(env)).toEqual(new Set(["n1", "n2"]));
   });
 });
 
-describe("lists that have not changed", () => {
-  const watch = (sqlite: { prepare: (sql: string) => unknown }) => {
-    const statements: string[] = [];
-    const prepare = sqlite.prepare;
-    sqlite.prepare = (sql: string) => {
-      statements.push(sql);
-      return prepare.call(sqlite, sql);
-    };
-    return {
-      statements,
-      restore: () => {
-        sqlite.prepare = prepare;
-      },
-    };
-  };
+describe("sendCommand", () => {
+  const command = {
+    type: "command",
+    id: "a1",
+    kind: "host",
+    name: "server-1",
+    action: "restart",
+    signed: "c2lnbmVk",
+  } as const;
 
-  it("answers 304 without reading D1 while the hub's version stands", async () => {
-    let version = "a1-4";
-    const hub = fleet((request) =>
-      new URL(request.url).pathname === "/version"
-        ? Response.json({ version })
-        : new Response(null, { status: 404 }),
-    );
-    const t = await setup({
-      FLEET: hub.binding as unknown as DurableObjectNamespace,
+  it("posts the node and the command, and says whether it was sent", async () => {
+    const seen: Request[] = [];
+    const env = envWith(async (request) => {
+      seen.push(request);
+      return answer(200, { sent: true });
     });
-    for (const path of [
-      "/api/services",
-      "/api/network",
-      "/api/history",
-      "/api/history/attention",
-    ]) {
-      const first = await t.call(path);
-      expect(first.status).toBe(200);
-      const tag = first.headers.get("etag")!;
-      expect(tag).toMatch(/^"a1-4-\d+"$/u);
-      expect(first.headers.get("cache-control")).toBe("private, no-cache");
-      const watched = watch(t.sqlite);
-      const again = await t.call(path, { "if-none-match": `W/${tag}` });
-      watched.restore();
-      expect(again.status).toBe(304);
-      expect(watched.statements).toEqual([]);
-      version = "a1-5";
-      expect((await t.call(path, { "if-none-match": tag })).status).toBe(200);
-      version = "a1-4";
-    }
+    expect(await sendCommand(env, "n1", command)).toBe(true);
+    expect(await seen[0]!.json()).toEqual({ nodeId: "n1", command });
   });
 
-  it("reads D1 as before when the hub cannot say its version", async () => {
-    const hub = fleet(() => {
-      throw new Error("hub down");
-    });
-    const errors = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const t = await setup({
-      FLEET: hub.binding as unknown as DurableObjectNamespace,
-    });
-    const response = await t.call("/api/services", { "if-none-match": '"x"' });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("etag")).toBeNull();
-    errors.mockRestore();
+  it("is false for an offline node", async () => {
+    const env = envWith(async () => answer(409, { code: "OFFLINE" }));
+    expect(await sendCommand(env, "n1", command)).toBe(false);
+  });
+
+  it("throws on any other answer", async () => {
+    const env = envWith(async () => answer(400, { code: "INVALID_COMMAND" }));
+    await expect(sendCommand(env, "n1", command)).rejects.toThrow(/400/u);
+  });
+});
+
+describe("dropNode", () => {
+  it("tells the hub to close the node's sockets", async () => {
+    const seen: Request[] = [];
+    await dropNode(
+      envWith(async (request) => {
+        seen.push(request);
+        return answer(204);
+      }),
+      "n1",
+    );
+    expect(new URL(seen[0]!.url).pathname).toBe("/drop");
+    expect(await seen[0]!.json()).toEqual({ nodeId: "n1" });
   });
 });

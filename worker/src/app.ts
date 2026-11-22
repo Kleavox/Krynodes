@@ -1,32 +1,20 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
-import { announce } from "./fleet/client";
+import type { KrynodesEnv } from "./env";
+import { upgradeInto } from "./fleet/client";
 import { securityHeaders } from "./lib/security-headers";
 import {
   requireGuardInProduction,
   requireOperator,
   resolveSession,
 } from "./lib/session";
-import { registerAdminRoutes } from "./routes/admin";
+import { registerActionRoutes } from "./routes/actions";
 import { registerAgentRoutes } from "./routes/agent";
-import { registerAgentUpdateRoutes } from "./routes/agent-updates";
 import { registerDeviceRoutes } from "./routes/devices";
-import { registerProposalRoutes } from "./routes/proposals";
-import { registerCheckResultRoutes } from "./routes/check-results";
 import { registerEnrollmentRoutes } from "./routes/enrollments";
-import { registerLiveRoutes } from "./routes/live";
-import { registerMetricRoutes } from "./routes/metrics";
-import { registerHistoryRoutes } from "./routes/history";
-import { registerLaptopRoutes } from "./routes/laptops";
-import { registerServiceRoutes } from "./routes/services";
-import { registerOperationRoutes } from "./routes/operations";
-import { registerNetworkRoutes } from "./routes/network";
-import { registerPackageRoutes } from "./routes/packages";
-import { registerSettingRoutes } from "./routes/settings";
-import { registerQuarantineRoutes } from "./quarantine/routes";
-import { registerUsageRoutes } from "./usage/usage";
-import type { KrynodesEnv } from "./routes/shared";
+import { registerNodeRoutes } from "./routes/nodes";
+import { registerReleaseRoutes } from "./routes/release";
 
 const app = new Hono<KrynodesEnv>();
 
@@ -68,11 +56,9 @@ app.use("/api/*", async (context, next) => {
   ) {
     const origin = context.req.header("origin");
     const site = context.req.header("sec-fetch-site");
-    const own = context.env.PUBLIC_ORIGIN
-      ? new URL(context.env.PUBLIC_ORIGIN).origin
-      : null;
+    const own = new URL(context.env.PUBLIC_ORIGIN).origin;
     if (
-      (origin && own && origin !== own) ||
+      (origin && origin !== own) ||
       (site && site !== "same-origin" && site !== "none")
     ) {
       return context.json(
@@ -96,59 +82,22 @@ app.get("/api/session", async (context) => {
     : context.json({ authenticated: false, via });
 });
 
-const MUTATIONS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-
-const topicsFor = (path: string) =>
-  path.startsWith("/api/checks")
-    ? ["checks"]
-    : path.startsWith("/api/actions")
-      ? ["actions"]
-      : path.startsWith("/api/services")
-        ? ["services"]
-        : ["all"];
-
-app.use("/api/*", async (context, next) => {
-  await next();
-  if (
-    !MUTATIONS.has(context.req.method) ||
-    context.req.path.startsWith("/api/agent/") ||
-    context.res.status >= 400
-  ) {
-    return;
-  }
-  const identity = context.get("identity");
-  if (identity) {
-    const work = announce(
-      context.env,
-      identity.id,
-      topicsFor(context.req.path),
-    );
-    try {
-      context.executionCtx.waitUntil(work);
-    } catch {
-      await work;
-    }
-  }
-});
-
-registerAdminRoutes(app, requireOperator);
-registerLiveRoutes(app, requireOperator);
-registerMetricRoutes(app, requireOperator);
-registerCheckResultRoutes(app, requireOperator);
-registerEnrollmentRoutes(app, requireOperator);
-registerAgentUpdateRoutes(app, requireOperator);
-registerServiceRoutes(app, requireOperator);
-registerHistoryRoutes(app, requireOperator);
-registerOperationRoutes(app, requireOperator);
-registerPackageRoutes(app, requireOperator);
-registerNetworkRoutes(app, requireOperator);
-registerLaptopRoutes(app, requireOperator);
-registerDeviceRoutes(app, requireOperator);
-registerProposalRoutes(app, requireOperator);
-registerUsageRoutes(app, requireOperator);
-registerSettingRoutes(app, requireOperator);
-registerQuarantineRoutes(app, requireOperator);
 registerAgentRoutes(app);
+
+app.use("/api/*", requireOperator);
+
+registerEnrollmentRoutes(app);
+registerNodeRoutes(app);
+registerDeviceRoutes(app);
+registerActionRoutes(app);
+registerReleaseRoutes(app);
+
+app.get("/api/live", async (context) => {
+  if (context.req.header("upgrade")?.toLowerCase() !== "websocket") {
+    return context.json({ code: "UPGRADE_REQUIRED" }, 426);
+  }
+  return upgradeInto(context.env, context.req.raw, "/watch");
+});
 
 app.all("/api/*", (context) =>
   context.json({ code: "NOT_FOUND", message: "No such endpoint." }, 404),

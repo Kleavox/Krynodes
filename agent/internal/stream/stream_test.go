@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -98,10 +100,6 @@ func (p *peer) write(opcode byte, payload []byte, fin bool) {
 	p.rw.Flush()
 }
 
-func (p *peer) answer(id json.RawMessage, body string) {
-	p.write(opText, []byte(`{"id":`+string(id)+`,`+body+`}`), true)
-}
-
 func server(t *testing.T, handle func(*peer)) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var dials atomic.Int32
@@ -129,128 +127,90 @@ func server(t *testing.T, handle func(*peer)) (*httptest.Server, *atomic.Int32) 
 	return srv, &dials
 }
 
-func client(t *testing.T, url string) (*Client, context.CancelFunc) {
+type seen struct {
+	connected chan struct{}
+	commands  chan reporter.Command
+	acks      chan string
+}
+
+func client(t *testing.T, url string) (*Client, *seen) {
 	t.Helper()
-	c := New(url, "token", "0.3.1")
+	c, events := fresh(url)
+	ctx, cancel := context.WithCancel(context.Background())
+	go c.Run(ctx)
+	t.Cleanup(cancel)
+	select {
+	case <-events.connected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no connection")
+	}
+	return c, events
+}
+
+func fresh(url string) (*Client, *seen) {
+	events := &seen{connected: make(chan struct{}, 8), commands: make(chan reporter.Command, 8), acks: make(chan string, 8)}
+	c := New(url, "token", "0.7.90")
 	c.minDelay = 10 * time.Millisecond
 	c.maxDelay = 40 * time.Millisecond
 	c.replacedDelay = 300 * time.Millisecond
 	c.refusedDelay = 300 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	go c.Run(ctx)
-	t.Cleanup(cancel)
-	if err := c.WaitConnected(context.Background(), 2*time.Second); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	return c, cancel
+	c.Hello = func() any { return reporter.Hello{Type: "hello", V: 1, Version: "0.7.90"} }
+	c.Connected = func() { events.connected <- struct{}{} }
+	c.Command = func(command reporter.Command) { events.commands <- command }
+	c.Ack = func(id string) { events.acks <- id }
+	return c, events
 }
 
-func serveCalls(p *peer) {
+func drain(p *peer) {
 	for {
-		message, err := p.request()
-		if err != nil {
+		if _, _, err := p.read(); err != nil {
 			return
 		}
-		switch string(message["type"]) {
-		case `"heartbeat"`:
-			p.answer(message["id"], `"type":"heartbeat","response":{"ok":true,"intervalSeconds":60,"configVersion":"v1","refresh":true}`)
-		case `"config"`:
-			p.answer(message["id"], `"type":"config","config":{"nodeId":"node-1","intervalSeconds":60,"checks":[],"configVersion":"v1"}`)
-		case `"actions"`:
-			p.answer(message["id"], `"type":"actions","response":{"ok":true,"inventoryHash":"abc"}`)
-		default:
-			p.answer(message["id"], `"type":"error","code":"INVALID_MESSAGE"`)
-		}
 	}
 }
 
-func beat() reporter.Heartbeat {
-	return reporter.Heartbeat{NodeID: "node-1", Host: reporter.Host{Hostname: "server-1", AgentVersion: "0.3.1"}}
-}
-
-func TestEveryCallSharesTheConnectionAndFindsItsAnswer(t *testing.T) {
-	srv, dials := server(t, serveCalls)
-	c, _ := client(t, srv.URL)
-	var wait sync.WaitGroup
-	errs := make(chan error, 3)
-	wait.Add(3)
-	go func() {
-		defer wait.Done()
-		response, err := c.SendHeartbeat(context.Background(), beat())
-		if err == nil && (!response.Refresh || response.ConfigVersion != "v1") {
-			err = errors.New("wrong heartbeat answer")
-		}
-		errs <- err
-	}()
-	go func() {
-		defer wait.Done()
-		config, err := c.FetchConfig(context.Background())
-		if err == nil && config.NodeID != "node-1" {
-			err = errors.New("wrong config answer")
-		}
-		errs <- err
-	}()
-	go func() {
-		defer wait.Done()
-		response, err := c.PostActions(context.Background(), reporter.ActionsReport{NodeID: "node-1"})
-		if err == nil && (response.InventoryHash == nil || *response.InventoryHash != "abc") {
-			err = errors.New("wrong actions answer")
-		}
-		errs <- err
-	}()
-	wait.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if dials.Load() != 1 {
-		t.Fatalf("dialled %d times", dials.Load())
-	}
-}
-
-func TestASetupStepTravelsAsItsOwnMessage(t *testing.T) {
-	sent := make(chan map[string]json.RawMessage, 1)
+func TestHelloGoesFirstThenWhatConnectedSends(t *testing.T) {
+	got := make(chan []string, 1)
 	srv, _ := server(t, func(p *peer) {
-		message, err := p.request()
-		if err != nil {
-			return
+		var types []string
+		for len(types) < 2 {
+			message, err := p.request()
+			if err != nil {
+				return
+			}
+			types = append(types, string(message["type"]))
 		}
-		sent <- message
-		p.answer(message["id"], `"type":"setup"`)
+		got <- types
+		drain(p)
 	})
-	c, _ := client(t, srv.URL)
-	if err := c.SendSetup(context.Background(), reporter.Setup{Phase: "docker", Step: 4, Of: 6}); err != nil {
-		t.Fatal(err)
+	c, events := fresh(srv.URL)
+	c.Connected = func() {
+		c.Send(reporter.Result{Type: "result", ID: "r-1", OK: true, Message: "Restarting now."})
+		events.connected <- struct{}{}
 	}
-	message := <-sent
-	if string(message["type"]) != `"setup"` || string(message["setup"]) != `{"phase":"docker","step":4,"of":6}` {
-		t.Fatalf("sent %s %s", message["type"], message["setup"])
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+	select {
+	case types := <-got:
+		if types[0] != `"hello"` || types[1] != `"result"` {
+			t.Fatalf("sent %v", types)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("nothing arrived")
 	}
 }
 
-func TestAnErrorAnswerIsAnError(t *testing.T) {
-	srv, _ := server(t, func(p *peer) {
-		message, err := p.request()
-		if err != nil {
-			return
-		}
-		p.answer(message["id"], `"type":"error","code":"SERVER_ERROR"`)
-		p.request()
-	})
-	c, _ := client(t, srv.URL)
-	if _, err := c.SendHeartbeat(context.Background(), beat()); err == nil || !strings.Contains(err.Error(), "SERVER_ERROR") {
-		t.Fatalf("err %v", err)
-	}
-}
-
-func TestPokesArriveEvenInFragmentsAndPingsAreAnswered(t *testing.T) {
+func TestCommandsAndAcksArriveDecodedAndAnythingElseIsDropped(t *testing.T) {
 	pong := make(chan []byte, 1)
 	srv, _ := server(t, func(p *peer) {
-		p.write(opText, []byte(`{"type":`), false)
-		p.write(opContinuation, []byte(`"poke"}`), true)
+		p.write(opText, []byte(`{"TYPE":"ack","id":"x-1"}`), true)
+		p.write(opText, []byte(`{"type":"ack","id":"x-2","extra":1}`), true)
+		p.write(opText, []byte(`{"type":"poke"}`), true)
+		p.write(opText, []byte(`{"type":"command","id":"c-1",`), false)
+		p.write(opContinuation, []byte(`"kind":"host","name":"server-1","action":"restart","signed":"s"}`), true)
 		p.write(opPing, []byte("hi"), true)
+		p.write(opText, []byte(`{"type":"ack","id":"r-1"}`), true)
 		for {
 			opcode, payload, err := p.read()
 			if err != nil {
@@ -261,11 +221,22 @@ func TestPokesArriveEvenInFragmentsAndPingsAreAnswered(t *testing.T) {
 			}
 		}
 	})
-	c, _ := client(t, srv.URL)
+	_, events := client(t, srv.URL)
 	select {
-	case <-c.Pokes():
+	case command := <-events.commands:
+		if command != (reporter.Command{Type: "command", ID: "c-1", Kind: "host", Name: "server-1", Action: "restart", Signed: "s"}) {
+			t.Fatalf("command %+v", command)
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("no poke")
+		t.Fatal("no command")
+	}
+	select {
+	case id := <-events.acks:
+		if id != "r-1" {
+			t.Fatalf("ack %q", id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no ack")
 	}
 	select {
 	case payload := <-pong:
@@ -275,71 +246,74 @@ func TestPokesArriveEvenInFragmentsAndPingsAreAnswered(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no pong")
 	}
+	select {
+	case id := <-events.acks:
+		t.Fatalf("a second ack %q", id)
+	case command := <-events.commands:
+		t.Fatalf("a second command %+v", command)
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func TestFramesThatBreakTheProtocolDeliverNothing(t *testing.T) {
+	const ack = `{"type":"ack","id":"a-1"}`
 	for name, send := range map[string]func(p *peer){
 		"a message inside a message": func(p *peer) {
 			p.write(opText, []byte(`{"type":`), false)
-			p.write(opText, []byte(`{"type":"poke"}`), true)
+			p.write(opText, []byte(ack), true)
 		},
 		"a long ping": func(p *peer) {
 			p.write(opPing, make([]byte, 126), true)
-			p.write(opText, []byte(`{"type":"poke"}`), true)
+			p.write(opText, []byte(ack), true)
 		},
 		"a split ping": func(p *peer) {
 			p.write(opPing, []byte("hi"), false)
-			p.write(opText, []byte(`{"type":"poke"}`), true)
+			p.write(opText, []byte(ack), true)
 		},
 	} {
 		srv, _ := server(t, func(p *peer) {
 			send(p)
-			for {
-				if _, _, err := p.read(); err != nil {
-					return
-				}
-			}
+			drain(p)
 		})
-		c, _ := client(t, srv.URL)
+		_, events := client(t, srv.URL)
 		select {
-		case <-c.Pokes():
+		case <-events.acks:
 			t.Fatalf("%s: the connection went on", name)
 		case <-time.After(300 * time.Millisecond):
 		}
 	}
 }
 
-func TestItReconnectsAtOnceAfterTheServerCloses(t *testing.T) {
+func TestItReconnectsAtOnceAfterTheServerClosesAndSaysHelloAgain(t *testing.T) {
 	var first atomic.Bool
+	hellos := make(chan struct{}, 4)
 	srv, dials := server(t, func(p *peer) {
+		message, err := p.request()
+		if err != nil || string(message["type"]) != `"hello"` {
+			return
+		}
+		hellos <- struct{}{}
 		if first.CompareAndSwap(false, true) {
 			p.write(opClose, []byte{0x03, 0xe9}, true)
 			return
 		}
-		serveCalls(p)
+		drain(p)
 	})
-	c, _ := client(t, srv.URL)
-	deadline := time.Now().Add(2 * time.Second)
-	for dials.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if err := c.WaitConnected(context.Background(), 2*time.Second); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.SendHeartbeat(context.Background(), beat()); err != nil {
-		t.Fatalf("after reconnect: %v", err)
-	}
-	ready := 0
-	for drained := false; !drained; {
+	_, events := client(t, srv.URL)
+	for range 2 {
 		select {
-		case <-c.Ready():
-			ready++
-		default:
-			drained = true
+		case <-hellos:
+		case <-time.After(2 * time.Second):
+			t.Fatal("no hello")
 		}
 	}
-	if ready == 0 {
-		t.Fatal("a reconnect should signal ready")
+	select {
+	case <-events.connected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no second connection")
+	}
+	if dials.Load() != 2 {
+		t.Fatalf("dials %d", dials.Load())
 	}
 }
 
@@ -356,7 +330,7 @@ func TestSilenceDropsAHalfOpenConnection(t *testing.T) {
 			}
 		}
 	})
-	c := New(srv.URL, "token", "0.3.1")
+	c := New(srv.URL, "token", "0.7.90")
 	c.minDelay = 10 * time.Millisecond
 	c.maxDelay = 40 * time.Millisecond
 	c.keepalive = 20 * time.Millisecond
@@ -387,7 +361,7 @@ func TestAReplacedConnectionWaitsBeforeComingBack(t *testing.T) {
 		mu.Unlock()
 		p.write(opClose, []byte{0x0f, 0xa0}, true)
 	})
-	c := New(srv.URL, "token", "0.3.1")
+	c := New(srv.URL, "token", "0.7.90")
 	c.minDelay = 10 * time.Millisecond
 	c.maxDelay = 40 * time.Millisecond
 	c.replacedDelay = 300 * time.Millisecond
@@ -421,10 +395,10 @@ func TestADeletedServerAsksAgainOnlyRarely(t *testing.T) {
 			mu.Unlock()
 			w.WriteHeader(status)
 		}))
-		c := New(srv.URL, "token", "0.6.2")
+		c := New(srv.URL, "token", "0.7.90")
 		c.minDelay = 10 * time.Millisecond
 		c.maxDelay = 40 * time.Millisecond
-		c.goneDelay = 400 * time.Millisecond
+		c.rareDelay = 400 * time.Millisecond
 		ctx, cancel := context.WithCancel(context.Background())
 		go c.Run(ctx)
 		deadline := time.Now().Add(3 * time.Second)
@@ -447,15 +421,62 @@ func TestADeletedServerAsksAgainOnlyRarely(t *testing.T) {
 	}
 }
 
-func TestCallsFailFastWithoutAConnection(t *testing.T) {
-	c := New("http://127.0.0.1:1", "token", "0.3.1")
-	if _, err := c.SendHeartbeat(context.Background(), beat()); !errors.Is(err, ErrNotConnected) {
+func TestSendFailsFastWithoutAConnection(t *testing.T) {
+	c := New("http://127.0.0.1:1", "token", "0.7.90")
+	if err := c.Send(reporter.Ack{Type: "ack", ID: "a"}); !errors.Is(err, ErrNotConnected) {
 		t.Fatalf("err %v", err)
 	}
-	if err := c.WaitConnected(context.Background(), 20*time.Millisecond); !errors.Is(err, ErrNotConnected) {
-		t.Fatalf("wait %v", err)
+}
+
+func TestATooOldAgentAsksAgainOnlyRarelyAndSaysWhyOnce(t *testing.T) {
+	var times []time.Time
+	var mu sync.Mutex
+	srv, _ := server(t, func(p *peer) {
+		mu.Lock()
+		times = append(times, time.Now())
+		mu.Unlock()
+		p.write(opClose, []byte{0x11, 0x4a}, true)
+		drain(p)
+	})
+	var logged strings.Builder
+	var logMu sync.Mutex
+	log.SetOutput(writerFunc(func(b []byte) (int, error) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		return logged.Write(b)
+	}))
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	c, _ := fresh(srv.URL)
+	c.rareDelay = 150 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(times)
+		mu.Unlock()
+		if count >= 3 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(times) < 3 || times[1].Sub(times[0]) < 120*time.Millisecond || times[2].Sub(times[1]) < 120*time.Millisecond {
+		t.Fatalf("dials %v", times)
+	}
+	logMu.Lock()
+	defer logMu.Unlock()
+	if strings.Count(logged.String(), "too old") != 1 {
+		t.Fatalf("logged: %s", logged.String())
 	}
 }
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(b []byte) (int, error) { return f(b) }
 
 func TestTheHandshakeMustProveTheKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -465,8 +486,31 @@ func TestTheHandshakeMustProveTheKey(t *testing.T) {
 		conn.Close()
 	}))
 	defer srv.Close()
-	if _, err := dial(context.Background(), srv.URL, "token", "0.3.1"); err == nil || !strings.Contains(err.Error(), "accept") {
+	if _, err := dial(context.Background(), srv.URL, "token", "0.7.90"); err == nil || !strings.Contains(err.Error(), "accept") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func TestStoppingDuringAHangingDialReturnsAtOnce(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	c, _ := fresh(srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		c.Run(ctx)
+		close(stopped)
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run kept waiting on a dial after its context ended")
 	}
 }
 
@@ -484,15 +528,17 @@ func TestRunSaysGoodbyeBeforeItReturns(t *testing.T) {
 			}
 		}
 	})
-	c := New(srv.URL, "token", "0.3.1")
+	c, events := fresh(srv.URL)
 	ctx, cancel := context.WithCancel(context.Background())
 	stopped := make(chan struct{})
 	go func() {
 		c.Run(ctx)
 		close(stopped)
 	}()
-	if err := c.WaitConnected(context.Background(), 2*time.Second); err != nil {
-		t.Fatal(err)
+	select {
+	case <-events.connected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no connection")
 	}
 	cancel()
 	select {
@@ -514,38 +560,5 @@ func TestTheStreamNeedsTLS13(t *testing.T) {
 	transport := dialer.Transport.(*http.Transport)
 	if transport.TLSClientConfig == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
 		t.Fatal("the stream must need TLS 1.3")
-	}
-}
-
-func TestActionsInAPokeAreHandedOverAndTheCycleStillWakes(t *testing.T) {
-	srv, _ := server(t, func(p *peer) {
-		p.write(opText, []byte(`{"type":"poke","actions":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","kind":"docker","name":"resolver","action":"restart"}]}`), true)
-		for {
-			if _, _, err := p.read(); err != nil {
-				return
-			}
-		}
-	})
-	delivered := make(chan []reporter.ActionRequest, 1)
-	c := New(srv.URL, "token", "0.7.6")
-	c.Deliver = func(requests []reporter.ActionRequest) error {
-		delivered <- requests
-		return nil
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go c.Run(ctx)
-	select {
-	case requests := <-delivered:
-		if len(requests) != 1 || requests[0].ID != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || requests[0].Action != "restart" {
-			t.Fatalf("delivered %#v", requests)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the actions were not handed over")
-	}
-	select {
-	case <-c.Pokes():
-	case <-time.After(2 * time.Second):
-		t.Fatal("the cycle was not woken")
 	}
 }

@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   version:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -50,6 +49,8 @@ jobs:
     if: needs.version.outputs.released == 'false'
     environment: release
     runs-on: ubuntu-latest
+    env:
+      PRERELEASE: ${{ github.ref != 'refs/heads/main' }}
     permissions:
       contents: write
       id-token: write
@@ -104,7 +105,7 @@ jobs:
           sha256sum krynodes-linux-arm64 > krynodes-linux-arm64.sha256
 
       - name: Build the Windows agent
-        if: steps.version.outputs.released == 'false'
+        if: steps.version.outputs.released == 'false' && env.PRERELEASE == 'false'
         env:
           CGO_ENABLED: "0"
           GOWORK: "off"
@@ -142,7 +143,11 @@ jobs:
             echo "AGENT_SIGNING_KEY does not match agent/internal/update/release.pub." >&2
             exit 1
           fi
-          for file in krynodes-linux-amd64 krynodes-linux-arm64 krynodes-windows-amd64.exe; do
+          files="krynodes-linux-amd64 krynodes-linux-arm64"
+          if [ "$PRERELEASE" = false ]; then
+            files="$files krynodes-windows-amd64.exe"
+          fi
+          for file in $files; do
             openssl pkeyutl -sign -inkey "$key" -rawin -in "$file" -out "$file.sig"
           done
           rm -f "$key"
@@ -164,7 +169,7 @@ jobs:
           subject-path: agent/krynodes-linux-arm64
 
       - name: Attest Windows binary
-        if: steps.version.outputs.released == 'false'
+        if: steps.version.outputs.released == 'false' && env.PRERELEASE == 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: agent/krynodes-windows-amd64.exe
@@ -177,6 +182,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Krynodes Agent ${{ steps.version.outputs.version }}
           draft: true
+          prerelease: ${{ env.PRERELEASE }}
           files: |
             agent/krynodes-linux-amd64.gz
             agent/krynodes-linux-arm64.gz
@@ -196,4 +202,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           REPO: ${{ github.repository }}
-        run: gh release edit "$TAG" --repo "$REPO" --draft=false --latest
+        run: |
+          if [ "$PRERELEASE" = true ]; then
+            gh release edit "$TAG" --repo "$REPO" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$TAG" --repo "$REPO" --draft=false --latest
+          fi

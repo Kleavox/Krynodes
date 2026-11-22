@@ -1,0 +1,393 @@
+{
+  "agent": {
+    "valid": [
+      {
+        "type": "hello",
+        "v": 1,
+        "version": "0.7.90",
+        "hostname": "server-1",
+        "os": "linux",
+        "arch": "amd64",
+        "kernel": "6.8.0-45-generic",
+        "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+        "trust": {
+          "version": 3,
+          "core": ["Y3JlZC1jb3Jl"],
+          "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+        }
+      },
+      {
+        "type": "hello",
+        "v": 1,
+        "version": "0.7.90",
+        "hostname": "server-1",
+        "os": "linux",
+        "arch": "amd64",
+        "kernel": "6.8.0-45-generic",
+        "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+        "trust": null
+      },
+      {
+        "type": "progress",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "line": "Pulling image"
+      },
+      {
+        "type": "progress",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "line": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "type": "result",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "ok": true,
+        "message": "Restarted"
+      },
+      {
+        "type": "result",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "ok": false,
+        "message": "Refused: the grant expired"
+      },
+      {
+        "type": "result",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "ok": true,
+        "message": "Restarted",
+        "trust": {
+          "version": 3,
+          "core": ["Y3JlZC1jb3Jl"],
+          "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+        }
+      },
+      {
+        "type": "result",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "ok": true,
+        "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      }
+    ],
+    "invalid": [
+      {
+        "why": "an unknown type",
+        "structural": true,
+        "message": {
+          "type": "metrics",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01"
+        }
+      },
+      {
+        "why": "a hub message sent by the agent",
+        "structural": true,
+        "message": {
+          "type": "ack",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01"
+        }
+      },
+      {
+        "why": "a message with no type",
+        "structural": true,
+        "message": {
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "line": "Pulling image"
+        }
+      },
+      {
+        "why": "a hello with an extra field",
+        "structural": true,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "extra": 1
+        }
+      },
+      {
+        "why": "a progress with an extra field",
+        "structural": true,
+        "message": {
+          "type": "progress",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "line": "Pulling image",
+          "extra": 1
+        }
+      },
+      {
+        "why": "a result with an extra field",
+        "structural": true,
+        "message": {
+          "type": "result",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "ok": true,
+          "message": "Restarted",
+          "extra": 1
+        }
+      },
+      {
+        "why": "a trust report with an extra field",
+        "structural": true,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"],
+            "passphrase": false
+          }
+        }
+      },
+      {
+        "why": "a result whose ok is a string",
+        "structural": true,
+        "message": {
+          "type": "result",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "ok": "yes",
+          "message": "Restarted"
+        }
+      },
+      {
+        "why": "a hello with no seal key",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          }
+        }
+      },
+      {
+        "why": "a hello with no trust member",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw"
+        }
+      },
+      {
+        "why": "a hello of wire version 2",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 2,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          }
+        }
+      },
+      {
+        "why": "a hello with a seal key of the wrong length",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "sealKey": "KjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          }
+        }
+      },
+      {
+        "why": "a progress line of 513 characters",
+        "structural": false,
+        "message": {
+          "type": "progress",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "line": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      {
+        "why": "a result message of 2049 characters",
+        "structural": false,
+        "message": {
+          "type": "result",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "ok": true,
+          "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        }
+      },
+      {
+        "why": "a trust report with a negative version",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": -1,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          }
+        }
+      }
+    ]
+  },
+  "hub": {
+    "valid": [
+      {
+        "type": "command",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "kind": "host",
+        "name": "server",
+        "action": "restart",
+        "signed": "eyJjb21tYW5kIjoiYyJ9"
+      },
+      {
+        "type": "command",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "kind": "trust",
+        "name": "devices",
+        "action": "trust",
+        "signed": "eyJjb21tYW5kIjoiYyJ9"
+      },
+      {
+        "type": "command",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "kind": "agent",
+        "name": "krynodes",
+        "action": "update",
+        "signed": "eyJjb21tYW5kIjoiYyJ9"
+      },
+      {
+        "type": "ack",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01"
+      }
+    ],
+    "invalid": [
+      {
+        "why": "an unknown type",
+        "structural": true,
+        "message": {
+          "type": "ping"
+        }
+      },
+      {
+        "why": "an agent message sent by the hub",
+        "structural": true,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.90",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          }
+        }
+      },
+      {
+        "why": "a command with an extra field",
+        "structural": true,
+        "message": {
+          "type": "command",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "kind": "host",
+          "name": "server",
+          "action": "restart",
+          "signed": "eyJjb21tYW5kIjoiYyJ9",
+          "extra": 1
+        }
+      },
+      {
+        "why": "an ack with an extra field",
+        "structural": true,
+        "message": {
+          "type": "ack",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "extra": 1
+        }
+      },
+      {
+        "why": "a command of an unknown kind",
+        "structural": false,
+        "message": {
+          "type": "command",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "kind": "stack",
+          "name": "server",
+          "action": "restart",
+          "signed": "eyJjb21tYW5kIjoiYyJ9"
+        }
+      },
+      {
+        "why": "a command with no signed member",
+        "structural": false,
+        "message": {
+          "type": "command",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "kind": "host",
+          "name": "server",
+          "action": "restart"
+        }
+      },
+      {
+        "why": "a command with an empty signed member",
+        "structural": false,
+        "message": {
+          "type": "command",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "kind": "host",
+          "name": "server",
+          "action": "restart",
+          "signed": ""
+        }
+      }
+    ]
+  }
+}

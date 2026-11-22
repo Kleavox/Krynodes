@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/Kleavox/krynodes/agent/internal/reporter"
 )
 
 const (
@@ -28,6 +26,7 @@ const (
 	opPing         = byte(0x9)
 	opPong         = byte(0xa)
 	maxMessage     = 1 << 20
+	dialTimeout    = 15 * time.Second
 )
 
 type closeError struct{ code int }
@@ -48,7 +47,7 @@ var errUnknownServer = errors.New("Krynodes refused this server's token (HTTP 40
 var dialer = &http.Client{
 	Transport: &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		TLSClientConfig:       reporter.TLSConfig(),
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS13},
 		ForceAttemptHTTP2:     false,
 		TLSNextProto:          map[string]func(string, *tls.Conn) http.RoundTripper{},
 		TLSHandshakeTimeout:   15 * time.Second,
@@ -62,8 +61,10 @@ func dial(ctx context.Context, endpoint, token, version string) (*conn, error) {
 		return nil, err
 	}
 	key := base64.StdEncoding.EncodeToString(nonce)
+	attempt, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(
-		context.WithoutCancel(ctx),
+		attempt,
 		http.MethodGet,
 		strings.TrimRight(endpoint, "/")+"/api/agent/stream",
 		nil,

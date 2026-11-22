@@ -1,6 +1,0 @@
-export const LAPTOP =
-  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJQIdIFdIOrfxkgPwGXPHesM4bMreTr2K6zwvH2eRuGK user1@laptop";
-export const PHONE =
-  "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPO5YBCY7BQSSM4XGAM/HxWEZPe5+h2n+txzD81ovRiq phone";
-export const LAPTOP_PRINT =
-  "SHA256:vJ6CKU+xFnpShJn8LfDKB88waZSGk7ZmJzZA0PM8Gxk";

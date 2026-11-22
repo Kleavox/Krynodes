@@ -1,98 +1,68 @@
-import { compareVersions } from "@krynodes/protocol";
+import type { Env } from "../env";
+import { announce } from "../fleet/client";
 
-const RELEASES = "https://github.com/Kleavox/Krynodes/releases";
-const VERSION = /^\d+\.\d+\.\d+$/u;
+const REPOSITORY = "Kleavox/Krynodes";
+const LATEST = `https://github.com/${REPOSITORY}/releases/latest`;
+const FEED = `https://github.com/${REPOSITORY}/releases.atom`;
+const TAG = /^agent-v(\d+\.\d+\.\d+)$/u;
+const ENTRY =
+  /href="https:\/\/github\.com\/Kleavox\/Krynodes\/releases\/tag\/([^"]+)"/gu;
+const HEADERS = { "user-agent": "kry-worker" };
 
 export interface AgentRelease {
   version: string | null;
   checkedAt: string | null;
 }
 
-export function canUpdateRemotely(agentVersion: string | null): boolean {
-  return agentVersion !== null && VERSION.test(agentVersion);
+function missed(why: string): null {
+  console.error("[kry release]", why);
+  return null;
 }
 
-export function parseReleaseLocation(location: string | null): string | null {
-  const match = location?.match(/\/releases\/tag\/agent-v(\d+\.\d+\.\d+)$/u);
-  return match?.[1] ?? null;
-}
-
-async function fetchLatestVersion(): Promise<string | null> {
+async function fetchNewest(any: boolean): Promise<string | null> {
   try {
-    const response = await fetch(`${RELEASES}/latest`, {
-      redirect: "manual",
-      headers: { "user-agent": "kry-worker" },
-    });
-    return parseReleaseLocation(response.headers.get("location"));
-  } catch {
-    return null;
+    if (!any) {
+      const response = await fetch(LATEST, {
+        redirect: "manual",
+        headers: HEADERS,
+      });
+      const version = TAG.exec(
+        response.headers.get("location")?.split("/releases/tag/")[1] ?? "",
+      )?.[1];
+      return (
+        version ??
+        missed(`${LATEST} answered ${response.status}, no agent release`)
+      );
+    }
+    const response = await fetch(FEED, { headers: HEADERS });
+    if (!response.ok) return missed(`${FEED} answered ${response.status}`);
+    for (const [, tag] of (await response.text()).matchAll(ENTRY)) {
+      const version = TAG.exec(tag ?? "")?.[1];
+      if (version) return version;
+    }
+    return missed(`${FEED} lists no agent release`);
+  } catch (error) {
+    return missed(error instanceof Error ? error.message : String(error));
   }
 }
 
 export async function readAgentRelease(db: D1Database): Promise<AgentRelease> {
   const row = await db
-    .prepare(
-      "SELECT value, updated_at FROM settings WHERE key = 'agent_release'",
-    )
-    .first<{ value: string | null; updated_at: string }>();
-  return { version: row?.value ?? null, checkedAt: row?.updated_at ?? null };
+    .prepare("SELECT version, checked_at FROM agent_release WHERE id = 1")
+    .first<{ version: string; checked_at: string }>();
+  return { version: row?.version ?? null, checkedAt: row?.checked_at ?? null };
 }
 
-export async function checkAgentRelease(
-  db: D1Database,
-  now = Date.now(),
-): Promise<AgentRelease> {
-  const found = await fetchLatestVersion();
-  if (found === null) return readAgentRelease(db);
-  const version = found;
-  const checkedAt = new Date(now).toISOString();
-  await db
-    .prepare(
-      `INSERT INTO settings (key, value, updated_at) VALUES ('agent_release', ?, ?)
-       ON CONFLICT (key) DO UPDATE SET value = excluded.value,
-         updated_at = excluded.updated_at`,
-    )
+export async function checkAgentRelease(env: Env): Promise<AgentRelease> {
+  const known = await readAgentRelease(env.DB);
+  const version = await fetchNewest(env.RELEASES === "any");
+  if (version === null) return known;
+  const checkedAt = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO agent_release (id, version, checked_at) VALUES (1, ?1, ?2) ON CONFLICT (id) DO UPDATE SET version = excluded.version, checked_at = excluded.checked_at",
+  )
     .bind(version, checkedAt)
     .run();
+  if (version !== known.version) await announce(env, ["fleet"]);
   return { version, checkedAt };
-}
-
-export async function requestAutoUpdates(
-  db: D1Database,
-  version: string,
-  now = Date.now(),
-): Promise<number> {
-  const candidates = await db
-    .prepare(
-      `SELECT id, agent_version FROM nodes
-       WHERE auto_update = 1 AND kind = 'server' AND enrolled_at IS NOT NULL
-         AND disabled_at IS NULL
-         AND (update_requested_version IS NULL OR update_requested_version <> ?)`,
-    )
-    .bind(version)
-    .all<{ id: string; agent_version: string | null }>();
-  const due = candidates.results.filter(
-    (node) =>
-      canUpdateRemotely(node.agent_version) &&
-      compareVersions(node.agent_version!, version) < 0,
-  );
-  if (due.length === 0) return 0;
-  await db
-    .prepare(
-      `UPDATE nodes SET update_requested_version = ?, update_requested_at = ?,
-         update_attempts = 1, update_error = NULL
-       WHERE id IN (SELECT value FROM json_each(?))`,
-    )
-    .bind(
-      version,
-      new Date(now).toISOString(),
-      JSON.stringify(due.map((node) => node.id)),
-    )
-    .run();
-  return due.length;
-}
-
-export async function runReleaseCheck(db: D1Database): Promise<void> {
-  const { version } = await checkAgentRelease(db);
-  if (version) await requestAutoUpdates(db, version);
 }

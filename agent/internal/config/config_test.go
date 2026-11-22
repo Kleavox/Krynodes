@@ -10,8 +10,7 @@ import (
 func TestSaveAndLoad(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	err := Save(path, Config{
-		Endpoint: "https://kry.example.test", NodeID: "node-id",
-		Token: "secret", IntervalSeconds: 60,
+		Endpoint: "https://kry.example.test", NodeID: "node-id", Token: "secret",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +26,7 @@ func TestSaveAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.IntervalSeconds != 60 || cfg.Token != "secret" {
+	if cfg.NodeID != "node-id" || cfg.Token != "secret" {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
 }

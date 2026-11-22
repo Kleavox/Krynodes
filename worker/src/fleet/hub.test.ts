@@ -1,1932 +1,480 @@
-import type { AgentHeartbeat, CheckResult } from "@krynodes/protocol";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Env } from "../env";
-import { createBatch, deliverActions } from "../actions/store";
-import { FakeSocket, FakeStorage } from "../test/hub";
-import { seedCheck, seedNode } from "../test/seed";
-import { createTestDb } from "../test/sqlite-d1";
-import { FleetHub } from "./hub";
+import { freshDb } from "../test/db";
+import { hubHarness } from "../test/hub";
 
-const NODE = "11111111-1111-4111-8111-111111111111";
-const CHECK = "22222222-2222-4222-8222-222222222222";
-const WINDOW = 300_000;
-const BASE = Math.floor(Date.parse("2026-10-01T08:00:00Z") / WINDOW) * WINDOW;
+const SEAL =
+  "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw";
 
-const heartbeat = (
-  cpu: number,
-  results: CheckResult[] = [],
-): AgentHeartbeat => ({
-  nodeId: NODE,
+const hello = {
+  type: "hello",
+  v: 1,
+  version: "0.7.90",
   hostname: "server-1",
-  operatingSystem: "linux",
-  architecture: "amd64",
-  agentVersion: "0.7.20",
-  metrics: {
-    cpuPercent: cpu,
-    memoryUsedBytes: 4,
-    memoryTotalBytes: 8,
-    diskUsedBytes: 1,
-    diskTotalBytes: 2,
-    load1: 0.5,
-    load5: 0.4,
-    load15: 0.3,
-    uptimeSeconds: 100,
-  },
-  results,
-});
+  os: "linux",
+  arch: "amd64",
+  kernel: "6.8.0-45-generic",
+  sealKey: SEAL,
+  trust: { version: 3, core: ["Y3JlZC1jb3Jl"], access: ["Y3JlZC1jb3Jl"] },
+};
 
-const result = (status: "UP" | "DOWN"): CheckResult => ({
-  checkId: CHECK,
-  status,
-  latencyMs: status === "UP" ? 30 : null,
-  message: status === "DOWN" ? "refused" : null,
-});
+const command = {
+  type: "command",
+  id: "a1",
+  kind: "host",
+  name: "server-1",
+  action: "reboot",
+  signed: "c2lnbmVk",
+};
 
-function setup() {
-  const { db, sqlite } = createTestDb();
-  seedNode(sqlite, { id: NODE });
-  seedCheck(sqlite, { id: CHECK, nodeId: NODE });
-  const accepted: { ws: FakeSocket; tags: string[] }[] = [];
-  const ctx = {
-    acceptWebSocket(ws: FakeSocket, tags: string[]) {
-      accepted.push({ ws, tags });
+async function setup() {
+  const db = freshDb();
+  await db
+    .prepare(
+      "INSERT INTO nodes (id, name, agent_token_hash, enrolled_at) VALUES ('n1', 'server-1', 'h1', '2026-11-22T00:00:00.000Z')",
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO actions (id, node_id, kind, name, action, title, status, created_at) VALUES ('a1', 'n1', 'host', 'server-1', 'reboot', 'Reboot server-1', 'sent', '2026-11-22T00:00:00.000Z')",
+    )
+    .run();
+  const writes: string[] = [];
+  const counted = {
+    prepare: (sql: string) => {
+      if (/^\s*(INSERT|UPDATE|DELETE)/iu.test(sql)) writes.push(sql);
+      return db.prepare(sql);
     },
-    getWebSockets(tag?: string) {
-      return accepted
-        .filter(
-          (entry) =>
-            (!entry.ws.closed || entry.ws.lingers) &&
-            (!tag || entry.tags.includes(tag)),
-        )
-        .map((entry) => entry.ws);
-    },
-    getWebSocketAutoResponseTimestamp(ws: FakeSocket) {
-      return ws.pinged === null ? null : new Date(ws.pinged);
-    },
-    setWebSocketAutoResponse() {},
-    storage: new FakeStorage(),
-  };
-  const mail: { subject: string; text: string }[] = [];
-  let mailFails = false;
-  const hub = new FleetHub(
-    ctx as unknown as DurableObjectState,
-    {
-      DB: db,
-      ALERT_EMAIL: "owner@example.test",
-      FROM_EMAIL: "kry@example.test",
-      PUBLIC_ORIGIN: "https://kry.example.test",
-      EMAIL: {
-        send: async (message: { subject: string; text: string }) => {
-          if (mailFails) throw new Error("destination address not verified");
-          mail.push(message);
-        },
-      },
-    } as unknown as Env,
-  );
-  const connect = async (version: string | null = null) => {
-    const ws = new FakeSocket();
-    await hub.accept(
-      ws as unknown as WebSocket,
-      NODE,
-      "standalone",
-      60,
-      version,
-    );
-    return ws;
-  };
-  let requests = 0;
-  const send = (ws: FakeSocket, at: number, beat: AgentHeartbeat) => {
-    vi.setSystemTime(at);
-    requests += 1;
-    return hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({ id: requests, type: "heartbeat", heartbeat: beat }),
-    );
-  };
-  const node = () =>
-    sqlite
-      .prepare("SELECT last_seen_at, cpu_percent FROM nodes WHERE id = ?")
-      .get(NODE) as {
-      last_seen_at: string;
-      cpu_percent: number;
-    };
-  const windows = () =>
-    sqlite
-      .prepare(
-        "SELECT window_start, samples, cpu_percent, checks FROM node_windows ORDER BY window_start",
-      )
-      .all() as {
-      window_start: string;
-      samples: number;
-      cpu_percent: number;
-      checks: string;
-    }[];
-  const changes = () =>
-    (sqlite.prepare("SELECT total_changes() AS n").get() as { n: number }).n;
-  return {
-    db,
-    sqlite,
-    hub,
-    accepted,
-    connect,
-    send,
-    node,
-    windows,
-    changes,
-    mail,
-    failMail: (on: boolean) => {
-      mailFails = on;
-    },
-    storage: ctx.storage,
-  };
+    batch: db.batch.bind(db),
+  } as unknown as D1Database;
+  return { db, writes, ...hubHarness(counted) };
 }
 
-class AutoResponse {
-  request: string;
-  response: string;
-  constructor(request: string, response: string) {
-    this.request = request;
-    this.response = response;
-  }
-}
+const post = (path: string, body: unknown) =>
+  new Request(`https://fleet${path}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 
-beforeEach(() => {
-  vi.useFakeTimers({ now: BASE, toFake: ["Date"] });
-  vi.stubGlobal("WebSocketRequestResponsePair", AutoResponse);
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-  vi.unstubAllGlobals();
-});
+afterEach(() => vi.useRealTimers());
 
 describe("FleetHub", () => {
-  it("answers a heartbeat and writes the server row once per connection", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    expect(t.accepted[0]?.tags).toEqual([NODE]);
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("UP")]));
-    expect(ws.replies()[0]).toMatchObject({
-      type: "heartbeat",
-      response: { ok: true, intervalSeconds: 60 },
-    });
-    expect(t.node()).toMatchObject({ cpu_percent: 10 });
-    expect(t.windows()).toEqual([]);
-    const before = t.changes();
-    await t.send(ws, BASE + 65_000, heartbeat(30, [result("UP")]));
-    expect(t.changes() - before).toBe(0);
-    expect(ws.replies()).toHaveLength(2);
+  it("answers pings without waking", async () => {
+    const { autoResponses } = await setup();
+    expect(autoResponses).toEqual([{ request: "ping", response: "pong" }]);
   });
 
-  it("holds the denials in memory, out of the stored beat and of D1", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    const denials = {
-      count: 2,
-      lines: [
-        {
-          at: "2026-10-01T07:59:00Z",
-          program: "cat",
-          wanted: "read shadow",
-          stack: "panel",
-        },
-      ],
-    };
-    const before = t.changes();
-    await t.send(ws, BASE + 65_000, { ...heartbeat(10), denials });
-    expect(t.changes() - before).toBe(0);
+  it("hello writes facts once and not again when nothing changed", async () => {
+    const { db, writes, connect, say } = await setup();
+    const ws = connect("n1");
+    await say(ws, hello);
+    expect(writes).toHaveLength(2);
     expect(
-      (ws.deserializeAttachment() as { beat: Record<string, unknown> }).beat,
-    ).not.toHaveProperty("denials");
-    const served = (await (
-      await t.hub.fetch(new Request(`https://fleet/denials?node=${NODE}`))
-    ).json()) as unknown;
-    expect(served).toEqual({ ...denials, at: BASE + 65_000 });
-    const unknown = await t.hub.fetch(
-      new Request("https://fleet/denials?node=someone-else"),
-    );
-    expect(await unknown.json()).toBeNull();
-    await t.send(ws, BASE + 125_000, heartbeat(10));
-    const forgotten = await t.hub.fetch(
-      new Request(`https://fleet/denials?node=${NODE}`),
-    );
-    expect(await forgotten.json()).toBeNull();
+      await db
+        .prepare(
+          "SELECT hostname, os, arch, kernel, version, seal_key, last_seen_at IS NOT NULL AS seen FROM nodes WHERE id = 'n1'",
+        )
+        .first(),
+    ).toEqual({
+      hostname: "server-1",
+      os: "linux",
+      arch: "amd64",
+      kernel: "6.8.0-45-generic",
+      version: "0.7.90",
+      seal_key: SEAL,
+      seen: 1,
+    });
+    expect(
+      await db
+        .prepare(
+          "SELECT version, core, access FROM node_trust WHERE node_id = 'n1'",
+        )
+        .first(),
+    ).toEqual({
+      version: 3,
+      core: '["Y3JlZC1jb3Jl"]',
+      access: '["Y3JlZC1jb3Jl"]',
+    });
+
+    await say(ws, hello);
+    await say(connect("n1"), hello);
+    expect(writes).toHaveLength(2);
+
+    await say(connect("n1"), { ...hello, kernel: "6.8.0-46-generic" });
+    expect(writes).toHaveLength(3);
   });
 
-  it("reads a server's checks once, again after a poke, a status change or ten minutes", async () => {
-    const t = setup();
-    const reads: string[] = [];
-    const prepare = t.sqlite.prepare.bind(t.sqlite);
-    t.sqlite.prepare = ((sql: string) => {
-      if (/FROM checks WHERE node_id/u.test(sql)) reads.push(sql);
-      return prepare(sql);
-    }) as typeof t.sqlite.prepare;
-    const ws = await t.connect();
-    await t.send(ws, BASE + 1_000, heartbeat(10, [result("UP")]));
-    reads.length = 0;
-    for (let beat = 0; beat < 10; beat += 1) {
-      await t.send(
-        ws,
-        BASE + 5_000 + beat * 60_000,
-        heartbeat(10, [result("UP")]),
-      );
-    }
-    expect(reads).toHaveLength(1);
-    await t.hub.fetch(
-      new Request("https://fleet/poke", {
-        method: "POST",
-        body: JSON.stringify({ nodeIds: [NODE] }),
-      }),
-    );
-    await t.send(ws, BASE + 605_000, heartbeat(10, [result("UP")]));
-    expect(reads).toHaveLength(2);
-    await t.send(ws, BASE + 665_000, heartbeat(10, [result("DOWN")]));
-    expect(reads).toHaveLength(2);
-    await t.send(ws, BASE + 725_000, heartbeat(10, [result("UP")]));
-    expect(reads).toHaveLength(3);
-    await t.send(ws, BASE + 785_000, heartbeat(10, [result("UP")]));
-    await t.send(ws, BASE + 845_000, heartbeat(10, [result("UP")]));
-    expect(reads).toHaveLength(4);
-    await t.send(ws, BASE + 1_385_000, heartbeat(10, [result("UP")]));
-    expect(reads).toHaveLength(5);
+  it("writes last_seen_at again after ten minutes", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-11-22T08:00:00.000Z") });
+    const { writes, connect, say } = await setup();
+    const ws = connect("n1");
+    await say(ws, { ...hello, trust: null });
+    vi.setSystemTime(Date.parse("2026-11-22T08:09:00.000Z"));
+    await say(ws, { ...hello, trust: null });
+    expect(writes).toHaveLength(1);
+    vi.setSystemTime(Date.parse("2026-11-22T08:10:00.000Z"));
+    await say(ws, { ...hello, trust: null });
+    expect(writes).toHaveLength(2);
   });
 
-  it("writes one averaged history row when the next window starts", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("UP")]));
-    await t.send(ws, BASE + 65_000, heartbeat(30, [result("DOWN")]));
-    await t.send(ws, BASE + WINDOW + 5_000, heartbeat(50, [result("UP")]));
-    expect(t.windows()).toEqual([
-      {
-        window_start: new Date(BASE).toISOString(),
-        samples: 2,
-        cpu_percent: 20,
-        checks: JSON.stringify({ [CHECK]: ["DOWN", null, "refused"] }),
-      },
+  it("a command reaches the node's socket", async () => {
+    const { connect, hub } = await setup();
+    const ws = connect("n1");
+    const other = connect("n2");
+    const response = await hub.fetch(
+      post("/command", { nodeId: "n1", command }),
+    );
+    expect(response.status).toBe(200);
+    expect(ws.replies()).toEqual([command]);
+    expect(other.sent).toEqual([]);
+  });
+
+  it("a command for a node with no socket is OFFLINE", async () => {
+    const { connect, hub } = await setup();
+    connect("n1").close(1001, "gone");
+    const response = await hub.fetch(
+      post("/command", { nodeId: "n1", command }),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ code: "OFFLINE" });
+  });
+
+  it("refuses a command that is not one", async () => {
+    const { connect, hub } = await setup();
+    connect("n1");
+    const response = await hub.fetch(
+      post("/command", { nodeId: "n1", command: { type: "ack", id: "a1" } }),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("drop closes the node's sockets and no other", async () => {
+    const { connect, hub } = await setup();
+    const first = connect("n1");
+    const other = connect("n2");
+    const response = await hub.fetch(post("/drop", { nodeId: "n1" }));
+    expect(response.status).toBe(204);
+    expect(first.closed).toEqual({ code: 4001, reason: "removed" });
+    expect(other.closed).toBeNull();
+  });
+
+  it("a late result from a removed node is closed, not stored", async () => {
+    const { db, connect, say } = await setup();
+    const ws = connect("n1");
+    await db.prepare("DELETE FROM nodes WHERE id = 'n1'").run();
+    await say(ws, {
+      type: "result",
+      id: "a1",
+      ok: true,
+      message: "Done",
+      trust: { version: 4, core: ["Y29yZQ"], access: [] },
+    });
+    expect(ws.closed?.code).toBe(4401);
+    expect(ws.sent).toEqual([]);
+    expect(
+      await db.prepare("SELECT version FROM node_trust").first(),
+    ).toBeNull();
+  });
+
+  it("a server stays online after the hub forgets its memory", async () => {
+    const harness = await setup();
+    harness.connect("n1");
+    harness.forget();
+    const response = await harness.hub.fetch(
+      new Request("https://fleet/online"),
+    );
+    expect(await response.json()).toEqual(["n1"]);
+  });
+
+  it("a second socket replaces the first", async () => {
+    const { connect, hub } = await setup();
+    const first = connect("n1");
+    const second = connect("n1");
+    expect(first.closed).toEqual({ code: 4000, reason: "replaced" });
+    expect(second.closed).toBeNull();
+    await hub.fetch(post("/command", { nodeId: "n1", command }));
+    expect(second.replies()).toEqual([command]);
+  });
+
+  it("resent result is stored once and acked twice", async () => {
+    const { db, writes, connect, watch, say } = await setup();
+    const ws = connect("n1");
+    const dashboard = watch();
+    const result = { type: "result", id: "a1", ok: true, message: "Rebooted" };
+    await say(ws, result);
+    const stored = await db
+      .prepare(
+        "SELECT status, message, finished_at FROM actions WHERE id = 'a1'",
+      )
+      .first<{ status: string; message: string; finished_at: string }>();
+    expect(stored).toMatchObject({ status: "done", message: "Rebooted" });
+    await say(ws, { ...result, ok: false, message: "Again" });
+    expect(
+      await db
+        .prepare(
+          "SELECT status, message, finished_at FROM actions WHERE id = 'a1'",
+        )
+        .first(),
+    ).toEqual(stored);
+    expect(ws.replies()).toEqual([
+      { type: "ack", id: "a1" },
+      { type: "ack", id: "a1" },
     ]);
-    expect(t.node().cpu_percent).toBe(50);
+    expect(writes.filter((sql) => sql.includes("actions"))).toHaveLength(2);
+    expect(dashboard.replies()).toEqual([
+      { type: "changed", topics: ["fleet"] },
+    ]);
   });
 
-  it("flushes the open window and the last sighting when the agent leaves", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("UP")]));
-    await t.send(ws, BASE + 65_000, heartbeat(20));
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-    expect(t.windows()).toMatchObject([{ samples: 2, cpu_percent: 15 }]);
-    expect(t.node().last_seen_at).toBe(
-      new Date(BASE + 65_000).toISOString().replace("T", " ").slice(0, 19),
-    );
-  });
-
-  it("resumes the window after a reconnect, keeping an earlier failure", async () => {
-    const t = setup();
-    const first = await t.connect();
-    await t.send(first, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    await t.hub.webSocketClose(first as unknown as WebSocket);
-    const second = await t.connect();
-    await t.send(second, BASE + 125_000, heartbeat(30, [result("UP")]));
-    await t.send(second, BASE + WINDOW + 5_000, heartbeat(40, [result("UP")]));
-    expect(t.windows()[0]).toMatchObject({
-      samples: 2,
-      cpu_percent: 20,
-      checks: JSON.stringify({ [CHECK]: ["DOWN", null, "refused"] }),
+  it("a failed result is failed and its trust is stored", async () => {
+    const { db, connect, say } = await setup();
+    await say(connect("n1"), {
+      type: "result",
+      id: "a1",
+      ok: false,
+      message: "No",
+      trust: { version: 4, core: ["Y29yZQ"], access: [] },
+    });
+    expect(
+      await db.prepare("SELECT status FROM actions WHERE id = 'a1'").first(),
+    ).toEqual({ status: "failed" });
+    expect(await db.prepare("SELECT version FROM node_trust").first()).toEqual({
+      version: 4,
     });
   });
 
-  it("replaces an older connection of the same server and flushes it", async () => {
-    const t = setup();
-    const old = await t.connect();
-    await t.send(old, BASE + 5_000, heartbeat(10));
-    await t.connect();
-    expect(old.closed).toEqual({
-      code: 4000,
-      reason: "Replaced by a newer connection",
+  it("another node cannot finish an action", async () => {
+    const { db, connect, say } = await setup();
+    await say(connect("n2"), {
+      type: "result",
+      id: "a1",
+      ok: true,
+      message: "Done",
     });
-    expect(t.windows()).toMatchObject([{ samples: 1 }]);
+    expect(
+      await db.prepare("SELECT status FROM actions WHERE id = 'a1'").first(),
+    ).toEqual({ status: "sent" });
   });
 
-  it("refuses a malformed message without closing, and closes for a disabled server", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.hub.webSocketMessage(ws as unknown as WebSocket, "not json");
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({
-        type: "heartbeat",
-        heartbeat: { nodeId: "someone-else" },
-      }),
-    );
+  it("progress reaches dashboards only and is not stored", async () => {
+    const { writes, connect, watch, say } = await setup();
+    const ws = connect("n1");
+    const other = connect("n2");
+    const dashboard = watch();
+    await say(ws, { type: "progress", id: "a1", line: "Pulling image" });
+    expect(dashboard.replies()).toEqual([
+      { type: "progress", id: "a1", line: "Pulling image" },
+    ]);
+    expect(ws.sent).toEqual([]);
+    expect(other.sent).toEqual([]);
+    expect(writes).toEqual([]);
+  });
+
+  it("an invalid message is answered and the socket kept", async () => {
+    const { writes, connect, say } = await setup();
+    const ws = connect("n1");
+    await say(ws, "{not json");
+    await say(ws, { type: "result", id: "a1" });
     expect(ws.replies()).toEqual([
       { type: "error", code: "INVALID_MESSAGE" },
       { type: "error", code: "INVALID_MESSAGE" },
     ]);
     expect(ws.closed).toBeNull();
-    t.sqlite
-      .prepare("UPDATE nodes SET disabled_at = '2026-10-01 00:00:00'")
-      .run();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    expect(ws.closed).toEqual({
-      code: 4401,
-      reason: "Unknown or disabled server",
-    });
+    expect(writes).toEqual([]);
   });
 
-  it("delivers queued actions and opens incidents like the HTTP route", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    expect(t.sqlite.prepare("SELECT status FROM incidents").all()).toEqual([
-      { status: "OPEN" },
+  it("closing writes last_seen_at and tells dashboards", async () => {
+    const { db, connect, watch, hub } = await setup();
+    const ws = connect("n1");
+    const dashboard = watch();
+    await hub.webSocketClose(ws as unknown as WebSocket);
+    expect(
+      await db
+        .prepare(
+          "SELECT last_seen_at IS NOT NULL AS seen FROM nodes WHERE id = 'n1'",
+        )
+        .first(),
+    ).toEqual({ seen: 1 });
+    expect(dashboard.replies()).toEqual([
+      { type: "changed", topics: ["fleet"] },
     ]);
   });
 
-  it("mails a confirmed failure at once and never its recovery", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    expect(t.mail).toEqual([]);
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: 1 check down — ${CHECK}`,
+  it("announces topics to dashboards", async () => {
+    const { connect, watch, hub } = await setup();
+    const ws = connect("n1");
+    const dashboard = watch();
+    await hub.fetch(post("/announce", { topics: ["fleet", 3] }));
+    expect(dashboard.replies()).toEqual([
+      { type: "changed", topics: ["fleet"] },
     ]);
-    await t.send(ws, BASE + 125_000, heartbeat(10, [result("UP")]));
-    await t.send(ws, BASE + 185_000, heartbeat(10, [result("DOWN")]));
-    await t.send(ws, BASE + 245_000, heartbeat(10, [result("DOWN")]));
-    vi.setSystemTime(BASE + 300_000);
-    await t.hub.alarm();
-    expect(t.mail).toHaveLength(1);
+    expect(ws.sent).toEqual([]);
   });
 
-  it("says in the failure mail when Krynodes restarts the unit by itself", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare(
-        "UPDATE checks SET kind = 'SERVICE', target = 'nginx', name = 'nginx', auto_restart = 1 WHERE id = ?",
-      )
-      .run(CHECK);
-    const ws = await t.connect();
-    const newer = (beat: AgentHeartbeat) => ({
-      ...beat,
-      agentVersion: "0.7.20",
-    });
-    await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
-    await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
-    expect(t.mail).toHaveLength(1);
-    expect(t.mail[0]!.text).toContain("restarting it automatically");
-  });
-
-  it("does not claim a restart when auto-restart is off", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare(
-        "UPDATE checks SET kind = 'SERVICE', target = 'nginx', name = 'nginx' WHERE id = ?",
-      )
-      .run(CHECK);
-    const ws = await t.connect();
-    const newer = (beat: AgentHeartbeat) => ({
-      ...beat,
-      agentVersion: "0.7.20",
-    });
-    await t.send(ws, BASE + 5_000, newer(heartbeat(10, [result("DOWN")])));
-    await t.send(ws, BASE + 65_000, newer(heartbeat(10, [result("DOWN")])));
-    expect(t.mail).toHaveLength(1);
-    expect(t.mail[0]!.text).not.toContain("automatically");
-  });
-
-  it("mails at once when a server stops reporting, once an hour, and never that it is back", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    expect(t.storage.alarm).toBe(BASE + 185_000);
-
-    vi.setSystemTime(BASE + 120_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-
-    vi.setSystemTime(BASE + 186_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-
-    await t.send(ws, BASE + 300_000, heartbeat(10));
-    vi.setSystemTime(BASE + 600_000);
-    await t.hub.alarm();
-    expect(t.mail).toHaveLength(1);
-
-    ws.close(1006, "gone");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-    const again = await t.connect();
-    await t.send(again, BASE + 3_700_000, heartbeat(10));
-    vi.setSystemTime(BASE + 3_900_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject).at(-1)).toBe(
-      `[Krynodes] ${NODE}: offline`,
-    );
-    expect(t.mail).toHaveLength(2);
-  });
-
-  it("mails a full disk once the database takes the report again", async () => {
-    const t = setup();
-    const disk = (used: number): AgentHeartbeat => ({
-      ...heartbeat(10),
-      metrics: {
-        ...heartbeat(10).metrics,
-        diskUsedBytes: used,
-        diskTotalBytes: 100,
-      },
-    });
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, disk(80));
-    await t.hub.fetch(
-      new Request("https://fleet/poke", {
-        method: "POST",
-        body: JSON.stringify({ nodeIds: [NODE] }),
-      }),
-    );
-    const prepare = t.db.prepare.bind(t.db);
-    let broken = true;
-    t.db.prepare = ((sql: string) => {
-      if (
-        broken &&
-        sql.includes("FROM checks WHERE node_id = ? AND enabled = 1")
-      ) {
-        broken = false;
-        throw new Error("D1 is unavailable");
-      }
-      return prepare(sql);
-    }) as typeof t.db.prepare;
-    await t.send(ws, BASE + 65_000, disk(97));
-    expect(broken).toBe(false);
-    expect(t.mail).toEqual([]);
-    await t.send(ws, BASE + 125_000, disk(97));
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: disk 97% full`,
-    ]);
-  });
-
-  it("mails once when the disk reaches 95%, and again only after it went below 90%", async () => {
-    const t = setup();
-    const disk = (used: number): AgentHeartbeat => ({
-      ...heartbeat(10),
-      metrics: {
-        ...heartbeat(10).metrics,
-        diskUsedBytes: used,
-        diskTotalBytes: 100,
-      },
-    });
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, disk(80));
-    await t.send(ws, BASE + 65_000, disk(96));
-    await t.send(ws, BASE + 125_000, disk(97));
-    const again = await t.connect();
-    await t.send(again, BASE + 185_000, disk(97));
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: disk 96% full`,
-    ]);
-    expect(t.mail[0]!.text).toContain("almost full");
-
-    const third = await t.connect();
-    await t.send(third, BASE + 245_000, disk(85));
-    await t.send(third, BASE + 4_000_000, disk(95));
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: disk 96% full`,
-      `[Krynodes] ${NODE}: disk 95% full`,
-    ]);
-  });
-
-  it("accepts a new connection even when closing a lingering one throws", async () => {
-    const t = setup();
-    const old = await t.connect();
-    old.lingers = true;
-    old.close(1006, "gone");
-    old.close = () => {
-      throw new TypeError("Can't call WebSocket close() after close().");
-    };
-    const fresh = await t.connect();
-    await t.send(fresh, BASE + 5_000, heartbeat(10));
-    expect(fresh.replies().at(-1)).toMatchObject({ type: "heartbeat" });
-  });
-
-  it("follows the newest connection when a replaced one lingers while closing", async () => {
-    const t = setup();
-    const old = await t.connect();
-    old.lingers = true;
-    await t.send(old, BASE + 5_000, heartbeat(10));
-    const fresh = await t.connect();
-    await t.send(fresh, BASE + 120_000, heartbeat(10));
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-  });
-
-  it("counts the agent's keepalive pings, so a report that fails to store is no outage", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    ws.pinged = BASE + 170_000;
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-    expect(t.storage.alarm).toBe(BASE + 350_000);
-
-    vi.setSystemTime(BASE + 360_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("keeps the newer report when a replaced connection finally closes", async () => {
-    const t = setup();
-    const old = await t.connect();
-    old.lingers = true;
-    await t.send(old, BASE + 5_000, heartbeat(10));
-    const fresh = await t.connect();
-    await t.send(fresh, BASE + 30_000, heartbeat(20));
-    vi.setSystemTime(BASE + 60_000);
-    await t.hub.webSocketClose(old as unknown as WebSocket);
-    expect(t.node().cpu_percent).toBe(20);
-  });
-
-  it("pokes the newest connection past one that is still closing", async () => {
-    const t = setup();
-    const old = await t.connect();
-    old.lingers = true;
-    const fresh = await t.connect();
-    const poke = await t.hub.fetch(
-      new Request("https://fleet/poke", {
-        method: "POST",
-        body: JSON.stringify({ nodeIds: [NODE] }),
-      }),
-    );
-    expect(await poke.json()).toEqual({ poked: 1 });
-    expect(fresh.replies()).toEqual([{ type: "poke" }]);
-  });
-
-  it("waits while the server restarts in its reboot window, then mails if it stays away", async () => {
-    const t = setup();
-    t.sqlite.prepare("UPDATE nodes SET security = ? WHERE id = ?").run(
-      JSON.stringify({
-        checkedAt: new Date(BASE).toISOString(),
-        findings: [
-          {
-            id: "reboot-pending",
-            severity: "note",
-            detail: "A restart is waiting",
-          },
-        ],
-        recipes: [],
-        lockdown: false,
-        rebootHour: new Date(BASE).getUTCHours(),
-      }),
-      NODE,
-    );
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    ws.close(1006, "rebooting");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-
-    vi.setSystemTime(BASE + 660_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("waits while a server set up by hand restarts at the end, then mails if it stays away", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, {
-      ...heartbeat(10),
-      setup: { phase: "restart", step: 6, of: 6 },
-    });
-    ws.close(1006, "restarting");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-
-    vi.setSystemTime(BASE + 660_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("never mails about a server that has not reported yet, and watches it from its first report", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    ws.close(1006, "restarting");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-
-    for (const at of [BASE + 200_000, BASE + 3_700_000]) {
-      vi.setSystemTime(at);
-      await t.hub.alarm();
+  it("an agent below MIN_AGENT is closed with 4426", async () => {
+    const { connect, hub } = await setup();
+    for (const version of ["0.7.25", null]) {
+      const ws = connect("n1", version);
+      expect(ws.closed?.code).toBe(4426);
     }
-    expect(t.mail).toEqual([]);
-
-    const back = await t.connect();
-    await t.send(back, BASE + 3_705_000, heartbeat(10));
-    back.close(1006, "gone");
-    await t.hub.webSocketClose(back as unknown as WebSocket);
-    vi.setSystemTime(BASE + 3_900_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
+    const response = await hub.fetch(new Request("https://fleet/online"));
+    expect(await response.json()).toEqual([]);
   });
 
-  describe("a quiet setup", () => {
-    const stored = (t: ReturnType<typeof setup>) =>
-      t.sqlite
-        .prepare("SELECT setup, last_seen_at FROM nodes WHERE id = ?")
-        .get(NODE) as { setup: string | null; last_seen_at: string | null };
-    let message = 100;
-    const step = (
-      t: ReturnType<typeof setup>,
-      ws: FakeSocket,
-      at: number,
-      body: unknown,
-    ) => {
-      vi.setSystemTime(at);
-      message += 1;
-      return t.hub.webSocketMessage(
-        ws as unknown as WebSocket,
-        JSON.stringify({ id: message, type: "setup", setup: body }),
-      );
-    };
-    const leaves = async (t: ReturnType<typeof setup>, ws: FakeSocket) => {
-      ws.close(1006, "gone");
-      await t.hub.webSocketClose(ws as unknown as WebSocket);
-    };
+  describe("silent sockets", () => {
+    const START = Date.parse("2026-11-22T08:00:00.000Z");
+    const at = (seconds: number) => vi.setSystemTime(START + seconds * 1000);
 
-    it("takes its step over the stream without counting it as a report", async () => {
-      const t = setup();
-      const viewer = new FakeSocket();
-      await t.hub.watch(viewer as unknown as WebSocket);
-      const ws = await t.connect();
-      const docker = { phase: "docker", step: 4, of: 6 };
-      await step(t, ws, BASE + 5_000, docker);
-      expect(ws.replies().at(-1)).toEqual({ id: message, type: "setup" });
-      expect(JSON.parse(stored(t).setup ?? "null")).toEqual(docker);
-      expect(stored(t).last_seen_at).toBeNull();
+    it("closes a socket silent for more than 75 seconds and the node reads offline", async () => {
+      vi.useFakeTimers({ now: START });
+      const { db, connect, watch, hub, settled, fire } = await setup();
+      const ws = connect("n1");
+      await settled();
+      const dashboard = watch();
+      at(75);
+      await fire();
+      expect(ws.closed).toBeNull();
+      expect(dashboard.replies()).toEqual([]);
+      at(76);
+      await fire();
+      expect(ws.closed).toEqual({ code: 4408, reason: "silent" });
+      const online = await hub.fetch(new Request("https://fleet/online"));
+      expect(await online.json()).toEqual([]);
       expect(
-        viewer.replies().filter((reply) => reply.type === "changed"),
-      ).toHaveLength(1);
-      const before = t.changes();
-      await step(t, ws, BASE + 35_000, docker);
-      expect(t.changes() - before).toBe(0);
-      await step(t, ws, BASE + 40_000, { phase: "docker", step: 7, of: 6 });
-      expect(ws.replies().at(-1)).toMatchObject({ code: "INVALID_MESSAGE" });
-    });
-
-    it("is failed once its server stays silent five minutes in a step, and nobody is mailed", async () => {
-      const t = setup();
-      const ws = await t.connect();
-      await step(t, ws, BASE + 5_000, { phase: "docker", step: 4, of: 6 });
-      await leaves(t, ws);
-
-      vi.setSystemTime(BASE + 240_000);
-      await t.hub.alarm();
-      expect(JSON.parse(stored(t).setup ?? "null")).not.toHaveProperty(
-        "failed",
-      );
-
-      vi.setSystemTime(BASE + 310_000);
-      await t.hub.alarm();
-      expect(JSON.parse(stored(t).setup ?? "null")).toEqual({
-        phase: "docker",
-        step: 4,
-        of: 6,
-        failed: true,
-      });
-      const before = t.changes();
-      vi.setSystemTime(BASE + 400_000);
-      await t.hub.alarm();
-      expect(t.changes() - before).toBe(0);
-      expect(t.mail).toEqual([]);
-    });
-
-    it("waits twenty minutes for a server that restarts at the end before calling it failed", async () => {
-      const t = setup();
-      const ws = await t.connect();
-      await step(t, ws, BASE + 5_000, { phase: "restart", step: 6, of: 6 });
-      await leaves(t, ws);
-
-      vi.setSystemTime(BASE + 1_150_000);
-      await t.hub.alarm();
-      expect(JSON.parse(stored(t).setup ?? "null")).not.toHaveProperty(
-        "failed",
-      );
-
-      vi.setSystemTime(BASE + 1_210_000);
-      await t.hub.alarm();
-      expect(JSON.parse(stored(t).setup ?? "null")).toMatchObject({
-        phase: "restart",
-        failed: true,
-      });
-      expect(t.mail).toEqual([]);
-    });
-
-    it("is no longer failed when its server is heard again, and is watched from its first report", async () => {
-      const t = setup();
-      const ws = await t.connect();
-      await step(t, ws, BASE + 5_000, { phase: "upgrade", step: 2, of: 6 });
-      await leaves(t, ws);
-      vi.setSystemTime(BASE + 310_000);
-      await t.hub.alarm();
-      expect(JSON.parse(stored(t).setup ?? "null")).toHaveProperty(
-        "failed",
-        true,
-      );
-
-      const again = await t.connect();
-      await step(t, again, BASE + 320_000, {
-        phase: "upgrade",
-        step: 2,
-        of: 6,
-      });
-      expect(JSON.parse(stored(t).setup ?? "null")).toEqual({
-        phase: "upgrade",
-        step: 2,
-        of: 6,
-      });
-      await t.send(again, BASE + 900_000, heartbeat(10));
-      expect(stored(t).setup).toBeNull();
-      await leaves(t, again);
-      vi.setSystemTime(BASE + 1_100_000);
-      await t.hub.alarm();
-      expect(t.mail.map((mail) => mail.subject)).toEqual([
-        `[Krynodes] ${NODE}: offline`,
+        await db
+          .prepare(
+            "SELECT last_seen_at IS NOT NULL AS seen FROM nodes WHERE id = 'n1'",
+          )
+          .first(),
+      ).toEqual({ seen: 1 });
+      expect(dashboard.replies()).toEqual([
+        { type: "changed", topics: ["fleet"] },
       ]);
-    });
-
-    it("is failed again when its server is heard and then goes silent again", async () => {
-      const t = setup();
-      const ws = await t.connect();
-      await step(t, ws, BASE + 5_000, { phase: "upgrade", step: 2, of: 6 });
-      await leaves(t, ws);
-      vi.setSystemTime(BASE + 310_000);
-      await t.hub.alarm();
-
-      const again = await t.connect();
-      await step(t, again, BASE + 320_000, {
-        phase: "docker",
-        step: 4,
-        of: 6,
-      });
-      await leaves(t, again);
-      vi.setSystemTime(BASE + 640_000);
-      await t.hub.alarm();
-      expect(JSON.parse(stored(t).setup ?? "null")).toEqual({
-        phase: "docker",
-        step: 4,
-        of: 6,
-        failed: true,
-      });
-    });
-
-    it("is never failed once the server has reported", async () => {
-      const t = setup();
-      const ws = await t.connect();
-      await t.send(ws, BASE + 5_000, heartbeat(10));
-      await step(t, ws, BASE + 6_000, { phase: "docker", step: 4, of: 6 });
-      expect(stored(t).setup).toBeNull();
-    });
-  });
-
-  it("mails as usual when a setup stopped before its restart", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, {
-      ...heartbeat(10),
-      setup: { phase: "restart", step: 6, of: 6, stopped: true },
-    });
-    ws.close(1006, "gone");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("mails one list when more than five servers go offline at once", async () => {
-    const t = setup();
-    const ids = Array.from(
-      { length: 7 },
-      (_, index) => `00000000-0000-4000-8000-00000000000${index}`,
-    );
-    for (const id of ids) {
-      seedNode(t.sqlite, { id });
-      const ws = new FakeSocket();
-      await t.hub.accept(ws as unknown as WebSocket, id, "standalone", 60);
-      await t.send(ws, BASE + 5_000, { ...heartbeat(10), nodeId: id });
-      ws.close(1006, "gone");
-      await t.hub.webSocketClose(ws as unknown as WebSocket);
-    }
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      "[Krynodes] 7 servers offline",
-    ]);
-    for (const id of ids) expect(t.mail[0]!.text).toContain(id);
-  });
-
-  it("checks 40 silent servers with a few statements and calls them all offline", async () => {
-    const t = setup();
-    const ids = Array.from(
-      { length: 40 },
-      (_, index) =>
-        `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-    );
-    for (const id of ids) {
-      seedNode(t.sqlite, { id });
-      const ws = new FakeSocket();
-      await t.hub.accept(ws as unknown as WebSocket, id, "standalone", 60);
-      await t.send(ws, BASE + 5_000, { ...heartbeat(10), nodeId: id });
-      ws.close(1006, "gone");
-      await t.hub.webSocketClose(ws as unknown as WebSocket);
-    }
-    let statements = 0;
-    const prepare = t.db.prepare.bind(t.db);
-    t.db.prepare = ((sql: string) => {
-      statements += 1;
-      return prepare(sql);
-    }) as typeof t.db.prepare;
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(statements).toBeLessThanOrEqual(10);
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      "[Krynodes] 40 servers offline",
-    ]);
-  });
-
-  it("keeps watching when the database fails during a check, and mails once it is back", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    ws.close(1006, "gone");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-    const prepare = t.db.prepare.bind(t.db);
-    t.db.prepare = (() => {
-      throw new Error("D1 is unavailable");
-    }) as typeof t.db.prepare;
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.storage.alarm).toBe(BASE + 260_000);
-    t.db.prepare = prepare;
-    vi.setSystemTime(BASE + 260_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("mails a server it found offline even when the next alarm cannot be set", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    ws.close(1006, "gone");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-    const other = "00000000-0000-4000-8000-000000000099";
-    seedNode(t.sqlite, { id: other });
-    const live = new FakeSocket();
-    await t.hub.accept(live as unknown as WebSocket, other, "standalone", 60);
-    await t.send(live, BASE + 190_000, { ...heartbeat(10), nodeId: other });
-    const setAlarm = t.storage.setAlarm.bind(t.storage);
-    let failed = false;
-    t.storage.setAlarm = async (at: number) => {
-      if (!failed) {
-        failed = true;
-        throw new Error("storage is unavailable");
-      }
-      return setAlarm(at);
-    };
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-    expect(t.storage.alarm).toBe(BASE + 260_000);
-  });
-
-  it("mails about the next outage within the hour when the first mail failed", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    ws.close(1006, "gone");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-    t.failMail(true);
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    logged.mockRestore();
-    t.failMail(false);
-    const back = await t.connect();
-    await t.send(back, BASE + 300_000, heartbeat(10));
-    back.close(1006, "gone");
-    await t.hub.webSocketClose(back as unknown as WebSocket);
-    vi.setSystemTime(BASE + 500_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("watches a server again when it returns on the connection it went silent on", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail).toHaveLength(1);
-    expect(t.storage.alarm).toBeNull();
-    await t.send(ws, BASE + 300_000, heartbeat(10));
-    expect(t.storage.alarm).toBe(BASE + 480_000);
-  });
-
-  it("answers a quiet warning when the server reports again", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    t.sqlite
-      .prepare(
-        "INSERT INTO warnings (node_id, id, kind, detail, at, cut_at) VALUES (?, 'quiet:1', 'quiet', '{}', 'now', 'later')",
-      )
-      .run(NODE);
-    await t.send(ws, BASE + 300_000, heartbeat(10));
-    expect(
-      t.sqlite
-        .prepare("SELECT answer FROM warnings WHERE node_id = ?")
-        .get(NODE),
-    ).toEqual({ answer: "back" });
-  });
-
-  it("still calls a silent server offline when its stored security report is unreadable", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare("UPDATE nodes SET security = ? WHERE id = ?")
-      .run("{not json", NODE);
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    ws.close(1006, "gone");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("waits while a restart from the dashboard runs, then mails if the server stays away", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    t.sqlite
-      .prepare(
-        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
-           status, requested_by, requested_at, deliverable_at, sent_at, finished_at)
-         VALUES ('r1', 'b1', 0, 'rolling', ?, 'host', 'server', 'reboot', 'done', 'owner@example.test', ?, ?, ?, ?)`,
-      )
-      .run(
-        NODE,
-        new Date(BASE + 10_000).toISOString(),
-        new Date(BASE + 10_000).toISOString(),
-        new Date(BASE + 20_000).toISOString(),
-        new Date(BASE + 30_000).toISOString(),
+      const refused = await hub.fetch(
+        post("/command", { nodeId: "n1", command }),
       );
-    ws.close(1006, "rebooting");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
+      expect(refused.status).toBe(409);
+    });
 
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-    expect(t.storage.alarm).toBe(BASE + 260_000);
+    it("keeps a socket that pinged or spoke recently and closes only the silent one", async () => {
+      vi.useFakeTimers({ now: START });
+      const { connect, hub, settled, ping, say, fire } = await setup();
+      const pinged = connect("n1");
+      const spoke = connect("n2");
+      const silent = connect("n3");
+      await settled();
+      at(90);
+      ping(pinged);
+      await say(spoke, { type: "progress", id: "a1", line: "Pulling" });
+      at(120);
+      await fire();
+      expect(pinged.closed).toBeNull();
+      expect(spoke.closed).toBeNull();
+      expect(silent.closed).toEqual({ code: 4408, reason: "silent" });
+      const online = await hub.fetch(new Request("https://fleet/online"));
+      expect(await online.json()).toEqual(["n1", "n2"]);
+    });
 
-    vi.setSystemTime(BASE + 660_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
+    it("counts a silence from the last ping when it is newer than the last message", async () => {
+      vi.useFakeTimers({ now: START });
+      const { connect, settled, ping, fire } = await setup();
+      const ws = connect("n1");
+      await settled();
+      at(100);
+      ping(ws);
+      at(170);
+      await fire();
+      expect(ws.closed).toBeNull();
+      at(176);
+      await fire();
+      expect(ws.closed?.code).toBe(4408);
+    });
 
-  it("mails about a silent server though an action queued for it was never swept", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    t.sqlite
-      .prepare(
-        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
-           status, requested_by, requested_at, deliverable_at)
-         VALUES ('q1', 'b1', 0, 'rolling', ?, 'docker', 'resolver', 'restart', 'queued', 'owner@example.test', ?, ?)`,
-      )
-      .run(
-        NODE,
-        new Date(BASE + 10_000).toISOString(),
-        new Date(BASE + 10_000).toISOString(),
+    it("reads a silent socket as offline and refuses a command before the alarm comes", async () => {
+      vi.useFakeTimers({ now: START });
+      const { connect, hub, settled, ping } = await setup();
+      const silent = connect("n1");
+      const pinged = connect("n2");
+      await settled();
+      const online = async () =>
+        (await hub.fetch(new Request("https://fleet/online"))).json();
+      at(75);
+      expect(await online()).toEqual(["n1", "n2"]);
+      at(100);
+      ping(pinged);
+      at(150);
+      expect(await online()).toEqual(["n2"]);
+      const refused = await hub.fetch(
+        post("/command", { nodeId: "n1", command }),
       );
-    ws.close(1006, "gone");
-    await t.hub.webSocketClose(ws as unknown as WebSocket);
-
-    vi.setSystemTime(BASE + 200_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-
-    vi.setSystemTime(BASE + 700_000);
-    await t.hub.alarm();
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: offline`,
-    ]);
-  });
-
-  it("follows a changed report interval before calling a server offline", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    t.sqlite
-      .prepare("UPDATE nodes SET interval_seconds = 300 WHERE id = ?")
-      .run(NODE);
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    expect(t.storage.alarm).toBe(BASE + 905_000);
-    vi.setSystemTime(BASE + 400_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-  });
-
-  it("never mails about a server that was deleted", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    t.sqlite.prepare("DELETE FROM nodes WHERE id = ?").run(NODE);
-    vi.setSystemTime(BASE + 300_000);
-    await t.hub.alarm();
-    expect(t.mail).toEqual([]);
-    expect(t.storage.alarm).toBeNull();
-  });
-
-  const restartNginx = (t: ReturnType<typeof setup>) =>
-    t.sqlite
-      .prepare(
-        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
-           status, requested_by, requested_at, deliverable_at, sent_at, finished_at)
-         VALUES ('m1', 'b1', 0, 'rolling', ?, 'docker', 'nginx', 'restart', 'sent', 'budi@example.test', ?, ?, ?, NULL)`,
-      )
-      .run(
-        NODE,
-        new Date(BASE).toISOString(),
-        new Date(BASE).toISOString(),
-        new Date(BASE).toISOString(),
-      );
-
-  it("opens the incident of a check the work on its server does not touch", async () => {
-    const t = setup();
-    restartNginx(t);
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    expect(
-      t.sqlite.prepare("SELECT COUNT(*) AS n FROM incidents").get(),
-    ).toEqual({ n: 1 });
-  });
-
-  it("opens no incident on what the owner stopped, until it is started again", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare(
-        "UPDATE checks SET kind = 'CONTAINER', target = 'nginx' WHERE id = ?",
-      )
-      .run(CHECK);
-    t.sqlite
-      .prepare(
-        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', 'nginx', 'stopped')",
-      )
-      .run(NODE);
-    const done = (id: string, action: string, at: number) =>
-      t.sqlite
-        .prepare(
-          `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
-             status, requested_by, requested_at, deliverable_at, sent_at, finished_at)
-           VALUES (?, ?, 0, 'rolling', ?, 'docker', 'nginx', ?, 'done', 'budi@example.test', ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          id,
-          NODE,
-          action,
-          ...Array(4).fill(new Date(at).toISOString()),
-        );
-    const incidents = () =>
-      (
-        t.sqlite.prepare("SELECT COUNT(*) AS n FROM incidents").get() as {
-          n: number;
-        }
-      ).n;
-    done("s1", "stop", BASE - 86_400_000);
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    await t.send(ws, BASE + 125_000, heartbeat(10, [result("DOWN")]));
-    expect(incidents()).toBe(0);
-    done("s2", "start", BASE + 150_000);
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({
-        id: 9,
-        type: "actions",
-        report: { nodeId: NODE, results: [] },
-      }),
-    );
-    await t.send(ws, BASE + 185_000, heartbeat(10, [result("DOWN")]));
-    expect(incidents()).toBe(0);
-    await t.send(ws, BASE + 305_000, heartbeat(10, [result("DOWN")]));
-    expect(incidents()).toBe(1);
-  });
-
-  it("opens no incident during planned work on the server, then one at the next failure", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare(
-        "UPDATE checks SET kind = 'CONTAINER', target = 'nginx' WHERE id = ?",
-      )
-      .run(CHECK);
-    t.sqlite
-      .prepare(
-        "INSERT INTO services (node_id, kind, name, state) VALUES (?, 'docker', 'nginx', 'running')",
-      )
-      .run(NODE);
-    const planned = (status: string, finishedAt: string | null) =>
-      t.sqlite
-        .prepare(
-          `INSERT OR REPLACE INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
-             status, requested_by, requested_at, deliverable_at, sent_at, finished_at)
-           VALUES ('m1', 'b1', 0, 'rolling', ?, 'docker', 'nginx', 'restart', ?, 'budi@example.test', ?, ?, ?, ?)`,
-        )
-        .run(
-          NODE,
-          status,
-          new Date(BASE).toISOString(),
-          new Date(BASE).toISOString(),
-          new Date(BASE).toISOString(),
-          finishedAt,
-        );
-    const incidents = () =>
-      (
-        t.sqlite.prepare("SELECT COUNT(*) AS n FROM incidents").get() as {
-          n: number;
-        }
-      ).n;
-    planned("sent", null);
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    expect(incidents()).toBe(0);
-    planned("done", new Date(BASE + 70_000).toISOString());
-    await t.send(ws, BASE + 125_000, heartbeat(10, [result("DOWN")]));
-    expect(incidents()).toBe(0);
-    await t.send(ws, BASE + 245_000, heartbeat(10, [result("DOWN")]));
-    expect(incidents()).toBe(1);
-  });
-
-  it("answers at most 60 messages a minute from one server and drops the rest", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    for (let index = 0; index < 62; index++) {
-      await t.send(ws, BASE + 5_000 + index * 100, heartbeat(10));
-    }
-    const answered = () =>
-      ws.replies().filter((reply) => reply.type === "heartbeat").length;
-    expect(answered()).toBe(60);
-    expect(
-      ws.replies().filter((reply) => reply.code === "TOO_MANY_MESSAGES"),
-    ).toHaveLength(1);
-    await t.send(ws, BASE + 66_000, heartbeat(10));
-    expect(answered()).toBe(61);
-  });
-
-  it("keeps the same 60 messages a minute when the server connects again", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    for (let index = 0; index < 60; index++) {
-      await t.send(ws, BASE + 5_000 + index * 100, heartbeat(10));
-    }
-    const again = await t.connect();
-    await t.send(again, BASE + 12_000, heartbeat(10));
-    expect(
-      again.replies().filter((reply) => reply.type === "heartbeat"),
-    ).toEqual([]);
-    await t.send(again, BASE + 66_000, heartbeat(10));
-    expect(
-      again.replies().filter((reply) => reply.type === "heartbeat"),
-    ).toHaveLength(1);
-  });
-
-  it("cuts off a second server's warning though one server left a long backlog", async () => {
-    const t = setup();
-    const other = "00000000-0000-4000-8000-000000000077";
-    seedNode(t.sqlite, { id: other });
-    const cutoffs: Record<string, number> = {};
-    const add = (node: string, id: string, at: number) => {
-      t.sqlite
-        .prepare(
-          "INSERT INTO warnings (node_id, id, kind, detail, at, cut_at) VALUES (?, ?, 'port', '{}', ?, ?)",
-        )
-        .run(node, id, new Date(at).toISOString(), new Date(at).toISOString());
-      cutoffs[`${node}|${id}`] = at;
-    };
-    for (let index = 0; index < 40; index++)
-      add(NODE, `w${index}`, BASE + index);
-    add(other, "late", BASE + 1_000);
-    await t.storage.put("cutoffs", cutoffs);
-    vi.setSystemTime(BASE + 60_000);
-    await t.hub.alarm();
-    expect(
-      t.sqlite
-        .prepare("SELECT node_id FROM quarantines ORDER BY node_id")
-        .all(),
-    ).toEqual(
-      [{ node_id: other }, { node_id: NODE }].sort((a, b) =>
-        a.node_id < b.node_id ? -1 : 1,
-      ),
-    );
-    expect(t.storage.alarm).toBe(BASE + 61_000);
-  });
-
-  it("still mails a confirmed failure when the server's socket closed before the answer", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    ws.close(1006, "gone");
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: 1 check down — ${CHECK}`,
-    ]);
-  });
-
-  it("still mails a confirmed failure when handing out actions fails", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    const prepare = t.db.prepare.bind(t.db);
-    t.db.prepare = ((sql: string) => {
-      if (sql.includes("SET status = 'expired'")) {
-        throw new Error("D1 is unavailable");
-      }
-      return prepare(sql);
-    }) as typeof t.db.prepare;
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: 1 check down — ${CHECK}`,
-    ]);
-  });
-
-  it("serves the live view and pokes connected servers", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    const live = (await (
-      await t.hub.fetch(new Request("https://fleet/live"))
-    ).json()) as { nodes: Record<string, { lastSeen: number }> };
-    expect(live.nodes[NODE]?.lastSeen).toBe(BASE + 5_000);
-    const poke = await t.hub.fetch(
-      new Request("https://fleet/poke", {
-        method: "POST",
-        body: JSON.stringify({ nodeIds: [NODE, "absent"] }),
-      }),
-    );
-    expect(await poke.json()).toEqual({ poked: 1 });
-    expect(ws.replies().at(-1)).toEqual({ type: "poke" });
-  });
-
-  it("answers every request by its id and refuses one without", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({ id: 1, type: "config" }),
-    );
-    expect(ws.replies()[0]).toMatchObject({
-      id: 1,
-      type: "config",
-      config: {
-        nodeId: NODE,
-        intervalSeconds: 60,
-        checks: [{ id: CHECK }],
-      },
-    });
-    expect(
-      (ws.replies()[0] as { config: { configVersion: string } }).config
-        .configVersion,
-    ).toMatch(/^[0-9a-f]{16}$/u);
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({
-        id: 2,
-        type: "actions",
-        report: {
-          nodeId: NODE,
-          inventory: {
-            hash: "a".repeat(64),
-            services: [
-              {
-                kind: "systemd",
-                name: "nginx.service",
-                state: "running",
-                since: null,
-                system: false,
-              },
-            ],
-          },
-        },
-      }),
-    );
-    expect(ws.replies()[1]).toEqual({
-      id: 2,
-      type: "actions",
-      response: { ok: true, inventoryHash: "a".repeat(64) },
-    });
-    expect(
-      t.sqlite.prepare("SELECT name FROM services WHERE node_id = ?").all(NODE),
-    ).toEqual([{ name: "nginx.service" }]);
-    vi.setSystemTime(BASE + 5_000);
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({ type: "heartbeat", heartbeat: heartbeat(10) }),
-    );
-    expect(ws.replies()[2]).toEqual({ type: "error", code: "INVALID_MESSAGE" });
-    vi.setSystemTime(BASE + 6_000);
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({ id: 3, type: "heartbeat", heartbeat: heartbeat(10) }),
-    );
-    expect(ws.replies()[3]).toMatchObject({ id: 3, type: "heartbeat" });
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({ id: 4, type: "actions", report: { nodeId: "other" } }),
-    );
-    expect(ws.replies()[4]).toEqual({
-      id: 4,
-      type: "error",
-      code: "INVALID_MESSAGE",
-    });
-  });
-
-  it("records a result sent beside one the agent asked itself and one that is broken", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    const batch = createBatch(t.db, {
-      action: "test",
-      mode: "parallel",
-      targets: [{ nodeId: NODE, kind: "network" as const, name: "kry0" }],
-      requestedBy: "owner@example.test",
-      now: BASE,
-    });
-    await t.db.batch(batch.statements);
-    await deliverActions(t.db, NODE, BASE);
-    const result = (id: string) => ({
-      id,
-      ok: true,
-      exitCode: 0,
-      output: "{}",
-      finishedAt: new Date(BASE).toISOString(),
-    });
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({
-        id: 1,
-        type: "actions",
-        report: {
-          nodeId: NODE,
-          results: [
-            result(batch.actions[0]!.id),
-            result("f63d813d-3f39-6f5d-4000-6f19ada72522"),
-            { ...result("2bba833b-e617-4faa-99b3-37758745a8ed"), ok: "yes" },
-          ],
-        },
-      }),
-    );
-    expect(ws.replies()[0]).toEqual({
-      id: 1,
-      type: "actions",
-      response: { ok: true, inventoryHash: null },
-    });
-    expect(
-      t.sqlite
-        .prepare("SELECT status FROM actions WHERE id = ?")
-        .get(batch.actions[0]!.id),
-    ).toEqual({ status: "done" });
-  });
-
-  it("pokes the server whose step comes next as soon as a result arrives", async () => {
-    const t = setup();
-    const OTHER = "33333333-3333-4333-8333-333333333333";
-    seedNode(t.sqlite, { id: OTHER });
-    const ws = await t.connect();
-    const next = new FakeSocket();
-    await t.hub.accept(next as unknown as WebSocket, OTHER, "standalone", 60);
-    const batch = createBatch(t.db, {
-      action: "restart",
-      mode: "rolling",
-      targets: [NODE, OTHER].map((nodeId) => ({
-        nodeId,
-        kind: "docker" as const,
-        name: "resolver",
-      })),
-      requestedBy: "owner@example.test",
-      now: BASE,
-    });
-    await t.db.batch(batch.statements);
-    await deliverActions(t.db, NODE, BASE);
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({
-        id: 1,
-        type: "actions",
-        report: {
-          nodeId: NODE,
-          results: [
-            {
-              id: batch.actions[0]!.id,
-              ok: true,
-              exitCode: 0,
-              output: "",
-              finishedAt: new Date(BASE).toISOString(),
-            },
-          ],
-        },
-      }),
-    );
-    expect(ws.replies()[0]).toEqual({
-      id: 1,
-      type: "actions",
-      response: { ok: true, inventoryHash: null },
-    });
-    expect(next.replies()).toEqual([{ type: "poke" }]);
-    expect(ws.replies()).toHaveLength(1);
-  });
-
-  describe("actions inside the poke", () => {
-    const queue = async (t: ReturnType<typeof setup>) => {
-      const batch = createBatch(t.db, {
-        action: "restart",
-        mode: "parallel",
-        targets: [{ nodeId: NODE, kind: "docker" as const, name: "resolver" }],
-        requestedBy: "owner@example.test",
-        now: BASE,
-      });
-      await t.db.batch(batch.statements);
-      return batch.actions[0]!.id;
-    };
-    const poke = async (t: ReturnType<typeof setup>) =>
-      (await t.hub
-        .fetch(
-          new Request("https://fleet/poke", {
-            method: "POST",
-            body: JSON.stringify({ nodeIds: [NODE] }),
-          }),
-        )
-        .then((response) => response.json())) as unknown;
-    const status = (t: ReturnType<typeof setup>, id: string) =>
-      t.sqlite.prepare("SELECT status FROM actions WHERE id = ?").get(id);
-
-    it("reads the agent's version when its stream opens", async () => {
-      const t = setup();
-      const pair = [new FakeSocket(), new FakeSocket()];
-      vi.stubGlobal("WebSocketPair", function () {
-        return { 0: pair[0], 1: pair[1] };
-      });
-      vi.stubGlobal(
-        "Response",
-        class extends Response {
-          constructor(body?: BodyInit | null, init?: ResponseInit) {
-            super(body, init?.status === 101 ? { status: 200 } : init);
-          }
-        },
-      );
-      await t.hub.fetch(
-        new Request("https://fleet/connect", {
-          headers: {
-            "x-kry-node": NODE,
-            "x-kry-owner": "standalone",
-            "x-kry-interval": "60",
-            "x-kry-version": "0.7.26",
-          },
-        }),
-      );
-      expect(pair[1]!.deserializeAttachment()).toMatchObject({
-        nodeId: NODE,
-        push: true,
-      });
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toEqual({ code: "OFFLINE" });
+      expect(silent.sent).toEqual([]);
+      expect(silent.closed).toBeNull();
+      const sent = await hub.fetch(post("/command", { nodeId: "n2", command }));
+      expect(sent.status).toBe(200);
     });
 
-    it("pushes queued actions inside the poke to an agent that takes them", async () => {
-      const t = setup();
-      const ws = await t.connect("0.7.26");
-      const id = await queue(t);
-      vi.setSystemTime(BASE + 1_000);
-      expect(await poke(t)).toEqual({ poked: 1 });
-      expect(ws.replies()).toEqual([
-        {
-          type: "poke",
-          actions: [
-            {
-              id,
-              kind: "docker",
-              name: "resolver",
-              action: "restart",
-              expiresAt: expect.any(String),
-            },
-          ],
-        },
-      ]);
-      expect(status(t, id)).toEqual({ status: "sent" });
+    it("sets no alarm while no agent is connected", async () => {
+      vi.useFakeTimers({ now: START });
+      const harness = await setup();
+      expect(harness.alarmAt()).toBeNull();
+      harness.watch();
+      harness.connect("n1", "0.7.25");
+      await harness.settled();
+      expect(harness.alarmAt()).toBeNull();
     });
 
-    it("leaves actions queued when the connection has not answered for a minute", async () => {
-      const t = setup();
-      const ws = await t.connect("0.7.26");
-      const id = await queue(t);
-      vi.setSystemTime(BASE + 61_000);
-      expect(await poke(t)).toEqual({ poked: 1 });
-      expect(ws.replies()).toEqual([{ type: "poke" }]);
-      expect(status(t, id)).toEqual({ status: "queued" });
+    it("arms one alarm 60 seconds out for the first agent and leaves it for the next", async () => {
+      vi.useFakeTimers({ now: START });
+      const { connect, settled, alarmAt } = await setup();
+      connect("n1");
+      await settled();
+      expect(alarmAt()).toBe(START + 60_000);
     });
 
-    it("still pokes when the actions cannot be read", async () => {
-      const t = setup();
-      const ws = await t.connect("0.7.26");
-      const prepare = vi.spyOn(t.db, "prepare").mockImplementation(() => {
-        throw new Error("D1 is down");
-      });
-      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-      try {
-        expect(await poke(t)).toEqual({ poked: 1 });
-        expect(ws.replies()).toEqual([{ type: "poke" }]);
-      } finally {
-        prepare.mockRestore();
-        logged.mockRestore();
-      }
+    it("does not push the alarm out when another agent joins", async () => {
+      vi.useFakeTimers({ now: START });
+      const harness = await setup();
+      harness.connect("n1");
+      await harness.settled();
+      at(30);
+      harness.connect("n2");
+      await harness.settled();
+      expect(harness.alarmAt()).toBe(START + 60_000);
     });
 
-    it("pushes the next step of a batch inside the poke", async () => {
-      const t = setup();
-      const OTHER = "33333333-3333-4333-8333-333333333333";
-      seedNode(t.sqlite, { id: OTHER });
-      const ws = await t.connect();
-      const next = new FakeSocket();
-      await t.hub.accept(
-        next as unknown as WebSocket,
-        OTHER,
-        "standalone",
-        60,
-        "0.7.26",
-      );
-      const batch = createBatch(t.db, {
-        action: "restart",
-        mode: "rolling",
-        targets: [NODE, OTHER].map((nodeId) => ({
-          nodeId,
-          kind: "docker" as const,
-          name: "resolver",
-        })),
-        requestedBy: "owner@example.test",
-        now: BASE,
-      });
-      await t.db.batch(batch.statements);
-      await deliverActions(t.db, NODE, BASE);
-      await t.hub.webSocketMessage(
-        ws as unknown as WebSocket,
-        JSON.stringify({
-          id: 1,
-          type: "actions",
-          report: {
-            nodeId: NODE,
-            results: [
-              {
-                id: batch.actions[0]!.id,
-                ok: true,
-                exitCode: 0,
-                output: "",
-                finishedAt: new Date(BASE).toISOString(),
-              },
-            ],
-          },
-        }),
-      );
-      expect(next.replies()).toEqual([
-        {
-          type: "poke",
-          actions: [expect.objectContaining({ id: batch.actions[1]!.id })],
-        },
-      ]);
-    });
-  });
-
-  it("asks again for a stalled update and keeps the agent's reason, like the HTTP route", async () => {
-    const t = setup();
-    t.sqlite
-      .prepare(
-        "UPDATE nodes SET update_requested_version = '0.7.21', update_requested_at = ?, update_attempts = 1 WHERE id = ?",
-      )
-      .run(new Date(BASE - 16 * 60_000).toISOString(), NODE);
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, {
-      ...heartbeat(10),
-      update: { version: "0.7.21", message: "download stalled" },
-    });
-    const row = t.sqlite
-      .prepare(
-        "SELECT update_requested_at, update_attempts, update_error FROM nodes WHERE id = ?",
-      )
-      .get(NODE) as {
-      update_requested_at: string;
-      update_attempts: number;
-      update_error: string;
-    };
-    expect(row).toMatchObject({
-      update_requested_at: new Date(BASE + 5_000).toISOString(),
-      update_attempts: 2,
-      update_error: "download stalled",
-    });
-    expect(ws.replies().at(-1)).toMatchObject({
-      response: {
-        update: {
-          version: "0.7.21",
-          requestedAt: new Date(BASE + 5_000).toISOString(),
-        },
-      },
-    });
-  });
-
-  it("remembers an alert mail that could not go out until one does", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    const mailState = async () =>
-      (
-        (await (
-          await t.hub.fetch(new Request("https://fleet/live"))
-        ).json()) as { mail: { failedAt: string; error: string } | null }
-      ).mail;
-    expect(await mailState()).toBeNull();
-    t.failMail(true);
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("DOWN")]));
-    await t.send(ws, BASE + 65_000, heartbeat(10, [result("DOWN")]));
-    expect(await mailState()).toEqual({
-      failedAt: new Date(BASE + 65_000).toISOString(),
-      error: "destination address not verified",
-    });
-    t.failMail(false);
-    const disk = {
-      ...heartbeat(10),
-      metrics: {
-        ...heartbeat(10).metrics,
-        diskUsedBytes: 96,
-        diskTotalBytes: 100,
-      },
-    };
-    await t.send(ws, BASE + 125_000, disk);
-    expect(t.mail.length).toBe(1);
-    expect(await mailState()).toBeNull();
-  });
-
-  it("keeps the results of a report whose inventory it cannot read", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    const action = "77777777-7777-4777-8777-777777777777";
-    t.sqlite
-      .prepare(
-        `INSERT INTO actions (id, batch_id, position, mode, node_id, kind, name, action,
-           status, requested_by, requested_at, deliverable_at, sent_at)
-         VALUES (?, ?, 0, 'rolling', ?, 'docker', 'resolver', 'restart', 'sent', 'owner', ?, ?, ?)`,
-      )
-      .run(
-        action,
-        action,
-        NODE,
-        new Date(BASE).toISOString(),
-        new Date(BASE).toISOString(),
-        new Date(BASE).toISOString(),
-      );
-    vi.setSystemTime(BASE + 5_000);
-    await t.hub.webSocketMessage(
-      ws as unknown as WebSocket,
-      JSON.stringify({
-        id: 9,
-        type: "actions",
-        report: {
-          nodeId: NODE,
-          results: [
-            {
-              id: action,
-              ok: true,
-              exitCode: 0,
-              output: "restarted",
-              finishedAt: new Date(BASE + 4_000).toISOString(),
-            },
-          ],
-          inventory: {
-            hash: "b".repeat(64),
-            services: [
-              {
-                kind: "docker",
-                name: "bad name!",
-                state: "running",
-                since: null,
-                system: false,
-              },
-            ],
-          },
-        },
-      }),
-    );
-    expect(ws.replies().at(-1)).toMatchObject({
-      id: 9,
-      type: "actions",
-      response: { ok: true },
-    });
-    expect(
-      (ws.replies().at(-1) as { response: { inventoryHash: string | null } })
-        .response.inventoryHash,
-    ).not.toBe("b".repeat(64));
-    expect(
-      t.sqlite.prepare("SELECT status FROM actions WHERE id = ?").get(action),
-    ).toEqual({ status: "done" });
-  });
-
-  it("tells the live view when each server connected", async () => {
-    const t = setup();
-    vi.setSystemTime(BASE + 1_000);
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10));
-    const live = (await (
-      await t.hub.fetch(new Request("https://fleet/live"))
-    ).json()) as { nodes: Record<string, { connectedAt: number }> };
-    expect(live.nodes[NODE]?.connectedAt).toBe(BASE + 1_000);
-  });
-
-  describe("dashboards watching", () => {
-    const changes = (ws: FakeSocket) =>
-      ws
-        .replies()
-        .filter((reply) => reply.type === "changed")
-        .map((reply) => reply.topics);
-
-    it("hears when a server connects, reports a check change and leaves", async () => {
-      const t = setup();
-      const viewer = new FakeSocket();
-      await t.hub.watch(viewer as unknown as WebSocket);
-      const ws = await t.connect();
-      await t.send(ws, BASE + 5_000, heartbeat(10, [result("UP")]));
-      expect(changes(viewer)).toEqual([["nodes", "checks"]]);
-      await t.send(ws, BASE + 65_000, heartbeat(20, [result("UP")]));
-      expect(changes(viewer)).toHaveLength(1);
-      await t.hub.webSocketClose(ws as unknown as WebSocket);
-      expect(changes(viewer).at(-1)).toEqual(["nodes"]);
+    it("sets the next alarm 60 seconds on while an agent remains", async () => {
+      vi.useFakeTimers({ now: START });
+      const harness = await setup();
+      const ws = harness.connect("n1");
+      await harness.settled();
+      at(60);
+      harness.ping(ws);
+      await harness.fire();
+      expect(ws.closed).toBeNull();
+      expect(harness.alarmAt()).toBe(START + 120_000);
     });
 
-    it("hears when setup moves on, writing it to D1 only when it changes", async () => {
-      const t = setup();
-      const viewer = new FakeSocket();
-      await t.hub.watch(viewer as unknown as WebSocket);
-      const ws = await t.connect();
-      const stored = () =>
-        (
-          t.sqlite
-            .prepare("SELECT setup FROM nodes WHERE id = ?")
-            .get(NODE) as {
-            setup: string | null;
-          }
-        ).setup;
-      const upgrade = { phase: "upgrade" as const, step: 2, of: 6 };
-      await t.send(ws, BASE + 5_000, { ...heartbeat(10), setup: upgrade });
-      expect(JSON.parse(stored() ?? "null")).toEqual(upgrade);
-      expect(changes(viewer)).toEqual([["nodes"]]);
-      const before = t.changes();
-      await t.send(ws, BASE + 65_000, { ...heartbeat(10), setup: upgrade });
-      expect(t.changes() - before).toBe(0);
-      expect(changes(viewer)).toHaveLength(1);
-      const stopped = { ...upgrade, stopped: true as const };
-      await t.send(ws, BASE + 70_000, { ...heartbeat(10), setup: stopped });
-      expect(JSON.parse(stored() ?? "null")).toEqual(stopped);
-      expect(changes(viewer).at(-1)).toEqual(["nodes"]);
-      await t.send(ws, BASE + 130_000, heartbeat(10));
-      expect(stored()).toBeNull();
-      expect(changes(viewer)).toHaveLength(3);
+    it("does not set another alarm when the last agent was closed", async () => {
+      vi.useFakeTimers({ now: START });
+      const harness = await setup();
+      const ws = harness.connect("n1");
+      await harness.settled();
+      at(200);
+      await harness.fire();
+      expect(ws.closed?.code).toBe(4408);
+      expect(harness.alarmAt()).toBeNull();
     });
 
-    it("hears action results and inventories, and what the Worker announces", async () => {
-      const t = setup();
-      const viewer = new FakeSocket();
-      await t.hub.watch(viewer as unknown as WebSocket);
-      const ws = await t.connect();
-      await t.hub.webSocketMessage(
-        ws as unknown as WebSocket,
-        JSON.stringify({
-          id: 1,
-          type: "actions",
-          report: { nodeId: NODE, inventory: { hash: "a".repeat(64) } },
-        }),
-      );
-      expect(changes(viewer)).toEqual([["actions", "services"]]);
-      await t.hub.fetch(
-        new Request("https://fleet/announce", {
-          method: "POST",
-          body: JSON.stringify({ topics: ["all"] }),
-        }),
-      );
-      expect(changes(viewer).at(-1)).toEqual(["all"]);
+    it("does not set another alarm when the agent had already closed", async () => {
+      vi.useFakeTimers({ now: START });
+      const harness = await setup();
+      harness.connect("n1").close(1001, "gone");
+      await harness.settled();
+      at(60);
+      await harness.fire();
+      expect(harness.alarmAt()).toBeNull();
     });
-
-    it("keeps watchers out of the live view, the agents' sockets and window flushing", async () => {
-      const t = setup();
-      const viewer = new FakeSocket();
-      await t.hub.watch(viewer as unknown as WebSocket);
-      await t.hub.webSocketMessage(viewer as unknown as WebSocket, "hello");
-      expect(viewer.replies()).toEqual([]);
-      const live = await (
-        await t.hub.fetch(new Request("https://fleet/live"))
-      ).json();
-      expect(live).toEqual({ nodes: {}, mail: null });
-      await t.hub.webSocketClose(viewer as unknown as WebSocket);
-      expect(t.windows()).toEqual([]);
-    });
-  });
-
-  it("mails a new serious security finding once", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    let id = 1000;
-    const inventory = (hash: string, ids: string[]) =>
-      t.hub.webSocketMessage(
-        ws as unknown as WebSocket,
-        JSON.stringify({
-          id: (id += 1),
-          type: "actions",
-          report: {
-            nodeId: NODE,
-            inventory: {
-              hash: hash.repeat(64),
-              services: [],
-              security: {
-                checkedAt: "2026-10-05T10:00:00.000Z",
-                findings: ids.map((finding) => ({
-                  id: finding,
-                  severity: "serious",
-                  detail: `${finding} detail`,
-                })),
-                recipes: [],
-                lockdown: false,
-                rebootHour: null,
-              },
-            },
-          },
-        }),
-      );
-    await inventory("a", ["ssh-password"]);
-    await inventory("b", ["ssh-password"]);
-    await inventory("c", ["ssh-password", "os-eol"]);
-    expect(t.mail.map((message) => message.subject)).toEqual([
-      `[Krynodes] ${NODE}: 1 serious security finding`,
-      `[Krynodes] ${NODE}: 1 serious security finding`,
-    ]);
-    expect(t.mail[1]!.text).toContain("os-eol detail");
-  });
-});
-
-describe("FleetHub list version", () => {
-  const version = async (hub: FleetHub) =>
-    (
-      (await (
-        await hub.fetch(new Request("https://fleet/version"))
-      ).json()) as {
-        version: string;
-      }
-    ).version;
-
-  it("moves on a change and stands through a quiet heartbeat", async () => {
-    const t = setup();
-    const ws = await t.connect();
-    await t.send(ws, BASE + 5_000, heartbeat(10, [result("UP")]));
-    const settled = await version(t.hub);
-    await t.send(ws, BASE + 65_000, heartbeat(20, [result("UP")]));
-    expect(await version(t.hub)).toBe(settled);
-    await t.send(ws, BASE + 125_000, heartbeat(20, [result("DOWN")]));
-    const failed = await version(t.hub);
-    expect(failed).not.toBe(settled);
-    t.hub.announce(["services"]);
-    expect(await version(t.hub)).not.toBe(failed);
   });
 });
