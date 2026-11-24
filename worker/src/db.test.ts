@@ -61,6 +61,20 @@ describe("0001_init", () => {
     ]);
   });
 
+  it("0002_seen adds a nullable seen_ip to nodes", async () => {
+    const db = freshDb();
+    await addNode(db, "n1", "server-1");
+    expect(
+      await db
+        .prepare("SELECT seen_ip FROM nodes WHERE id = 'n1'")
+        .first("seen_ip"),
+    ).toBeNull();
+    await db.prepare("UPDATE nodes SET seen_ip = '203.0.113.9'").run();
+    expect(await db.prepare("SELECT seen_ip FROM nodes").first("seen_ip")).toBe(
+      "203.0.113.9",
+    );
+  });
+
   it("deleting a node removes its trust and its actions", async () => {
     const db = freshDb();
     await addNode(db, "n1", "server-1");

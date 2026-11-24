@@ -784,6 +784,20 @@ describe("GET /api/network/next", () => {
     expect(next.relayPorts).toEqual({});
   });
 
+  it("hands the address each requested machine connects from", async () => {
+    const { call, db } = await created();
+    await machine(db, S3);
+    await machine(db, L1, { kind: "laptop" });
+    await db
+      .prepare("UPDATE nodes SET seen_ip = '203.0.113.9' WHERE id = ?")
+      .bind(S3)
+      .run();
+    const next = (await (
+      await call(`/api/network/next?for=${S3},${L1}`)
+    ).json()) as { seen: Record<string, string | null> };
+    expect(next.seen).toEqual({ [S3]: "203.0.113.9", [L1]: null });
+  });
+
   it("addresses for new members are random and never taken", async () => {
     const { call, db } = await created();
     await machine(db, S3);

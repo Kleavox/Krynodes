@@ -305,7 +305,8 @@ export function testLines(
 const pathOf = (
   via: string | null | undefined,
   names: ReadonlyMap<string, string>,
-) => (via ? `Via ${names.get(via) ?? via}` : "Direct");
+  direct = "Direct",
+) => (via ? `Via ${names.get(via) ?? via}` : direct);
 
 export function fleetRow(
   node: Pick<FleetNode, "address" | "via" | "ms">,
@@ -336,6 +337,7 @@ export function memberRow(
     path: pathOf(
       node.via,
       new Map(view.members.map((one) => [one.node, one.name])),
+      member.kind !== "laptop" && !member.endpoint ? "Behind NAT" : "Direct",
     ),
     ms: metricText(node.ms ?? null, " ms"),
     state: appliedText(member, version),

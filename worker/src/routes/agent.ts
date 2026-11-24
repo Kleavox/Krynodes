@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import type { KrynodesApp, KrynodesEnv } from "../env";
 import { announce, upgradeInto } from "../fleet/client";
+import { publicIpv4 } from "../lib/address";
 import { randomToken, readBearerToken, sha256 } from "../lib/crypto";
 import { dnsClash, isUnique, readJson } from "./shared";
 
@@ -170,12 +171,18 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     const token = readBearerToken(context.req.header("authorization"));
     const node = token
       ? await context.env.DB.prepare(
-          "SELECT id FROM nodes WHERE agent_token_hash = ?",
+          "SELECT id, seen_ip FROM nodes WHERE agent_token_hash = ?",
         )
           .bind(await sha256(token))
-          .first<{ id: string }>()
+          .first<{ id: string; seen_ip: string | null }>()
       : null;
     if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
+    const seen = publicIpv4(context.req.header("cf-connecting-ip"));
+    if (seen !== node.seen_ip) {
+      await context.env.DB.prepare("UPDATE nodes SET seen_ip = ? WHERE id = ?")
+        .bind(seen, node.id)
+        .run();
+    }
     const version =
       /^kry-agent\/(\S+)/u.exec(context.req.header("user-agent") ?? "")?.[1] ??
       "";

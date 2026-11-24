@@ -416,7 +416,7 @@ export async function approve(
     keys = prepared.data;
     await same(keys.key, keys.signer);
 
-    const found = inspected.public;
+    const found = inspected.public ?? next.seen?.[request.node] ?? null;
     const online = new Set(
       nodes.filter((node) => node.online).map((node) => node.id),
     );

@@ -104,6 +104,7 @@ interface Setup {
   joiner: "server" | "laptop";
   preparedKey?: string;
   found?: string | null;
+  seen?: string | null;
   arrived?: string[];
   untrusted?: string;
 }
@@ -113,6 +114,7 @@ async function setup({
   joiner,
   preparedKey,
   found = "203.0.113.30",
+  seen = null,
   arrived = ["203.0.113.10"],
   untrusted,
 }: Setup) {
@@ -345,6 +347,7 @@ async function setup({
           addresses: {
             [id]: (range ?? document!.range).replace(/0\/24$/u, "163"),
           },
+          seen: { [id]: seen },
           relayPorts: {},
         };
       },
@@ -617,6 +620,104 @@ describe("approving a join request", () => {
         setting.found !== null,
       );
     }
+  });
+
+  describe("a server whose interface carries no public address", () => {
+    const probes = (run: Awaited<ReturnType<typeof setup>>) =>
+      run.commands.filter((command) => command.action === "probe");
+
+    it("is probed on the address the Worker saw it connect from", async () => {
+      const run = await setup({
+        existing: true,
+        joiner: "server",
+        found: null,
+        seen: "198.51.100.77",
+        arrived: ["203.0.113.10"],
+      });
+      await approve(run.request, run.expected, run.deps);
+      expect(probes(run).map(({ nodeId, args }) => ({ nodeId, args }))).toEqual(
+        [
+          {
+            nodeId: S3,
+            args: {
+              port: "51822",
+              peers: "203.0.113.10:51820 203.0.113.20:51820",
+            },
+          },
+          { nodeId: S1, args: { port: "51820", peers: "198.51.100.77:51822" } },
+          { nodeId: S2, args: { port: "51820", peers: "198.51.100.77:51822" } },
+        ],
+      );
+      expect(run.signed[0]!.members.at(-1)).toMatchObject({
+        node: S3,
+        endpoint: "198.51.100.77:51822",
+        nat: false,
+      });
+    });
+
+    it("is written behind NAT when the probe never arrives", async () => {
+      const run = await setup({
+        existing: true,
+        joiner: "server",
+        found: null,
+        seen: "198.51.100.77",
+        arrived: [],
+      });
+      await approve(run.request, run.expected, run.deps);
+      expect(probes(run)).toHaveLength(3);
+      expect(run.signed[0]!.members.at(-1)).toMatchObject({
+        endpoint: null,
+        nat: true,
+      });
+    });
+
+    it("is written unverified as the first server of a network", async () => {
+      const run = await setup({
+        existing: false,
+        joiner: "server",
+        found: null,
+        seen: "198.51.100.77",
+      });
+      await approve(run.request, run.expected, run.deps);
+      expect(probes(run)).toEqual([]);
+      expect(run.signed[0]!.members.at(-1)).toMatchObject({
+        endpoint: "198.51.100.77:51822",
+        nat: false,
+      });
+    });
+
+    it("is written behind NAT when the Worker saw no public address either", async () => {
+      const run = await setup({
+        existing: true,
+        joiner: "server",
+        found: null,
+        seen: null,
+      });
+      await approve(run.request, run.expected, run.deps);
+      expect(probes(run)).toEqual([]);
+      expect(run.signed[0]!.members.at(-1)).toMatchObject({
+        endpoint: null,
+        nat: true,
+      });
+    });
+
+    it("never overrides an address the interface carries", async () => {
+      const run = await setup({
+        existing: true,
+        joiner: "server",
+        found: "203.0.113.30",
+        seen: "198.51.100.77",
+      });
+      await approve(run.request, run.expected, run.deps);
+      expect(
+        probes(run)
+          .slice(1)
+          .map(({ args }) => args?.peers),
+      ).toEqual(["203.0.113.30:51822", "203.0.113.30:51822"]);
+      expect(run.signed[0]!.members.at(-1)).toMatchObject({
+        endpoint: "203.0.113.30:51822",
+      });
+    });
   });
 
   it("creates the network with a random free range and the default rule", async () => {

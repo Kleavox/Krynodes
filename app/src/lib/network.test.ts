@@ -343,6 +343,24 @@ describe("a member line", () => {
     ...patch,
   });
 
+  it("a server with no endpoint in the document is behind NAT, a laptop is not", () => {
+    const behind: NetworkView = {
+      ...view,
+      members: view.members.map((one) =>
+        one.node === S1 ? { ...one, endpoint: null, nat: true } : one,
+      ),
+    };
+    expect(memberRow(behind, fleet(S1))).toMatchObject({ path: "Behind NAT" });
+    expect(memberRow(behind, fleet(S2))).toMatchObject({ path: "Direct" });
+    expect(memberRow(behind, fleet(L1))).toMatchObject({ path: "Direct" });
+    expect(memberRow(behind, fleet(L1, { via: S1 }))).toMatchObject({
+      path: "Via server-1",
+    });
+    expect(memberRow(behind, fleet(S1, { via: S2 }))).toMatchObject({
+      path: "Via server-2",
+    });
+  });
+
   it("a missing round trip shows --", () => {
     expect(memberRow(view, fleet(S1))).toEqual({
       address: "10.88.37.14",

@@ -35,6 +35,7 @@ interface MachineRow {
   name: string;
   kind: string;
   seal_key: string | null;
+  seen_ip: string | null;
   state: "requested" | "rejected" | "in" | "leaving" | null;
   key: string | null;
   signer: string | null;
@@ -50,7 +51,7 @@ interface MachineRow {
 const machinesAnd = (db: D1Database, ids: string[]) =>
   db
     .prepare(
-      `SELECT n.id, n.name, n.kind, n.seal_key, m.state, m.key, m.signer, m.ready, m.reason,
+      `SELECT n.id, n.name, n.kind, n.seal_key, n.seen_ip, m.state, m.key, m.signer, m.ready, m.reason,
               m.port, m.mtu, m.address, m.announce_key, m.announce_signature
        FROM nodes n LEFT JOIN network_members m ON m.node_id = n.id
        WHERE n.id IN (SELECT value FROM json_each(?1)) OR m.state = 'in'`,
@@ -227,6 +228,9 @@ export function registerNetworkRoutes(app: KrynodesApp): void {
       ),
       addresses: Object.fromEntries(
         ids.data.map((id, index) => [id, addresses[index]!]),
+      ),
+      seen: Object.fromEntries(
+        ids.data.map((id) => [id, machines.get(id)!.seen_ip]),
       ),
       relayPorts: Object.fromEntries(
         (current?.document.members ?? []).flatMap((member) =>

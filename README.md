@@ -177,6 +177,9 @@ rules for every name and gives no guarantee which resolver answers.
 **Behind NAT.** A machine that cannot be reached from outside still joins.
 Laptops reach it through another member, a meeting point, and the tray says
 "via server-1" while they do.
+A server is reached directly only when its cloud firewall (security group) lets
+UDP 51820-51919 in from the internet; otherwise it is treated as behind NAT
+(relaying through a meeting point comes later).
 
 **Other changes.** ⋯ **Test Link** checks the tunnel between two members.
 **New Keys** gives a server a new key in one passkey touch and shows the new

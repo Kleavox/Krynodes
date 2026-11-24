@@ -150,6 +150,7 @@ export interface NetworkNext {
   hash: string | null;
   prepared: Record<string, PreparedKeys>;
   addresses: Record<string, string>;
+  seen?: Record<string, string | null>;
   relayPorts: Record<string, Record<string, number>>;
 }
 

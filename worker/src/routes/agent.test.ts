@@ -40,7 +40,7 @@ async function setup() {
     init: RequestInit = {},
   ) =>
     app.request(`https://kry.example.test${path}`, { ...init, headers }, env);
-  return { hub, names, call };
+  return { db, hub, names, call };
 }
 
 const agent = {
@@ -90,6 +90,64 @@ describe("agent stream", () => {
     });
     expect(response.status).toBe(401);
     expect(hub).toEqual([]);
+  });
+
+  describe("the address it connects from", () => {
+    const seen = (db: D1Database) =>
+      db.prepare("SELECT seen_ip FROM nodes WHERE id = 'n1'").first("seen_ip");
+
+    it("is recorded when it is a public IPv4", async () => {
+      const { db, call } = await setup();
+      await call("/api/agent/stream", {
+        ...agent,
+        "cf-connecting-ip": "203.0.113.9",
+      });
+      expect(await seen(db)).toBe("203.0.113.9");
+    });
+
+    it("is never recorded when it is private, IPv6 or missing", async () => {
+      const { db, call } = await setup();
+      await db.prepare("UPDATE nodes SET seen_ip = '203.0.113.9'").run();
+      for (const address of ["10.88.37.4", "2001:db8::1", undefined]) {
+        await call("/api/agent/stream", {
+          ...agent,
+          ...(address ? { "cf-connecting-ip": address } : {}),
+        });
+        expect(await seen(db)).toBeNull();
+        await db.prepare("UPDATE nodes SET seen_ip = '203.0.113.9'").run();
+      }
+    });
+
+    it("follows the node when it moves and is not written when it did not", async () => {
+      const { db, call } = await setup();
+      const writes: string[] = [];
+      const prepare = db.prepare.bind(db);
+      db.prepare = (sql: string) => {
+        if (/^\s*UPDATE/iu.test(sql)) writes.push(sql);
+        return prepare(sql);
+      };
+      const connect = (address: string) =>
+        call("/api/agent/stream", { ...agent, "cf-connecting-ip": address });
+      await connect("203.0.113.9");
+      await connect("203.0.113.9");
+      await connect("203.0.113.9");
+      expect(writes).toHaveLength(1);
+      await connect("198.51.100.4");
+      expect(await seen(db)).toBe("198.51.100.4");
+      expect(writes).toHaveLength(2);
+    });
+
+    it("is not taken from anything the agent sends", async () => {
+      const { db, call } = await setup();
+      await call("/api/agent/stream", {
+        ...agent,
+        "cf-connecting-ip": "203.0.113.9",
+        "x-forwarded-for": "198.51.100.4",
+        "x-real-ip": "198.51.100.5",
+        "x-kry-seen": "198.51.100.6",
+      });
+      expect(await seen(db)).toBe("203.0.113.9");
+    });
   });
 
   it("wants an upgrade", async () => {
