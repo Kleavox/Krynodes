@@ -1,5 +1,7 @@
 import { QueryObserver, type QueryClient } from "@tanstack/react-query";
 
+import { NETWORK } from "@krynodes/protocol";
+
 import { apiFetch } from "@/lib/http";
 import { onProgress } from "@/lib/live";
 import { queryKeys } from "@/lib/query-client";
@@ -14,6 +16,9 @@ export interface ActionRequest {
   title: string;
   args?: Record<string, string>;
 }
+
+const commandName = (kind: ActionKind, node: FleetNode) =>
+  kind === "network" ? NETWORK.interface : node.name;
 
 const finished = (row: ActionRow | undefined): row is ActionRow =>
   row?.status === "done" || row?.status === "failed";
@@ -78,7 +83,7 @@ export async function deliver(
         nodeId: node.id,
         id: body.id,
         kind: body.kind,
-        name: node.name,
+        name: commandName(body.kind, node),
         action: body.action,
         title: body.title,
         signed: body.signed,
@@ -113,7 +118,7 @@ export async function runAction(
       id,
       nodeId: node.id,
       kind: request.kind,
-      name: node.name,
+      name: commandName(request.kind, node),
       action: request.action,
       args: request.args,
     }),

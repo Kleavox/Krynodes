@@ -297,6 +297,39 @@ describe("running a signed action", () => {
     });
   });
 
+  it("names a network command after the interface the agent checks", async () => {
+    authenticator();
+    const calls = api((call) =>
+      call.method === "POST"
+        ? {
+            status: 201,
+            body: row(String(call.body!.id), {
+              status: "failed",
+              message: "x",
+            }),
+          }
+        : { status: 200, body: [] },
+    );
+    await runAction(new QueryClient(), node, {
+      kind: "network",
+      action: "test",
+      title: "Test Link to server-2",
+      args: { peer: "node-2", address: "10.88.37.2", mtu: "1420" },
+    });
+    const body = calls[0]!.body!;
+    expect(body).toMatchObject({ kind: "network", name: "kry0" });
+    const signed = JSON.parse(String(body.signed)) as { command: string };
+    const command = JSON.parse(
+      new TextDecoder().decode(
+        Uint8Array.from(
+          atob(signed.command.replaceAll("-", "+").replaceAll("_", "/")),
+          (char) => char.charCodeAt(0),
+        ),
+      ),
+    ) as Record<string, unknown>;
+    expect(command).toMatchObject({ kind: "network", name: "kry0" });
+  });
+
   it("progress lines appear in order, then the row's result", async () => {
     authenticator();
     vi.stubGlobal("WebSocket", FakeSocket);
