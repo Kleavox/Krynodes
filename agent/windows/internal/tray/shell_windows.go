@@ -105,6 +105,15 @@ func copyText(value string) error {
 	return nil
 }
 
+func show(text string) {
+	message, err := windows.UTF16PtrFromString(text)
+	if err != nil {
+		return
+	}
+	title, _ := windows.UTF16PtrFromString("Krynodes")
+	_, _ = windows.MessageBox(0, message, title, windows.MB_OK|windows.MB_ICONINFORMATION|windows.MB_SETFOREGROUND)
+}
+
 func open(address string) error {
 	parsed, err := url.Parse(address)
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {

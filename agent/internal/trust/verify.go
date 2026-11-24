@@ -27,6 +27,7 @@ const (
 	flagVerified = 0x04
 	algES256     = -7
 	algRS256     = -257
+	documentTag  = "krynodes-document-v1\n"
 )
 
 var b64 = base64.RawURLEncoding
@@ -72,6 +73,12 @@ type SignedGrant struct {
 type SignedCommand struct {
 	Grant     SignedGrant `json:"grant"`
 	Command   string      `json:"command"`
+	Signature string      `json:"signature"`
+}
+
+type SignedDocument struct {
+	Grant     SignedGrant `json:"grant"`
+	Document  string      `json:"document"`
 	Signature string      `json:"signature"`
 }
 
@@ -223,12 +230,12 @@ func verifyAssertion(trust Trust, allowed []string, outside string, assertion As
 	return authData[32]&flagVerified != 0, nil
 }
 
-func verifySession(trust Trust, signed SignedCommand, now time.Time) ([]byte, time.Time, error) {
-	grantBytes, err := decode("grant", signed.Grant.Grant)
+func verifyGrant(trust Trust, signed SignedGrant, now time.Time) (*ecdsa.PublicKey, time.Time, error) {
+	grantBytes, err := decode("grant", signed.Grant)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	uv, err := verifyAssertion(trust, trust.Access, "the passkey has no access to this server", signed.Grant.Assertion, digest(grantBytes))
+	uv, err := verifyAssertion(trust, trust.Access, "the passkey has no access to this server", signed.Assertion, digest(grantBytes))
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -265,23 +272,23 @@ func verifySession(trust Trust, signed SignedCommand, now time.Time) ([]byte, ti
 	if err != nil || !ok || sessionKey.Curve != elliptic.P256() {
 		return nil, time.Time{}, errors.New("the session key is not P-256")
 	}
-	commandBytes, err := decode("command", signed.Command)
+	return sessionKey, expires, nil
+}
+
+func verifySigned(key *ecdsa.PublicKey, noun string, data []byte, encoded string) error {
+	signature, err := decode(noun+" signature", encoded)
 	if err != nil {
-		return nil, time.Time{}, err
-	}
-	signature, err := decode("command signature", signed.Signature)
-	if err != nil {
-		return nil, time.Time{}, err
+		return err
 	}
 	if len(signature) != 64 {
-		return nil, time.Time{}, errors.New("the command signature is not P1363")
+		return fmt.Errorf("the %s signature is not P1363", noun)
 	}
 	r := new(big.Int).SetBytes(signature[:32])
 	s := new(big.Int).SetBytes(signature[32:])
-	if !ecdsa.Verify(sessionKey, digest(commandBytes), r, s) {
-		return nil, time.Time{}, errors.New("the command signature is invalid")
+	if !ecdsa.Verify(key, digest(data), r, s) {
+		return fmt.Errorf("the %s signature is invalid", noun)
 	}
-	return commandBytes, expires, nil
+	return nil
 }
 
 func VerifyCommand(trust Trust, request reporter.Command, now time.Time) (Command, error) {
@@ -292,8 +299,15 @@ func VerifyCommand(trust Trust, request reporter.Command, now time.Time) (Comman
 	if err := strict([]byte(request.Signed), &signed); err != nil {
 		return Command{}, fmt.Errorf("the signature is malformed: %w", err)
 	}
-	commandBytes, expires, err := verifySession(trust, signed, now)
+	sessionKey, expires, err := verifyGrant(trust, signed.Grant, now)
 	if err != nil {
+		return Command{}, err
+	}
+	commandBytes, err := decode("command", signed.Command)
+	if err != nil {
+		return Command{}, err
+	}
+	if err := verifySigned(sessionKey, "command", commandBytes, signed.Signature); err != nil {
 		return Command{}, err
 	}
 	var command Command
@@ -324,6 +338,25 @@ func VerifyCommand(trust Trust, request reporter.Command, now time.Time) (Comman
 		return Command{}, fmt.Errorf("the command expired at %s", ClockSays(commandExpires, now))
 	}
 	return command, nil
+}
+
+func VerifyDocument(trust Trust, signed []byte, now time.Time) ([]byte, error) {
+	var request SignedDocument
+	if err := strict(signed, &request); err != nil {
+		return nil, fmt.Errorf("the signed document is malformed: %w", err)
+	}
+	sessionKey, _, err := verifyGrant(trust, request.Grant, now)
+	if err != nil {
+		return nil, err
+	}
+	document, err := decode("document", request.Document)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifySigned(sessionKey, "document", append([]byte(documentTag), document...), request.Signature); err != nil {
+		return nil, err
+	}
+	return document, nil
 }
 
 func ClockSays(at, now time.Time) string {

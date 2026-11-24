@@ -2,17 +2,24 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/config"
+	"github.com/Kleavox/krynodes/agent/internal/network"
+	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/internal/seal"
 	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
@@ -33,7 +40,7 @@ func TestVersionPrintsTheBuildVersion(t *testing.T) {
 }
 
 func TestAnythingElseIsRefusedWithExitTwo(t *testing.T) {
-	for _, args := range [][]string{nil, {"bogus"}, {"version", "extra"}, {"--version"}, {"install-service", "--config", "x"}, {"self-update", "now"}} {
+	for _, args := range [][]string{nil, {"bogus"}, {"version", "extra"}, {"--version"}, {"install-service", "--config", "x"}, {"self-update", "now"}, {"network"}, {"network", "bogus"}, {"network", "rules", "now"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("run(%q) exited %d, want 2", args, code)
@@ -169,21 +176,25 @@ func TestMissingFactsAreSentAsUnknown(t *testing.T) {
 }
 
 func TestHelloCarriesTheTrustOnlyOnceThereIsOne(t *testing.T) {
-	message := hello(facts{"server-1", "Debian GNU/Linux 12", "amd64", "6.1.0"}, "seal", trust.Trust{})
-	if message.Type != "hello" || message.V != 1 || message.Version != version || message.SealKey != "seal" || message.Trust != nil {
+	message := hello(facts{"server-1", "Debian GNU/Linux 12", "amd64", "6.1.0"}, "seal", trust.Trust{}, nil)
+	if message.Type != "hello" || message.V != 1 || message.Version != version || message.SealKey != "seal" || message.Trust != nil || message.Kind != "server" || message.Network != nil {
 		t.Fatalf("hello %+v", message)
 	}
 	first, err := trust.FirstTrust(testNode, testOrigin, []string{testToken})
 	if err != nil {
 		t.Fatal(err)
 	}
-	message = hello(facts{}.known(), "seal", first)
+	message = hello(facts{}.known(), "seal", first, nil)
 	if message.Trust == nil || message.Trust.Version != 1 || len(message.Trust.Core) != 1 || message.Hostname != "unknown" {
 		t.Fatalf("hello %+v", message)
 	}
-	encoded, _ := json.Marshal(hello(facts{}, "seal", trust.Trust{}))
-	if !strings.Contains(string(encoded), `"trust":null`) {
+	encoded, _ := json.Marshal(hello(facts{}, "seal", trust.Trust{}, nil))
+	if !strings.Contains(string(encoded), `"trust":null`) || !strings.Contains(string(encoded), `"kind":"server"`) || !strings.Contains(string(encoded), `"network":null`) {
 		t.Fatalf("hello %s", encoded)
+	}
+	joined := &reporter.NetworkHello{Version: 2, Key: "k", Signer: "s", Ready: true}
+	if message := hello(facts{}, "seal", trust.Trust{}, joined); message.Network != joined {
+		t.Fatalf("hello %+v", message)
 	}
 }
 
@@ -232,5 +243,206 @@ func TestATrustResetSeedsTheTokensAboveTheStoredVersion(t *testing.T) {
 	}
 	if _, err := reseed(configPath, state, testOrigin, []string{"bad"}); err == nil {
 		t.Fatal("a bad token was taken")
+	}
+}
+
+func TestEnrollMakesNetworkKeysAndInstallsNothing(t *testing.T) {
+	server := &enrollServer{}
+	endpoint := server.start(t, http.StatusOK, `{"nodeId":"`+testNode+`","token":"agent-token"}`)
+	_, state, err := enrollIn(t, endpoint, testToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := network.Load(filepath.Join(state, "network"), false)
+	if err != nil || keys.Public == "" || keys.Signer == "" {
+		t.Fatalf("keys %v", err)
+	}
+	entries, _ := os.ReadDir(state)
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if strings.Join(names, " ") != "network seal.key trust.json" {
+		t.Fatalf("enroll left %v", names)
+	}
+	if runtime.GOOS != "windows" {
+		if info, _ := os.Stat(filepath.Join(state, "network")); info.Mode().Perm() != 0o700 {
+			t.Fatalf("the key directory is %v", info.Mode())
+		}
+	}
+}
+
+type fingerprintCase struct {
+	Key         string `json:"key"`
+	Signer      string `json:"signer"`
+	SealKey     string `json:"sealKey"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+func TestTheFingerprintCommandPrintsTheSameAsTheProtocol(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "protocol", "src", "fixtures", "fingerprint.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []fingerprintCase
+	if err := json.Unmarshal(raw, &cases); err != nil || len(cases) == 0 {
+		t.Fatalf("fixture %v", err)
+	}
+	for _, item := range cases {
+		if got := network.Fingerprint(item.Key, item.Signer, item.SealKey); got != item.Fingerprint {
+			t.Fatalf("got %s want %s", got, item.Fingerprint)
+		}
+	}
+	state := t.TempDir()
+	var stdout bytes.Buffer
+	if err := networkWith("fingerprint", localMesh(state), &stdout); err == nil || stdout.Len() != 0 {
+		t.Fatalf("no keys: %v %q", err, stdout.String())
+	}
+	keys, err := network.Load(filepath.Join(state, "network"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := networkWith("fingerprint", localMesh(state), &stdout); err == nil || !strings.Contains(err.Error(), "no seal key") || stdout.Len() != 0 {
+		t.Fatalf("no seal key: %v %q", err, stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "seal.key")); !os.IsNotExist(err) {
+		t.Fatalf("the fingerprint made a seal key: %v", err)
+	}
+	key, err := seal.Load(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := networkWith("fingerprint", localMesh(state), &stdout); err != nil {
+		t.Fatal(err)
+	}
+	if want := network.Fingerprint(keys.Public, keys.Signer, seal.Public(key)) + "\n"; stdout.String() != want {
+		t.Fatalf("printed %q want %q", stdout.String(), want)
+	}
+}
+
+func TestTheRulesCommandFailsWithoutAnAppliedDocument(t *testing.T) {
+	state := t.TempDir()
+	m := localMesh(state)
+	var calls []string
+	m.Run = func(_ context.Context, name string, args ...string) ([]byte, int, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil, 0, nil
+	}
+	var stdout bytes.Buffer
+	if err := networkWith("rules", m, &stdout); err == nil || !strings.Contains(err.Error(), "no applied network document") {
+		t.Fatalf("rules %v", err)
+	}
+	if len(calls) != 0 || stdout.Len() != 0 {
+		t.Fatalf("calls %v stdout %q", calls, stdout.String())
+	}
+}
+
+func TestARefreshSendsTheLinksAndADocumentIsApplied(t *testing.T) {
+	sent := make(chan any, 4)
+	m := localMesh(t.TempDir())
+	m.Trust = func() trust.Trust { return trust.Trust{NodeID: testNode} }
+	m.Send = func(message any) error { sent <- message; return nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	take := networkWorker(ctx, m)
+	take(reporter.Refresh{Type: "refresh"})
+	if links, ok := (<-sent).(reporter.Links); !ok || links.Type != "links" || links.Links == nil {
+		t.Fatalf("links %+v", links)
+	}
+	take(reporter.Document{Type: "document", Version: 1, Signed: "{}"})
+	if applied, ok := (<-sent).(reporter.Applied); !ok || applied.OK || applied.Version != 1 {
+		t.Fatalf("applied %+v", applied)
+	}
+}
+
+func TestRefreshesDoNotPileUpAndDocumentsAreNeverDropped(t *testing.T) {
+	release := make(chan struct{})
+	sent := make(chan any, 128)
+	m := localMesh(t.TempDir())
+	m.Trust = func() trust.Trust { return trust.Trust{NodeID: testNode} }
+	m.Send = func(message any) error {
+		<-release
+		sent <- message
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	take := networkWorker(ctx, m)
+	for range 3 {
+		take(reporter.Refresh{Type: "refresh"})
+	}
+	take(reporter.Document{Type: "document", Version: 1, Signed: "{}"})
+	for range 40 {
+		take(reporter.Hints{Type: "hints"})
+	}
+	take(reporter.Document{Type: "document", Version: 2, Signed: "{}"})
+	take(reporter.Document{Type: "document", Version: 3, Signed: "{}"})
+	close(release)
+	links, versions := 0, []int{}
+	for deadline := time.After(2 * time.Second); len(versions) < 3 || links < 1; {
+		select {
+		case message := <-sent:
+			switch value := message.(type) {
+			case reporter.Links:
+				links++
+			case reporter.Applied:
+				versions = append(versions, value.Version)
+			}
+		case <-deadline:
+			t.Fatalf("links %d versions %v", links, versions)
+		}
+	}
+	select {
+	case message := <-sent:
+		t.Fatalf("more arrived: %+v", message)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if links != 1 || !slices.Equal(versions, []int{1, 2, 3}) {
+		t.Fatalf("links %d versions %v", links, versions)
+	}
+}
+
+func TestTheDocumentQueueKeepsTheLowestVersions(t *testing.T) {
+	release, busy := make(chan struct{}), make(chan struct{}, 1)
+	sent := make(chan int, 128)
+	m := localMesh(t.TempDir())
+	m.Trust = func() trust.Trust { return trust.Trust{NodeID: testNode} }
+	m.Send = func(message any) error {
+		if applied, ok := message.(reporter.Applied); ok {
+			busy <- struct{}{}
+			<-release
+			sent <- applied.Version
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	take := networkWorker(ctx, m)
+	take(reporter.Document{Type: "document", Version: 1, Signed: "{}"})
+	<-busy
+	for version := 71; version >= 2; version-- {
+		take(reporter.Document{Type: "document", Version: version, Signed: "{}"})
+	}
+	close(release)
+	go func() {
+		for range busy {
+		}
+	}()
+	var versions []int
+	for deadline := time.After(5 * time.Second); len(versions) < 65; {
+		select {
+		case version := <-sent:
+			versions = append(versions, version)
+		case <-deadline:
+			t.Fatalf("versions %v", versions)
+		}
+	}
+	select {
+	case version := <-sent:
+		t.Fatalf("version %d was kept past the cap", version)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if versions[0] != 1 || versions[1] != 2 || versions[64] != 65 || !slices.IsSorted(versions) {
+		t.Fatalf("versions %v", versions)
 	}
 }

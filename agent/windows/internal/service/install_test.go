@@ -8,6 +8,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +28,7 @@ import (
 type fakeSystem struct {
 	calls    []string
 	fail     error
+	nowFail  error
 	stopFail error
 	source   string
 	program  string
@@ -81,36 +84,39 @@ func (f *fakeSystem) Tray(executable string) error {
 	return nil
 }
 
+func (f *fakeSystem) StartTray(executable string) error {
+	f.calls = append(f.calls, "tray now "+filepath.Base(executable))
+	return f.nowFail
+}
+
 type enrollServer struct {
 	*httptest.Server
 	trust []string
-	sent  struct {
-		Hostname string     `json:"hostname"`
-		Laptop   laptopKeys `json:"laptop"`
-	}
+	name  string
+	body  map[string]json.RawMessage
 	calls int
 }
 
 func newEnrollServer(t *testing.T, tokens ...string) *enrollServer {
 	t.Helper()
-	server := &enrollServer{trust: tokens}
+	server := &enrollServer{trust: tokens, name: "laptop-1"}
 	server.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		server.calls++
 		if r.URL.Path != "/api/agent/enroll" || r.Header.Get("Authorization") != "Bearer one-time-code" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if err := json.NewDecoder(r.Body).Decode(&server.sent); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&server.body); err != nil {
 			t.Error(err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"nodeId": laptop1, "token": "agent-token", "intervalSeconds": 60, "trust": server.trust})
+		json.NewEncoder(w).Encode(map[string]any{"nodeId": laptop1, "name": server.name, "token": "agent-token", "trust": server.trust})
 	}))
 	t.Cleanup(server.Close)
 	return server
 }
 
-func (s *enrollServer) install(dir string, secrets Secrets, system System) error {
-	return Install(context.Background(), s.Client(), dir, secrets, system, Enrollment{Code: "one-time-code", Origin: testOrigin, Endpoint: s.URL, Version: "0.7.24"})
+func (s *enrollServer) install(dir string, secrets Secrets, system System, out io.Writer) error {
+	return Install(context.Background(), s.Client(), dir, secrets, system, Enrollment{Code: "one-time-code", Origin: testOrigin, Endpoint: s.URL, Version: "0.7.24", Kernel: "10.0.19045"}, out)
 }
 
 func TestInstallEnrollsAsALaptopAndStartsTheService(t *testing.T) {
@@ -119,14 +125,12 @@ func TestInstallEnrollsAsALaptopAndStartsTheService(t *testing.T) {
 	dir := t.TempDir()
 	secrets := memory{}
 	system := newSystem(t)
-	if err := server.install(dir, secrets, system); err != nil {
+	if err := server.install(dir, secrets, system, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	service := Service{Dir: dir, Secrets: secrets}
-	keys, err := service.keys()
-	sent := server.sent
-	if err != nil || sent.Laptop.Key != keys.Public || sent.Laptop.Signer != keys.Signer || sent.Laptop.Port != 51820 || len(sent.Laptop.SealKey) != 87 || sent.Hostname == "" {
-		t.Fatalf("sent %+v, keys %+v, %v", sent, keys, err)
+	if _, err := service.keys(); err != nil || len(server.body["hostname"]) < 3 {
+		t.Fatalf("sent %s, %v", server.body, err)
 	}
 	if string(secrets[tokenSecret]) != "agent-token" {
 		t.Errorf("token %q", secrets[tokenSecret])
@@ -140,10 +144,10 @@ func TestInstallEnrollsAsALaptopAndStartsTheService(t *testing.T) {
 	if err != nil || current.NodeID != laptop1 || current.Origin != testOrigin || len(current.Core) != 1 || !slices.Equal(current.Access, []string{"cred-1"}) {
 		t.Fatalf("trust %+v, %v", current, err)
 	}
-	if record, err := service.read(); err != nil || record.NodeID != laptop1 || record.Endpoint != server.URL || record.Interval != 60 {
+	if record, err := service.read(); err != nil || record.NodeID != laptop1 || record.Endpoint != server.URL {
 		t.Fatalf("state %+v, %v", record, err)
 	}
-	want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe"}
+	want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}
 	if !slices.Equal(system.calls, want) {
 		t.Fatalf("calls %v", system.calls)
 	}
@@ -161,7 +165,7 @@ func TestEveryEnrolledPasskeyCanSignForANewLaptop(t *testing.T) {
 	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey, "cred-2.-7."+spki(t, other))
 	dir := t.TempDir()
 	secrets := memory{}
-	if err := server.install(dir, secrets, newSystem(t)); err != nil {
+	if err := server.install(dir, secrets, newSystem(t), io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	current, err := trust.Load(dir)
@@ -178,12 +182,12 @@ func TestEveryEnrolledPasskeyCanSignForANewLaptop(t *testing.T) {
 	}
 	f.seal = seal.Public(sealing)
 	first := f.document(1, "", true)
-	if err := f.service.applyDocument(f.signWith("cred-1", f.passkey, first)); err != nil {
-		t.Fatalf("signed by the first passkey: %v", err)
+	if got := f.deliver(1, f.signWith("cred-1", f.passkey, first)); !got.OK {
+		t.Fatalf("signed by the first passkey: %+v", got)
 	}
 	second := f.document(2, network.BodyHash(first), true)
-	if err := f.service.applyDocument(f.signWith("cred-2", other, second)); err != nil {
-		t.Fatalf("signed by the second passkey: %v", err)
+	if got := f.deliver(2, f.signWith("cred-2", other, second)); !got.OK {
+		t.Fatalf("signed by the second passkey: %+v", got)
 	}
 }
 
@@ -194,20 +198,20 @@ func TestAFailedInstallFinishesOnTheNextRun(t *testing.T) {
 	secrets := memory{}
 	system := newSystem(t)
 	system.fail = errors.New("the service manager is busy")
-	if err := server.install(dir, secrets, system); err == nil || !strings.Contains(err.Error(), "run install again") {
+	if err := server.install(dir, secrets, system, io.Discard); err == nil || !strings.Contains(err.Error(), "run install again") {
 		t.Fatalf("first run: %v", err)
 	}
 	if want := []string{"stop", "unpack", "register krynodes.exe", "start"}; !slices.Equal(system.calls, want) {
 		t.Fatalf("first run calls %v, want %v", system.calls, want)
 	}
 	system.fail, system.calls = nil, nil
-	if err := server.install(dir, secrets, system); err != nil {
+	if err := server.install(dir, secrets, system, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if server.calls != 1 || string(secrets[tokenSecret]) != "agent-token" {
 		t.Fatalf("enrolled %d times, token %q", server.calls, secrets[tokenSecret])
 	}
-	if want := []string{"unpack", "register krynodes.exe", "tray krynodes.exe"}; !slices.Equal(system.calls, want) {
+	if want := []string{"unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}; !slices.Equal(system.calls, want) {
 		t.Fatalf("calls %v, want %v", system.calls, want)
 	}
 }
@@ -217,7 +221,7 @@ func TestAnInstallWithoutTrustOrOverPlainHTTPIsRefused(t *testing.T) {
 	dir := t.TempDir()
 	secrets := memory{}
 	system := newSystem(t)
-	if err := server.install(dir, secrets, system); err == nil || !strings.Contains(err.Error(), "no trusted passkeys") {
+	if err := server.install(dir, secrets, system, io.Discard); err == nil || !strings.Contains(err.Error(), "no trusted passkeys") {
 		t.Fatalf("no trust: %v", err)
 	}
 	if want := []string{"stop", "unpack", "start"}; !slices.Equal(system.calls, want) {
@@ -227,7 +231,7 @@ func TestAnInstallWithoutTrustOrOverPlainHTTPIsRefused(t *testing.T) {
 		t.Fatal("a laptop without trust was set up")
 	}
 	for _, origin := range []string{"http://kry.example.com", "http://203.0.113.5:8787", "ftp://kry.example.com", "https://kry.example.com/path"} {
-		err := Install(context.Background(), server.Client(), dir, secrets, system, Enrollment{Code: "one-time-code", Origin: testOrigin, Endpoint: origin})
+		err := Install(context.Background(), server.Client(), dir, secrets, system, Enrollment{Code: "one-time-code", Origin: testOrigin, Endpoint: origin}, io.Discard)
 		if err == nil || len(system.calls) != 3 {
 			t.Errorf("%s was accepted: %v", origin, err)
 		}
@@ -273,7 +277,7 @@ func TestReinstallSwapsInBesideARunningTray(t *testing.T) {
 		tray.Process.Kill()
 		tray.Wait()
 	})
-	if err := server.install(t.TempDir(), memory{}, system); err != nil {
+	if err := server.install(t.TempDir(), memory{}, system, io.Discard); err != nil {
 		t.Fatalf("install over a running program: %v", err)
 	}
 	if data, _ := os.ReadFile(system.program); string(data) != "agent 0.7.24" {
@@ -282,7 +286,7 @@ func TestReinstallSwapsInBesideARunningTray(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(system.program), oldName)); err != nil {
 		t.Errorf("the running program was not set aside: %v", err)
 	}
-	if want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe"}; !slices.Equal(system.calls, want) {
+	if want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}; !slices.Equal(system.calls, want) {
 		t.Errorf("calls %v, want %v", system.calls, want)
 	}
 }
@@ -298,7 +302,7 @@ func TestAFailedCopyStartsTheServiceAgain(t *testing.T) {
 	if err := os.WriteFile(system.program, []byte("agent 0.7.23"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := server.install(t.TempDir(), memory{}, system)
+	err := server.install(t.TempDir(), memory{}, system, io.Discard)
 	if err == nil || !strings.HasPrefix(err.Error(), "copy the agent: stage the new agent") {
 		t.Fatalf("install = %v, want the copy refused", err)
 	}
@@ -325,7 +329,7 @@ func TestAStopThatTimesOutStartsTheServiceAgain(t *testing.T) {
 	if err := os.WriteFile(system.program, []byte("agent 0.7.23"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := server.install(t.TempDir(), memory{}, system)
+	err := server.install(t.TempDir(), memory{}, system, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "did not stop in 30 seconds") {
 		t.Fatalf("install = %v, want the stop failure", err)
 	}
@@ -337,5 +341,89 @@ func TestAStopThatTimesOutStartsTheServiceAgain(t *testing.T) {
 	}
 	if server.calls != 0 {
 		t.Errorf("enrolled %d times after a failed stop", server.calls)
+	}
+}
+
+func TestTrayStartUsesTheShellToken(t *testing.T) {
+	var events []string
+	elevated := map[uintptr]bool{}
+	shell := shellUser{
+		Session: func() (uint32, error) { return 1, nil },
+		Processes: func() ([]shellProcess, error) {
+			return []shellProcess{{ID: 40, Session: 2, Name: "explorer.exe"}, {ID: 41, Session: 1, Name: "krynodes.exe"}, {ID: 42, Session: 1, Name: "Explorer.EXE"}, {ID: 43, Session: 1, Name: "explorer.exe"}}, nil
+		},
+		Token: func(id uint32) (uintptr, error) {
+			events = append(events, fmt.Sprintf("token %d", id))
+			return uintptr(id) + 100, nil
+		},
+		Elevated: func(token uintptr) bool { return elevated[token] },
+		Start: func(token uintptr, command string) error {
+			events = append(events, fmt.Sprintf("start %d %s", token, command))
+			return nil
+		},
+		Close: func(token uintptr) { events = append(events, fmt.Sprintf("close %d", token)) },
+	}
+	executable := `C:\Program Files\Krynodes\krynodes.exe`
+	if err := shell.startTray(executable); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"token 42", `start 142 "C:\Program Files\Krynodes\krynodes.exe" tray`, "close 142"}; !slices.Equal(events, want) {
+		t.Fatalf("events %q, want %q", events, want)
+	}
+
+	events = nil
+	elevated[142] = true
+	if err := shell.startTray(executable); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"token 42", "close 142", "token 43", `start 143 "C:\Program Files\Krynodes\krynodes.exe" tray`, "close 143"}; !slices.Equal(events, want) {
+		t.Fatalf("an elevated shell is used: events %q, want %q", events, want)
+	}
+
+	events = nil
+	elevated[143] = true
+	if err := shell.startTray(executable); !errors.Is(err, errElevatedShell) || !slices.Equal(events, []string{"token 42", "close 142", "token 43", "close 143"}) {
+		t.Fatalf("with only elevated shells: %v, events %q", err, events)
+	}
+	elevated = map[uintptr]bool{}
+
+	events = nil
+	shell.Session = func() (uint32, error) { return 3, nil }
+	if err := shell.startTray(executable); !errors.Is(err, errNoShell) || len(events) != 0 {
+		t.Fatalf("with no Explorer in this session: %v, events %q", err, events)
+	}
+
+	events = nil
+	shell.Session = func() (uint32, error) { return 0, errors.New("access denied") }
+	if err := shell.startTray(executable); err == nil || len(events) != 0 {
+		t.Fatalf("an unknown session: %v, events %q", err, events)
+	}
+
+	events = nil
+	shell.Session = func() (uint32, error) { return 1, nil }
+	shell.Start = func(uintptr, string) error { return errors.New("access denied") }
+	if err := shell.startTray(executable); err == nil || !slices.Equal(events, []string{"token 42", "close 142"}) {
+		t.Fatalf("a refused start: %v, events %q", err, events)
+	}
+
+	events = nil
+	shell.Token = func(uint32) (uintptr, error) { return 0, errors.New("access denied") }
+	if err := shell.startTray(executable); err == nil || len(events) != 0 {
+		t.Fatalf("a refused token: %v, events %q", err, events)
+	}
+
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	system := newSystem(t)
+	system.nowFail = errElevatedShell
+	var out strings.Builder
+	if err := server.install(t.TempDir(), memory{}, system, &out); err != nil {
+		t.Fatalf("a tray that cannot start now fails the install: %v", err)
+	}
+	if want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}; !slices.Equal(system.calls, want) {
+		t.Fatalf("calls %v, want %v", system.calls, want)
+	}
+	if !strings.HasPrefix(out.String(), "Krynodes is installed.\n") || !strings.HasSuffix(out.String(), "laptop-1 on the Network page of your dashboard.\nThe tray could not start now (Explorer runs elevated in this session, and the tray is never started elevated); it starts the next time you sign in.\n") {
+		t.Fatalf("printed %q", out.String())
 	}
 }

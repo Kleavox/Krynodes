@@ -43,12 +43,12 @@ type Server struct {
 }
 
 type Status struct {
-	Removed          bool     `json:"removed"`
 	Joined           bool     `json:"joined"`
 	Connected        bool     `json:"connected"`
 	FirewallOff      bool     `json:"firewallOff"`
 	Name             string   `json:"name"`
 	Address          string   `json:"address"`
+	Fingerprint      string   `json:"fingerprint"`
 	Exit             string   `json:"exit"`
 	Local            bool     `json:"local"`
 	Exits            []Server `json:"exits"`

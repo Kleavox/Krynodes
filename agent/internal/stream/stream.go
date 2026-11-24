@@ -23,10 +23,12 @@ const (
 )
 
 type Client struct {
-	Hello     func() any
-	Connected func()
-	Command   func(reporter.Command)
-	Ack       func(string)
+	Hello        func() any
+	Connected    func()
+	Disconnected func()
+	Command      func(reporter.Command)
+	Ack          func(string)
+	Network      func(any)
 
 	endpoint string
 	token    string
@@ -78,6 +80,13 @@ func (c *Client) Send(message any) error {
 		return err
 	}
 	return nil
+}
+
+func (c *Client) HelloAgain() error {
+	if c.Hello == nil {
+		return nil
+	}
+	return c.Send(c.Hello())
 }
 
 func (c *Client) delay(attempt int) time.Duration {
@@ -225,9 +234,12 @@ func (c *Client) serve(ctx context.Context, connection *conn) int {
 func (c *Client) detach(connection *conn) {
 	connection.close()
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.conn == connection {
 		c.conn = nil
+	}
+	c.mu.Unlock()
+	if c.Disconnected != nil {
+		c.Disconnected()
 	}
 }
 
@@ -248,6 +260,10 @@ func (c *Client) dispatch(message []byte) {
 	case reporter.Ack:
 		if c.Ack != nil {
 			c.Ack(value.ID)
+		}
+	case reporter.Document, reporter.Hints, reporter.Refresh:
+		if c.Network != nil {
+			c.Network(value)
 		}
 	}
 }

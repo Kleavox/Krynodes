@@ -18,9 +18,8 @@ const (
 )
 
 var (
-	errRemoved = errors.New("This laptop was removed from the private network.")
-	errOff     = errors.New("Connect this laptop first.")
-	errNoDNS   = errors.New("The private network has no DNS for laptops, so the exit node stays off.")
+	errOff   = errors.New("Connect this laptop first.")
+	errNoDNS = errors.New("The private network has no DNS for laptops, so the exit node stays off.")
 )
 
 type note struct {
@@ -74,7 +73,7 @@ func (s *Service) listen(now time.Time, record state, answers map[string]answer)
 func (s *Service) Status(seen uint64) pipe.Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	status := pipe.Status{Exit: s.last.Exit, Local: s.local, Last: s.noteID}
+	status := pipe.Status{Exit: s.last.Exit, Local: s.local, Last: s.noteID, Fingerprint: s.fingerprint(), Connected: !s.off}
 	now := s.Now()
 	s.notes = slices.DeleteFunc(s.notes, func(waiting note) bool { return now.Sub(waiting.at) > noteKept })
 	for _, waiting := range s.notes {
@@ -89,8 +88,7 @@ func (s *Service) Status(seen uint64) pipe.Status {
 	if err != nil {
 		return status
 	}
-	status.Removed, status.Joined, status.NotifyOffline = record.Removed, record.Joined, record.Offline
-	status.Connected = !s.off && !record.Removed
+	status.Joined, status.NotifyOffline = record.Joined, record.Offline
 	if record.Document == nil || !record.Joined {
 		return status
 	}
@@ -135,11 +133,6 @@ func (s *Service) Connect(on bool) error {
 	defer s.push()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if on {
-		if record, err := s.read(); err == nil && record.Removed {
-			return errRemoved
-		}
-	}
 	if s.off != on {
 		return nil
 	}
@@ -160,8 +153,6 @@ func (s *Service) Exit(server string) error {
 		switch {
 		case err != nil || record.Document == nil || !record.Joined:
 			return pipe.ErrNotOffered
-		case record.Removed:
-			return errRemoved
 		case s.off:
 			return errOff
 		case !exit.Offered(*record.Document, s.held, server):

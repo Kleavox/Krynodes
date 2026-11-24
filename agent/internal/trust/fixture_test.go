@@ -1,6 +1,7 @@
 package trust
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,13 +12,14 @@ import (
 )
 
 type browserFixture struct {
-	Origin  string           `json:"origin"`
-	RPID    string           `json:"rpId"`
-	NodeID  string           `json:"nodeId"`
-	Now     string           `json:"now"`
-	Tokens  []string         `json:"tokens"`
-	Change  reporter.Command `json:"change"`
-	Command reporter.Command `json:"command"`
+	Origin   string            `json:"origin"`
+	RPID     string            `json:"rpId"`
+	NodeID   string            `json:"nodeId"`
+	Now      string            `json:"now"`
+	Tokens   []string          `json:"tokens"`
+	Change   reporter.Command  `json:"change"`
+	Command  reporter.Command  `json:"command"`
+	Document reporter.Document `json:"document"`
 }
 
 func loadBrowserFixture(t *testing.T, name string) (browserFixture, time.Time) {
@@ -61,6 +63,48 @@ func TestTheBrowsersFirstTrustApplies(t *testing.T) {
 	}
 }
 
+func TestTheBrowsersSignedDocumentVerifies(t *testing.T) {
+	fixture, now := loadBrowserFixture(t, "browser-signed.json")
+	first, err := FirstTrust(fixture.NodeID, fixture.Origin, fixture.Tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := ApplyTrustChange(first, []byte(fixture.Change.Signed), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := VerifyDocument(next, []byte(fixture.Document.Signed), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		V       int `json:"v"`
+		Version int `json:"version"`
+		Allow   []struct {
+			From  map[string]string `json:"from"`
+			To    map[string]string `json:"to"`
+			Ports string            `json:"ports"`
+		} `json:"allow"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.V != 1 || document.Version != fixture.Document.Version || len(document.Allow) != 1 ||
+		document.Allow[0].From["group"] != "laptops" || document.Allow[0].To["group"] != "servers" || document.Allow[0].Ports != "all" {
+		t.Fatalf("document %s", raw)
+	}
+}
+
+func TestTheBrowsersDocumentNeedsTheTrustItWasSignedFor(t *testing.T) {
+	fixture, now := loadBrowserFixture(t, "browser-signed.json")
+	first, err := FirstTrust(fixture.NodeID, fixture.Origin, fixture.Tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = VerifyDocument(first, []byte(fixture.Document.Signed), now)
+	refused(t, err, "passkey is not trusted")
+}
+
 func TestTheBrowsersCommandNeedsTheTrustItWasSignedFor(t *testing.T) {
 	fixture, now := loadBrowserFixture(t, "browser-signed.json")
 	first, err := FirstTrust(fixture.NodeID, fixture.Origin, fixture.Tokens)
@@ -80,5 +124,7 @@ func TestTheBrowsersTouchOnlyAnswersAreRefused(t *testing.T) {
 	_, err = ApplyTrustChange(first, []byte(fixture.Change.Signed), now)
 	refused(t, err, "was opened without a fingerprint, face or PIN")
 	_, err = VerifyCommand(first, fixture.Command, now)
+	refused(t, err, "was opened without a fingerprint, face or PIN")
+	_, err = VerifyDocument(first, []byte(fixture.Document.Signed), now)
 	refused(t, err, "was opened without a fingerprint, face or PIN")
 }

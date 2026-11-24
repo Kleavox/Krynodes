@@ -19,6 +19,11 @@ const server = (name: string, online: boolean): FleetNode => ({
   lastSeenAt: null,
   trust: null,
   update: null,
+  kind: "server",
+  address: null,
+  via: null,
+  ms: null,
+  request: null,
 });
 
 const page = (nodes?: FleetNode[]) => {

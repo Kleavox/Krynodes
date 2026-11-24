@@ -11,6 +11,7 @@
       "address": "10.88.0.1",
       "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
       "signer": "Gq5XvCZ6m6GB0YdQ3TTqN4TfxLMvx8ZvYhAEZ3yUnUs=",
+      "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
       "port": 51820,
       "mtu": null,
       "endpoint": "203.0.113.21:51820",
@@ -26,6 +27,7 @@
       "address": "10.88.0.2",
       "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
       "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+      "sealKey": "BAoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dzj6vH4_wYNFBsiKTA3PkVMU1phaG92fYSLkpmgp661vMM",
       "port": 51821,
       "mtu": 1380,
       "endpoint": null,
@@ -41,6 +43,7 @@
       "address": "10.88.0.9",
       "key": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
       "signer": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo=",
+      "sealKey": "BAkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk",
       "port": 51822,
       "mtu": null,
       "endpoint": null,
@@ -50,8 +53,21 @@
         "22222222-2222-4222-8222-222222222222": "eyJ2Ijo2fQ"
       },
       "kind": "laptop",
-      "relay": { "22222222-2222-4222-8222-222222222222": 51920 }
+      "relay": {
+        "22222222-2222-4222-8222-222222222222": 51920
+      }
     }
   ],
-  "blocked": ["HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="]
+  "blocked": ["HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="],
+  "allow": [
+    {
+      "from": {
+        "group": "laptops"
+      },
+      "to": {
+        "group": "servers"
+      },
+      "ports": "all"
+    }
+  ]
 }

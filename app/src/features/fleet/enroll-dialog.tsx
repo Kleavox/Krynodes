@@ -16,10 +16,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ApproveDialog } from "@/features/network/approve-dialog";
+import { useNetworkView } from "@/features/network/use-network";
 import { useDevices } from "@/lib/api";
 import { stampTime } from "@/lib/format";
 import { errorMessage } from "@/lib/http";
-import type { Device, Enrollment } from "@/types";
+import type { Device, Enrollment, JoinRequest } from "@/types";
 
 import { useCreateEnrollment, useEnrollment } from "./use-fleet";
 
@@ -63,8 +65,11 @@ function Enroll({ onClose }: { onClose: () => void }) {
   const create = useCreateEnrollment();
   const enrollment = useEnrollment(create.data?.id);
   const [name, setName] = useState("");
+  const [approving, setApproving] = useState<JoinRequest | null>(null);
   const nodeId = enrollment.data?.nodeId;
   const step = enrollStep(create.data, nodeId);
+  const view = useNetworkView();
+  const network = view.data?.network;
 
   return (
     <>
@@ -120,7 +125,29 @@ function Enroll({ onClose }: { onClose: () => void }) {
         <Install enrollment={create.data} onClose={onClose} />
       )}
       {step === "enrolled" && nodeId && (
-        <Arrived name={name} nodeId={nodeId} onClose={onClose} />
+        <Arrived
+          name={name}
+          nodeId={nodeId}
+          network={
+            view.data === undefined
+              ? undefined
+              : Boolean(network && !network.deleted)
+          }
+          request={view.data?.requests.find(
+            (request) => request.node === nodeId,
+          )}
+          onApprove={setApproving}
+          onClose={onClose}
+        />
+      )}
+      {approving && (
+        <ApproveDialog
+          request={approving}
+          onClose={() => {
+            setApproving(null);
+            onClose();
+          }}
+        />
       )}
     </>
   );
@@ -132,7 +159,9 @@ export function EnrollForm({
   error,
   onCancel,
   onCreate,
+  label = "Server Name",
 }: {
+  label?: string;
   devices: Device[];
   pending: boolean;
   error: Error | null;
@@ -147,7 +176,7 @@ export function EnrollForm({
     return (
       <EmptyState
         title="Register a passkey first."
-        body="A server needs at least one passkey to trust before it can enroll."
+        body="A server or laptop needs at least one passkey to trust before it can enroll."
         action={
           <Button asChild variant="outline">
             <Link to="/passkeys">Go to Passkeys</Link>
@@ -165,9 +194,9 @@ export function EnrollForm({
       }}
     >
       <div className="space-y-2">
-        <Label htmlFor="server-name">Server Name</Label>
+        <Label htmlFor="machine-name">{label}</Label>
         <Input
-          id="server-name"
+          id="machine-name"
           value={name}
           maxLength={64}
           autoComplete="off"
@@ -240,19 +269,68 @@ export function Install({
 export function Arrived({
   name,
   nodeId,
+  network,
+  request,
+  onApprove,
   onClose,
 }: {
   name: string;
   nodeId: string;
+  network: boolean | undefined;
+  request: JoinRequest | undefined;
+  onApprove: (request: JoinRequest) => void;
   onClose: () => void;
 }) {
+  if (network) {
+    const waiting = !request
+      ? `Waiting for ${name} to ask to join.`
+      : request.ready
+        ? null
+        : request.reason
+          ? `${name} cannot join yet: ${request.reason}`
+          : `${name} is not ready to join yet.`;
+    return (
+      <>
+        {request && (
+          <p className="text-sm">{name} asked to join the private network.</p>
+        )}
+        {waiting && (
+          <p role="status" className="text-sm text-muted-foreground">
+            {waiting}
+          </p>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Not Now
+          </Button>
+          <Button
+            disabled={!request?.ready}
+            onClick={() => request && onApprove(request)}
+          >
+            Approve
+          </Button>
+        </DialogFooter>
+      </>
+    );
+  }
   return (
-    <DialogFooter>
-      <Button asChild>
-        <a href={`#server-${nodeId}`} onClick={onClose}>
-          Show {name}
-        </a>
-      </Button>
-    </DialogFooter>
+    <>
+      {network === false && (
+        <p className="text-sm">
+          Create a private network on the{" "}
+          <Link to="/network" className="underline underline-offset-4">
+            Network page
+          </Link>{" "}
+          to connect your servers.
+        </p>
+      )}
+      <DialogFooter>
+        <Button asChild>
+          <a href={`#server-${nodeId}`} onClick={onClose}>
+            Show {name}
+          </a>
+        </Button>
+      </DialogFooter>
+    </>
   );
 }

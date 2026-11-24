@@ -150,3 +150,8 @@ export function displayHandle(
   const local = email?.split("@")[0];
   return local || "Account";
 }
+
+export const byNewest = <T>(rows: T[], at: (row: T) => string): T[] =>
+  [...rows].sort(
+    (one, other) => parseTimestamp(at(other)) - parseTimestamp(at(one)),
+  );

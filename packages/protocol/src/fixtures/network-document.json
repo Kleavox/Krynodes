@@ -11,11 +11,14 @@
       "address": "10.88.0.1",
       "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
       "signer": "Gq5XvCZ6m6GB0YdQ3TTqN4TfxLMvx8ZvYhAEZ3yUnUs=",
+      "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
       "port": 51820,
       "mtu": null,
       "endpoint": "203.0.113.21:51820",
       "nat": false,
-      "psk": { "22222222-2222-4222-8222-222222222222": "eyJ2IjoxfQ" }
+      "psk": {
+        "22222222-2222-4222-8222-222222222222": "eyJ2IjoxfQ"
+      }
     },
     {
       "node": "22222222-2222-4222-8222-222222222222",
@@ -23,12 +26,26 @@
       "address": "10.88.0.2",
       "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
       "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+      "sealKey": "BAoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dzj6vH4_wYNFBsiKTA3PkVMU1phaG92fYSLkpmgp661vMM",
       "port": 51821,
       "mtu": 1380,
       "endpoint": null,
       "nat": true,
-      "psk": { "11111111-1111-4111-8111-111111111111": "eyJ2IjoyfQ" }
+      "psk": {
+        "11111111-1111-4111-8111-111111111111": "eyJ2IjoyfQ"
+      }
     }
   ],
-  "blocked": ["HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="]
+  "blocked": ["HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw="],
+  "allow": [
+    {
+      "from": {
+        "node": "11111111-1111-4111-8111-111111111111"
+      },
+      "to": {
+        "node": "22222222-2222-4222-8222-222222222222"
+      },
+      "ports": ["5432/tcp"]
+    }
+  ]
 }

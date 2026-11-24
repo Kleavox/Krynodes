@@ -13,7 +13,6 @@ var releaseVersion = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 const (
 	notRunning = "The Krynodes service is not running."
-	removed    = "This laptop was removed from the private network."
 	firewall   = "Windows Firewall is off, so this laptop accepts connections from the network."
 	notYet     = "This laptop is not on the private network yet."
 	copyHint   = "Click to copy the address."
@@ -30,6 +29,7 @@ type entry struct {
 	Separator bool
 	Ask       *pipe.Request
 	Copy      string
+	Show      string
 	Open      string
 	Quit      bool
 }
@@ -80,17 +80,15 @@ func menu(status pipe.Status, reachable bool) []entry {
 	if status.Connected {
 		connect = ask("disconnect")
 	}
-	entries := []entry{{Key: "connected", Title: "Connected", Checkbox: true, Checked: status.Connected && !status.Removed, Disabled: status.Removed || !status.Joined, Ask: connect}}
+	entries := []entry{{Key: "connected", Title: "Connected", Checkbox: true, Checked: status.Connected, Disabled: !status.Joined, Ask: connect}}
 	switch {
-	case status.Removed:
-		entries = append(entries, line("removed", removed))
 	case !status.Joined:
 		entries = append(entries, line("joining", notYet))
 	case status.FirewallOff:
 		entries = append(entries, line("firewall", firewall))
 	}
 	entries = append(entries, separator("head", ""))
-	if status.Joined && !status.Removed {
+	if status.Joined {
 		entries = append(entries, entry{Key: "laptop", Title: "This Laptop · " + status.Name + " · " + status.Address, Tooltip: copyHint, Copy: status.Address})
 		chosen := "None"
 		for _, server := range status.Exits {
@@ -135,7 +133,12 @@ func menu(status pipe.Status, reachable bool) []entry {
 			separator("network", ""),
 		)
 	}
+	shown := ""
+	if status.Fingerprint != "" {
+		shown = "This laptop's network fingerprint is " + status.Fingerprint + ". Approve it only if the dashboard shows the same one."
+	}
 	entries = append(entries,
+		entry{Key: "fingerprint", Title: "Fingerprint", Disabled: shown == "", Show: shown},
 		entry{Key: "dashboard", Title: "Open Dashboard", Disabled: status.Dashboard == "", Open: status.Dashboard},
 		separator("tail", ""),
 		entry{Key: "settings", Title: "Settings"},

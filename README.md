@@ -1,37 +1,52 @@
 # Krynodes
 
-Krynodes is a small, self-hosted console for a handful of Linux servers, run on
-Cloudflare Workers. A single root daemon, `kry`, runs on each server and keeps
-one WebSocket open to the Worker. The dashboard shows each server as Online or
-Offline as it happens, and sits behind Cloudflare Access. D1 holds the servers,
-the passkeys and the history.
+Krynodes is a small, self-hosted console for a handful of Linux servers and the
+Windows laptops that reach them, run on Cloudflare Workers. A single root
+daemon, `kry`, runs on each server, and a Windows service runs on each laptop;
+each keeps one WebSocket open to the Worker. The dashboard shows every machine
+as Online or Offline as it happens, and sits behind Cloudflare Access. D1 holds
+the machines, the passkeys, the private network's signed documents and the
+history.
 
-Nothing a server does is decided by the Worker or by the dashboard login. A
-person signs each action with a passkey in the browser, and the daemon checks
-that signature against the passkeys it was told to trust before it acts. A
-stolen Access session, or a Worker that has been taken over, cannot make a
-server restart, update or remove itself.
+Nothing a machine does is decided by the Worker or by the dashboard login. A
+person signs each action and each change to the private network with a passkey
+in the browser, and the machine checks that signature against the passkeys it
+was told to trust before it acts. A stolen Access session, or a Worker that has
+been taken over, cannot make a server restart, update or remove itself, and
+cannot add a machine to the private network or open a port on it, as long as
+the owner compares fingerprints: a fresh browser asks the owner to check every
+member's fingerprint once before it signs anything, and a laptop's first join is
+anchored by the fingerprint the owner checks and the fresh keys it makes.
 
-This is the first part of an overhaul that turns Krynodes into a private mesh
-between servers and laptops, with Docker stacks that move between servers. Part
-1, in this tree, is the skeleton only:
+This is an overhaul that turns Krynodes into a private network between servers
+and laptops, with Docker stacks that move between servers. This tree holds the
+first two parts:
 
 - **Fleet.** Enroll a server with one command; see it Online or Offline live.
-- **Passkeys.** Add a passkey, rename it, choose which servers trust it, remove
-  it.
+- **Passkeys.** Add a passkey, rename it, choose which machines trust it,
+  remove it.
 - **Actions.** Update Agent, Restart Server, Remove Server, each signed by a
-  trusted passkey. A command is instant or refused: a server that is offline
+  trusted passkey. A command is instant or refused: a machine that is offline
   refuses it at once, and nothing waits in a queue.
-- **History.** Every action, who it went to and how it ended.
+- **Private network.** Servers and laptops ask to join and the owner approves
+  or rejects each one. Servers refuse each other unless a Connections rule
+  allows it. Laptops reach the servers and can send their internet traffic out
+  through one server, the exit node.
+- **History.** Every action and every network change, who it went to and how
+  it ended.
 
-The mesh, moving stacks, container checks, web addresses and the Windows agent
-come in later parts. The 0.7 line's metrics, incidents and hardening are not in
-this tree; they are not hidden, they are removed.
+The dashboard's pages are plain for now; their visual design comes later.
+Moving stacks, container checks and web addresses come in later parts. The 0.7
+line's metrics, incidents, quarantine and hardening are not in this tree; they
+are not hidden, they are removed.
 
 ```text
 Browser ── Cloudflare Access ── kry Worker ── D1
  (signs)                           │
                                    └── FleetHub (Durable Object) ══ wss ══ kry on each server
+                                                                 ══ wss ══ Krynodes on each laptop
+
+server-1 ══ WireGuard (kry0) ══ server-2 ══ … ══ laptop-1
 ```
 
 ## Layout
@@ -61,7 +76,7 @@ change; it serves the built assets from `app/dist`.
 
 ```sh
 pnpm check         # format, knip, lint scripts, typecheck, tests, build
-pnpm native:check  # go test, vet, build, deadcode
+pnpm native:check  # go test, vet, build, deadcode, the Windows module
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same steps on every push to any
@@ -83,16 +98,138 @@ script (it needs OpenSSL 3), installs `/usr/local/bin/kry`, enrolls the server
 and starts `krynodes.service`. The configuration is `/etc/kry/config.json` and
 the state is in `/var/lib/kry`.
 
-The server is Online in Fleet within a few seconds. Afterwards:
+The script ends by printing the server's network fingerprint, for example
+`Network fingerprint: 1A2B-3C4D-5E6F-7081`. The server is Online in Fleet
+within a few seconds and asks to join the private network. Afterwards:
 
 ```sh
 sudo systemctl status krynodes
 kry version
+sudo kry network fingerprint
 ```
 
 Remove Server in the dashboard takes the unit, `/etc/kry`, `/var/lib/kry` and
-the binary off the server; the server itself keeps running. `sudo kry
-uninstall-service` does the same by hand.
+the binary off the server; the server itself keeps running. A member of the
+private network must be removed from it first. `sudo kry uninstall-service`
+does the same by hand.
+
+## The private network
+
+Every enrolled machine makes its own network keys and asks to join. Asking
+changes nothing on the machine: no package is installed and no port is opened.
+The request waits under **Join Requests** on the Network page.
+
+**Approve and fingerprints.** Approve shows a fingerprint the browser computes
+from the exact keys it is about to sign. Compare it with the one the machine
+shows (`sudo kry network fingerprint` on a server, the install output or the
+tray's **Fingerprint** on a laptop) and approve only when they match. A Worker
+that swapped a key would show a different fingerprint. Each browser remembers
+the fingerprints it has checked and the last document it signed. A member it
+has not checked yet, because another browser approved it or the site's data was
+cleared, is listed with its fingerprint for a one-time check before anything is
+signed. A member whose keys changed since this browser last saw them is listed
+the same way, with a warning, and checked again. A document older than the
+last one this browser signed or checked stops the change. The first approval is
+**Create Network**: it picks a random range such as `10.88.37.0/24` that no
+chosen machine already uses. Each member gets a random free address in it, not
+the next one in order. **Reject** keeps the machine in Fleet and out of the
+network; ⋯ **Ask to Join Again** puts it back in the list. The Enroll dialog
+also offers Approve for a server that has just enrolled.
+
+**Connections.** Servers refuse each other on the private network by default.
+Only ping between members and replies to allowed connections pass. A rule opens
+one direction: `server-1 → server-2 · 81/tcp` lets server-1 connect to port 81
+on server-2, and server-2 still cannot connect to server-1. `From` is one
+member, All Laptops or All Servers; `To` is one server or All Servers, never a
+laptop. Ports are All Ports or up to eight entries such as `22/tcp`,
+`8000-8100/tcp` or `53/udp`. A new network starts with one rule, **All Laptops
+→ All Servers · All Ports**, which the owner can change or delete. The rules
+also cover Docker ports published on `0.0.0.0`: a container on server-2 stays
+closed to server-1 until a rule opens that port. Removing a rule refuses new
+connections; one that is already open keeps running until it closes.
+
+**On a server** the rules live in the server's own firewall chains (`KRY-EDGE`,
+`KRY-IN`, `KRY-FWD`, `KRY-EXIT`). They are put back before `kry0` comes up at
+boot, and if they cannot be, `kry0` does not start. Every 10 seconds the daemon
+puts back a missing jump, for example after Docker is installed later. Member
+names answer as `<name>.kry` through a block in `/etc/hosts`.
+
+**Laptops.** On the Network page, **Add Laptop** gives a download link pinned
+to the Worker's release and a PowerShell command with a code that works once
+for 10 minutes. Run it as Administrator. It prints the fingerprint and starts
+the tray at once; the tray also starts at every sign-in. The laptop then waits
+for Approve like a server. Laptops refuse every connection that comes in over
+the tunnel. Started with no command, `krynodes-windows-amd64.exe` only says
+that it is installed from the dashboard. `krynodes uninstall`, run as
+Administrator, takes it off the laptop; remove it from the network on the
+Network page as well.
+
+**Exit node.** ⋯ **Exit Node for Laptops** on a public server lets laptops
+send all their internet traffic out through it. Each laptop picks it under
+**Exit Node** in the tray. Exit traffic never reaches private, shared or
+link-local addresses behind the exit node. While an exit is on, a laptop sends
+every name to the network's DNS (**Laptop DNS** on the Network page). If
+Tailscale has also claimed every name, the laptop keeps Tailscale's own names
+(`.ts.net`) on Tailscale's resolver, so they still answer. This works for
+Tailscale only. When another VPN also claims every name, Windows holds two
+rules for every name and gives no guarantee which resolver answers.
+
+**Behind NAT.** A machine that cannot be reached from outside still joins.
+Laptops reach it through another member, a meeting point, and the tray says
+"via server-1" while they do.
+
+**Other changes.** ⋯ **Test Link** checks the tunnel between two members.
+**New Keys** gives a server a new key in one passkey touch and shows the new
+fingerprint first. **Remove from Network** drops a member, its rules and its
+key from every other member. **Delete Network** makes every member leave. A
+member that was offline catches up on every change, in order, when it comes
+back, without a new signature. ⋯ **Delete Laptop** in Fleet deletes a laptop
+that is not in the network, for example a lost one.
+
+Turning an exit node off, or leaving the network, leaves the kernel's IP
+forwarding on until the next reboot while Krynodes' chains refuse what it would
+forward; this is intended, since Docker and other tools rely on forwarding too.
+A member that was offline while a passkey that signed some of the changes it
+missed lost its trust cannot check those changes: take it off locally
+(`sudo kry uninstall-service`, or `krynodes uninstall` on a laptop), enroll it
+again and approve it.
+
+## Security model in plain words
+
+- **The machine decides.** A server or laptop applies a network document only
+  when a passkey it trusts signed it, with fingerprint, face or PIN. The
+  document must also be exactly the next version after the one it holds, built
+  on that version, and name the machine's own keys. The Worker only stores and
+  forwards documents.
+- **Every network command is signed.** That includes checks such as Test
+  Link, because an unsigned check could make the fleet send traffic for
+  someone else. One passkey touch opens a 5-minute session for a whole flow.
+  The session ends when the page is hidden, and an ended session signs
+  nothing.
+- **Nothing joins without a touch.** There is no auto-approve and no document
+  built by the Worker.
+- **The Worker holds no secret.** Private keys stay on each machine.
+  Preshared keys are made in the browser and sealed to each member's seal key,
+  which is itself in the signed document.
+- **Fail closed.** When a change cannot be applied, the machine keeps its
+  previous document, configuration and rules exactly as they were.
+- **Unsigned hints cost availability only.** The Worker suggests endpoints and
+  meeting points, which can change where packets go but never who is a peer or
+  what is allowed.
+- **Stated limits.** At enroll a machine takes its first passkey trust from the
+  Worker once; the fingerprint check is how the owner closes that gap for the
+  network. A fresh browser must check every member's fingerprint once before it
+  signs a change. A server's first document must build on the one named in the
+  signed prepare. A laptop has no prepare: it makes new keys whenever it leaves,
+  so an old document never names it. The browser's memory covers the members,
+  their keys and the version, not the rules: a taken-over Worker that serves a
+  newer forged document with the same members could change the rules the owner
+  builds on. Only a machine joining in that change would apply them; every
+  member refuses the document because it does not follow the one they hold, and
+  shows a failure. A signed document never ages, so a member offline for weeks still
+  catches up. Code running in the dashboard during one passkey session could
+  sign more than the owner meant, and such a chain breaks at the owner's next
+  real change.
 
 ## Agent releases
 
@@ -102,12 +239,12 @@ a new version publishes the release `agent-v<version>` as the Latest one;
 production servers update only from Latest.
 
 Running the workflow by hand on any other branch publishes a **pre-release**
-instead. It is built for Linux only, is never marked Latest, and is never seen
-by a production Worker, which follows `releases/latest`. Test builds on the
+instead. It carries the Linux and Windows builds, is never marked Latest, and
+is never seen by a production Worker, which follows `releases/latest`. Test builds on the
 overhaul branch are `0.7.90` and up; the first release of the new line is
 `0.8.0`, made from `main`.
 
-Agents older than `0.7.90` are refused by the Worker.
+Agents older than `0.7.92` are refused by the Worker.
 
 ## Test deployment
 

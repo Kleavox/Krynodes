@@ -20,6 +20,15 @@ export function onProgress(listener: (progress: Progress) => void) {
   };
 }
 
+const networkListeners = new Set<() => void>();
+
+export function onNetworkChange(listener: () => void) {
+  networkListeners.add(listener);
+  return () => {
+    networkListeners.delete(listener);
+  };
+}
+
 export function retryDelay(attempt: number, random: number): number {
   return Math.round(Math.min(30_000, 1_000 * 2 ** attempt) * (0.5 + random));
 }
@@ -41,6 +50,7 @@ export function watch(client: QueryClient, url: string): () => void {
     flush = setTimeout(() => {
       void client.invalidateQueries({ queryKey: queryKeys.fleet });
       void client.invalidateQueries({ queryKey: queryKeys.actions });
+      void client.invalidateQueries({ queryKey: queryKeys.network });
     }, SETTLE_MS);
   };
 
@@ -54,14 +64,22 @@ export function watch(client: QueryClient, url: string): () => void {
     };
     current.onmessage = (event: MessageEvent) => {
       if (typeof event.data !== "string") return;
-      let message: (Partial<Progress> & { type?: unknown }) | null;
+      let message:
+        (Partial<Progress> & { type?: unknown; topics?: unknown }) | null;
       try {
         message = JSON.parse(event.data) as typeof message;
       } catch {
         return;
       }
-      if (message?.type === "changed") refresh();
-      else if (
+      if (message?.type === "changed") {
+        refresh();
+        if (
+          Array.isArray(message.topics) &&
+          message.topics.includes("network")
+        ) {
+          for (const listener of networkListeners) listener();
+        }
+      } else if (
         message?.type === "progress" &&
         typeof message.id === "string" &&
         typeof message.line === "string"

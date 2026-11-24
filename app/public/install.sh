@@ -110,6 +110,11 @@ MCowBQYDK2VwAyEADLGUbsAkMk1uQY9fs9DNkQYPcMsJ3VyZTRLx2tRzzLg=
 
   echo "Krynodes agent $("$bin" version) is running."
   echo "Check it with: sudo systemctl status krynodes"
+  if fp=$("$bin" network fingerprint); then
+    echo "Network fingerprint: $fp"
+  else
+    echo "See it with: sudo kry network fingerprint"
+  fi
 }
 
 main "$@"

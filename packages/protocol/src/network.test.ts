@@ -1,15 +1,25 @@
 import { describe, expect, it } from "vitest";
 
+import hashes from "./fixtures/document-hash.json";
+import fingerprints from "./fixtures/fingerprint.json";
+import allow from "./fixtures/network-allow.json";
 import document from "./fixtures/network-document.json";
 import laptopDocument from "./fixtures/network-document-laptop.json";
 import {
+  DEFAULT_RULE,
   dnsName,
+  DOCUMENT_TAG,
+  documentHash,
+  joinFingerprint,
   laptopAddress6,
   links,
   NETWORK,
   networkArgsValid,
-  networkBeatSchema,
   networkDocumentSchema,
+  networkInspectSchema,
+  networkRekeySchema,
+  pickAddresses,
+  pickRange,
   placeSchema,
   stackNetworkSchema,
   type NetworkDocument,
@@ -66,13 +76,12 @@ describe("the network document", () => {
     ).toBe(false);
   });
 
-  it("names its parent by hash, marks cut members and carries the knock settings", () => {
+  it("names its parent by hash and marks cut members", () => {
     const parent = "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0";
     expect(
       changed((copy) => {
         copy.parent = parent;
         copy.members[1]!.cut = true;
-        copy.knocks = { scan: 5, stop: false };
       }),
     ).toBe(true);
     expect(
@@ -80,9 +89,12 @@ describe("the network document", () => {
         copy.parent = "abc";
       }),
     ).toBe(false);
+  });
+
+  it("no longer knows the knock settings", () => {
     expect(
       changed((copy) => {
-        copy.knocks = { scan: 7 as 5, stop: true };
+        (copy as { knocks?: unknown }).knocks = { scan: 5, stop: false };
       }),
     ).toBe(false);
   });
@@ -116,6 +128,110 @@ describe("the network document", () => {
   });
 });
 
+describe("the connection rules of a document", () => {
+  it.each(allow.valid)("reads $why", ({ document: value }) => {
+    const parsed = networkDocumentSchema.safeParse(value);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toEqual(value);
+  });
+
+  it.each(allow.invalid)("refuses $why", ({ document: value }) => {
+    expect(networkDocumentSchema.safeParse(value).success).toBe(false);
+  });
+
+  it("holds rules in the fixtures both documents share", () => {
+    expect(allow.valid.length).toBeGreaterThan(3);
+    expect(allow.invalid.length).toBeGreaterThan(10);
+    expect(document.allow).toHaveLength(1);
+    expect(laptopDocument.allow).toHaveLength(1);
+  });
+
+  const base = allow.valid[0]!.document;
+  const withRules = (rules: unknown[]) =>
+    networkDocumentSchema.safeParse({ ...base, allow: rules }).success;
+  const rule = (extra: Record<string, unknown>) => ({
+    from: { group: "laptops" },
+    to: { group: "servers" },
+    ports: "all",
+    ...extra,
+  });
+
+  it("takes 64 rules and no more", () => {
+    const many = (size: number) =>
+      Array.from({ length: size }, (_, i) => rule({ ports: [`${i + 1}/tcp`] }));
+    expect(withRules(many(64))).toBe(true);
+    expect(withRules(many(65))).toBe(false);
+  });
+
+  it("takes eight ports in a rule and no more, and each one whole", () => {
+    const ports = (size: number) =>
+      Array.from({ length: size }, (_, i) => `${i + 1}/tcp`);
+    expect(withRules([rule({ ports: ports(8) })])).toBe(true);
+    expect(withRules([rule({ ports: ports(9) })])).toBe(false);
+    for (const good of ["1/tcp", "65535/udp", "7-8/tcp", "1-65535/tcp"]) {
+      expect(withRules([rule({ ports: [good] })]), good).toBe(true);
+    }
+    for (const bad of [
+      "0/tcp",
+      "65536/tcp",
+      "0-80/tcp",
+      "80-65536/tcp",
+      "90-80/tcp",
+      "80-80/tcp",
+      "7-7/udp",
+      "080/tcp",
+      "00080/tcp",
+      "0080/tcp",
+      "080-90/tcp",
+      "80-090/tcp",
+      "80",
+      "80/",
+      "80/sctp",
+      "80/TCP",
+      "80-/tcp",
+      "-80/tcp",
+      "1-2-3/tcp",
+      "123456/tcp",
+      " 80/tcp",
+    ]) {
+      expect(withRules([rule({ ports: [bad] })]), bad).toBe(false);
+    }
+  });
+
+  it("takes one spelling for a port and no overlap inside a rule", () => {
+    for (const ok of [
+      ["80/tcp", "80/udp"],
+      ["1-99/tcp", "100-200/tcp"],
+      ["1-100/tcp", "1-100/udp"],
+      ["22/tcp", "80/tcp", "443/tcp", "53/udp"],
+    ]) {
+      expect(withRules([rule({ ports: ok })]), ok.join()).toBe(true);
+    }
+    for (const bad of [
+      ["1-100/tcp", "50/tcp"],
+      ["50/tcp", "1-100/tcp"],
+      ["1-100/tcp", "100-200/tcp"],
+      ["10-20/tcp", "15-30/tcp"],
+      ["80/tcp", "80/tcp"],
+      ["80/udp", "70-90/udp"],
+    ]) {
+      expect(withRules([rule({ ports: bad })]), bad.join()).toBe(false);
+    }
+  });
+
+  it("sees the same rule through the order of its ports", () => {
+    const first = { node: laptopDocument.members[0]!.node };
+    const second = { node: laptopDocument.members[1]!.node };
+    const open = (ports: string[]) => ({ from: first, to: second, ports });
+    expect(
+      withRules([open(["22/tcp", "80/tcp"]), open(["22/tcp", "53/udp"])]),
+    ).toBe(true);
+    expect(
+      withRules([open(["22/tcp", "80/tcp"]), open(["80/tcp", "22/tcp"])]),
+    ).toBe(false);
+  });
+});
+
 describe("laptops on the network", () => {
   const id = (n: number) => {
     const d = String(n);
@@ -131,6 +247,7 @@ describe("laptops on the network", () => {
     address: `10.88.0.${n}`,
     key: key(n),
     signer: key(n + 50),
+    sealKey: String(n).repeat(87),
     port: 51820,
     mtu: null,
     endpoint: extra.nat ? null : `203.0.113.${n}:51820`,
@@ -173,6 +290,7 @@ describe("laptops on the network", () => {
           : {}),
       })),
       blocked: [],
+      allow: [],
       ...extra,
     };
   };
@@ -465,22 +583,6 @@ describe("laptops on the network", () => {
     expect(() => laptopAddress6("192.168.1.1")).toThrow();
     expect(() => laptopAddress6("10.88.3.255")).toThrow();
   });
-
-  it("a laptop names its meeting point on the beat", () => {
-    const beat = {
-      version: 3,
-      key: key(3),
-      links: [],
-      meet: id(1),
-    };
-    expect(networkBeatSchema.safeParse(beat).success).toBe(true);
-    expect(
-      networkBeatSchema.safeParse({ ...beat, meet: undefined }).success,
-    ).toBe(true);
-    expect(networkBeatSchema.safeParse({ ...beat, meet: "1" }).success).toBe(
-      false,
-    );
-  });
 });
 
 describe("stacks on the network", () => {
@@ -546,6 +648,18 @@ describe("network actions", () => {
       false,
     );
     expect(networkArgsValid("inspect", {})).toBe(true);
+    const parent = "a".repeat(43);
+    for (const [args, valid] of [
+      [{ range: "10.88.3.0/24", port: "51821" }, true],
+      [{ range: "10.88.3.0/24", port: "51821", parent }, true],
+      [{ range: "10.88.3.0/24", port: "51821", parent: "" }, false],
+      [{ range: "10.88.3.0/24", port: "51821", parent: "a".repeat(42) }, false],
+      [{ range: "10.88.3.0/24", port: "51821", other: parent }, false],
+    ] as const) {
+      expect(networkArgsValid("prepare", args), JSON.stringify(args)).toBe(
+        valid,
+      );
+    }
     expect(
       networkArgsValid("test", {
         peer: B,
@@ -556,5 +670,279 @@ describe("network actions", () => {
     expect(
       networkArgsValid("test", { peer: A, address: "8.8.8.8", mtu: "1420" }),
     ).toBe(false);
+  });
+});
+
+describe("join fingerprints and random picks", () => {
+  const seeded = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  it("fingerprint matches the shared fixture", async () => {
+    expect(fingerprints.length).toBeGreaterThanOrEqual(2);
+    for (const one of fingerprints) {
+      expect(await joinFingerprint(one.key, one.signer, one.sealKey)).toBe(
+        one.fingerprint,
+      );
+    }
+  });
+
+  it("a fingerprint is four groups of four capital hex digits and follows every key", async () => {
+    const [one] = fingerprints;
+    const found = await joinFingerprint(one!.key, one!.signer, one!.sealKey);
+    expect(found).toMatch(/^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/u);
+    const other = fingerprints[1]!;
+    for (const changed of [
+      [other.key, one!.signer, one!.sealKey],
+      [one!.key, other.signer, one!.sealKey],
+      [one!.key, one!.signer, other.sealKey],
+    ] as const) {
+      expect(await joinFingerprint(...changed)).not.toBe(found);
+    }
+  });
+
+  it("a rekey answers the new key, the signer and the fingerprint over them", () => {
+    const [one] = fingerprints;
+    const answer = {
+      key: one!.key,
+      signer: one!.signer,
+      fingerprint: one!.fingerprint,
+      signature: "c2lnbmF0dXJl",
+    };
+    expect(networkRekeySchema.safeParse(answer).success).toBe(true);
+    for (const broken of [
+      { ...answer, fingerprint: undefined },
+      { ...answer, signer: undefined },
+      { ...answer, fingerprint: "bffc-fa17-2a62-f0f5" },
+      { ...answer, fingerprint: "BFFC-FA17-2A62" },
+      { ...answer, private: one!.key },
+    ]) {
+      expect(networkRekeySchema.safeParse(broken).success).toBe(false);
+    }
+  });
+
+  describe("pickRange", () => {
+    const rangeOf = (x: number) => `10.88.${x}.0/24`;
+
+    it("pickRange never returns a range that overlaps a used subnet", () => {
+      const used = [
+        "10.88.3.0/24",
+        "10.88.200.17",
+        "10.88.64.9/26",
+        "10.88.8.0/22",
+        "10.88.128.0/17",
+        "192.168.1.0/24",
+        "fd00::/8",
+      ];
+      const blocked = new Set([3, 200, 64, 8, 9, 10, 11]);
+      for (let x = 128; x < 256; x += 1) blocked.add(x);
+      const random = seeded(7);
+      const seen = new Set<string>();
+      for (let draw = 0; draw < 1000; draw += 1) {
+        const range = pickRange(used, random);
+        expect(range).not.toBeNull();
+        const x = Number(range!.split(".")[2]);
+        expect(range).toBe(rangeOf(x));
+        expect(blocked.has(x), range!).toBe(false);
+        seen.add(range!);
+      }
+      expect(seen.size).toBeGreaterThan(40);
+    });
+
+    it("pickRange treats a host address with a prefix as its whole subnet", () => {
+      const used = Array.from({ length: 255 }, (_, x) => `10.88.${x}.5/24`);
+      expect(pickRange(used, seeded(1))).toBe(rangeOf(255));
+    });
+
+    it("pickRange returns null when every /24 is used", () => {
+      expect(pickRange(["10.88.0.0/16"], seeded(1))).toBeNull();
+      expect(pickRange(["10.0.0.0/8"], seeded(1))).toBeNull();
+      expect(pickRange(["0.0.0.0/0"], seeded(1))).toBeNull();
+      expect(
+        pickRange(
+          Array.from({ length: 256 }, (_, x) => rangeOf(x)),
+          seeded(1),
+        ),
+      ).toBeNull();
+    });
+
+    it("pickRange takes any of the 256 when nothing is used", () => {
+      expect(pickRange([], () => 0)).toBe(rangeOf(0));
+      expect(pickRange([], () => 0.999999)).toBe(rangeOf(255));
+      expect(
+        pickRange(["10.89.0.0/16", "fd00::/8", "fe80::1/64"], () => 0),
+      ).toBe(rangeOf(0));
+    });
+
+    it("pickRange names an entry it cannot read instead of skipping it", () => {
+      for (const bad of [
+        "not an address",
+        "",
+        "10.88.3.0/33",
+        "10.88.3.0/255.255.255.0",
+        "10.88.3.0/",
+        "10.88.3.0/-1",
+        "10.88.3",
+        "10.88.3.256",
+        "10.88.3.0.1/24",
+        " 10.88.3.0/24",
+        "10.88.3.0/24 ",
+      ]) {
+        expect(() => pickRange(["10.88.1.0/24", bad], seeded(1)), bad).toThrow(
+          RangeError,
+        );
+        expect(() => pickRange([bad], seeded(1)), bad).toThrow(
+          `${bad} is not an IPv4 address or subnet`,
+        );
+      }
+    });
+
+    it("pickRange refuses a random number outside 0 up to 1", () => {
+      for (const value of [1, 1.5, -0.1, Number.NaN, Infinity, -Infinity]) {
+        expect(() => pickRange([], () => value), String(value)).toThrow(
+          RangeError,
+        );
+      }
+      expect(pickRange([], () => 0.9999999999999999)).toBe(rangeOf(255));
+    });
+  });
+
+  describe("pickAddresses", () => {
+    const range = "10.88.37.0/24";
+    const host = (address: string) => Number(address.split(".")[3]);
+    const hosts = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => `10.88.37.${from + i}`);
+
+    it("pickAddresses prefers never-used hosts", () => {
+      const taken = hosts(1, 3);
+      const freed = hosts(4, 250);
+      const never = new Set([251, 252, 253, 254]);
+      const random = seeded(3);
+      for (let draw = 0; draw < 200; draw += 1) {
+        const picked = pickAddresses(range, taken, freed, 4, random);
+        expect(new Set(picked.map(host))).toEqual(never);
+      }
+      const more = pickAddresses(range, taken, freed, 6, random);
+      expect(new Set(more).size).toBe(6);
+      expect([...never].every((one) => more.map(host).includes(one))).toBe(
+        true,
+      );
+      expect(more.every((one) => !taken.includes(one))).toBe(true);
+    });
+
+    it("pickAddresses falls back to freed hosts", () => {
+      const taken = hosts(1, 200);
+      const freed = hosts(201, 254);
+      const picked = pickAddresses(range, taken, freed, 3, seeded(5));
+      expect(picked).toHaveLength(3);
+      expect(new Set(picked).size).toBe(3);
+      expect(picked.every((one) => freed.includes(one))).toBe(true);
+      expect(pickAddresses(range, [], [], 0, seeded(1))).toEqual([]);
+    });
+
+    it("pickAddresses never returns .0 or .255", () => {
+      const random = seeded(11);
+      const everything = pickAddresses(range, [], [], 254, random);
+      expect(new Set(everything.map(host))).toEqual(
+        new Set(Array.from({ length: 254 }, (_, i) => i + 1)),
+      );
+      for (let draw = 0; draw < 1000; draw += 1) {
+        const [one] = pickAddresses(range, [], [], 1, random);
+        expect(host(one!)).toBeGreaterThanOrEqual(1);
+        expect(host(one!)).toBeLessThanOrEqual(254);
+        expect(one!.startsWith("10.88.37.")).toBe(true);
+      }
+    });
+
+    it("pickAddresses never returns a taken host, and says when too few are free", () => {
+      const taken = hosts(1, 253);
+      expect(pickAddresses(range, taken, [], 1, seeded(1))).toEqual([
+        "10.88.37.254",
+      ]);
+      expect(() => pickAddresses(range, taken, [], 2, seeded(1))).toThrow(
+        RangeError,
+      );
+      expect(() =>
+        pickAddresses(range, hosts(1, 254), hosts(1, 254), 1, seeded(1)),
+      ).toThrow(RangeError);
+      expect(
+        pickAddresses(range, ["10.88.38.5"], ["10.88.38.6"], 254, seeded(1)),
+      ).toHaveLength(254);
+    });
+
+    it("pickAddresses refuses a random number outside 0 up to 1", () => {
+      for (const value of [1, 1.5, -0.1, Number.NaN, Infinity, -Infinity]) {
+        expect(
+          () => pickAddresses(range, [], [], 1, () => value),
+          String(value),
+        ).toThrow(RangeError);
+      }
+      expect(pickAddresses(range, [], [], 1, () => 0.9999999999999999)).toEqual(
+        ["10.88.37.254"],
+      );
+    });
+
+    it("pickAddresses refuses a range that is not a /24 of the pool", () => {
+      for (const bad of ["10.89.0.0/24", "10.88.0.0/16", "10.88.0.1/24", ""]) {
+        expect(() => pickAddresses(bad, [], [], 1, seeded(1)), bad).toThrow(
+          RangeError,
+        );
+      }
+      expect(() => pickAddresses(range, [], [], -1, seeded(1))).toThrow(
+        RangeError,
+      );
+    });
+  });
+});
+
+describe("what every side of a document shares", () => {
+  it("documentHash matches the shared fixture", async () => {
+    expect(hashes.length).toBeGreaterThan(0);
+    for (const { body, hash } of hashes) {
+      const padded = body.replaceAll("-", "+").replaceAll("_", "/");
+      const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+      expect(await documentHash(bytes)).toBe(hash);
+    }
+  });
+
+  it("the default rule opens every server to every laptop and parses", () => {
+    expect(DEFAULT_RULE).toEqual({
+      from: { group: "laptops" },
+      to: { group: "servers" },
+      ports: "all",
+    });
+    expect(DOCUMENT_TAG).toBe("krynodes-document-v1\n");
+    expect(
+      changed((copy) => {
+        copy.allow = [DEFAULT_RULE];
+      }),
+    ).toBe(true);
+  });
+
+  it("an inspect answer names the public address or null", () => {
+    const answer = {
+      kernel: { ok: true, version: "6.8", reason: null },
+      tools: true,
+      iptables: true,
+      used: [],
+      others: [],
+      port: 51820,
+      mtu: 1500,
+      public: "203.0.113.21",
+    };
+    expect(networkInspectSchema.safeParse(answer).success).toBe(true);
+    expect(
+      networkInspectSchema.safeParse({ ...answer, public: null }).success,
+    ).toBe(true);
+    for (const bad of ["203.0.113.21:51820", "2001:db8::1", "server-1"]) {
+      expect(
+        networkInspectSchema.safeParse({ ...answer, public: bad }).success,
+      ).toBe(false);
+    }
+    const { public: _, ...without } = answer;
+    expect(networkInspectSchema.safeParse(without).success).toBe(false);
   });
 });

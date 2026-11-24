@@ -52,7 +52,7 @@ var fakeTools = map[string]string{
 	"openssl":   "exit 0\n",
 	"install":   "echo \"install $*\" >> \"$LOG\"\n",
 	"systemctl": "echo \"systemctl $*\" >> \"$LOG\"\n",
-	"kry":       "echo \"kry $*\" >> \"$LOG\"\nif [ \"$1\" = version ]; then echo 0.7.90; fi\nif [ \"$1\" = enroll ] && [ -n \"${FAIL_ENROLL:-}\" ]; then exit 1; fi\nexit 0\n",
+	"kry":       "echo \"kry $*\" >> \"$LOG\"\nif [ \"$1\" = version ]; then echo 0.7.90; fi\nif [ \"$1\" = network ] && [ -n \"${FAIL_FINGERPRINT:-}\" ]; then echo 'this server has no seal key' >&2; exit 1; fi\nif [ \"$1\" = network ]; then echo BFFC-FA17-2A62-F0F5; fi\nif [ \"$1\" = enroll ] && [ -n \"${FAIL_ENROLL:-}\" ]; then exit 1; fi\nexit 0\n",
 }
 
 const (
@@ -99,7 +99,8 @@ func runScript(t *testing.T, script string, args ...string) (string, string, err
 const wantLog = "install -m 0755 TMP/krynodes-linux-amd64 kry\n" +
 	"kry enroll --endpoint https://kry.example --token token-1 --origin https://dash.example --trust " + trustTokens + "\n" +
 	"kry install-service\n" +
-	"kry version\n"
+	"kry version\n" +
+	"kry network fingerprint\n"
 
 func normalized(log string) string {
 	lines := strings.Split(log, "\n")
@@ -120,7 +121,21 @@ func TestTheInstallerEnrollsWithTheTrustAndStartsTheService(t *testing.T) {
 	if got := normalized(log); got != wantLog {
 		t.Fatalf("got\n%s\nwant\n%s", got, wantLog)
 	}
-	if !strings.Contains(output, "Krynodes agent 0.7.90 is running.") {
+	if !strings.Contains(output, "Krynodes agent 0.7.90 is running.") || !strings.HasSuffix(output, "\nNetwork fingerprint: BFFC-FA17-2A62-F0F5\n") {
+		t.Fatalf("output\n%s", output)
+	}
+}
+
+func TestAMissingFingerprintStillEndsTheInstallWell(t *testing.T) {
+	t.Setenv("FAIL_FINGERPRINT", "1")
+	log, output, err := runInstaller(t, strings.Fields(installArgs)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, output)
+	}
+	if got := normalized(log); got != wantLog {
+		t.Fatalf("got\n%s\nwant\n%s", got, wantLog)
+	}
+	if strings.Contains(output, "Network fingerprint:") || !strings.HasSuffix(output, "\nSee it with: sudo kry network fingerprint\n") {
 		t.Fatalf("output\n%s", output)
 	}
 }

@@ -562,3 +562,96 @@ func TestTheStreamNeedsTLS13(t *testing.T) {
 		t.Fatal("the stream must need TLS 1.3")
 	}
 }
+
+func TestNetworkMessagesArriveDecoded(t *testing.T) {
+	srv, _ := server(t, func(p *peer) {
+		p.write(opText, []byte(`{"type":"refresh"}`), true)
+		p.write(opText, []byte(`{"type":"hints","endpoints":[],"announced":[],"meetings":[{"laptop":"laptop-1","via":"server-2"}],"held":["server-1"],"connected":[]}`), true)
+		p.write(opText, []byte(`{"type":"document","version":3,"signed":"s"}`), true)
+		drain(p)
+	})
+	c, events := fresh(srv.URL)
+	arrived := make(chan any, 8)
+	c.Network = func(message any) { arrived <- message }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+	<-events.connected
+	var got []any
+	for len(got) < 3 {
+		select {
+		case message := <-arrived:
+			got = append(got, message)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("arrived %+v", got)
+		}
+	}
+	hints, ok := got[1].(reporter.Hints)
+	if got[0] != (reporter.Refresh{Type: "refresh"}) || !ok || len(hints.Meetings) != 1 || hints.Meetings[0].Via != "server-2" || len(hints.Held) != 1 || got[2] != (reporter.Document{Type: "document", Version: 3, Signed: "s"}) {
+		t.Fatalf("arrived %+v", got)
+	}
+}
+
+func TestHelloAgainGoesOutOnTheLiveConnection(t *testing.T) {
+	got := make(chan []string, 1)
+	srv, dials := server(t, func(p *peer) {
+		var types []string
+		for len(types) < 2 {
+			message, err := p.request()
+			if err != nil {
+				return
+			}
+			types = append(types, string(message["type"]))
+		}
+		got <- types
+		drain(p)
+	})
+	c, _ := client(t, srv.URL)
+	if err := c.HelloAgain(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case types := <-got:
+		if types[0] != `"hello"` || types[1] != `"hello"` || dials.Load() != 1 {
+			t.Fatalf("sent %v over %d connections", types, dials.Load())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("nothing arrived")
+	}
+	if idle, _ := fresh(srv.URL); !errors.Is(idle.HelloAgain(), ErrNotConnected) {
+		t.Fatal("hello went out without a connection")
+	}
+}
+
+func TestDisconnectedIsToldWhenTheConnectionCloses(t *testing.T) {
+	closing := make(chan struct{})
+	srv, _ := server(t, func(p *peer) {
+		if _, err := p.request(); err != nil {
+			return
+		}
+		<-closing
+		p.write(opClose, []byte{0x11, 0x31}, true)
+	})
+	c, events := fresh(srv.URL)
+	gone := make(chan struct{}, 8)
+	c.Disconnected = func() { gone <- struct{}{} }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+	select {
+	case <-events.connected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("no connection")
+	}
+	select {
+	case <-gone:
+		t.Fatal("told disconnected on an open connection")
+	default:
+	}
+	close(closing)
+	select {
+	case <-gone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("not told when the hub closed the connection")
+	}
+}

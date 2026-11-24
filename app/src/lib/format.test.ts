@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  byNewest,
   clockTime,
   countdown,
   dayLabel,
@@ -135,5 +136,20 @@ describe("displayHandle", () => {
   it("falls back to a generic label", () => {
     expect(displayHandle(null, null)).toBe("Account");
     expect(displayHandle(undefined, undefined)).toBe("Account");
+  });
+});
+
+describe("newest first", () => {
+  it("merges rows of two kinds by their time", () => {
+    const rows = [
+      { at: "2026-11-22T03:00:00.000Z", id: "a" },
+      { at: "2026-11-22 05:00:00", id: "b" },
+      { at: "2026-11-22T04:00:00.000Z", id: "c" },
+    ];
+    expect(byNewest(rows, (row) => row.at).map((row) => row.id)).toEqual([
+      "b",
+      "c",
+      "a",
+    ]);
   });
 });

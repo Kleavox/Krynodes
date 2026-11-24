@@ -282,3 +282,67 @@ func NRPT(plan Plan) (Policy, bool) {
 	}
 	return Policy{Name: []string{"."}, Servers: strings.Join(servers, ";"), ConfigOptions: 8, Version: 2}, true
 }
+
+const (
+	nrptName   = "Krynodes"
+	nrptPrefix = "Krynodes for "
+)
+
+var vpnSuffixes = map[string]string{
+	"100.100.100.100":    ".ts.net",
+	"fd7a:115c:a1e0::53": ".ts.net",
+}
+
+type nrptRule struct {
+	Key string
+	Policy
+}
+
+func ours(rule nrptRule) bool {
+	return rule.Key == nrptName || strings.HasPrefix(rule.Key, nrptPrefix)
+}
+
+func otherVPNRules(existing []nrptRule) []nrptRule {
+	var rules []nrptRule
+	for _, rule := range existing {
+		if ours(rule) || !slices.Contains(rule.Name, ".") {
+			continue
+		}
+		var names, servers []string
+		for server := range strings.SplitSeq(rule.Servers, ";") {
+			server = strings.TrimSpace(server)
+			suffix, known := vpnSuffixes[server]
+			if !known {
+				continue
+			}
+			servers = append(servers, server)
+			if !slices.Contains(names, suffix) {
+				names = append(names, suffix)
+			}
+		}
+		if len(names) > 0 {
+			rules = append(rules, nrptRule{Key: nrptPrefix + rule.Key, Policy: Policy{Name: names, Servers: strings.Join(servers, ";"), ConfigOptions: 8, Version: 2}})
+		}
+	}
+	return rules
+}
+
+func nrptChanges(exit bool, existing []nrptRule) (write []nrptRule, remove []string) {
+	var want []nrptRule
+	if exit {
+		want = otherVPNRules(existing)
+	}
+	for _, rule := range existing {
+		if strings.HasPrefix(rule.Key, nrptPrefix) && !slices.ContainsFunc(want, func(wanted nrptRule) bool { return wanted.Key == rule.Key }) {
+			remove = append(remove, rule.Key)
+		}
+	}
+	for _, rule := range want {
+		if !slices.ContainsFunc(existing, func(had nrptRule) bool {
+			return had.Key == rule.Key && slices.Equal(had.Name, rule.Name) && had.Servers == rule.Servers
+		}) {
+			write = append(write, rule)
+		}
+	}
+	return write, remove
+}

@@ -105,7 +105,7 @@ jobs:
           sha256sum krynodes-linux-arm64 > krynodes-linux-arm64.sha256
 
       - name: Build the Windows agent
-        if: steps.version.outputs.released == 'false' && env.PRERELEASE == 'false'
+        if: steps.version.outputs.released == 'false'
         env:
           CGO_ENABLED: "0"
           GOWORK: "off"
@@ -143,11 +143,7 @@ jobs:
             echo "AGENT_SIGNING_KEY does not match agent/internal/update/release.pub." >&2
             exit 1
           fi
-          files="krynodes-linux-amd64 krynodes-linux-arm64"
-          if [ "$PRERELEASE" = false ]; then
-            files="$files krynodes-windows-amd64.exe"
-          fi
-          for file in $files; do
+          for file in krynodes-linux-amd64 krynodes-linux-arm64 krynodes-windows-amd64.exe; do
             openssl pkeyutl -sign -inkey "$key" -rawin -in "$file" -out "$file.sig"
           done
           rm -f "$key"
@@ -169,7 +165,7 @@ jobs:
           subject-path: agent/krynodes-linux-arm64
 
       - name: Attest Windows binary
-        if: steps.version.outputs.released == 'false' && env.PRERELEASE == 'false'
+        if: steps.version.outputs.released == 'false'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: agent/krynodes-windows-amd64.exe

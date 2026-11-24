@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"slices"
 	"testing"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
-	"github.com/Kleavox/krynodes/agent/internal/stream"
 )
 
 func (f *fixture) twoPublic() {
@@ -21,19 +19,14 @@ func (f *fixture) twoPublic() {
 	document.Members[0].PSK[server3] = "c2VhbGVk"
 	document.Members[1].PSK[server3] = "c2VhbGVk"
 	document.Members[2].PSK[server3] = f.psk()
-	document.Members = append(document.Members, network.Member{Node: server3, Name: "server-3", Address: "10.88.0.3", Key: wgKey(3), Signer: wgKey(13), Port: network.FirstPort, Endpoint: endpoint("203.0.113.3:51820"), PSK: map[string]string{server1: "c2VhbGVk", server2: "c2VhbGVk", laptop1: "c2VhbGVk"}})
+	document.Members = append(document.Members, network.Member{Node: server3, Name: "server-3", Address: "10.88.0.3", Key: wgKey(3), Signer: wgKey(13), SealKey: otherSealKey, Port: network.FirstPort, Endpoint: endpoint("203.0.113.3:51820"), PSK: map[string]string{server1: "c2VhbGVk", server2: "c2VhbGVk", laptop1: "c2VhbGVk"}})
 	body, err := json.Marshal(document)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := f.service.applyDocument(f.sign(body)); err != nil {
-		f.t.Fatal(err)
+	if got := f.deliver(1, f.sign(body)); !got.OK {
+		f.t.Fatal(got.Message)
 	}
-	f.service.wake = make(chan struct{}, 1)
-	f.service.mu.Lock()
-	f.service.refresh()
-	f.service.mu.Unlock()
-	f.service.push()
 }
 
 func second(at int) time.Time {
@@ -58,21 +51,16 @@ func TestTheMeetingPointFollowsThePings(t *testing.T) {
 		t.Fatalf("before any ping the member behind NAT is reached through the default meeting point: %+v", behind)
 	}
 	f.service.observe(second(0), map[string]answer{server1: {30 * time.Millisecond, true}, server2: {40 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}})
-	select {
-	case <-f.service.wake:
-	default:
-		t.Fatal("a new meeting point sent no beat")
-	}
 	if behind := f.behind(); behind.Endpoint != "203.0.113.3:51920" || behind.Pin != behind.Endpoint {
 		t.Fatalf("the member behind NAT did not follow the switch: %+v", behind)
 	}
-	if beat, ok := f.service.beat(reporter.Host{}); !ok || beat.Network.Meet != server3 {
-		t.Fatalf("beat %+v", beat.Network)
+	if meets := sentOf[reporter.Meet](f.hub); len(meets) != 1 || meets[0].Via != server3 {
+		t.Fatalf("meets %+v", meets)
 	}
 	if via := f.service.Status(0).Servers[1]; via.Node != server2 || via.Via != "server-3" {
 		t.Fatalf("the member behind NAT is shown %+v", via)
 	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Held: []string{server3}}})
+	f.hint(reporter.Hints{Held: []string{server3}})
 	f.service.observe(second(1), map[string]answer{server1: {30 * time.Millisecond, true}, server2: {40 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}})
 	if f.service.meet != server1 {
 		t.Fatalf("a held server stays the meeting point: %q", f.service.meet)
@@ -82,17 +70,10 @@ func TestTheMeetingPointFollowsThePings(t *testing.T) {
 	}
 }
 
-type unreachable struct{ fakeServer }
-
-func (*unreachable) SendHeartbeat(context.Context, reporter.Heartbeat) (reporter.HeartbeatResponse, error) {
-	return reporter.HeartbeatResponse{}, stream.ErrNotConnected
-}
-
 func TestTheMeetingPointMovesForSpeedOnlyWhileTheStreamIsUp(t *testing.T) {
 	f := newFixture(t)
 	f.twoPublic()
-	f.service.answer(reporter.HeartbeatResponse{})
-	f.service.cycle(context.Background(), &unreachable{}, reporter.Host{})
+	f.service.setLinked(false)
 	f.service.observe(second(0), map[string]answer{server1: {20 * time.Millisecond, true}})
 	faster := map[string]answer{server1: {20 * time.Millisecond, true}, server3: {15 * time.Millisecond, true}}
 	for at := 1; at <= 62; at++ {
@@ -101,12 +82,12 @@ func TestTheMeetingPointMovesForSpeedOnlyWhileTheStreamIsUp(t *testing.T) {
 	if f.service.meet != server1 {
 		t.Fatalf("moved to %q for speed while the Worker was unreachable", f.service.meet)
 	}
-	f.service.answer(reporter.HeartbeatResponse{})
+	f.service.reconnected()
 	f.service.observe(second(63), faster)
 	if f.service.meet != server3 {
 		t.Fatalf("the stream is up again and the meeting point stays %q", f.service.meet)
 	}
-	f.service.cycle(context.Background(), &unreachable{}, reporter.Host{})
+	f.service.setLinked(false)
 	for at := 64; at <= 66; at++ {
 		f.service.observe(second(at), map[string]answer{server1: {20 * time.Millisecond, true}, server3: {}})
 	}
@@ -145,7 +126,7 @@ func TestASilentOrHeldExitTurnsOffWithOneNotification(t *testing.T) {
 	if f.last().Exit != server1 {
 		t.Fatal("choosing the exit again did not start a new watch")
 	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Held: []string{server1}}})
+	f.hint(reporter.Hints{Held: []string{server1}})
 	for at := 42; at < 45; at++ {
 		f.service.observe(second(at), map[string]answer{server1: {20 * time.Millisecond, true}, server3: {10 * time.Millisecond, true}})
 	}
@@ -165,8 +146,8 @@ func TestAnExitWithoutDNSIsNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.applyDocument(f.sign(body)); err != nil {
-		t.Fatal(err)
+	if got := f.deliver(1, f.sign(body)); !got.OK {
+		t.Fatal(got.Message)
 	}
 	f.service.mu.Lock()
 	f.service.exit = server1
@@ -181,9 +162,7 @@ func TestAnExitWithoutDNSIsNone(t *testing.T) {
 func TestAHintedEndpointIsUsedButNeverPinned(t *testing.T) {
 	f := newFixture(t)
 	f.joined()
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{
-		Endpoints: []reporter.NetworkEndpoint{{Key: f.server.Public, Endpoint: "198.51.100.7:51820"}},
-	}})
+	f.hint(reporter.Hints{Endpoints: []reporter.HintEndpoint{{Key: f.server.Public, Endpoint: "198.51.100.7:51820"}}})
 	peer := f.last().Peers[0]
 	if peer.Endpoint != "198.51.100.7:51820" || peer.Pin != "203.0.113.1:51820" {
 		t.Fatalf("peer %+v", peer)
@@ -200,21 +179,19 @@ func TestTheDefaultMeetingPointComesFromTheSignedDocumentAndIsNeverHeld(t *testi
 	document.Members[0].PSK[server3] = "c2VhbGVk"
 	document.Members[1].PSK[server3] = "c2VhbGVk"
 	document.Members[2].PSK[server3] = f.psk()
-	document.Members = append(document.Members, network.Member{Node: server3, Name: "server-3", Address: "10.88.0.3", Key: wgKey(3), Signer: wgKey(13), Port: network.FirstPort, Endpoint: endpoint("203.0.113.3:51820"), PSK: map[string]string{server1: "c2VhbGVk", server2: "c2VhbGVk", laptop1: "c2VhbGVk"}})
+	document.Members = append(document.Members, network.Member{Node: server3, Name: "server-3", Address: "10.88.0.3", Key: wgKey(3), Signer: wgKey(13), SealKey: otherSealKey, Port: network.FirstPort, Endpoint: endpoint("203.0.113.3:51820"), PSK: map[string]string{server1: "c2VhbGVk", server2: "c2VhbGVk", laptop1: "c2VhbGVk"}})
 	body, err := json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.applyDocument(f.sign(body)); err != nil {
-		t.Fatal(err)
+	if got := f.deliver(1, f.sign(body)); !got.OK {
+		t.Fatal(got.Message)
 	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{
-		Endpoints: []reporter.NetworkEndpoint{{Key: f.server.Public, Endpoint: "198.51.100.7:51820"}},
-	}})
+	f.hint(reporter.Hints{Endpoints: []reporter.HintEndpoint{{Key: f.server.Public, Endpoint: "198.51.100.7:51820"}}})
 	if behind := f.behind(); behind.Endpoint != "203.0.113.3:51920" {
 		t.Fatalf("the default meeting point was taken from a hinted endpoint: %+v", behind)
 	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Held: []string{server3}}})
+	f.hint(reporter.Hints{Held: []string{server3}})
 	if behind := f.behind(); behind.Endpoint != "" || behind.Pin != "" || !behind.Relay {
 		t.Fatalf("the member behind NAT keeps an endpoint with every meeting point held: %+v", behind)
 	}
@@ -237,24 +214,43 @@ func (f *fixture) natRound(from, to int, behind bool) {
 func TestABrokenRelayIsLeftWhenAConnectedMemberBehindNATMissesThrough(t *testing.T) {
 	f := newFixture(t)
 	f.twoPublic()
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{server2}}})
+	f.hint(reporter.Hints{Connected: []string{server2}})
 	f.natRound(0, 21, false)
 	if f.service.meet != server3 || f.behind().Endpoint != "203.0.113.3:51920" {
 		t.Fatalf("left %q before 3 counted misses", f.service.meet)
 	}
+	f.hint(reporter.Hints{Meetings: []reporter.HintMeeting{{Laptop: laptop1, Via: server3}}, Connected: []string{server2}})
 	f.natRound(22, 22, false)
 	if f.service.meet != server1 || f.behind().Endpoint != "203.0.113.1:51920" {
 		t.Fatalf("still on %q with its relay broken", f.service.meet)
 	}
-	if beat, ok := f.service.beat(reporter.Host{}); !ok || beat.Network.Meet != server1 {
-		t.Fatalf("beat %+v", beat.Network)
+	if meets := sentOf[reporter.Meet](f.hub); len(meets) == 0 || meets[len(meets)-1].Via != server1 {
+		t.Fatalf("meets %+v", meets)
+	}
+}
+
+func TestEveryHintSaysWhoIsConnected(t *testing.T) {
+	f := newFixture(t)
+	f.twoPublic()
+	f.hint(reporter.Hints{Connected: []string{server2}})
+	f.natRound(0, 21, false)
+	f.hint(reporter.Hints{Meetings: []reporter.HintMeeting{{Laptop: laptop1, Via: server3}}})
+	f.hub.sent = nil
+	f.natRound(22, 200, false)
+	if meets := sentOf[reporter.Meet](f.hub); len(meets) != 0 || f.service.meet != server3 {
+		t.Fatalf("a member a later hint called offline moved the laptop: %+v", meets)
+	}
+	f.hint(reporter.Hints{Connected: []string{server2}})
+	f.natRound(201, 222, false)
+	if meets := sentOf[reporter.Meet](f.hub); len(meets) == 0 || meets[0].Via != server1 {
+		t.Fatalf("a member a later hint called connected was not counted: %+v", meets)
 	}
 }
 
 func TestAMemberBehindNATTheWorkerReportsOfflineNeverMovesTheLaptop(t *testing.T) {
 	f := newFixture(t)
 	f.twoPublic()
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{}}})
+	f.hint(reporter.Hints{Connected: []string{}})
 	f.natRound(0, 200, false)
 	if f.service.meet != server3 {
 		t.Fatalf("a switched-off member behind NAT moved the laptop to %q", f.service.meet)
@@ -264,14 +260,14 @@ func TestAMemberBehindNATTheWorkerReportsOfflineNeverMovesTheLaptop(t *testing.T
 func TestAnUnreachableWorkerFreezesTheCountThroughTheMeetingPoint(t *testing.T) {
 	f := newFixture(t)
 	f.twoPublic()
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{server2}}})
+	f.hint(reporter.Hints{Connected: []string{server2}})
 	f.natRound(0, 21, false)
-	f.service.cycle(context.Background(), &unreachable{}, reporter.Host{})
+	f.service.setLinked(false)
 	f.natRound(22, 120, false)
 	if f.service.meet != server3 {
 		t.Fatalf("counted misses while the Worker was unreachable and moved to %q", f.service.meet)
 	}
-	f.service.answer(reporter.HeartbeatResponse{})
+	f.service.setLinked(true)
 	f.natRound(121, 121, false)
 	if f.service.meet != server1 {
 		t.Fatalf("the frozen count did not resume: still on %q", f.service.meet)
@@ -281,7 +277,7 @@ func TestAnUnreachableWorkerFreezesTheCountThroughTheMeetingPoint(t *testing.T) 
 func TestAnAnswerThroughTheMeetingPointKeepsIt(t *testing.T) {
 	f := newFixture(t)
 	f.twoPublic()
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Connected: []string{server2}}})
+	f.hint(reporter.Hints{Connected: []string{server2}})
 	f.natRound(0, 200, true)
 	if f.service.meet != server3 {
 		t.Fatalf("a member answering through server-3 moved the laptop to %q", f.service.meet)

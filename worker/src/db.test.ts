@@ -47,6 +47,14 @@ describe("0001_init", () => {
       "agent_release",
       "devices",
       "enrollments",
+      "network",
+      "network_addresses",
+      "network_blocked",
+      "network_changes",
+      "network_changes_at",
+      "network_documents",
+      "network_links",
+      "network_members",
       "node_trust",
       "nodes",
       "settings",
@@ -71,6 +79,53 @@ describe("0001_init", () => {
     expect(await count(db, "actions", "n1")).toBe(0);
     expect(await count(db, "node_trust", "n2")).toBe(1);
     expect(await count(db, "actions", "n2")).toBe(1);
+  });
+
+  it("deleting a node removes its member, link and address rows", async () => {
+    const db = freshDb();
+    await addNode(db, "n1", "server-1");
+    await addNode(db, "n2", "server-2");
+    const at = "2026-11-22T00:00:00.000Z";
+    for (const [id, address] of [
+      ["n1", "10.88.37.1"],
+      ["n2", "10.88.37.2"],
+    ] as const) {
+      await db
+        .prepare(
+          "INSERT INTO network_members (node_id, state, key, signer, since) VALUES (?1, 'in', ?2, ?2, ?3)",
+        )
+        .bind(id, `key-${id}`, at)
+        .run();
+      await db
+        .prepare(
+          "INSERT INTO network_addresses (address, node_id) VALUES (?1, ?2)",
+        )
+        .bind(address, id)
+        .run();
+    }
+    await db
+      .prepare(
+        "INSERT INTO network_links (a, b, answering, ms, since) VALUES ('n1', 'n2', 1, 4.5, ?1)",
+      )
+      .bind(at)
+      .run();
+    await db
+      .prepare(
+        "INSERT INTO network_blocked (key, node_id, at) VALUES ('key-old', 'n1', ?1)",
+      )
+      .bind(at)
+      .run();
+    await db.prepare("DELETE FROM nodes WHERE id = ?1").bind("n1").run();
+    expect(await count(db, "network_members", "n1")).toBe(0);
+    expect(await count(db, "network_addresses", "n1")).toBe(0);
+    expect(await count(db, "network_members", "n2")).toBe(1);
+    expect(await count(db, "network_addresses", "n2")).toBe(1);
+    expect(
+      await db.prepare("SELECT COUNT(*) AS n FROM network_links").first("n"),
+    ).toBe(0);
+    expect(
+      await db.prepare("SELECT key, node_id FROM network_blocked").first(),
+    ).toEqual({ key: "key-old", node_id: null });
   });
 
   it("refuses a second node with the same name", async () => {

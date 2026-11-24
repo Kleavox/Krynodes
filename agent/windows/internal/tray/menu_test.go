@@ -30,7 +30,7 @@ func titles(entries []entry, parent string) []string {
 
 func TestTheMenuFollowsTheApprovedOrder(t *testing.T) {
 	status := pipe.Status{
-		Joined: true, Connected: true, Name: "laptop-1", Address: "10.88.0.10", Exit: "s1", Dashboard: "https://kry.example.com",
+		Joined: true, Connected: true, Name: "laptop-1", Address: "10.88.0.10", Exit: "s1", Dashboard: "https://kry.example.com", Fingerprint: "1A2B-3C4D-5E6F-7081",
 		Exits: []pipe.Server{{Node: "s1", Name: "server-1", RTT: number(14)}, {Node: "s3", Name: "server-3"}},
 		Servers: []pipe.Server{
 			{Node: "s1", Name: "server-1", Address: "10.88.0.1", Online: on(true)},
@@ -39,7 +39,7 @@ func TestTheMenuFollowsTheApprovedOrder(t *testing.T) {
 		},
 	}
 	entries := menu(status, true)
-	if want := []string{"Connected", "This Laptop · laptop-1 · 10.88.0.10", "Exit Node · server-1", "Servers · 1 Reachable", "Open Dashboard", "Settings", "Quit"}; !slices.Equal(titles(entries, ""), want) {
+	if want := []string{"Connected", "This Laptop · laptop-1 · 10.88.0.10", "Exit Node · server-1", "Servers · 1 Reachable", "Fingerprint", "Open Dashboard", "Settings", "Quit"}; !slices.Equal(titles(entries, ""), want) {
 		t.Fatalf("menu %q", titles(entries, ""))
 	}
 	if want := []string{"None", "server-1 · 14 ms", "server-3 · --", "Allow Local Network"}; !slices.Equal(titles(entries, "exit"), want) {
@@ -64,13 +64,20 @@ func TestTheMenuFollowsTheApprovedOrder(t *testing.T) {
 	}
 }
 
-func TestARemovedLaptopShowsOneLineAndCannotConnect(t *testing.T) {
-	entries := menu(pipe.Status{Removed: true, Joined: true, Connected: true, FirewallOff: true, Name: "laptop-1"}, true)
-	if want := []string{"Connected", "This laptop was removed from the private network.", "Open Dashboard", "Settings", "Quit"}; !slices.Equal(titles(entries, ""), want) {
+func TestALaptopWaitingForApprovalShowsItsFingerprint(t *testing.T) {
+	entries := menu(pipe.Status{Connected: true, Fingerprint: "1A2B-3C4D-5E6F-7081"}, true)
+	if want := []string{"Connected", "This laptop is not on the private network yet.", "Fingerprint", "Open Dashboard", "Settings", "Quit"}; !slices.Equal(titles(entries, ""), want) {
 		t.Fatalf("menu %q", titles(entries, ""))
 	}
-	if entries[0].Checked || !entries[0].Disabled || !entries[1].Disabled {
+	if !entries[0].Disabled || !entries[1].Disabled {
 		t.Fatalf("header %+v", entries[:2])
+	}
+	index := slices.IndexFunc(entries, func(item entry) bool { return item.Key == "fingerprint" })
+	if item := entries[index]; item.Disabled || item.Show != "This laptop's network fingerprint is 1A2B-3C4D-5E6F-7081. Approve it only if the dashboard shows the same one." || item.Copy != "" || item.Ask != nil {
+		t.Fatalf("fingerprint %+v", item)
+	}
+	if item := menu(pipe.Status{}, true)[3]; item.Key != "fingerprint" || !item.Disabled {
+		t.Fatalf("a laptop without keys %+v", item)
 	}
 }
 

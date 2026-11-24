@@ -20,7 +20,7 @@
     "agent:build": "go -C agent build -buildvcs=false -o ../bin/ ./cmd/agent",
     "agent:deadcode": "node tooling/lint/go-deadcode.mjs",
     "agent:windows": "node tooling/lint/go-windows.mjs",
-    "native:check": "pnpm agent:test && pnpm agent:vet && pnpm agent:build && pnpm agent:deadcode",
+    "native:check": "pnpm agent:test && pnpm agent:vet && pnpm agent:build && pnpm agent:deadcode && pnpm agent:windows",
     "check": "pnpm lint && pnpm typecheck && turbo run test build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

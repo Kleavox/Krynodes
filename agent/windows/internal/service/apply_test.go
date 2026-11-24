@@ -2,12 +2,7 @@ package service
 
 import (
 	"bytes"
-	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"reflect"
 	"slices"
 	"strings"
@@ -15,7 +10,6 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
-	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
 func reach() (network.Document, network.Member, map[string]string) {
@@ -148,7 +142,7 @@ func TestADocumentWithoutThisLaptopTakesTheTunnelDown(t *testing.T) {
 	for _, deleted := range []bool{false, true} {
 		f := newFixture(t)
 		first := f.document(1, "", true)
-		f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Document: f.sign(first)}})
+		f.deliver(1, f.sign(first))
 		up := f.last()
 		if up.Address != "10.88.0.10" || len(up.Peers) != 2 || up.Peers[0].Node != server1 || up.Peers[1].Node != server2 || !slices.Equal(up.DNS, []string{"10.88.0.1"}) {
 			t.Fatalf("joined tunnel %+v", up)
@@ -162,168 +156,107 @@ func TestADocumentWithoutThisLaptopTakesTheTunnelDown(t *testing.T) {
 		if behind := up.Peers[1]; behind.Endpoint != "203.0.113.1:51920" || behind.Pin != behind.Endpoint || !behind.Relay || behind.PresharedKey != up.Peers[0].PresharedKey {
 			t.Fatalf("the member behind NAT %+v", behind)
 		}
-		key := f.secrets[wireguardSecret]
-		var second []byte
+		second := f.document(2, network.BodyHash(first), false)
 		if deleted {
-			var document network.Document
-			if err := json.Unmarshal(f.document(2, network.BodyHash(first), true), &document); err != nil {
-				t.Fatal(err)
-			}
-			document.Deleted = true
-			second, _ = json.Marshal(document)
-		} else {
-			second = f.document(2, network.BodyHash(first), false)
+			second = f.edited(f.document(2, network.BodyHash(first), true), func(document *network.Document) { document.Deleted = true })
 		}
-		f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Document: f.sign(second)}})
+		if got := f.deliver(2, f.sign(second)); got != (reporter.Applied{Type: "applied", Version: 2, OK: true, Message: "Left the private network."}) {
+			t.Fatalf("deleted=%v: %+v", deleted, got)
+		}
 		if down := f.last(); len(down.Peers) != 0 || down.Address != "" {
 			t.Fatalf("deleted=%v: the tunnel stays up: %+v", deleted, down)
 		}
 		record := f.record()
-		if record.Joined || record.Document != nil || record.Applied.Version != 2 {
+		if record.Joined || record.Document != nil || record.Applied.Version != 2 || record.NodeID != laptop1 || record.Endpoint != testOrigin {
 			t.Errorf("deleted=%v: state %+v", deleted, record)
 		}
-		if !bytes.Equal(f.secrets[wireguardSecret], key) {
-			t.Errorf("deleted=%v: the key was not kept", deleted)
+		keys, err := f.service.keys()
+		if err != nil || keys.Public == f.keys.Public || keys.Signer == f.keys.Signer || f.hub.hellos != 1 {
+			t.Fatalf("deleted=%v: keys %+v, %v, hellos %d", deleted, keys, err, f.hub.hellos)
+		}
+		hello := f.service.hello("0.7.92")
+		if hello.Kind != "laptop" || hello.Network == nil || hello.Network.Key != keys.Public || hello.Network.Signer != keys.Signer || hello.Network.Version != 2 || !hello.Network.Ready || hello.Network.Reason != nil {
+			t.Fatalf("deleted=%v: hello %+v", deleted, hello.Network)
+		}
+		if got := f.deliver(3, f.sign(f.document(3, network.BodyHash(second), false))); !got.OK || got.Message != "This laptop is not in the private network." || f.hub.hellos != 1 {
+			t.Fatalf("deleted=%v: a later document without it %+v", deleted, got)
 		}
 	}
 }
 
-func TestAnUnsignedOrOlderDocumentIsRefused(t *testing.T) {
+func TestTheHelloSaysWhatTheLaptopIs(t *testing.T) {
 	f := newFixture(t)
-	first := f.document(1, "", true)
-	if err := f.service.applyDocument(nil); err == nil || !strings.Contains(err.Error(), "not signed") {
-		t.Fatalf("unsigned: %v", err)
+	f.service.Kernel = "10.0.19045"
+	hello := f.service.hello("0.7.92")
+	if hello.Type != "hello" || hello.V != 1 || hello.Version != "0.7.92" || hello.Kind != "laptop" || hello.Kernel != "10.0.19045" || hello.SealKey != f.seal || hello.Hostname == "" || hello.OS == "" || hello.Arch == "" {
+		t.Fatalf("hello %+v", hello)
 	}
-	stranger, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
+	if hello.Trust == nil || hello.Trust.Version != 1 || !slices.Equal(hello.Trust.Core, []string{"cred-1"}) {
+		t.Fatalf("trust %+v", hello.Trust)
 	}
-	if err := f.service.applyDocument(f.signWith("cred-1", stranger, first)); err == nil {
-		t.Fatal("a document signed by an untrusted passkey applied")
+	if want := (reporter.NetworkHello{Version: 0, Key: f.keys.Public, Signer: f.keys.Signer, Ready: true}); hello.Network == nil || *hello.Network != want {
+		t.Fatalf("network %+v", hello.Network)
 	}
-	if f.record().Applied.Version != 0 {
-		t.Fatal("a refused document was recorded")
-	}
-	if err := f.service.applyDocument(f.sign(first)); err != nil {
-		t.Fatal(err)
-	}
-	second := f.document(2, network.BodyHash(first), true)
-	if err := f.service.applyDocument(f.sign(second)); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.service.applyDocument(f.sign(first)); err == nil || !strings.Contains(err.Error(), "not newer") {
-		t.Fatalf("older: %v", err)
-	}
-	if record := f.record(); record.Applied.Version != 2 || !record.Joined {
-		t.Fatalf("state %+v", record)
+	delete(f.secrets, wireguardSecret)
+	if hello := f.service.hello("0.7.92"); hello.Network != nil || f.service.Status(0).Fingerprint != "" {
+		t.Fatalf("a laptop without keys %+v", hello.Network)
 	}
 }
 
 func TestARekeyedLaptopMakesANewKeyAndAnnouncesIt(t *testing.T) {
 	f := newFixture(t)
 	first := f.document(1, "", true)
-	if err := f.service.applyDocument(f.sign(first)); err != nil {
-		t.Fatal(err)
-	}
-	var document network.Document
-	if err := json.Unmarshal(f.document(2, network.BodyHash(first), true), &document); err != nil {
-		t.Fatal(err)
-	}
-	document.Members[2].Rekey = true
-	second, _ := json.Marshal(document)
-	if err := f.service.applyDocument(f.sign(second)); err != nil {
-		t.Fatal(err)
+	f.deliver(1, f.sign(first))
+	second := f.edited(f.document(2, network.BodyHash(first), true), func(document *network.Document) { document.Members[2].Rekey = true })
+	f.hub.sent = nil
+	if got := f.deliver(2, f.sign(second)); !got.OK {
+		t.Fatalf("rekey %+v", got)
 	}
 	keys, err := f.service.keys()
 	if err != nil || keys.Public == f.keys.Public || keys.Signer != f.keys.Signer {
 		t.Fatalf("keys %+v, %v", keys, err)
 	}
-	server := &fakeServer{}
-	f.service.cycle(context.Background(), server, reporter.Host{})
-	announce := server.beats[0].Network.Announce
-	if announce == nil || announce.Key != keys.Public || !network.Announced(f.keys.Signer, laptop1, announce.Key, announce.Signature) {
-		t.Fatalf("announce %+v", announce)
+	announced := sentOf[reporter.Announce](f.hub)
+	if len(announced) != 1 || announced[0].Type != "announce" || announced[0].Key != keys.Public || !network.Announced(f.keys.Signer, laptop1, keys.Public, announced[0].Signature) {
+		t.Fatalf("announce %+v", announced)
 	}
-}
-
-func TestOnlyTrustActionsRunOnALaptop(t *testing.T) {
-	f := newFixture(t)
-	before := f.secrets[wireguardSecret]
-	trusted := f.change("77777777-7777-4777-8777-000000000001", 2, nil)
-	requests := []reporter.ActionRequest{
-		{ID: "77777777-7777-4777-8777-000000000002", Kind: "compose", Name: "listmonk", Action: "deploy", ExpiresAt: trusted.ExpiresAt, Signed: trusted.Signed},
-		{ID: "77777777-7777-4777-8777-000000000003", Kind: "network", Name: "kry0", Action: "rekey", ExpiresAt: trusted.ExpiresAt, Signed: trusted.Signed},
-		{ID: "77777777-7777-4777-8777-000000000004", Kind: "host", Name: "server", Action: "reboot", ExpiresAt: trusted.ExpiresAt},
-		{ID: "77777777-7777-4777-8777-000000000005", Kind: "trust", Name: "devices", Action: "reset", ExpiresAt: trusted.ExpiresAt, Signed: trusted.Signed},
-		{ID: "77777777-7777-4777-8777-000000000006", Kind: "trust", Name: "other", Action: "trust", ExpiresAt: trusted.ExpiresAt, Signed: trusted.Signed},
+	f.hub.sent = nil
+	f.service.reconnected()
+	if again := sentOf[reporter.Announce](f.hub); !slices.Equal(again, announced) {
+		t.Fatalf("a new connection carried %+v", again)
 	}
-	server := &fakeServer{response: reporter.HeartbeatResponse{Actions: requests}}
-	f.service.cycle(context.Background(), server, reporter.Host{Hostname: "laptop-1"})
-	report := server.reports[0]
-	if len(report.Results) != len(requests) {
-		t.Fatalf("results %+v", report.Results)
+	third := f.document(3, network.BodyHash(second), true)
+	if got := f.deliver(3, f.sign(third)); !got.OK {
+		t.Fatalf("a document still naming the old key while the new one is announced %+v", got)
 	}
-	for _, result := range report.Results {
-		if result.OK || result.Output != "refused: unknown action" {
-			t.Errorf("result %+v", result)
-		}
+	fourth := f.edited(f.document(4, network.BodyHash(third), true), func(document *network.Document) { document.Members[2].Key = keys.Public })
+	if got := f.deliver(4, f.sign(fourth)); !got.OK || f.record().Announce != nil {
+		t.Fatalf("the new key %+v, announce %+v", got, f.record().Announce)
 	}
-	current, err := trust.Load(f.service.Dir)
-	if err != nil || current.Version != 1 || !bytes.Equal(f.secrets[wireguardSecret], before) {
-		t.Fatalf("something ran: trust %+v, %v", current, err)
-	}
-	encoded, err := json.Marshal(report.Inventory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sent map[string]any
-	if err := json.Unmarshal(encoded, &sent); err != nil || len(sent) != 2 || sent["trust"] == nil || sent["hash"] == nil {
-		t.Fatalf("inventory %s", encoded)
-	}
-	beat, err := json.Marshal(server.beats[0].Network)
-	if err != nil || !strings.Contains(string(beat), `"links":[]`) || !strings.Contains(string(beat), f.keys.Public) {
-		t.Fatalf("beat %s", beat)
-	}
-}
-
-func TestASignedTrustChangeIsAppliedOnTheLaptop(t *testing.T) {
-	f := newFixture(t)
-	second, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	added := trust.TrustKey{ID: "cred-2", Name: "Laptop", Alg: -7, PublicKey: spki(t, second)}
-	request := f.change("77777777-7777-4777-8777-000000000010", 2, []trust.TrustKey{f.device, added})
-	server := &fakeServer{response: reporter.HeartbeatResponse{Actions: []reporter.ActionRequest{request}}}
-	f.service.cycle(context.Background(), server, reporter.Host{})
-	result := server.reports[0].Results[0]
-	if !result.OK || result.ID != request.ID {
-		t.Fatalf("result %+v", result)
-	}
-	current, err := trust.Load(f.service.Dir)
-	if err != nil || current.Version != 2 || len(current.Core) != 2 || current.NodeID != laptop1 {
-		t.Fatalf("trust %+v, %v", current, err)
-	}
-	if devices := server.reports[0].Inventory.Trust; devices == nil || devices.Version != 2 || len(devices.Core) != 2 {
-		t.Fatalf("inventory %+v", server.reports[0].Inventory)
-	}
-	f.service.cycle(context.Background(), server, reporter.Host{})
-	if len(server.reports) != 2 || len(server.reports[1].Results) != 0 {
-		t.Fatalf("the change ran twice: %+v", server.reports)
+	fifth := f.document(5, network.BodyHash(fourth), true)
+	if got := f.deliver(5, f.sign(fifth)); got.OK || got.Message != "the document names another key for laptop-1" {
+		t.Fatalf("the old key after the new one was taken %+v", got)
 	}
 }
 
 func (f *fixture) joined() []byte {
 	f.t.Helper()
 	first := f.document(1, "", true)
-	if err := f.service.applyDocument(f.sign(first)); err != nil {
-		f.t.Fatal(err)
+	if got := f.deliver(1, f.sign(first)); !got.OK {
+		f.t.Fatal(got.Message)
 	}
-	f.service.mu.Lock()
-	f.service.refresh()
-	f.service.mu.Unlock()
-	f.service.push()
 	return first
+}
+
+func (f *fixture) hint(hints reporter.Hints) {
+	f.t.Helper()
+	hints.Type = "hints"
+	for _, list := range []*[]string{&hints.Held, &hints.Connected} {
+		if *list == nil {
+			*list = []string{}
+		}
+	}
+	f.service.receive(hints)
 }
 
 func TestHubHintsNeverWidenTheSignedPeers(t *testing.T) {
@@ -335,19 +268,19 @@ func TestHubHintsNeverWidenTheSignedPeers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{
-		Announced: []reporter.NetworkAnnounced{
+	f.hint(reporter.Hints{
+		Announced: []reporter.HintAnnounced{
 			{Node: server1, Key: forged.Public, Signature: stranger.Announce(server1)},
-			{Node: server1, Key: forged.Public},
+			{Node: server1, Key: forged.Public, Signature: "c2lnbmVk"},
 			{Node: laptop1, Key: forged.Public, Signature: forged.Announce(laptop1)},
 		},
-		Endpoints: []reporter.NetworkEndpoint{
+		Endpoints: []reporter.HintEndpoint{
 			{Key: wgKey(2), Endpoint: "203.0.113.20:51820"},
 			{Key: f.keys.Public, Endpoint: "203.0.113.21:51820"},
 			{Key: f.server.Public, Endpoint: "203.0.113.22:22"},
 			{Key: wgKey(99), Endpoint: "203.0.113.23:51820"},
 		},
-	}})
+	})
 	if now := f.last(); !reflect.DeepEqual(now, before) {
 		t.Fatalf("unsigned or out-of-bounds hints changed the tunnel: %+v", now)
 	}
@@ -355,54 +288,23 @@ func TestHubHintsNeverWidenTheSignedPeers(t *testing.T) {
 		t.Fatalf("hints were kept: %+v %+v", record.Announced, record.Endpoints)
 	}
 
-	var document network.Document
-	if err := json.Unmarshal(f.document(2, network.BodyHash(first), true), &document); err != nil {
-		t.Fatal(err)
+	second := f.edited(f.document(2, network.BodyHash(first), true), func(document *network.Document) { document.Blocked = []string{forged.Public} })
+	if got := f.deliver(2, f.sign(second)); !got.OK {
+		t.Fatal(got.Message)
 	}
-	document.Blocked = []string{forged.Public}
-	second, _ := json.Marshal(document)
-	if err := f.service.applyDocument(f.sign(second)); err != nil {
-		t.Fatal(err)
-	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Announced: []reporter.NetworkAnnounced{{Node: server1, Key: forged.Public, Signature: forged.Announce(server1)}}}})
+	f.hint(reporter.Hints{Announced: []reporter.HintAnnounced{{Node: server1, Key: forged.Public, Signature: forged.Announce(server1)}}})
 	if peer := f.last().Peers[0]; peer.Key != f.server.Public {
 		t.Fatalf("a blocked key was taken: %+v", peer)
 	}
 
 	rotated := serverKeys(t, 3)
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{
-		Announced: []reporter.NetworkAnnounced{{Node: server1, Key: rotated.Public, Signature: rotated.Announce(server1)}},
-		Endpoints: []reporter.NetworkEndpoint{{Key: rotated.Public, Endpoint: "203.0.113.30:51830"}},
-	}})
+	f.hint(reporter.Hints{
+		Announced: []reporter.HintAnnounced{{Node: server1, Key: rotated.Public, Signature: rotated.Announce(server1)}},
+		Endpoints: []reporter.HintEndpoint{{Key: rotated.Public, Endpoint: "203.0.113.30:51830"}},
+	})
 	after := f.last()
 	if len(after.Peers) != 2 || after.Peers[0].Key != rotated.Public || after.Peers[0].Endpoint != "203.0.113.30:51830" || !slices.Equal(after.Peers[0].AllowedIPs, before.Peers[0].AllowedIPs) {
 		t.Fatalf("a signed new key and its endpoint: %+v", after)
-	}
-}
-
-func TestARemovedLaptopKeepsItsKeysAndStaysDown(t *testing.T) {
-	f := newFixture(t)
-	f.joined()
-	key := f.secrets[wireguardSecret]
-	f.service.gone(true)
-	if down := f.last(); !reflect.DeepEqual(down, Wanted{}) {
-		t.Fatalf("the tunnel stays up: %+v", down)
-	}
-	if !bytes.Equal(f.secrets[wireguardSecret], key) || !f.service.Removed() {
-		t.Fatal("the keys were dropped or the removal was not kept")
-	}
-	var restarted []Wanted
-	again := &Service{Dir: f.service.Dir, Secrets: f.secrets, Now: f.service.Now, Apply: func(wanted Wanted) { restarted = append(restarted, wanted) }}
-	again.mu.Lock()
-	again.refresh()
-	again.mu.Unlock()
-	again.push()
-	if len(restarted) != 0 {
-		t.Fatalf("a restart brought the tunnel up: %+v", restarted)
-	}
-	f.service.gone(false)
-	if up := f.last(); len(up.Peers) != 2 {
-		t.Fatalf("the tunnel did not come back: %+v", up)
 	}
 }
 
@@ -417,56 +319,17 @@ func TestAHeldServerIsNoExit(t *testing.T) {
 	if exit := f.last(); exit.Exit != server1 || !slices.Contains(exit.Peers[0].AllowedIPs, "0.0.0.0/0") {
 		t.Fatalf("exit %+v", exit)
 	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Held: []string{server1}}})
+	f.hint(reporter.Hints{Held: []string{server1}})
 	held := f.last()
 	if held.Exit != "" || slices.Contains(held.Peers[0].AllowedIPs, "0.0.0.0/0") || slices.Contains(held.Peers[0].AllowedIPs, "::/0") || !slices.Equal(held.Held, []string{server1}) {
 		t.Fatalf("held exit %+v", held)
 	}
-	f.service.answer(reporter.HeartbeatResponse{Network: &reporter.NetworkReply{Held: []string{}}})
+	f.hint(reporter.Hints{Meetings: []reporter.HintMeeting{{Laptop: laptop1, Via: server1}}, Held: []string{server1}})
+	if still := f.last(); !slices.Equal(still.Held, []string{server1}) {
+		t.Fatalf("a meetings hint still holding the server released it: %+v", still)
+	}
+	f.hint(reporter.Hints{})
 	if back := f.last(); back.Exit != server1 {
 		t.Fatalf("released exit %+v", back)
-	}
-}
-
-func TestAMalformedDocumentIsRefused(t *testing.T) {
-	f := newFixture(t)
-	for _, body := range []string{
-		`{"v":1,"version":1,"range":"10.88.0.0/24","port":51820,"mtu":1420,"members":[],"blocked":[],"extra":true}`,
-		`{"v":1,"version":1,"range":"10.99.0.0/24","port":51820,"mtu":1420,"members":[],"blocked":[]}`,
-		`not json`,
-	} {
-		if err := f.service.applyDocument(f.sign([]byte(body))); err == nil {
-			t.Errorf("%s was applied", body)
-		}
-	}
-	if record := f.record(); record.Applied.Version != 0 || record.Joined {
-		t.Fatalf("state %+v", record)
-	}
-}
-
-func TestAnAppliedTrustChangeIsNotRefusedAfterARestart(t *testing.T) {
-	f := newFixture(t)
-	second, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := f.change("77777777-7777-4777-8777-000000000020", 2, []trust.TrustKey{f.device, {ID: "cred-2", Name: "Laptop", Alg: -7, PublicKey: spki(t, second)}})
-	f.service.deliver([]reporter.ActionRequest{request})
-	f.service.mu.Lock()
-	f.service.report(laptop1)
-	f.service.mu.Unlock()
-	again := &Service{Dir: f.service.Dir, Secrets: f.secrets, Now: f.service.Now}
-	server := &fakeServer{response: reporter.HeartbeatResponse{Actions: []reporter.ActionRequest{request}}}
-	again.cycle(context.Background(), server, reporter.Host{})
-	results := server.reports[0].Results
-	if len(results) != 1 || !results[0].OK || results[0].ID != request.ID {
-		t.Fatalf("results %+v", results)
-	}
-	again.cycle(context.Background(), server, reporter.Host{})
-	if len(server.reports) > 1 && len(server.reports[1].Results) != 0 {
-		t.Fatalf("posted twice: %+v", server.reports[1].Results)
-	}
-	if record := f.record(); len(record.Results) != 0 || record.Ledger[request.ID].IsZero() {
-		t.Fatalf("ledger %+v results %+v", record.Ledger, record.Results)
 	}
 }

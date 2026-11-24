@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"reflect"
 	"strings"
@@ -82,7 +83,8 @@ func check(t *testing.T, name string, s side, types map[string]func() any) {
 	}
 }
 
-func TestWireMatchesTheSharedFixture(t *testing.T) {
+func load(t *testing.T) fixture {
+	t.Helper()
 	raw, err := os.ReadFile("../../../packages/protocol/src/fixtures/wire.json")
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +93,11 @@ func TestWireMatchesTheSharedFixture(t *testing.T) {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
+	return f
+}
+
+func TestWireMatchesTheSharedFixture(t *testing.T) {
+	f := load(t)
 	if len(f.Agent.Valid) == 0 || len(f.Hub.Valid) == 0 {
 		t.Fatal("the fixture holds no valid messages")
 	}
@@ -98,22 +105,66 @@ func TestWireMatchesTheSharedFixture(t *testing.T) {
 		"hello":    func() any { return new(Hello) },
 		"progress": func() any { return new(Progress) },
 		"result":   func() any { return new(Result) },
+		"applied":  func() any { return new(Applied) },
+		"links":    func() any { return new(Links) },
+		"announce": func() any { return new(Announce) },
+		"meet":     func() any { return new(Meet) },
 	})
 	check(t, "hub", f.Hub, map[string]func() any{
-		"command": func() any { return new(Command) },
-		"ack":     func() any { return new(Ack) },
+		"command":  func() any { return new(Command) },
+		"ack":      func() any { return new(Ack) },
+		"document": func() any { return new(Document) },
+		"hints":    func() any { return new(Hints) },
+		"refresh":  func() any { return new(Refresh) },
 	})
 }
 
-func TestDecodeHubTakesOnlyExactHubMessages(t *testing.T) {
-	raw, err := os.ReadFile("../../../packages/protocol/src/fixtures/wire.json")
+func TestTheFixtureHoldsEveryKindOfMessage(t *testing.T) {
+	f := load(t)
+	for name, want := range map[string]struct {
+		side  side
+		kinds []string
+	}{
+		"agent": {f.Agent, []string{"hello", "progress", "result", "applied", "links", "announce", "meet"}},
+		"hub":   {f.Hub, []string{"command", "ack", "document", "hints", "refresh"}},
+	} {
+		seen := map[string]bool{}
+		for _, raw := range want.side.Valid {
+			var head struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(raw, &head); err != nil {
+				t.Fatal(err)
+			}
+			seen[head.Type] = true
+		}
+		for _, kind := range want.kinds {
+			if !seen[kind] {
+				t.Fatalf("%s: the fixture has no valid %s", name, kind)
+			}
+		}
+	}
+}
+
+func TestHelloSaysWhatKindOfMachineAndWhatItsNetworkIs(t *testing.T) {
+	reason := "WireGuard is not available in this kernel"
+	encoded, err := json.Marshal(Hello{Type: "hello", V: 1, Kind: "server", Network: &NetworkHello{Version: 2, Key: "k", Signer: "s", Reason: &reason}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var f fixture
-	if err := json.Unmarshal(raw, &f); err != nil {
-		t.Fatal(err)
+	for _, part := range []string{`"kind":"server"`, `"network":{"version":2,"key":"k","signer":"s","ready":false,"reason":"WireGuard is not available in this kernel"}`} {
+		if !strings.Contains(string(encoded), part) {
+			t.Fatalf("hello %s has no %s", encoded, part)
+		}
 	}
+	encoded, _ = json.Marshal(Hello{Type: "hello", Kind: "laptop"})
+	if !strings.Contains(string(encoded), `"network":null`) {
+		t.Fatalf("hello %s", encoded)
+	}
+}
+
+func TestDecodeHubTakesOnlyExactHubMessages(t *testing.T) {
+	f := load(t)
 	for i, message := range f.Hub.Valid {
 		value, err := DecodeHub(message)
 		if err != nil {
@@ -149,5 +200,115 @@ func TestDecodeHubTakesOnlyExactHubMessages(t *testing.T) {
 	value, err := DecodeHub([]byte(`{"type":"ack","id":"a"}`))
 	if ack, ok := value.(Ack); err != nil || !ok || ack.ID != "a" {
 		t.Fatalf("ack %#v %v", value, err)
+	}
+}
+
+func hintsWith(over map[string]string) string {
+	parts := map[string]string{"endpoints": "[]", "announced": "[]", "meetings": "[]", "held": "[]", "connected": "[]"}
+	maps.Copy(parts, over)
+	return `{"type":"hints","endpoints":` + parts["endpoints"] + `,"announced":` + parts["announced"] + `,"meetings":` + parts["meetings"] + `,"held":` + parts["held"] + `,"connected":` + parts["connected"] + "}"
+}
+
+func repeated(entry string, count int) string {
+	return "[" + strings.TrimSuffix(strings.Repeat(entry+",", count), ",") + "]"
+}
+
+func TestDecodeHubReadsTheNetworkMessages(t *testing.T) {
+	value, err := DecodeHub([]byte(`{"type":"document","version":4,"signed":"eyJ2IjoxfQ"}`))
+	if got, ok := value.(Document); err != nil || !ok || got.Type != "document" || got.Version != 4 || got.Signed != "eyJ2IjoxfQ" {
+		t.Fatalf("document %#v %v", value, err)
+	}
+	value, err = DecodeHub([]byte(hintsWith(map[string]string{
+		"endpoints": `[{"key":"k","endpoint":"203.0.113.1:51820"}]`,
+		"announced": `[{"node":"n","key":"k","signature":"c2ln"}]`,
+		"meetings":  `[{"laptop":"l","via":"v"}]`,
+		"held":      `["l"]`,
+		"connected": `["a","b"]`,
+	})))
+	want := Hints{
+		Type:      "hints",
+		Endpoints: []HintEndpoint{{Key: "k", Endpoint: "203.0.113.1:51820"}},
+		Announced: []HintAnnounced{{Node: "n", Key: "k", Signature: "c2ln"}},
+		Meetings:  []HintMeeting{{Laptop: "l", Via: "v"}},
+		Held:      []string{"l"},
+		Connected: []string{"a", "b"},
+	}
+	if got, ok := value.(Hints); err != nil || !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("hints %#v %v", value, err)
+	}
+	value, err = DecodeHub([]byte(hintsWith(nil)))
+	if got, ok := value.(Hints); err != nil || !ok || got.Endpoints == nil || len(got.Connected) != 0 {
+		t.Fatalf("empty hints %#v %v", value, err)
+	}
+	value, err = DecodeHub([]byte(`{"type":"refresh"}`))
+	if got, ok := value.(Refresh); err != nil || !ok || got.Type != "refresh" {
+		t.Fatalf("refresh %#v %v", value, err)
+	}
+	for _, edge := range []string{
+		`{"type":"document","version":1,"signed":"a"}`,
+		`{"type":"document","version":1,"signed":"` + strings.Repeat("a", 524288) + `"}`,
+		hintsWith(map[string]string{
+			"endpoints": repeated(`{"key":"k","endpoint":"e"}`, 32),
+			"announced": repeated(`{"node":"n","key":"k","signature":"s"}`, 32),
+			"meetings":  repeated(`{"laptop":"l","via":"v"}`, 32),
+			"held":      repeated(`"h"`, 32),
+			"connected": repeated(`"c"`, 32),
+		}),
+	} {
+		if _, err := DecodeHub([]byte(edge)); err != nil {
+			t.Fatalf("%.80s was refused: %v", edge, err)
+		}
+	}
+}
+
+func TestDecodeHubRefusesMalformedNetworkMessages(t *testing.T) {
+	for _, message := range []string{
+		`{"type":"document","version":0,"signed":"a"}`,
+		`{"type":"document","version":-1,"signed":"a"}`,
+		`{"type":"document","version":"4","signed":"a"}`,
+		`{"type":"document","version":4.5,"signed":"a"}`,
+		`{"type":"document","version":null,"signed":"a"}`,
+		`{"type":"document","version":4,"signed":""}`,
+		`{"type":"document","version":4,"signed":7}`,
+		`{"type":"document","version":4,"signed":"` + strings.Repeat("a", 524289) + `"}`,
+		`{"type":"document","version":4}`,
+		`{"type":"document","version":4,"signed":"a","extra":1}`,
+		`{"type":"document","Version":4,"signed":"a"}`,
+		`{"type":"document","version":4,"signed":"a","id":"a"}`,
+		`{"type":"refresh","extra":1}`,
+		`{"type":"refresh","id":"a"}`,
+		`{"type":"Refresh"}`,
+		`{"type":"hints","endpoints":[],"announced":[],"meetings":[],"held":[]}`,
+		`{"type":"hints","endpoints":[],"announced":[],"meetings":[],"held":[],"connected":[],"extra":1}`,
+		hintsWith(map[string]string{"endpoints": "null"}),
+		hintsWith(map[string]string{"held": "null"}),
+		hintsWith(map[string]string{"connected": "{}"}),
+		hintsWith(map[string]string{"endpoints": repeated(`{"key":"k","endpoint":"e"}`, 33)}),
+		hintsWith(map[string]string{"announced": repeated(`{"node":"n","key":"k","signature":"s"}`, 33)}),
+		hintsWith(map[string]string{"meetings": repeated(`{"laptop":"l","via":"v"}`, 33)}),
+		hintsWith(map[string]string{"held": repeated(`"h"`, 33)}),
+		hintsWith(map[string]string{"connected": repeated(`"c"`, 33)}),
+		hintsWith(map[string]string{"endpoints": `[{"key":"k","endpoint":"e","rtt":3}]`}),
+		hintsWith(map[string]string{"endpoints": `[{"key":"k"}]`}),
+		hintsWith(map[string]string{"endpoints": `[{"Key":"k","endpoint":"e"}]`}),
+		hintsWith(map[string]string{"endpoints": `[null]`}),
+		hintsWith(map[string]string{"endpoints": `[{"key":"k","endpoint":7}]`}),
+		hintsWith(map[string]string{"endpoints": `[{"key":null,"endpoint":"e"}]`}),
+		hintsWith(map[string]string{"announced": `[{"node":"n","key":"k"}]`}),
+		hintsWith(map[string]string{"meetings": `[{"laptop":"l","via":"v","extra":1}]`}),
+		hintsWith(map[string]string{"meetings": `[{"laptop":"","via":"v"}]`}),
+		hintsWith(map[string]string{"held": `[null]`}),
+		hintsWith(map[string]string{"held": `[7]`}),
+		hintsWith(map[string]string{"connected": `[""]`}),
+		`{"type":"applied","version":4,"ok":true,"message":"x"}`,
+		`{"type":"links","links":[]}`,
+	} {
+		value, err := DecodeHub([]byte(message))
+		if err == nil {
+			t.Fatalf("%.120s was accepted as %#v", message, value)
+		}
+		if value != nil {
+			t.Fatalf("%.120s was refused with %#v in hand", message, value)
+		}
 	}
 }

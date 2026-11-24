@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-import { sealKeySchema } from "./network";
+import {
+  b64url,
+  endpoint,
+  isNetworkVerb,
+  networkLinkSchema,
+  sealKeySchema,
+  wireguardKey,
+} from "./network";
 
 export const WIRE_VERSION = 1;
 
@@ -15,6 +22,17 @@ export const trustReportSchema = z.strictObject({
   access: credentials,
 });
 
+export const networkHelloSchema = z.strictObject({
+  version: z.number().int().nonnegative(),
+  key: wireguardKey,
+  signer: wireguardKey,
+  ready: z.boolean(),
+  reason: z.string().max(300).nullable(),
+});
+
+const nodeId = z.string().uuid();
+const upTo32 = <T extends z.ZodType>(item: T) => z.array(item).max(32);
+
 export const agentMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("hello"),
@@ -24,8 +42,10 @@ export const agentMessageSchema = z.discriminatedUnion("type", [
     os: z.string().min(1).max(64),
     arch: z.string().min(1).max(64),
     kernel: z.string().min(1).max(128),
+    kind: z.enum(["server", "laptop"]),
     sealKey: sealKeySchema,
     trust: trustReportSchema.nullable(),
+    network: networkHelloSchema.nullable(),
   }),
   z.strictObject({
     type: z.literal("progress"),
@@ -39,21 +59,58 @@ export const agentMessageSchema = z.discriminatedUnion("type", [
     message: z.string().max(2048),
     trust: trustReportSchema.optional(),
   }),
+  z.strictObject({
+    type: z.literal("applied"),
+    version: z.number().int().nonnegative(),
+    ok: z.boolean(),
+    message: z.string().max(2048),
+  }),
+  z.strictObject({
+    type: z.literal("links"),
+    links: upTo32(networkLinkSchema),
+  }),
+  z.strictObject({
+    type: z.literal("announce"),
+    key: wireguardKey,
+    signature: b64url,
+  }),
+  z.strictObject({ type: z.literal("meet"), via: nodeId }),
 ]);
 
 export const hubMessageSchema = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("command"),
-    id,
-    kind: z.enum(["trust", "agent", "host"]),
-    name: z.string().min(1).max(128),
-    action: z.string().min(1).max(64),
-    signed: z.string().min(1),
-  }),
+  z
+    .strictObject({
+      type: z.literal("command"),
+      id,
+      kind: z.enum(["trust", "agent", "host", "network"]),
+      name: z.string().min(1).max(128),
+      action: z.string().min(1).max(64),
+      signed: z.string().min(1),
+    })
+    .refine(
+      (command) => command.kind !== "network" || isNetworkVerb(command.action),
+    ),
   z.strictObject({ type: z.literal("ack"), id }),
+  z.strictObject({
+    type: z.literal("document"),
+    version: z.number().int().positive(),
+    signed: z.string().min(1).max(524288),
+  }),
+  z.strictObject({
+    type: z.literal("hints"),
+    endpoints: upTo32(z.strictObject({ key: wireguardKey, endpoint })),
+    announced: upTo32(
+      z.strictObject({ node: nodeId, key: wireguardKey, signature: b64url }),
+    ),
+    meetings: upTo32(z.strictObject({ laptop: nodeId, via: nodeId })),
+    held: upTo32(nodeId),
+    connected: upTo32(nodeId),
+  }),
+  z.strictObject({ type: z.literal("refresh") }),
 ]);
 
 export type TrustReport = z.infer<typeof trustReportSchema>;
+export type NetworkHello = z.infer<typeof networkHelloSchema>;
 export type AgentMessage = z.infer<typeof agentMessageSchema>;
 export type HubMessage = z.infer<typeof hubMessageSchema>;
 

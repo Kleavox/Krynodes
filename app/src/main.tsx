@@ -10,6 +10,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { createQueryClient } from "@/lib/query-client";
 import { FleetPage } from "@/pages/fleet";
 import { HistoryPage } from "@/pages/history";
+import { NetworkPage } from "@/pages/network";
 import { NotFoundPage } from "@/pages/not-found";
 import { PasskeysPage } from "@/pages/passkeys";
 import { AppShell } from "@/shell/app-shell";
@@ -27,6 +28,7 @@ createRoot(document.getElementById("root")!).render(
               <Routes>
                 <Route element={<AppShell identity={identity} via={via} />}>
                   <Route index element={<FleetPage />} />
+                  <Route path="network" element={<NetworkPage />} />
                   <Route path="passkeys" element={<PasskeysPage />} />
                   <Route path="history" element={<HistoryPage />} />
                   <Route path="*" element={<NotFoundPage />} />

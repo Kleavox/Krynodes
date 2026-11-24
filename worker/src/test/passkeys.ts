@@ -1,3 +1,5 @@
+import { DOCUMENT_TAG } from "@krynodes/protocol";
+
 import { toB64url } from "../lib/b64url";
 
 const encoder = new TextEncoder();
@@ -118,6 +120,22 @@ export async function testPasskey(
       };
     },
   };
+}
+
+export async function signDocument(
+  session: { key: CryptoKey; grant: object },
+  bytes: Uint8Array,
+): Promise<string> {
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    session.key,
+    concat(encoder.encode(DOCUMENT_TAG), bytes),
+  );
+  return JSON.stringify({
+    grant: session.grant,
+    document: toB64url(bytes),
+    signature: toB64url(new Uint8Array(signature)),
+  });
 }
 
 export async function testPassphrase() {

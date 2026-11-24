@@ -8,7 +8,10 @@ import (
 
 var version = "dev"
 
-const usage = "usage: krynodes <install|uninstall|service|tray|version>"
+const (
+	usage = "usage: krynodes <install|uninstall|service|tray|version>"
+	hint  = "Krynodes is installed from your dashboard: Network, Add Laptop."
+)
 
 func main() {
 	command := ""
@@ -21,8 +24,12 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, usage)
-		return 2
+		if inTerminal() {
+			fmt.Fprintln(stdout, hint)
+		} else {
+			notice(hint)
+		}
+		return 0
 	}
 	switch args[0] {
 	case "version":

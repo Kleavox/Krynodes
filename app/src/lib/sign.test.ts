@@ -11,6 +11,7 @@ import {
   openSession,
   signChange,
   signCommand,
+  signDocument,
 } from "./sign";
 
 const SIGNED_AT = Date.parse("2026-11-22T10:00:00.000Z");
@@ -90,6 +91,8 @@ afterEach(() => {
 
 describe("what the browser signs", () => {
   it("a command is the committed fixture's command, signed by the session key", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(SIGNED_AT + 10_000);
     const asked = authenticator("EBESExQVFhcYGRobHB0eHw");
     const session = await createSession(
       ["EBESExQVFhcYGRobHB0eHw"],
@@ -210,6 +213,61 @@ describe("what the browser signs", () => {
   });
 });
 
+describe("a network document", () => {
+  it("signDocument signs the exact document bytes", async () => {
+    authenticator();
+    const session = await createSession(
+      ["AAECAwQFBgcICQoLDA0ODw"],
+      "kry.example.org",
+    );
+    const document = {
+      v: 1 as const,
+      version: 1,
+      range: "10.88.37.0/24",
+      port: 51820,
+      mtu: 1420,
+      members: [],
+      blocked: [],
+      allow: [],
+    };
+    const signed = JSON.parse(await signDocument(session, document)) as {
+      grant: { grant: string };
+      document: string;
+      signature: string;
+    };
+    expect(Object.keys(signed)).toEqual(["grant", "document", "signature"]);
+    expect(signed.grant).toEqual(session.grant);
+    expect(text(signed.document)).toBe(JSON.stringify(document));
+
+    const grant = JSON.parse(text(signed.grant.grant)) as {
+      sessionKey: string;
+    };
+    const key = await crypto.subtle.importKey(
+      "spki",
+      fromB64url(grant.sessionKey),
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    const bytes = fromB64url(signed.document);
+    const tag = new TextEncoder().encode("krynodes-document-v1\n");
+    const tagged = new Uint8Array(tag.length + bytes.length);
+    tagged.set(tag);
+    tagged.set(bytes, tag.length);
+    const signature = fromB64url(signed.signature);
+    expect(signature).toHaveLength(64);
+    const verify = (data: Uint8Array<ArrayBuffer>) =>
+      crypto.subtle.verify(
+        { name: "ECDSA", hash: "SHA-256" },
+        key,
+        signature,
+        data,
+      );
+    expect(await verify(tagged)).toBe(true);
+    expect(await verify(bytes)).toBe(false);
+  });
+});
+
 describe("the signing session", () => {
   it("is reused for five minutes by a server its passkey reaches", async () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
@@ -279,5 +337,45 @@ describe("the signing session", () => {
     });
     await openSession(["EBESExQVFhcYGRobHB0eHw"]);
     expect(activeSession()).toBeNull();
+  });
+});
+
+describe("a session that is over", () => {
+  const document = {
+    v: 1 as const,
+    version: 1,
+    range: "10.88.37.0/24",
+    port: 51820,
+    mtu: 1420,
+    members: [],
+    blocked: [],
+    allow: [],
+  };
+  const over = "Your passkey session has ended. Start again; nothing was sent.";
+
+  it("signs no command and no document once it has expired", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(SIGNED_AT);
+    authenticator();
+    const session = await openSession(["AAECAwQFBgcICQoLDA0ODw"]);
+    await expect(signDocument(session, document)).resolves.toBeTypeOf("string");
+    vi.advanceTimersByTime(5 * MINUTE);
+    await expect(signDocument(session, document)).rejects.toThrow(over);
+    await expect(signCommand(session, { v: 1 })).rejects.toThrow(over);
+  });
+
+  it("signs nothing once the page was hidden", async () => {
+    authenticator();
+    const session = await openSession(["AAECAwQFBgcICQoLDA0ODw"]);
+    page.visibilityState = "hidden";
+    for (const listener of page.listeners) listener();
+    await expect(signDocument(session, document)).rejects.toThrow(over);
+    await expect(signCommand(session, { v: 1 })).rejects.toThrow(over);
+    page.visibilityState = "visible";
+    const hiddenWhileAsked = await (async () => {
+      page.visibilityState = "hidden";
+      return openSession(["AAECAwQFBgcICQoLDA0ODw"]);
+    })();
+    await expect(signCommand(hiddenWhileAsked, { v: 1 })).rejects.toThrow(over);
   });
 });

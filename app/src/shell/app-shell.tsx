@@ -17,7 +17,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useFleet } from "@/features/fleet/use-fleet";
 import { displayHandle } from "@/lib/format";
+import { requestCount } from "@/lib/network";
 import { useLiveUpdates } from "@/lib/live";
 import { cn } from "@/lib/utils";
 import type { Identity, SessionVia } from "@/types";
@@ -35,6 +37,9 @@ export function AppShell({
   const { pathname } = useLocation();
   const navigation = useNavigationType();
   useLiveUpdates();
+  const requests = requestCount(useFleet().data);
+  const count = (to: string) =>
+    to === "/network" && requests > 0 ? ` ${requests}` : "";
 
   useEffect(() => {
     if (navigation !== "POP") window.scrollTo(0, 0);
@@ -68,6 +73,7 @@ export function AppShell({
               }
             >
               {section.label}
+              {count(section.to)}
             </NavLink>
           ))}
         </nav>
@@ -95,6 +101,7 @@ export function AppShell({
           >
             <section.icon aria-hidden="true" className="size-4" />
             {section.label}
+            {count(section.to)}
           </NavLink>
         ))}
       </nav>

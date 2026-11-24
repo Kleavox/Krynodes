@@ -12,6 +12,7 @@ import { errorMessage } from "@/lib/http";
 export function FleetPage() {
   const fleet = useFleet();
   const [enrolling, setEnrolling] = useState(false);
+  const names = new Map(fleet.data?.map((node) => [node.id, node.name]));
   return (
     <>
       <PageHeader
@@ -29,7 +30,7 @@ export function FleetPage() {
         ) : (
           <ul className="divide-y rounded-lg border bg-card">
             {fleet.data.map((node) => (
-              <ServerRow key={node.id} node={node} />
+              <ServerRow key={node.id} node={node} names={names} />
             ))}
           </ul>
         )

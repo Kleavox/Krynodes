@@ -7,6 +7,7 @@ export const queryKeys = {
   fleet: ["fleet"],
   devices: ["devices"],
   actions: ["actions"],
+  network: ["network"],
 } as const;
 
 export function createQueryClient(): QueryClient {

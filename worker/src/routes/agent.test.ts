@@ -46,7 +46,7 @@ async function setup() {
 const agent = {
   upgrade: "websocket",
   authorization: "Bearer agent-token",
-  "user-agent": "kry-agent/0.7.90",
+  "user-agent": "kry-agent/0.7.92",
 };
 
 describe("agent stream", () => {
@@ -64,7 +64,7 @@ describe("agent stream", () => {
     const forwarded = hub[0]!;
     expect(new URL(forwarded.url).pathname).toBe("/connect");
     expect(forwarded.headers.get("x-kry-node")).toBe("n1");
-    expect(forwarded.headers.get("x-kry-version")).toBe("0.7.90");
+    expect(forwarded.headers.get("x-kry-version")).toBe("0.7.92");
     expect(forwarded.headers.get("authorization")).toBeNull();
     expect(forwarded.headers.get("upgrade")).toBe("websocket");
   });
@@ -160,7 +160,7 @@ const host = {
   os: "linux",
   arch: "amd64",
   kernel: "6.8.0-45-generic",
-  version: "0.7.90",
+  version: "0.7.92",
 };
 
 const enroll = (
@@ -201,7 +201,7 @@ describe("enroll", () => {
       os: "linux",
       arch: "amd64",
       kernel: "6.8.0-45-generic",
-      version: "0.7.90",
+      version: "0.7.92",
       agent_token_hash: await sha256(token),
     });
     expect(
@@ -263,6 +263,22 @@ describe("enroll", () => {
     );
   });
 
+  it("a network name another machine took meanwhile leaves the token unspent", async () => {
+    const { db, call } = testEnv();
+    await addNode(db, "n1", "Server 1");
+    await addEnrollment(db, "enroll-token", { name: "server-1" });
+    const response = await enroll(call, host);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: "NAME_TAKEN",
+      message:
+        "server-1 would have the same network name as Server 1 (server-1.kry). Create a new install command with another name.",
+    });
+    expect(await db.prepare("SELECT used_at FROM enrollments").first()).toEqual(
+      { used_at: null },
+    );
+  });
+
   it("the token it returns opens the stream", async () => {
     const { db, call, hub } = testEnv();
     await addEnrollment(db, "enroll-token");
@@ -274,7 +290,7 @@ describe("enroll", () => {
       headers: {
         upgrade: "websocket",
         authorization: `Bearer ${token}`,
-        "user-agent": "kry-agent/0.7.90",
+        "user-agent": "kry-agent/0.7.92",
       },
     });
     const connect = hub.calls.find((entry) => entry.path === "/connect");

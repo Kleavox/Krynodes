@@ -34,6 +34,11 @@ const server = (
   lastSeenAt: null,
   trust: { version: 4, core, access },
   update: null,
+  kind: "server",
+  address: null,
+  via: null,
+  ms: null,
+  request: null,
 });
 
 afterEach(() => {

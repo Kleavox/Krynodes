@@ -4,10 +4,12 @@ import {
   MIN_AGENT,
   parseAgentMessage,
   type AgentMessage,
+  type HubMessage,
   type TrustReport,
 } from "@krynodes/protocol";
 
 import type { Env } from "../env";
+import { HubNetwork } from "./network";
 
 const AGENT = "agent";
 const WATCH = "watch";
@@ -40,10 +42,16 @@ type Result = Extract<AgentMessage, { type: "result" }>;
 export class FleetHub implements DurableObject {
   private readonly ctx: DurableObjectState;
   private readonly env: Env;
+  private readonly network: HubNetwork;
 
   constructor(ctx: DurableObjectState, env: Env) {
     this.ctx = ctx;
     this.env = env;
+    this.network = new HubNetwork(env.DB, ctx.storage, {
+      send: (nodeId, message) => this.sendTo(nodeId, message),
+      online: () => this.online(),
+      announce: (topics) => this.announce(topics),
+    });
     ctx.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair("ping", "pong"),
     );
@@ -65,8 +73,14 @@ export class FleetHub implements DurableObject {
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === "/online") return Response.json(this.online());
+    if (pathname === "/via") return Response.json(await this.network.via());
     if (pathname === "/command" && post) return this.command(request);
     if (pathname === "/drop" && post) return this.drop(request);
+    if (pathname === "/document" && post) return this.document(request);
+    if (pathname === "/refresh" && post) {
+      await this.network.refresh();
+      return new Response(null, { status: 204 });
+    }
     if (pathname === "/announce" && post) {
       const body = (await request.json().catch(() => null)) as {
         topics?: unknown;
@@ -133,11 +147,26 @@ export class FleetHub implements DurableObject {
       ws.send(JSON.stringify({ type: "error", code: "INVALID_MESSAGE" }));
       return;
     }
-    if (message.type === "hello") await this.hello(ws, agent.nodeId, message);
-    else if (message.type === "result") {
-      await this.result(ws, agent.nodeId, message);
-    } else {
-      this.toWatchers({ type: "progress", id: message.id, line: message.line });
+    const { nodeId } = agent;
+    switch (message.type) {
+      case "hello":
+        return this.hello(ws, nodeId, message);
+      case "result":
+        return this.result(ws, nodeId, message);
+      case "progress":
+        return this.toWatchers({
+          type: "progress",
+          id: message.id,
+          line: message.line,
+        });
+      case "applied":
+        return this.network.applied(nodeId, message);
+      case "links":
+        return this.network.links(nodeId, message.links);
+      case "announce":
+        return this.network.announce(nodeId, message.key, message.signature);
+      case "meet":
+        return this.network.meet(nodeId, message.via);
     }
   }
 
@@ -148,6 +177,7 @@ export class FleetHub implements DurableObject {
       .bind(new Date().toISOString(), agent.nodeId)
       .run();
     this.announce(["fleet"]);
+    await this.network.gone(agent.nodeId);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
@@ -195,6 +225,18 @@ export class FleetHub implements DurableObject {
     return [...new Set(this.heard().map(({ agent }) => agent.nodeId))];
   }
 
+  private sendTo(nodeId: string, message: HubMessage): void {
+    const text = JSON.stringify(message);
+    for (const { ws } of this.heard(nodeId)) {
+      try {
+        ws.send(text);
+        return;
+      } catch {
+        continue;
+      }
+    }
+  }
+
   private async command(request: Request): Promise<Response> {
     const body = (await request.json().catch(() => null)) as {
       nodeId?: unknown;
@@ -233,6 +275,24 @@ export class FleetHub implements DurableObject {
         continue;
       }
     }
+    return new Response(null, { status: 204 });
+  }
+
+  private async document(request: Request): Promise<Response> {
+    const body = (await request.json().catch(() => null)) as {
+      version?: unknown;
+    } | null;
+    const version = body?.version;
+    if (typeof version !== "number" || !Number.isInteger(version)) {
+      return new Response(null, { status: 400 });
+    }
+    const stored = await this.env.DB.prepare(
+      "SELECT 1 FROM network_documents WHERE version = ?",
+    )
+      .bind(version)
+      .first();
+    if (!stored) return new Response(null, { status: 404 });
+    await this.network.push(version);
     return new Response(null, { status: 204 });
   }
 
@@ -279,6 +339,7 @@ export class FleetHub implements DurableObject {
       ? await this.storeTrust(nodeId, hello.trust)
       : false;
     if (changed || trusted) this.announce(["fleet"]);
+    if (hello.network) await this.network.hello(nodeId, hello.network);
   }
 
   private async result(ws: WebSocket, nodeId: string, result: Result) {
@@ -290,7 +351,7 @@ export class FleetHub implements DurableObject {
       return;
     }
     const finished = await this.env.DB.prepare(
-      "UPDATE actions SET status = ?, message = ?, finished_at = ? WHERE id = ? AND node_id = ? AND status IN ('sent', 'running')",
+      "UPDATE actions SET status = ?, message = ?, finished_at = ? WHERE id = ? AND node_id = ? AND status IN ('sent', 'running') RETURNING kind, action",
     )
       .bind(
         result.ok ? "done" : "failed",
@@ -299,12 +360,15 @@ export class FleetHub implements DurableObject {
         result.id,
         nodeId,
       )
-      .run();
+      .first<{ kind: string; action: string }>();
+    if (finished?.kind === "network" && result.ok) {
+      await this.network.result(nodeId, finished.action, result.message);
+    }
     const trusted = result.trust
       ? await this.storeTrust(nodeId, result.trust)
       : false;
     ws.send(JSON.stringify({ type: "ack", id: result.id }));
-    if (finished.meta.changes > 0 || trusted) this.announce(["fleet"]);
+    if (finished || trusted) this.announce(["fleet"]);
   }
 
   private async storeTrust(nodeId: string, trust: TrustReport) {

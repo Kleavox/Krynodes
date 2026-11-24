@@ -31,6 +31,25 @@ export async function announce(env: Env, topics: string[]): Promise<void> {
   }
 }
 
+export async function pushDocument(env: Env, version: number): Promise<void> {
+  try {
+    await hub(env).fetch("https://fleet/document", {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    });
+  } catch (error) {
+    console.error("[kry fleet]", error);
+  }
+}
+
+export async function refreshLinks(env: Env): Promise<void> {
+  try {
+    await post(env, "/refresh", {});
+  } catch (error) {
+    console.error("[kry fleet]", error);
+  }
+}
+
 async function post(env: Env, path: string, body: unknown): Promise<Response> {
   return hub(env).fetch(`https://fleet${path}`, {
     method: "POST",
@@ -41,6 +60,12 @@ async function post(env: Env, path: string, body: unknown): Promise<Response> {
 export async function onlineNodes(env: Env): Promise<Set<string>> {
   const response = await hub(env).fetch("https://fleet/online");
   return new Set((await response.json()) as string[]);
+}
+
+export async function viaNodes(env: Env): Promise<Record<string, string>> {
+  const response = await hub(env).fetch("https://fleet/via");
+  if (!response.ok) throw new Error(`the hub refused via: ${response.status}`);
+  return (await response.json()) as Record<string, string>;
 }
 
 export async function sendCommand(

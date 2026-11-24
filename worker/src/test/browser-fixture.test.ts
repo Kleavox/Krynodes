@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "vitest";
 
 import { toB64url } from "../lib/b64url";
-import { importKeyPair, testPasskey } from "./passkeys";
+import { importKeyPair, signDocument, testPasskey } from "./passkeys";
 
 const ORIGIN = "https://kry.example.org";
 const RP_ID = "kry.example.org";
@@ -129,11 +129,20 @@ async function build(touchOnly: boolean) {
     session.privateKey,
     commandBytes,
   );
+  const signedGrant = { grant: toB64url(grantBytes), ...grant };
   const command = {
-    grant: { grant: toB64url(grantBytes), ...grant },
+    grant: signedGrant,
     command: toB64url(commandBytes),
     signature: toB64url(new Uint8Array(signature)),
   };
+  const network: { valid: { document: { version: number } }[] } = JSON.parse(
+    readFileSync(new URL("network-allow.json", fixtures), "utf8"),
+  );
+  const document = network.valid[0]!.document;
+  const signedDocument = await signDocument(
+    { key: session.privateKey, grant: signedGrant },
+    encoder.encode(JSON.stringify(document)),
+  );
 
   return {
     origin: ORIGIN,
@@ -156,6 +165,11 @@ async function build(touchOnly: boolean) {
       name: "server-1",
       action: "restart",
       signed: JSON.stringify(command),
+    },
+    document: {
+      type: "document",
+      version: document.version,
+      signed: signedDocument,
     },
   };
 }

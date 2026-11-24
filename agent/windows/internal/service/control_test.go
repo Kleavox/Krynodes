@@ -95,18 +95,6 @@ func TestEveryTrayShowsEachNoteOnce(t *testing.T) {
 	}
 }
 
-func TestARemovedLaptopCannotConnect(t *testing.T) {
-	f := newFixture(t)
-	f.joined()
-	f.service.gone(true)
-	if err := f.service.Connect(true); !errors.Is(err, errRemoved) {
-		t.Fatalf("connect answered %v", err)
-	}
-	if status := f.service.Status(0); !status.Removed || status.Connected {
-		t.Fatalf("status %+v", status)
-	}
-}
-
 func TestTheTrayChoosesOnlyAnOfferedExit(t *testing.T) {
 	f := newFixture(t)
 	f.twoPublic()

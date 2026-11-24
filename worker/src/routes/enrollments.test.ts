@@ -77,6 +77,32 @@ describe("creating an enrollment", () => {
   });
 });
 
+describe("a name in the private network", () => {
+  it("refuses a name whose network name another machine already has", async () => {
+    const { db, send } = await ready();
+    await addNode(db, "n1", "Server 1");
+    const response = await send("POST", "/api/enrollments", {
+      name: "server-1",
+      trust: ["d1"],
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: "NAME_TAKEN",
+      message:
+        "server-1 would have the same network name as Server 1 (server-1.kry). Choose another name.",
+    });
+    expect(await db.prepare("SELECT id FROM enrollments").first()).toBeNull();
+    expect(
+      (
+        await send("POST", "/api/enrollments", {
+          name: "server-10",
+          trust: ["d1"],
+        })
+      ).status,
+    ).toBe(201);
+  });
+});
+
 describe("waiting for the server", () => {
   it("answers no node until the agent enrolls, then its id", async () => {
     const { db, call } = await ready();

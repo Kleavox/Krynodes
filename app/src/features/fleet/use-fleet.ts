@@ -11,10 +11,14 @@ export function useFleet() {
   });
 }
 
-export function useDeleteNode(id: string, onDone: () => void) {
+export function useDeleteNode(
+  id: string,
+  onDone: () => void,
+  path = `/api/nodes/${id}`,
+) {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => apiFetch(`/api/nodes/${id}`, { method: "DELETE" }),
+    mutationFn: () => apiFetch(path, { method: "DELETE" }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: queryKeys.fleet });
       onDone();

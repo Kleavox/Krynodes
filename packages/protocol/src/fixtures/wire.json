@@ -4,28 +4,107 @@
       {
         "type": "hello",
         "v": 1,
-        "version": "0.7.90",
+        "version": "0.7.92",
         "hostname": "server-1",
         "os": "linux",
         "arch": "amd64",
         "kernel": "6.8.0-45-generic",
+        "kind": "server",
         "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
         "trust": {
           "version": 3,
           "core": ["Y3JlZC1jb3Jl"],
           "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+        },
+        "network": {
+          "version": 3,
+          "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+          "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+          "ready": true,
+          "reason": null
         }
       },
       {
         "type": "hello",
         "v": 1,
-        "version": "0.7.90",
+        "version": "0.7.92",
         "hostname": "server-1",
         "os": "linux",
         "arch": "amd64",
         "kernel": "6.8.0-45-generic",
+        "kind": "server",
         "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
-        "trust": null
+        "trust": null,
+        "network": null
+      },
+      {
+        "type": "hello",
+        "v": 1,
+        "version": "0.7.92",
+        "hostname": "laptop-1",
+        "os": "windows",
+        "arch": "amd64",
+        "kernel": "10.0.19045",
+        "kind": "laptop",
+        "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+        "trust": {
+          "version": 3,
+          "core": ["Y3JlZC1jb3Jl"],
+          "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+        },
+        "network": {
+          "version": 0,
+          "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+          "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+          "ready": true,
+          "reason": null
+        }
+      },
+      {
+        "type": "hello",
+        "v": 1,
+        "version": "0.7.92",
+        "hostname": "server-1",
+        "os": "linux",
+        "arch": "amd64",
+        "kernel": "6.8.0-45-generic",
+        "kind": "server",
+        "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+        "trust": {
+          "version": 3,
+          "core": ["Y3JlZC1jb3Jl"],
+          "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+        },
+        "network": {
+          "version": 0,
+          "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+          "signer": "Gq5XvCZ6m6GB0YdQ3TTqN4TfxLMvx8ZvYhAEZ3yUnUs=",
+          "ready": false,
+          "reason": "WireGuard is not available in this kernel"
+        }
+      },
+      {
+        "type": "hello",
+        "v": 1,
+        "version": "0.7.92",
+        "hostname": "server-1",
+        "os": "linux",
+        "arch": "amd64",
+        "kernel": "6.8.0-45-generic",
+        "kind": "server",
+        "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+        "trust": {
+          "version": 3,
+          "core": ["Y3JlZC1jb3Jl"],
+          "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+        },
+        "network": {
+          "version": 3,
+          "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+          "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+          "ready": false,
+          "reason": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        }
       },
       {
         "type": "progress",
@@ -65,6 +144,52 @@
         "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
         "ok": true,
         "message": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      },
+      {
+        "type": "applied",
+        "version": 4,
+        "ok": true,
+        "message": "Applied version 4"
+      },
+      {
+        "type": "applied",
+        "version": 4,
+        "ok": false,
+        "message": "Refused: the document does not follow version 3"
+      },
+      {
+        "type": "links",
+        "links": []
+      },
+      {
+        "type": "links",
+        "links": [
+          {
+            "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+            "handshake": 1780000000,
+            "rx": 1024,
+            "tx": 2048,
+            "endpoint": "203.0.113.21:51820",
+            "ms": 12.5
+          },
+          {
+            "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2A=",
+            "handshake": null,
+            "rx": 0,
+            "tx": 0,
+            "endpoint": "[2001:db8::1]:51821",
+            "ms": null
+          }
+        ]
+      },
+      {
+        "type": "announce",
+        "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+        "signature": "c2lnbmF0dXJl"
+      },
+      {
+        "type": "meet",
+        "via": "11111111-1111-4111-8111-111111111111"
       }
     ],
     "invalid": [
@@ -98,17 +223,19 @@
         "message": {
           "type": "hello",
           "v": 1,
-          "version": "0.7.90",
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
+          "kind": "server",
           "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
           "trust": {
             "version": 3,
             "core": ["Y3JlZC1jb3Jl"],
             "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
           },
+          "network": null,
           "extra": 1
         }
       },
@@ -139,18 +266,20 @@
         "message": {
           "type": "hello",
           "v": 1,
-          "version": "0.7.90",
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
+          "kind": "server",
           "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
           "trust": {
             "version": 3,
             "core": ["Y3JlZC1jb3Jl"],
             "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"],
             "passphrase": false
-          }
+          },
+          "network": null
         }
       },
       {
@@ -169,16 +298,18 @@
         "message": {
           "type": "hello",
           "v": 1,
-          "version": "0.7.90",
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
+          "kind": "server",
           "trust": {
             "version": 3,
             "core": ["Y3JlZC1jb3Jl"],
             "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
-          }
+          },
+          "network": null
         }
       },
       {
@@ -187,12 +318,14 @@
         "message": {
           "type": "hello",
           "v": 1,
-          "version": "0.7.90",
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
-          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw"
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "network": null
         }
       },
       {
@@ -201,17 +334,19 @@
         "message": {
           "type": "hello",
           "v": 2,
-          "version": "0.7.90",
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
+          "kind": "server",
           "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
           "trust": {
             "version": 3,
             "core": ["Y3JlZC1jb3Jl"],
             "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
-          }
+          },
+          "network": null
         }
       },
       {
@@ -220,17 +355,19 @@
         "message": {
           "type": "hello",
           "v": 1,
-          "version": "0.7.90",
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
+          "kind": "server",
           "sealKey": "KjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
           "trust": {
             "version": 3,
             "core": ["Y3JlZC1jb3Jl"],
             "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
-          }
+          },
+          "network": null
         }
       },
       {
@@ -258,17 +395,640 @@
         "message": {
           "type": "hello",
           "v": 1,
-          "version": "0.7.90",
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": -1,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": null
+        }
+      },
+      {
+        "why": "a hello with no network member",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          }
+        }
+      },
+      {
+        "why": "a hello with no kind",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
           "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
           "trust": {
-            "version": -1,
+            "version": 3,
             "core": ["Y3JlZC1jb3Jl"],
             "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": {
+            "version": 3,
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+            "ready": true,
+            "reason": null
           }
+        }
+      },
+      {
+        "why": "a hello of an unknown kind",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "tablet",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": {
+            "version": 3,
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+            "ready": true,
+            "reason": null
+          }
+        }
+      },
+      {
+        "why": "a hello whose network has an extra field",
+        "structural": true,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": {
+            "version": 3,
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+            "ready": true,
+            "reason": null,
+            "extra": 1
+          }
+        }
+      },
+      {
+        "why": "a hello whose network reason is 301 characters",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": {
+            "version": 3,
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+            "ready": false,
+            "reason": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+          }
+        }
+      },
+      {
+        "why": "a hello whose network key has the wrong length",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": {
+            "version": 3,
+            "key": "TIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+            "ready": true,
+            "reason": null
+          }
+        }
+      },
+      {
+        "why": "a hello whose network version is negative",
+        "structural": false,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": {
+            "version": -1,
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+            "ready": true,
+            "reason": null
+          }
+        }
+      },
+      {
+        "why": "a hello whose network ready is a string",
+        "structural": true,
+        "message": {
+          "type": "hello",
+          "v": 1,
+          "version": "0.7.92",
+          "hostname": "server-1",
+          "os": "linux",
+          "arch": "amd64",
+          "kernel": "6.8.0-45-generic",
+          "kind": "server",
+          "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
+          "trust": {
+            "version": 3,
+            "core": ["Y3JlZC1jb3Jl"],
+            "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
+          },
+          "network": {
+            "version": 3,
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signer": "TW9yZVNpZ25lcktleUZvclRoZVNlY29uZE1lbWJlcjE=",
+            "ready": "yes",
+            "reason": null
+          }
+        }
+      },
+      {
+        "why": "an applied with an extra field",
+        "structural": true,
+        "message": {
+          "type": "applied",
+          "version": 4,
+          "ok": true,
+          "message": "Applied version 4",
+          "extra": 1
+        }
+      },
+      {
+        "why": "an applied whose ok is a string",
+        "structural": true,
+        "message": {
+          "type": "applied",
+          "version": 4,
+          "ok": "yes",
+          "message": "Applied version 4"
+        }
+      },
+      {
+        "why": "an applied message of 2049 characters",
+        "structural": false,
+        "message": {
+          "type": "applied",
+          "version": 4,
+          "ok": false,
+          "message": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"
+        }
+      },
+      {
+        "why": "a links message with 33 links",
+        "structural": false,
+        "message": {
+          "type": "links",
+          "links": [
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA5A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA6A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA10A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA11A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA12A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA13A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA14A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA15A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA16A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA17A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA18A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA19A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA20A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA21A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA22A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA23A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA24A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA25A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA26A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA27A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA28A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA29A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA30A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA31A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA32A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA33A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            }
+          ]
+        }
+      },
+      {
+        "why": "a link with an extra field",
+        "structural": true,
+        "message": {
+          "type": "links",
+          "links": [
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1A=",
+              "handshake": null,
+              "rx": 0,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null,
+              "extra": 1
+            }
+          ]
+        }
+      },
+      {
+        "why": "a link with a negative byte count",
+        "structural": false,
+        "message": {
+          "type": "links",
+          "links": [
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1A=",
+              "handshake": null,
+              "rx": -1,
+              "tx": 0,
+              "endpoint": null,
+              "ms": null
+            }
+          ]
+        }
+      },
+      {
+        "why": "a links message with an extra field",
+        "structural": true,
+        "message": {
+          "type": "links",
+          "links": [],
+          "extra": 1
+        }
+      },
+      {
+        "why": "an announce with an extra field",
+        "structural": true,
+        "message": {
+          "type": "announce",
+          "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+          "signature": "c2lnbmF0dXJl",
+          "extra": 1
+        }
+      },
+      {
+        "why": "an announce with a key of the wrong length",
+        "structural": false,
+        "message": {
+          "type": "announce",
+          "key": "TIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+          "signature": "c2lnbmF0dXJl"
+        }
+      },
+      {
+        "why": "a meet whose via is not an id",
+        "structural": false,
+        "message": {
+          "type": "meet",
+          "via": "1"
+        }
+      },
+      {
+        "why": "a meet with an extra field",
+        "structural": true,
+        "message": {
+          "type": "meet",
+          "via": "11111111-1111-4111-8111-111111111111",
+          "extra": 1
+        }
+      },
+      {
+        "why": "a document sent by the agent",
+        "structural": true,
+        "message": {
+          "type": "document",
+          "version": 4,
+          "signed": "eyJkb2N1bWVudCI6MX0"
+        }
+      },
+      {
+        "why": "a hints message sent by the agent",
+        "structural": true,
+        "message": {
+          "type": "hints",
+          "endpoints": [],
+          "announced": [],
+          "meetings": [],
+          "held": [],
+          "connected": []
+        }
+      },
+      {
+        "why": "a refresh sent by the agent",
+        "structural": true,
+        "message": {
+          "type": "refresh"
         }
       }
     ]
@@ -300,8 +1060,71 @@
         "signed": "eyJjb21tYW5kIjoiYyJ9"
       },
       {
+        "type": "command",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "kind": "network",
+        "name": "kry0",
+        "action": "inspect",
+        "signed": "eyJjb21tYW5kIjoiYyJ9"
+      },
+      {
+        "type": "command",
+        "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        "kind": "network",
+        "name": "kry0",
+        "action": "drop",
+        "signed": "eyJjb21tYW5kIjoiYyJ9"
+      },
+      {
         "type": "ack",
         "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01"
+      },
+      {
+        "type": "document",
+        "version": 4,
+        "signed": "eyJkb2N1bWVudCI6MX0"
+      },
+      {
+        "type": "hints",
+        "endpoints": [
+          {
+            "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+            "endpoint": "203.0.113.21:51820"
+          },
+          {
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "endpoint": "[2001:db8::1]:51821"
+          }
+        ],
+        "announced": [
+          {
+            "node": "22222222-2222-4222-8222-222222222222",
+            "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "signature": "c2lnbmF0dXJl"
+          }
+        ],
+        "meetings": [
+          {
+            "laptop": "99999999-9999-4999-8999-999999999999",
+            "via": "11111111-1111-4111-8111-111111111111"
+          }
+        ],
+        "held": ["99999999-9999-4999-8999-999999999999"],
+        "connected": [
+          "11111111-1111-4111-8111-111111111111",
+          "22222222-2222-4222-8222-222222222222"
+        ]
+      },
+      {
+        "type": "hints",
+        "endpoints": [],
+        "announced": [],
+        "meetings": [],
+        "held": [],
+        "connected": []
+      },
+      {
+        "type": "refresh"
       }
     ],
     "invalid": [
@@ -318,17 +1141,19 @@
         "message": {
           "type": "hello",
           "v": 1,
-          "version": "0.7.90",
+          "version": "0.7.92",
           "hostname": "server-1",
           "os": "linux",
           "arch": "amd64",
           "kernel": "6.8.0-45-generic",
+          "kind": "server",
           "sealKey": "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw",
           "trust": {
             "version": 3,
             "core": ["Y3JlZC1jb3Jl"],
             "access": ["Y3JlZC1jb3Jl", "Y3JlZC1hY2Nlc3M"]
-          }
+          },
+          "network": null
         }
       },
       {
@@ -386,6 +1211,718 @@
           "name": "server",
           "action": "restart",
           "signed": ""
+        }
+      },
+      {
+        "why": "a network command with the removed tighten action",
+        "structural": false,
+        "message": {
+          "type": "command",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "kind": "network",
+          "name": "kry0",
+          "action": "tighten",
+          "signed": "eyJjb21tYW5kIjoiYyJ9"
+        }
+      },
+      {
+        "why": "a network command with an unknown action",
+        "structural": false,
+        "message": {
+          "type": "command",
+          "id": "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+          "kind": "network",
+          "name": "kry0",
+          "action": "flush",
+          "signed": "eyJjb21tYW5kIjoiYyJ9"
+        }
+      },
+      {
+        "why": "a document of version 0",
+        "structural": false,
+        "message": {
+          "type": "document",
+          "version": 0,
+          "signed": "eyJkb2N1bWVudCI6MX0"
+        }
+      },
+      {
+        "why": "a document with no signed member",
+        "structural": false,
+        "message": {
+          "type": "document",
+          "version": 4
+        }
+      },
+      {
+        "why": "a document with an empty signed member",
+        "structural": false,
+        "message": {
+          "type": "document",
+          "version": 4,
+          "signed": ""
+        }
+      },
+      {
+        "why": "a document whose version is a string",
+        "structural": true,
+        "message": {
+          "type": "document",
+          "version": "4",
+          "signed": "eyJkb2N1bWVudCI6MX0"
+        }
+      },
+      {
+        "why": "a document with an extra field",
+        "structural": true,
+        "message": {
+          "type": "document",
+          "version": 4,
+          "signed": "eyJkb2N1bWVudCI6MX0",
+          "extra": 1
+        }
+      },
+      {
+        "why": "hints with 33 endpoints",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1A=",
+              "endpoint": "203.0.113.2:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2A=",
+              "endpoint": "203.0.113.3:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3A=",
+              "endpoint": "203.0.113.4:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4A=",
+              "endpoint": "203.0.113.5:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA5A=",
+              "endpoint": "203.0.113.6:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA6A=",
+              "endpoint": "203.0.113.7:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7A=",
+              "endpoint": "203.0.113.8:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8A=",
+              "endpoint": "203.0.113.9:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9A=",
+              "endpoint": "203.0.113.10:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA10A=",
+              "endpoint": "203.0.113.11:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA11A=",
+              "endpoint": "203.0.113.12:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA12A=",
+              "endpoint": "203.0.113.13:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA13A=",
+              "endpoint": "203.0.113.14:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA14A=",
+              "endpoint": "203.0.113.15:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA15A=",
+              "endpoint": "203.0.113.16:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA16A=",
+              "endpoint": "203.0.113.17:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA17A=",
+              "endpoint": "203.0.113.18:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA18A=",
+              "endpoint": "203.0.113.19:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA19A=",
+              "endpoint": "203.0.113.20:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA20A=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA21A=",
+              "endpoint": "203.0.113.22:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA22A=",
+              "endpoint": "203.0.113.23:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA23A=",
+              "endpoint": "203.0.113.24:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA24A=",
+              "endpoint": "203.0.113.25:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA25A=",
+              "endpoint": "203.0.113.26:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA26A=",
+              "endpoint": "203.0.113.27:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA27A=",
+              "endpoint": "203.0.113.28:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA28A=",
+              "endpoint": "203.0.113.29:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA29A=",
+              "endpoint": "203.0.113.30:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA30A=",
+              "endpoint": "203.0.113.31:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA31A=",
+              "endpoint": "203.0.113.32:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA32A=",
+              "endpoint": "203.0.113.33:51820"
+            },
+            {
+              "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA33A=",
+              "endpoint": "203.0.113.34:51820"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "hints with 33 meetings",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "endpoint": "[2001:db8::1]:51821"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            },
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "hints with 33 held members",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "endpoint": "[2001:db8::1]:51821"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": [
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999",
+            "99999999-9999-4999-8999-999999999999"
+          ],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "hints with an extra field",
+        "structural": true,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "endpoint": "[2001:db8::1]:51821"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ],
+          "extra": 1
+        }
+      },
+      {
+        "why": "hints with no connected member",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "endpoint": "[2001:db8::1]:51821"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"]
+        }
+      },
+      {
+        "why": "hints whose held is null",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "endpoint": "[2001:db8::1]:51821"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": null,
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "hints with an endpoint that has an extra field",
+        "structural": true,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820",
+              "rtt": 3
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "hints with an endpoint that is not an address",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "server-1"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "hints with an announcement that lacks its signature",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "endpoint": "[2001:db8::1]:51821"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "99999999-9999-4999-8999-999999999999",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "hints with a meeting whose laptop is not an id",
+        "structural": false,
+        "message": {
+          "type": "hints",
+          "endpoints": [
+            {
+              "key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+              "endpoint": "203.0.113.21:51820"
+            },
+            {
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "endpoint": "[2001:db8::1]:51821"
+            }
+          ],
+          "announced": [
+            {
+              "node": "22222222-2222-4222-8222-222222222222",
+              "key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+              "signature": "c2lnbmF0dXJl"
+            }
+          ],
+          "meetings": [
+            {
+              "laptop": "1",
+              "via": "11111111-1111-4111-8111-111111111111"
+            }
+          ],
+          "held": ["99999999-9999-4999-8999-999999999999"],
+          "connected": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      },
+      {
+        "why": "a refresh with an extra field",
+        "structural": true,
+        "message": {
+          "type": "refresh",
+          "extra": 1
+        }
+      },
+      {
+        "why": "an applied sent by the hub",
+        "structural": true,
+        "message": {
+          "type": "applied",
+          "version": 4,
+          "ok": true,
+          "message": "Applied version 4"
         }
       }
     ]

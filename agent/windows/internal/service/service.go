@@ -5,9 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,7 +19,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
+	"github.com/Kleavox/krynodes/agent/internal/daemon"
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/safefile"
@@ -39,9 +39,7 @@ const (
 	tokenSecret     = "token"
 	stateFile       = "state.json"
 	trustFile       = "trust.json"
-	expirySkew      = time.Minute
-	maxResults      = 10
-	ledgerKept      = 30 * 24 * time.Hour
+	maxMessage      = 2048
 )
 
 type Secrets interface {
@@ -50,26 +48,22 @@ type Secrets interface {
 	Write(path string, data []byte) error
 }
 
-type server interface {
-	SendHeartbeat(context.Context, reporter.Heartbeat) (reporter.HeartbeatResponse, error)
-	PostActions(context.Context, reporter.ActionsReport) (reporter.ActionsResponse, error)
+type hub interface {
+	Send(message any) error
+	HelloAgain() error
 }
 
 type state struct {
-	Endpoint  string                    `json:"endpoint"`
-	NodeID    string                    `json:"nodeId"`
-	Interval  int                       `json:"interval"`
-	Applied   network.Applied           `json:"applied"`
-	Joined    bool                      `json:"joined,omitempty"`
-	Document  *network.Document         `json:"document,omitempty"`
-	Announce  *reporter.NetworkAnnounce `json:"announce,omitempty"`
-	Announced map[string]string         `json:"announced,omitempty"`
-	Endpoints map[string]string         `json:"endpoints,omitempty"`
-	Removed   bool                      `json:"removed,omitempty"`
-	Offline   bool                      `json:"notifyOffline,omitempty"`
-	Offered   string                    `json:"offered,omitempty"`
-	Ledger    map[string]time.Time      `json:"ledger,omitempty"`
-	Results   []reporter.ActionResult   `json:"results,omitempty"`
+	Endpoint  string             `json:"endpoint"`
+	NodeID    string             `json:"nodeId"`
+	Applied   network.Applied    `json:"applied"`
+	Joined    bool               `json:"joined,omitempty"`
+	Document  *network.Document  `json:"document,omitempty"`
+	Announce  *reporter.Announce `json:"announce,omitempty"`
+	Announced map[string]string  `json:"announced,omitempty"`
+	Endpoints map[string]string  `json:"endpoints,omitempty"`
+	Offline   bool               `json:"notifyOffline,omitempty"`
+	Offered   string             `json:"offered,omitempty"`
 }
 
 type Service struct {
@@ -78,7 +72,9 @@ type Service struct {
 	Now     func() time.Time
 	Apply   func(Wanted)
 	Ping    func(address string) (time.Duration, bool)
+	Kernel  string
 
+	hub       hub
 	mu        sync.Mutex
 	applying  sync.Mutex
 	pending   *Wanted
@@ -95,15 +91,20 @@ type Service struct {
 	chooser   meet.Chooser
 	watch     exit.ExitWatch
 	watching  string
-	wake      chan struct{}
 	last      Wanted
-	queued    []reporter.ActionRequest
-	acked     string
-	interval  time.Duration
 }
 
-func laptopWords(text string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(text, "this server's", "this laptop's"), "this server", "this laptop")
+var laptopWords = strings.NewReplacer("this server's", "this laptop's", "this server", "this laptop", "This server", "This laptop").Replace
+
+func clip(text string, most int) string {
+	if len(text) <= most {
+		return text
+	}
+	cut := most
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
 }
 
 func (s *Service) read() (state, error) {
@@ -128,28 +129,33 @@ func (s *Service) keep(name string, value any) error {
 }
 
 func newKeys(secrets Secrets) (network.Keys, *ecdh.PrivateKey, error) {
-	private, err := ecdh.X25519().GenerateKey(rand.Reader)
-	if err != nil {
-		return network.Keys{}, nil, err
-	}
-	_, signer, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return network.Keys{}, nil, err
-	}
 	sealing, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
 		return network.Keys{}, nil, err
 	}
-	for _, secret := range []struct {
-		name  string
-		value []byte
-	}{{wireguardSecret, private.Bytes()}, {signerSecret, signer.Seed()}, {sealSecret, sealing.Bytes()}} {
-		if err := secrets.Put(secret.name, secret.value); err != nil {
-			return network.Keys{}, nil, err
-		}
+	if err := secrets.Put(sealSecret, sealing.Bytes()); err != nil {
+		return network.Keys{}, nil, err
 	}
-	keys, err := network.KeysOf(private.Bytes(), signer.Seed())
+	keys, err := networkKeys(secrets)
 	return keys, sealing, err
+}
+
+func networkKeys(secrets Secrets) (network.Keys, error) {
+	private, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return network.Keys{}, err
+	}
+	_, signer, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return network.Keys{}, err
+	}
+	if err := secrets.Put(signerSecret, signer.Seed()); err != nil {
+		return network.Keys{}, err
+	}
+	if err := secrets.Put(wireguardSecret, private.Bytes()); err != nil {
+		return network.Keys{}, err
+	}
+	return network.KeysOf(private.Bytes(), signer.Seed())
 }
 
 func (s *Service) keys() (network.Keys, error) {
@@ -162,6 +168,26 @@ func (s *Service) keys() (network.Keys, error) {
 		return network.Keys{}, err
 	}
 	return network.KeysOf(private, seed)
+}
+
+func (s *Service) sealing() (*ecdh.PrivateKey, error) {
+	raw, err := s.Secrets.Get(sealSecret)
+	if err != nil {
+		return nil, err
+	}
+	return ecdh.P256().NewPrivateKey(raw)
+}
+
+func (s *Service) fingerprint() string {
+	keys, err := s.keys()
+	if err != nil {
+		return ""
+	}
+	sealing, err := s.sealing()
+	if err != nil {
+		return ""
+	}
+	return network.Fingerprint(keys.Public, keys.Signer, seal.Public(sealing))
 }
 
 func (s *Service) newKey() (network.Keys, []byte, error) {
@@ -178,11 +204,7 @@ func (s *Service) newKey() (network.Keys, []byte, error) {
 }
 
 func (s *Service) presharedKeys(self network.Member, document network.Document) (map[string]string, error) {
-	raw, err := s.Secrets.Get(sealSecret)
-	if err != nil {
-		return nil, err
-	}
-	key, err := ecdh.P256().NewPrivateKey(raw)
+	key, err := s.sealing()
 	if err != nil {
 		return nil, err
 	}
@@ -211,88 +233,169 @@ func current(document network.Document, announced, endpoints map[string]string) 
 	return document
 }
 
-func (s *Service) applyDocument(signed json.RawMessage) error {
+func (s *Service) receive(message any) {
+	switch value := message.(type) {
+	case reporter.Document:
+		s.document(value.Version, value.Signed)
+	case reporter.Hints:
+		s.hints(value)
+	}
+}
+
+func (s *Service) send(message any) {
+	if s.hub == nil {
+		return
+	}
+	if err := s.hub.Send(message); err != nil && !errors.Is(err, stream.ErrNotConnected) {
+		log.Printf("tell Krynodes: %v", err)
+	}
+}
+
+func (s *Service) document(version int, signed string) {
+	s.mu.Lock()
+	message, at, announce, left, err := s.apply(version, []byte(signed))
+	s.refresh()
+	s.mu.Unlock()
+	s.push()
+	answer := reporter.Applied{Type: "applied", Version: at, OK: err == nil, Message: message}
+	if err != nil {
+		answer.Message = laptopWords(err.Error())
+		log.Printf("network document %d refused: %s", version, answer.Message)
+	}
+	answer.Message = clip(answer.Message, maxMessage)
+	s.send(answer)
+	if announce != nil {
+		s.send(*announce)
+	}
+	if left && s.hub != nil {
+		if err := s.hub.HelloAgain(); err != nil && !errors.Is(err, stream.ErrNotConnected) {
+			log.Printf("tell Krynodes the new network keys: %v", err)
+		}
+	}
+}
+
+func (s *Service) apply(version int, signed []byte) (string, int, *reporter.Announce, bool, error) {
+	record, err := s.read()
+	if err != nil {
+		return "", version, nil, false, err
+	}
+	if version <= record.Applied.Version {
+		return "Already applied.", record.Applied.Version, nil, false, nil
+	}
 	trusted, err := trust.Load(s.Dir)
 	if err != nil {
-		return err
+		return "", version, nil, false, err
 	}
 	body, err := trust.VerifyDocument(trusted, signed, s.Now())
 	if err != nil {
-		return err
+		return "", version, nil, false, err
 	}
 	document, err := network.Parse(body)
 	if err != nil {
-		return err
+		return "", version, nil, false, err
 	}
-	record, err := s.read()
-	if err != nil {
-		return err
+	if document.Version != version {
+		return "", version, nil, false, fmt.Errorf("the signed document is version %d, not %d", document.Version, version)
 	}
 	hash := network.BodyHash(body)
 	self, err := network.Accept(document, record.Applied, trusted.NodeID, record.Joined)
 	if errors.Is(err, network.ErrLeave) {
-		record.Applied, record.Joined, record.Document = record.Applied.After(document, hash), false, nil
-		record.Announce, record.Announced, record.Endpoints = nil, nil, nil
-		return s.save(record)
+		message, left, err := s.leave(record, record.Applied.After(document, hash))
+		return message, version, nil, left, err
 	}
 	if err != nil {
-		return err
+		return "", version, nil, false, err
 	}
 	keys, err := s.keys()
 	if err != nil {
-		return errors.New("this laptop has no network key; add it again")
+		return "", version, nil, false, errors.New("this laptop has no network keys")
 	}
-	rekey := self.Key == keys.Public && self.Rekey
-	if self.Key != keys.Public && (record.Announce == nil || record.Announce.Key != keys.Public) {
-		return fmt.Errorf("the document names another key for %s", self.Name)
+	own := ""
+	if record.Document != nil {
+		if entry, ok := member(*record.Document, trusted.NodeID); ok {
+			own = entry.Key
+		}
+	}
+	pending := record.Announce != nil && record.Announce.Key == keys.Public
+	if self.Signer != keys.Signer || (self.Key != keys.Public && (!pending || self.Key != own)) {
+		return "", version, nil, false, fmt.Errorf("the document names another key for %s", self.Name)
+	}
+	if sealing, err := s.sealing(); err != nil || self.SealKey != seal.Public(sealing) {
+		return "", version, nil, false, fmt.Errorf("the document names another seal key for %s", self.Name)
 	}
 	if _, err := s.presharedKeys(self, document); err != nil {
-		return err
+		return "", version, nil, false, err
 	}
-	if self.Key == keys.Public && !rekey {
+	if self.Key == keys.Public {
 		record.Announce = nil
 	}
-	if rekey {
+	if self.Key == keys.Public && self.Rekey {
 		next, private, err := s.newKey()
 		if err != nil {
-			return err
+			return "", version, nil, false, err
 		}
-		record.Announce = &reporter.NetworkAnnounce{Key: next.Public, Signature: next.Announce(trusted.NodeID)}
+		record.Announce = &reporter.Announce{Type: "announce", Key: next.Public, Signature: next.Announce(trusted.NodeID)}
 		if err := s.save(record); err != nil {
-			return err
+			return "", version, nil, false, err
 		}
 		if err := s.Secrets.Put(wireguardSecret, private); err != nil {
-			return err
+			return "", version, nil, false, err
 		}
 	}
 	for node, key := range record.Announced {
-		if entry, ok := member(document, node); !ok || entry.Key == key || slices.Contains(document.Blocked, key) {
+		if entry, ok := member(document, node); !ok || entry.Cut || entry.Key == key || slices.Contains(document.Blocked, key) {
 			delete(record.Announced, node)
 		}
 	}
 	record.Applied, record.Joined, record.Document, record.Endpoints = record.Applied.After(document, hash), true, &document, nil
-	return s.save(record)
+	if err := s.save(record); err != nil {
+		return "", version, nil, false, err
+	}
+	return fmt.Sprintf("Applied version %d.", version), version, record.Announce, false, nil
 }
 
-func newer(signed json.RawMessage, applied int) bool {
-	var envelope trust.SignedDocument
-	var head struct {
-		Version int `json:"version"`
+func (s *Service) leave(record state, applied network.Applied) (string, bool, error) {
+	joined := record.Joined
+	record = state{Endpoint: record.Endpoint, NodeID: record.NodeID, Applied: applied, Offline: record.Offline, Offered: record.Offered}
+	if !joined {
+		return "This laptop is not in the private network.", false, s.save(record)
 	}
-	if json.Unmarshal(signed, &envelope) != nil {
-		return false
+	s.exit, s.watching, s.health = "", "", nil
+	var problems []string
+	if _, err := networkKeys(s.Secrets); err != nil {
+		problems = append(problems, "make new network keys: "+err.Error())
 	}
-	body, err := base64.RawURLEncoding.DecodeString(envelope.Document)
-	return err == nil && json.Unmarshal(body, &head) == nil && head.Version > applied
+	left := false
+	if err := s.save(record); err != nil {
+		problems = append(problems, err.Error())
+	} else {
+		left = true
+	}
+	if len(problems) > 0 {
+		return "", left, fmt.Errorf("left the private network, but: %s", strings.Join(problems, "; "))
+	}
+	return "Left the private network.", true, nil
 }
 
-func (s *Service) takeHints(reply *reporter.NetworkReply) error {
+func (s *Service) hints(hints reporter.Hints) {
+	defer s.push()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.linked = true
+	s.held, s.connected = hints.Held, hints.Connected
+	if err := s.takeHints(hints); err != nil {
+		log.Printf("network hints: %v", err)
+	}
+	s.refresh()
+}
+
+func (s *Service) takeHints(hints reporter.Hints) error {
 	record, err := s.read()
 	if err != nil || !record.Joined || record.Document == nil {
 		return err
 	}
 	changed := false
-	for _, announced := range reply.Announced {
+	for _, announced := range hints.Announced {
 		peer, ok := member(*record.Document, announced.Node)
 		if !ok || announced.Node == record.NodeID || record.Announced[announced.Node] == announced.Key || slices.Contains(record.Applied.Blocked, announced.Key) {
 			continue
@@ -310,7 +413,7 @@ func (s *Service) takeHints(reply *reporter.NetworkReply) error {
 	for _, entry := range current(*record.Document, record.Announced, nil).Members {
 		listening[entry.Key] = !entry.NAT && entry.Node != record.NodeID
 	}
-	for _, entry := range reply.Endpoints {
+	for _, entry := range hints.Endpoints {
 		parsed, err := netip.ParseAddrPort(entry.Endpoint)
 		if err != nil || !listening[entry.Key] || parsed.Port() < network.FirstPort || parsed.Port() > network.LastPort || record.Endpoints[entry.Key] == parsed.String() {
 			continue
@@ -328,7 +431,7 @@ func (s *Service) takeHints(reply *reporter.NetworkReply) error {
 
 func (s *Service) wanted() Wanted {
 	record, err := s.read()
-	if err != nil || record.Removed || s.off || !record.Joined || record.Document == nil {
+	if err != nil || s.off || !record.Joined || record.Document == nil {
 		return Wanted{}
 	}
 	document := current(*record.Document, record.Announced, record.Endpoints)
@@ -364,7 +467,7 @@ func (s *Service) wanted() Wanted {
 		Address: self.Address,
 		DNS:     slices.Clone(document.DNS),
 		Exit:    chosen,
-		Held:    slices.Clone(s.held),
+		Held:    append([]string(nil), s.held...),
 		Key:     private,
 		MTU:     mtu,
 		Local:   s.local,
@@ -402,12 +505,18 @@ func reached(document network.Document, self string) []network.Member {
 }
 
 func (s *Service) observe(now time.Time, answers map[string]answer) {
-	defer s.push()
+	if via := s.watchPings(now, answers); via != "" {
+		s.send(reporter.Meet{Type: "meet", Via: via})
+	}
+	s.push()
+}
+
+func (s *Service) watchPings(now time.Time, answers map[string]answer) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	record, err := s.read()
 	if err != nil || record.Document == nil {
-		return
+		return ""
 	}
 	var allowed []string
 	for node := range answers {
@@ -423,13 +532,9 @@ func (s *Service) observe(now time.Time, answers map[string]answer) {
 		s.chooser.Through(now, meetingOf(*record.Document, s.meet, s.held), answered || !counted)
 	}
 	s.listen(now, record, answers)
-	changed := false
+	moved, changed := "", false
 	if point := s.chooser.Current(s.linked); point != s.meet {
-		s.meet, changed = point, true
-		select {
-		case s.wake <- struct{}{}:
-		default:
-		}
+		s.meet, moved, changed = point, point, true
 	}
 	if s.exit != "" && len(s.last.Peers) > 0 && s.watchExit(now, answers[s.exit].ok) {
 		changed = true
@@ -437,6 +542,7 @@ func (s *Service) observe(now time.Time, answers map[string]answer) {
 	if changed {
 		s.refresh()
 	}
+	return moved
 }
 
 func (s *Service) through(signed network.Document, self string, answers map[string]answer) (bool, bool) {
@@ -532,214 +638,78 @@ func (s *Service) push() {
 	}
 }
 
-func (s *Service) gone(gone bool) {
-	defer s.push()
+func (s *Service) setLinked(linked bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	record, err := s.read()
-	if err != nil || record.Removed == gone {
-		return
-	}
-	record.Removed = gone
-	if err := s.save(record); err != nil {
-		log.Printf("record that this laptop was removed: %v", err)
-	}
-	if gone {
-		log.Printf("Krynodes no longer knows this laptop; the tunnel is down and the keys are kept")
-	}
-	s.refresh()
+	s.linked = linked
 }
 
-func (s *Service) Removed() bool {
+func (s *Service) reconnected() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, err := s.read()
-	return err == nil && record.Removed
-}
-
-func (s *Service) deliver(requests []reporter.ActionRequest) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.queue(requests)
-	return nil
-}
-
-func (s *Service) queue(requests []reporter.ActionRequest) {
-	record, _ := s.read()
-	for _, request := range requests {
-		_, done := record.Ledger[request.ID]
-		if !done && !slices.ContainsFunc(s.queued, func(queued reporter.ActionRequest) bool { return queued.ID == request.ID }) {
-			s.queued = append(s.queued, request)
-		}
-	}
-}
-
-func (s *Service) act(request reporter.ActionRequest) reporter.ActionResult {
-	now := s.Now()
-	result := reporter.ActionResult{ID: request.ID, FinishedAt: now.UTC().Format(time.RFC3339Nano)}
-	refuse := func(err error) reporter.ActionResult {
-		result.Output = "refused: " + laptopWords(err.Error())
-		return result
-	}
-	if request.Kind != "trust" || request.Name != "devices" || request.Action != "trust" {
-		return refuse(errors.New("unknown action"))
-	}
-	expires, err := time.Parse(time.RFC3339Nano, request.ExpiresAt)
-	if err != nil {
-		return refuse(errors.New("invalid expiry"))
-	}
-	if now.After(expires.Add(expirySkew)) {
-		return refuse(fmt.Errorf("the request expired at %s", trust.ClockSays(expires, now)))
-	}
-	trusted, err := trust.Load(s.Dir)
-	if err != nil {
-		return refuse(err)
-	}
-	next, err := trust.ApplyTrustChange(trusted, request, now)
-	if err != nil {
-		return refuse(err)
-	}
-	if err := s.keep(trustFile, next); err != nil {
-		return refuse(err)
-	}
-	result.OK = true
-	result.Output = fmt.Sprintf("%d trusted devices, version %d", len(next.Core), next.Version)
-	return result
-}
-
-func (s *Service) answer(response reporter.HeartbeatResponse) {
-	defer s.push()
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.linked = true
-	if response.IntervalSeconds >= 15 && response.IntervalSeconds <= 3600 {
-		s.interval = time.Duration(response.IntervalSeconds) * time.Second
-	}
-	if response.Refresh {
-		s.acked = ""
-	}
-	s.queue(response.Actions)
-	if reply := response.Network; reply != nil {
-		if reply.Held != nil {
-			s.held = reply.Held
-		}
-		if reply.Connected != nil {
-			s.connected = reply.Connected
-		}
-		if record, err := s.read(); err == nil && len(reply.Document) > 0 && newer(reply.Document, record.Applied.Version) {
-			if err := s.applyDocument(reply.Document); err != nil {
-				log.Printf("network document refused: %s", laptopWords(err.Error()))
-			}
-		}
-		if err := s.takeHints(reply); err != nil {
-			log.Printf("network hints: %v", err)
-		}
-	}
-	s.refresh()
-}
-
-func (s *Service) beat(host reporter.Host) (reporter.Heartbeat, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	via := s.meet
 	record, err := s.read()
-	if err != nil {
-		log.Printf("read the laptop's state: %v", err)
-		return reporter.Heartbeat{}, false
-	}
-	beat := reporter.Heartbeat{NodeID: record.NodeID, Host: host}
-	if keys, err := s.keys(); err == nil {
-		public := keys.Public
-		beat.Network = &reporter.NetworkBeat{Version: record.Applied.Version, Key: &public, Links: []network.Link{}, Announce: record.Announce, Meet: s.meet}
-	}
-	return beat, true
-}
-
-func (s *Service) report(node string) (reporter.ActionsReport, bool) {
-	queued := s.queued
-	s.queued = nil
-	record, err := s.read()
-	if err != nil {
-		log.Printf("read the laptop's state: %v", err)
-		return reporter.ActionsReport{}, false
-	}
-	now := s.Now()
-	for id, at := range record.Ledger {
-		if now.Sub(at) > ledgerKept {
-			delete(record.Ledger, id)
-		}
-	}
-	for _, request := range queued {
-		if record.Ledger == nil {
-			record.Ledger = map[string]time.Time{}
-		}
-		record.Ledger[request.ID] = now
-		if err := s.save(record); err != nil {
-			log.Printf("record action %s: %v", request.ID, err)
-			continue
-		}
-		record.Results = append(record.Results, s.act(request))
-		if err := s.save(record); err != nil {
-			log.Printf("record the result of action %s: %v", request.ID, err)
-		}
-	}
-	report := reporter.ActionsReport{NodeID: node, Results: slices.Clone(record.Results[:min(len(record.Results), maxResults)])}
-	if trusted, err := trust.Load(s.Dir); err == nil {
-		devices := trusted.Report()
-		encoded, err := json.Marshal(devices)
-		sum := sha256.Sum256(encoded)
-		if hash := hex.EncodeToString(sum[:]); err == nil && hash != s.acked {
-			report.Inventory = &reporter.InventoryReport{Hash: hash, Trust: &devices}
-		}
-	}
-	return report, len(report.Results) > 0 || report.Inventory != nil
-}
-
-func (s *Service) cycle(ctx context.Context, to server, host reporter.Host) {
-	beat, ok := s.beat(host)
-	if !ok {
-		return
-	}
-	response, err := to.SendHeartbeat(ctx, beat)
-	if err != nil {
-		s.mu.Lock()
-		s.linked = false
-		s.mu.Unlock()
-		if !errors.Is(err, stream.ErrNotConnected) {
-			log.Printf("heartbeat: %v", err)
-		}
-		return
-	}
-	s.answer(response)
-	s.mu.Lock()
-	report, sending := s.report(beat.NodeID)
 	s.mu.Unlock()
-	if !sending {
-		return
+	if err == nil && record.Announce != nil {
+		s.send(*record.Announce)
 	}
-	answered, err := to.PostActions(ctx, report)
-	if err != nil {
-		log.Printf("report: %v", err)
-		return
+	if via != "" {
+		s.send(reporter.Meet{Type: "meet", Via: via})
 	}
+}
+
+func known(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "unknown"
+	}
+	return value
+}
+
+func (s *Service) hello(version string) reporter.Hello {
+	hostname, _ := os.Hostname()
+	message := reporter.Hello{Type: "hello", V: 1, Version: version, Hostname: known(hostname), OS: runtime.GOOS, Arch: runtime.GOARCH, Kernel: known(s.Kernel), Kind: "laptop"}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if answered.InventoryHash != nil {
-		s.acked = *answered.InventoryHash
+	if sealing, err := s.sealing(); err == nil {
+		message.SealKey = seal.Public(sealing)
 	}
-	if len(report.Results) == 0 {
-		return
+	if trusted, err := trust.Load(s.Dir); err == nil && len(trusted.Core) > 0 {
+		report := trusted.Report()
+		message.Trust = &report
 	}
 	record, err := s.read()
-	if err != nil {
-		log.Printf("read the laptop's state: %v", err)
-		return
+	keys, missing := s.keys()
+	if err == nil && missing == nil {
+		message.Network = &reporter.NetworkHello{Version: record.Applied.Version, Key: keys.Public, Signer: keys.Signer, Ready: true}
 	}
-	record.Results = slices.DeleteFunc(record.Results, func(result reporter.ActionResult) bool {
-		return slices.ContainsFunc(report.Results, func(sent reporter.ActionResult) bool { return sent.ID == result.ID })
-	})
-	if err := s.save(record); err != nil {
-		log.Printf("forget the posted results: %v", err)
+	return message
+}
+
+func (s *Service) daemon() *daemon.Daemon {
+	d := &daemon.Daemon{
+		State: s.Dir,
+		Trust: func() trust.Trust {
+			current, err := trust.Load(s.Dir)
+			if err != nil {
+				log.Print(err)
+			}
+			return current
+		},
+		SaveTrust: func(next trust.Trust) error { return s.keep(trustFile, next) },
+		Send: func(message any) error {
+			if result, ok := message.(reporter.Result); ok {
+				result.Message = laptopWords(result.Message)
+				message = result
+			}
+			if s.hub == nil {
+				return stream.ErrNotConnected
+			}
+			return s.hub.Send(message)
+		},
+		Now: s.Now,
 	}
+	d.Handlers = map[string]daemon.Handler{"trust/apply": d.ApplyTrust}
+	return d
 }
 
 func (s *Service) Run(ctx context.Context, version string) error {
@@ -751,43 +721,26 @@ func (s *Service) Run(ctx context.Context, version string) error {
 	if err != nil {
 		return fmt.Errorf("the agent token cannot be read (%v); run install again", err)
 	}
-	hostname, err := os.Hostname()
-	if err != nil {
-		return err
+	client := stream.New(record.Endpoint, string(token), version)
+	s.hub = client
+	d := s.daemon()
+	client.Hello = func() any { return s.hello(version) }
+	client.Connected = func() {
+		d.Resend()
+		s.reconnected()
 	}
-	host := reporter.Host{Hostname: hostname, OperatingSystem: runtime.GOOS, Architecture: runtime.GOARCH, AgentVersion: version}
+	client.Disconnected = func() { s.setLinked(false) }
+	client.Command = func(command reporter.Command) { go d.Handle(ctx, command) }
+	client.Ack = d.Ack
+	client.Network = s.receive
 	s.mu.Lock()
-	s.interval = time.Duration(record.Interval) * time.Second
-	s.wake = make(chan struct{}, 1)
 	s.refresh()
 	s.mu.Unlock()
 	s.push()
 	if s.Ping != nil {
 		go s.pings(ctx)
 	}
-	client := stream.New(record.Endpoint, string(token), version)
-	client.Deliver = s.deliver
-	client.Gone = s.gone
-	client.Noun = "laptop"
-	client.Unknown = "Krynodes does not know this laptop any more (it was removed or its token replaced); the tunnel stays down until it is added again"
-	go client.Run(ctx)
-	for {
-		s.cycle(ctx, client, host)
-		s.mu.Lock()
-		wait := s.interval
-		s.mu.Unlock()
-		timer := time.NewTimer(max(wait, 15*time.Second))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil
-		case <-timer.C:
-		case <-client.Pokes():
-			timer.Stop()
-		case <-client.Ready():
-			timer.Stop()
-		case <-s.wake:
-			timer.Stop()
-		}
-	}
+	go d.Start(ctx)
+	client.Run(ctx)
+	return nil
 }

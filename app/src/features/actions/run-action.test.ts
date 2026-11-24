@@ -20,6 +20,11 @@ const node: FleetNode = {
   lastSeenAt: null,
   trust: { version: 2, core: [PASSKEY], access: [PASSKEY] },
   update: "0.8.1",
+  kind: "server",
+  address: null,
+  via: null,
+  ms: null,
+  request: null,
 };
 
 const row = (id: string, patch: Partial<ActionRow> = {}): ActionRow => ({

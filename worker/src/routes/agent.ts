@@ -1,11 +1,15 @@
-import { agentSupported, MIN_AGENT } from "@krynodes/protocol";
+import {
+  agentSupported,
+  laptopEnrollSchema,
+  MIN_AGENT,
+} from "@krynodes/protocol";
 import type { MiddlewareHandler } from "hono";
 import { z } from "zod";
 
 import type { KrynodesApp, KrynodesEnv } from "../env";
 import { announce, upgradeInto } from "../fleet/client";
 import { randomToken, readBearerToken, sha256 } from "../lib/crypto";
-import { isUnique, readJson } from "./shared";
+import { dnsClash, isUnique, readJson } from "./shared";
 
 const agentRateLimit: MiddlewareHandler<KrynodesEnv> = async (
   context,
@@ -25,13 +29,21 @@ const agentRateLimit: MiddlewareHandler<KrynodesEnv> = async (
   await next();
 };
 
-const enrollSchema = z.strictObject({
+const hostSchema = z.strictObject({
   hostname: z.string().min(1).max(255),
   os: z.string().min(1).max(64),
   arch: z.string().min(1).max(64),
   kernel: z.string().min(1).max(128),
   version: z.string().min(1).max(64),
 });
+
+const enrollSchema = z.union([
+  hostSchema,
+  hostSchema.extend({
+    kind: z.literal("laptop"),
+    ...laptopEnrollSchema.shape,
+  }),
+]);
 
 export function registerAgentRoutes(app: KrynodesApp): void {
   app.use("/api/agent/*", agentRateLimit);
@@ -56,11 +68,23 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     const now = new Date().toISOString();
     const invite = await db
       .prepare(
-        "SELECT id, name FROM enrollments WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+        "SELECT id, name, trust, kind FROM enrollments WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
       )
       .bind(await sha256(token), now)
-      .first<{ id: string; name: string }>();
+      .first<{ id: string; name: string; trust: string; kind: string }>();
     if (!invite) return context.json({ code: "INVALID_ENROLLMENT" }, 401);
+    const laptop = "kind" in host.data ? host.data : null;
+    if (invite.kind !== (laptop ? "laptop" : "server")) {
+      return context.json({ code: "INVALID_ENROLLMENT" }, 400);
+    }
+    const clash = await dnsClash(
+      db,
+      invite.name,
+      laptop
+        ? "Make a new code with another name."
+        : "Create a new install command with another name.",
+    );
+    if (clash) return context.json({ code: "NAME_TAKEN", message: clash }, 409);
     const nodeId = crypto.randomUUID();
     const agentToken = randomToken();
     let created: D1Result[];
@@ -68,8 +92,8 @@ export function registerAgentRoutes(app: KrynodesApp): void {
       created = await db.batch([
         db
           .prepare(
-            `INSERT INTO nodes (id, name, agent_token_hash, enrolled_at, hostname, os, arch, kernel, version)
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+            `INSERT INTO nodes (id, name, agent_token_hash, enrolled_at, hostname, os, arch, kernel, version, kind, seal_key)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11, ?12
              WHERE EXISTS (SELECT 1 FROM enrollments WHERE id = ?10 AND used_at IS NULL)`,
           )
           .bind(
@@ -83,7 +107,20 @@ export function registerAgentRoutes(app: KrynodesApp): void {
             host.data.kernel,
             host.data.version,
             invite.id,
+            invite.kind,
+            laptop?.sealKey ?? null,
           ),
+        ...(laptop
+          ? [
+              db
+                .prepare(
+                  `INSERT INTO network_members (node_id, state, key, signer, port, ready, since)
+                   SELECT ?1, 'requested', ?2, ?3, ?4, 1, ?5
+                   WHERE EXISTS (SELECT 1 FROM nodes WHERE id = ?1)`,
+                )
+                .bind(nodeId, laptop.key, laptop.signer, laptop.port, now),
+            ]
+          : []),
         db
           .prepare(
             "UPDATE enrollments SET used_at = ?, node_id = ? WHERE id = ? AND used_at IS NULL",
@@ -95,7 +132,9 @@ export function registerAgentRoutes(app: KrynodesApp): void {
       return context.json(
         {
           code: "NAME_TAKEN",
-          message: `${invite.name} is already a server. Create a new install command with another name.`,
+          message: laptop
+            ? `${invite.name} is taken by another machine. Make a new code with another name.`
+            : `${invite.name} is already a server. Create a new install command with another name.`,
         },
         409,
       );
@@ -103,8 +142,25 @@ export function registerAgentRoutes(app: KrynodesApp): void {
     if (!created[0]?.meta.changes) {
       return context.json({ code: "INVALID_ENROLLMENT" }, 401);
     }
-    await announce(context.env, ["fleet"]);
-    return context.json({ nodeId, token: agentToken });
+    if (!laptop) {
+      await announce(context.env, ["fleet"]);
+      return context.json({ nodeId, token: agentToken });
+    }
+    const trusted = await db
+      .prepare(
+        "SELECT id, alg, public_key FROM devices WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+      )
+      .bind(invite.trust)
+      .all<{ id: string; alg: string; public_key: string }>();
+    await announce(context.env, ["fleet", "network"]);
+    return context.json({
+      nodeId,
+      name: invite.name,
+      token: agentToken,
+      trust: trusted.results.map(
+        (device) => `${device.id}.${device.alg}.${device.public_key}`,
+      ),
+    });
   });
 
   app.get("/api/agent/stream", async (context) => {

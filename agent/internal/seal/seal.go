@@ -1,13 +1,32 @@
 package seal
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 )
+
+const info = "krynodes-seal-v1"
+
+var encoding = base64.RawURLEncoding
+
+type envelope struct {
+	V   int    `json:"v"`
+	EPK string `json:"epk"`
+	IV  string `json:"iv"`
+	CT  string `json:"ct"`
+}
 
 func Load(dir string) (*ecdh.PrivateKey, error) {
 	path := filepath.Join(dir, "seal.key")
@@ -56,6 +75,65 @@ func Load(dir string) (*ecdh.PrivateKey, error) {
 	return key, nil
 }
 
+func Read(dir string) (*ecdh.PrivateKey, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "seal.key"))
+	if err != nil {
+		return nil, err
+	}
+	return ecdh.P256().NewPrivateKey(raw)
+}
+
 func Public(key *ecdh.PrivateKey) string {
-	return base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
+	return encoding.EncodeToString(key.PublicKey().Bytes())
+}
+
+func Open(key *ecdh.PrivateKey, sealed string) ([]byte, error) {
+	invalid := errors.New("the sealed message is not valid")
+	body, err := encoding.DecodeString(sealed)
+	if err != nil {
+		return nil, invalid
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	var message envelope
+	if err := decoder.Decode(&message); err != nil || message.V != 1 {
+		return nil, invalid
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, invalid
+	}
+	epk, err := encoding.DecodeString(message.EPK)
+	if err != nil {
+		return nil, invalid
+	}
+	ephemeral, err := ecdh.P256().NewPublicKey(epk)
+	if err != nil {
+		return nil, invalid
+	}
+	shared, err := key.ECDH(ephemeral)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := hkdf.Key(sha256.New, shared, append(slices.Clone(epk), key.PublicKey().Bytes()...), info, 32)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(secret)
+	if err != nil {
+		return nil, err
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	iv, ivErr := encoding.DecodeString(message.IV)
+	ct, ctErr := encoding.DecodeString(message.CT)
+	if ivErr != nil || ctErr != nil || len(iv) != aead.NonceSize() {
+		return nil, invalid
+	}
+	plaintext, err := aead.Open(nil, iv, ct, nil)
+	if err != nil {
+		return nil, errors.New("the sealed message is not for this server")
+	}
+	return plaintext, nil
 }

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,12 +46,33 @@ func TestEverySubcommandIsKnownAndAnythingElseIsRefused(t *testing.T) {
 		{[]string{"service"}, 1},
 		{[]string{"tray", "now"}, 1},
 		{[]string{"after-update"}, 1},
-		{nil, 2},
 		{[]string{"nope"}, 2},
 	} {
 		var stdout, stderr bytes.Buffer
 		if got := run(test.args, &stdout, &stderr); got != test.want {
 			t.Errorf("run(%v) = %d, want %d (stderr %q)", test.args, got, test.want, stderr.String())
+		}
+	}
+}
+
+func TestNoArgumentsShowsTheDashboardHint(t *testing.T) {
+	for _, terminal := range []bool{false, true} {
+		shown := []string{}
+		before, attached := notice, inTerminal
+		notice = func(text string) { shown = append(shown, text) }
+		inTerminal = func() bool { return terminal }
+		var stdout, stderr bytes.Buffer
+		got := run(nil, &stdout, &stderr)
+		notice, inTerminal = before, attached
+		if got != 0 {
+			t.Fatalf("terminal %v: run() = %d, want 0", terminal, got)
+		}
+		want, printed := []string{hint}, ""
+		if terminal {
+			want, printed = []string{}, hint+"\n"
+		}
+		if hint != "Krynodes is installed from your dashboard: Network, Add Laptop." || !slices.Equal(shown, want) || stdout.String() != printed || stderr.Len() != 0 {
+			t.Errorf("terminal %v: shown %q, printed %q and %q", terminal, shown, stdout.String(), stderr.String())
 		}
 	}
 }

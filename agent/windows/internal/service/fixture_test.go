@@ -2,9 +2,12 @@ package service
 
 import (
 	"bytes"
-	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -57,20 +60,29 @@ func (m memory) Write(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-type fakeServer struct {
-	response reporter.HeartbeatResponse
-	beats    []reporter.Heartbeat
-	reports  []reporter.ActionsReport
+type fakeHub struct {
+	sent   []any
+	hellos int
 }
 
-func (f *fakeServer) SendHeartbeat(_ context.Context, beat reporter.Heartbeat) (reporter.HeartbeatResponse, error) {
-	f.beats = append(f.beats, beat)
-	return f.response, nil
+func (h *fakeHub) Send(message any) error {
+	h.sent = append(h.sent, message)
+	return nil
 }
 
-func (f *fakeServer) PostActions(_ context.Context, report reporter.ActionsReport) (reporter.ActionsResponse, error) {
-	f.reports = append(f.reports, report)
-	return reporter.ActionsResponse{OK: true}, nil
+func (h *fakeHub) HelloAgain() error {
+	h.hellos++
+	return nil
+}
+
+func sentOf[T any](h *fakeHub) []T {
+	var found []T
+	for _, message := range h.sent {
+		if typed, ok := message.(T); ok {
+			found = append(found, typed)
+		}
+	}
+	return found
 }
 
 type fixture struct {
@@ -82,6 +94,7 @@ type fixture struct {
 	seal    string
 	passkey *ecdsa.PrivateKey
 	device  trust.TrustKey
+	hub     *fakeHub
 	applied []Wanted
 }
 
@@ -99,9 +112,11 @@ func digest(data []byte) []byte {
 	return sum[:]
 }
 
+const otherSealKey = "BAoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dzj6vH4_wYNFBsiKTA3PkVMU1phaG92fYSLkpmgp661vMM"
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{t: t, secrets: memory{}}
+	f := &fixture{t: t, secrets: memory{}, hub: &fakeHub{}}
 	keys, sealing, err := newKeys(f.secrets)
 	if err != nil {
 		t.Fatal(err)
@@ -113,11 +128,11 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.device = trust.TrustKey{ID: "cred-1", Name: "Phone", Alg: -7, PublicKey: spki(t, f.passkey)}
 	dir := t.TempDir()
-	if err := trust.Save(dir, trust.Trust{V: 2, NodeID: laptop1, Origin: testOrigin, RPID: testRPID, Version: 1, Core: []trust.TrustKey{f.device}, Access: []string{"cred-1"}, RequireUV: true}); err != nil {
+	if err := trust.Save(dir, trust.Trust{V: 1, NodeID: laptop1, Origin: testOrigin, RPID: testRPID, Version: 1, Keys: []trust.TrustKey{f.device}, Core: []string{"cred-1"}, Access: []string{"cred-1"}, RequireUV: true}); err != nil {
 		t.Fatal(err)
 	}
-	f.service = &Service{Dir: dir, Secrets: f.secrets, Now: func() time.Time { return testNow }, Apply: func(wanted Wanted) { f.applied = append(f.applied, wanted) }}
-	if err := f.service.save(state{Endpoint: testOrigin, NodeID: laptop1, Interval: 60}); err != nil {
+	f.service = &Service{Dir: dir, Secrets: f.secrets, Now: func() time.Time { return testNow }, Apply: func(wanted Wanted) { f.applied = append(f.applied, wanted) }, hub: f.hub}
+	if err := f.service.save(state{Endpoint: testOrigin, NodeID: laptop1}); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -156,7 +171,7 @@ func (f *fixture) signWith(id string, passkey *ecdsa.PrivateKey, body []byte) js
 	}
 	approval := f.assert(id, passkey, digest(grant))
 	approval["grant"] = b64.EncodeToString(grant)
-	r, s, err := ecdsa.Sign(rand.Reader, session, digest(body))
+	r, s, err := ecdsa.Sign(rand.Reader, session, digest(append([]byte("krynodes-document-v1\n"), body...)))
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -193,22 +208,55 @@ func endpoint(text string) *string {
 
 func (f *fixture) psk() string {
 	f.t.Helper()
-	sealed, err := seal.Seal(f.seal, bytes.Repeat([]byte{9}, 32))
+	recipient, err := b64.DecodeString(f.seal)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return sealed
+	public, err := ecdh.P256().NewPublicKey(recipient)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	ephemeral, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	shared, err := ephemeral.ECDH(public)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	epk := ephemeral.PublicKey().Bytes()
+	secret, err := hkdf.Key(sha256.New, shared, append(bytes.Clone(epk), recipient...), "krynodes-seal-v1", 32)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	block, err := aes.NewCipher(secret)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	iv := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(iv); err != nil {
+		f.t.Fatal(err)
+	}
+	envelope, err := json.Marshal(map[string]any{"v": 1, "epk": b64.EncodeToString(epk), "iv": b64.EncodeToString(iv), "ct": b64.EncodeToString(aead.Seal(nil, iv, bytes.Repeat([]byte{9}, 32), nil))})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return b64.EncodeToString(envelope)
 }
 
 func (f *fixture) laptop() network.Member {
-	return network.Member{Node: laptop1, Name: "laptop-1", Address: "10.88.0.10", Key: f.keys.Public, Signer: f.keys.Signer, Port: network.FirstPort, Kind: "laptop", PSK: map[string]string{server1: f.psk(), server2: f.psk()}, Relay: map[string]int{server2: network.FirstRelayPort}}
+	return network.Member{Node: laptop1, Name: "laptop-1", Address: "10.88.0.10", Key: f.keys.Public, Signer: f.keys.Signer, SealKey: f.seal, Port: network.FirstPort, Kind: "laptop", PSK: map[string]string{server1: f.psk(), server2: f.psk()}, Relay: map[string]int{server2: network.FirstRelayPort}}
 }
 
 func (f *fixture) document(version int, parent string, withLaptop bool) []byte {
 	f.t.Helper()
 	members := []network.Member{
-		{Node: server1, Name: "server-1", Address: "10.88.0.1", Key: f.server.Public, Signer: f.server.Signer, Port: network.FirstPort, Endpoint: endpoint("203.0.113.1:51820"), Exit: true, PSK: map[string]string{server2: "c2VhbGVk"}},
-		{Node: server2, Name: "server-2", Address: "10.88.0.2", Key: wgKey(2), Signer: wgKey(12), Port: network.FirstPort, NAT: true, PSK: map[string]string{server1: "c2VhbGVk"}},
+		{Node: server1, Name: "server-1", Address: "10.88.0.1", Key: f.server.Public, Signer: f.server.Signer, SealKey: otherSealKey, Port: network.FirstPort, Endpoint: endpoint("203.0.113.1:51820"), Exit: true, PSK: map[string]string{server2: "c2VhbGVk"}},
+		{Node: server2, Name: "server-2", Address: "10.88.0.2", Key: wgKey(2), Signer: wgKey(12), SealKey: otherSealKey, Port: network.FirstPort, NAT: true, PSK: map[string]string{server1: "c2VhbGVk"}},
 	}
 	blocked := []string{}
 	if withLaptop {
@@ -217,19 +265,19 @@ func (f *fixture) document(version int, parent string, withLaptop bool) []byte {
 	} else {
 		blocked = append(blocked, f.keys.Public)
 	}
-	body, err := json.Marshal(network.Document{V: 1, Version: version, Range: "10.88.0.0/24", Port: network.FirstPort, MTU: 1420, Parent: parent, DNS: []string{"10.88.0.1"}, Members: members, Blocked: blocked})
+	body, err := json.Marshal(network.Document{V: 1, Version: version, Range: "10.88.0.0/24", Port: network.FirstPort, MTU: 1420, Parent: parent, DNS: []string{"10.88.0.1"}, Members: members, Blocked: blocked, Allow: []network.Rule{}})
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	return body
 }
 
-func (f *fixture) change(id string, version int, core []trust.TrustKey) reporter.ActionRequest {
+func (f *fixture) change(id string, version int, core []trust.TrustKey) reporter.Command {
 	f.t.Helper()
 	body, err := json.Marshal(map[string]any{
-		"v": 2, "origin": testOrigin, "rpId": testRPID, "version": version,
+		"v": 1, "origin": testOrigin, "rpId": testRPID, "version": version,
 		"issuedAt": testNow.Format(time.RFC3339Nano), "expiresAt": testNow.Add(time.Hour).Format(time.RFC3339Nano),
-		"core": core, "passphrase": nil, "access": map[string][]string{laptop1: {"cred-1"}},
+		"core": core, "access": map[string][]string{laptop1: {"cred-1"}},
 	})
 	if err != nil {
 		f.t.Fatal(err)
@@ -238,7 +286,18 @@ func (f *fixture) change(id string, version int, core []trust.TrustKey) reporter
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	return reporter.ActionRequest{ID: id, Kind: "trust", Name: "devices", Action: "trust", ExpiresAt: testNow.Add(10 * time.Minute).Format(time.RFC3339Nano), Signed: signed}
+	return reporter.Command{Type: "command", ID: id, Kind: "trust", Name: "devices", Action: "apply", Signed: string(signed)}
+}
+
+func (f *fixture) deliver(version int, signed json.RawMessage) reporter.Applied {
+	f.t.Helper()
+	before := len(f.hub.sent)
+	f.service.receive(reporter.Document{Type: "document", Version: version, Signed: string(signed)})
+	answers := sentOf[reporter.Applied](&fakeHub{sent: f.hub.sent[before:]})
+	if len(answers) != 1 {
+		f.t.Fatalf("version %d was answered %d times: %+v", version, len(answers), f.hub.sent[before:])
+	}
+	return answers[0]
 }
 
 func (f *fixture) record() state {

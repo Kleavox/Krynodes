@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
+    "lib": ["ES2024", "DOM"],
     "types": []
   },
   "include": ["src/**/*.ts"],

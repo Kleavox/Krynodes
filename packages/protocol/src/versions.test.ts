@@ -9,12 +9,14 @@ describe("agent versions", () => {
     expect(compareVersions("0.3.1", "0.3.1")).toBe(0);
   });
 
-  it("supports only agent 0.7.90 and later, and builds from source", () => {
-    expect(MIN_AGENT).toBe("0.7.90");
-    expect(agentSupported("0.7.90")).toBe(true);
-    expect(agentSupported("0.7.91")).toBe(true);
+  it("supports only agent 0.7.92 and later, and builds from source", () => {
+    expect(MIN_AGENT).toBe("0.7.92");
+    expect(agentSupported("0.7.92")).toBe(true);
+    expect(agentSupported("0.7.93")).toBe(true);
     expect(agentSupported("0.8.0")).toBe(true);
     expect(agentSupported("0.10.0")).toBe(true);
+    expect(agentSupported("0.7.91")).toBe(false);
+    expect(agentSupported("0.7.90")).toBe(false);
     expect(agentSupported("0.7.89")).toBe(false);
     expect(agentSupported("0.7.25")).toBe(false);
     expect(agentSupported("0.7.9")).toBe(false);

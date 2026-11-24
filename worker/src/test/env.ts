@@ -21,7 +21,11 @@ interface HubCall {
 
 export function testEnv(overrides: Partial<Env> = {}) {
   const db = freshDb();
-  const hub = { online: [] as string[], calls: [] as HubCall[] };
+  const hub = {
+    online: [] as string[],
+    via: {} as Record<string, string> | null,
+    calls: [] as HubCall[],
+  };
   const env = {
     DB: db,
     ENVIRONMENT: "development",
@@ -45,6 +49,11 @@ export function testEnv(overrides: Partial<Env> = {}) {
             : null;
           hub.calls.push({ path, body });
           if (path === "/online") return Response.json(hub.online);
+          if (path === "/via") {
+            return hub.via
+              ? Response.json(hub.via)
+              : new Response(null, { status: 500 });
+          }
           if (path === "/command") {
             return hub.online.includes(String(body?.nodeId))
               ? Response.json({ sent: true })

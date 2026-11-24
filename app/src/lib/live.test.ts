@@ -1,7 +1,13 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { liveUrl, onProgress, retryDelay, watch } from "./live";
+import {
+  liveUrl,
+  onNetworkChange,
+  onProgress,
+  retryDelay,
+  watch,
+} from "./live";
 
 class FakeSocket {
   static all: FakeSocket[] = [];
@@ -77,7 +83,7 @@ describe("live updates", () => {
     current().deliver(JSON.stringify({ type: "changed", topics: ["fleet"] }));
     expect(keys()).toEqual([]);
     vi.advanceTimersByTime(300);
-    expect(keys()).toEqual([["fleet"], ["actions"]]);
+    expect(keys()).toEqual([["fleet"], ["actions"], ["network"]]);
   });
 
   it("ignores pongs and anything unreadable", () => {
@@ -99,7 +105,7 @@ describe("live updates", () => {
     expect(FakeSocket.all).toHaveLength(2);
     current().onopen?.();
     vi.advanceTimersByTime(300);
-    expect(keys()).toEqual([["fleet"], ["actions"]]);
+    expect(keys()).toEqual([["fleet"], ["actions"], ["network"]]);
   });
 
   it("backs off further while the server stays away", () => {
@@ -141,5 +147,22 @@ describe("live updates", () => {
     expect(seen).toEqual(["a:1", "a:2"]);
     vi.advanceTimersByTime(1_000);
     expect(keys()).toEqual([]);
+  });
+
+  it("tells network listeners when the network topic changed", () => {
+    start();
+    let heard = 0;
+    const off = onNetworkChange(() => {
+      heard += 1;
+    });
+    current().deliver(JSON.stringify({ type: "changed", topics: ["fleet"] }));
+    current().deliver(
+      JSON.stringify({ type: "changed", topics: ["network", "fleet"] }),
+    );
+    current().deliver(JSON.stringify({ type: "changed" }));
+    expect(heard).toBe(1);
+    off();
+    current().deliver(JSON.stringify({ type: "changed", topics: ["network"] }));
+    expect(heard).toBe(1);
   });
 });

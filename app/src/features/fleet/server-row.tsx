@@ -1,15 +1,34 @@
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { RowMenu } from "@/components/row-menu";
+import { Badge } from "@/components/ui/badge";
 import { ActionDialog, type Ask } from "@/features/actions/action-dialog";
 import { DeleteDialog } from "@/features/fleet/delete-dialog";
+import { networkApi } from "@/lib/api";
 import { stampTime } from "@/lib/format";
+import { fleetRow, networkFailure } from "@/lib/network";
 import { cn } from "@/lib/utils";
 import type { FleetNode } from "@/types";
 
-export function serverActions(
-  node: FleetNode,
-): { label: string; ask?: Ask; destructive?: boolean; erase?: boolean }[] {
+interface Item {
+  label: string;
+  ask?: Ask;
+  destructive?: boolean;
+  erase?: boolean;
+  again?: boolean;
+}
+
+export function serverActions(node: FleetNode): Item[] {
+  const again: Item[] =
+    node.request === "rejected"
+      ? [{ label: "Ask to Join Again", again: true }]
+      : [];
+  if (node.kind === "laptop") {
+    return node.address === null
+      ? [...again, { label: "Delete Laptop", destructive: true, erase: true }]
+      : again;
+  }
   return [
     {
       label: "Update Agent",
@@ -52,12 +71,26 @@ export function serverActions(
     ...(node.online
       ? []
       : [{ label: "Delete Server", destructive: true, erase: true }]),
+    ...again,
   ];
 }
 
-export function ServerRow({ node }: { node: FleetNode }) {
+const askAgain = (node: FleetNode) =>
+  void networkApi.askAgain(node.id).catch((error: unknown) => {
+    toast.error(networkFailure(error));
+  });
+
+export function ServerRow({
+  node,
+  names,
+}: {
+  node: FleetNode;
+  names: ReadonlyMap<string, string>;
+}) {
   const [asked, setAsked] = useState<Ask | null>(null);
   const [erasing, setErasing] = useState(false);
+  const network = fleetRow(node, names);
+  const items = serverActions(node);
   return (
     <li
       id={`server-${node.id}`}
@@ -76,6 +109,13 @@ export function ServerRow({ node }: { node: FleetNode }) {
             />
             {node.online ? "Online" : "Offline"}
           </span>
+          {node.kind === "laptop" && <Badge variant="outline">Laptop</Badge>}
+          {node.request === "requested" && (
+            <Badge variant="secondary">Wants to Join</Badge>
+          )}
+          {node.request === "rejected" && (
+            <Badge variant="secondary">Join Rejected</Badge>
+          )}
         </div>
         <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
           <span>
@@ -91,19 +131,28 @@ export function ServerRow({ node }: { node: FleetNode }) {
             </span>
           )}
         </p>
+        {network && (
+          <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+            <span className="font-mono">{network.address}</span>
+            <span>{network.path}</span>
+            <span>{network.ms}</span>
+          </p>
+        )}
       </div>
-      <RowMenu
-        label={`Actions for ${node.name}`}
-        items={serverActions(node).map(
-          ({ label, ask, destructive, erase }) => ({
+      {items.length > 0 && (
+        <RowMenu
+          label={`Actions for ${node.name}`}
+          items={items.map(({ label, ask, destructive, erase, again }) => ({
             label,
             destructive,
-            onSelect: erase
-              ? () => setErasing(true)
-              : ask && (() => setAsked(ask)),
-          }),
-        )}
-      />
+            onSelect: again
+              ? () => askAgain(node)
+              : erase
+                ? () => setErasing(true)
+                : ask && (() => setAsked(ask)),
+          }))}
+        />
+      )}
       {asked && (
         <ActionDialog node={node} ask={asked} onClose={() => setAsked(null)} />
       )}

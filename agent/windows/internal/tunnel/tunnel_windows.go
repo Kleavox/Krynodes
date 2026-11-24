@@ -31,7 +31,7 @@ import (
 const (
 	adapterName = "Krynodes"
 	ruleName    = "Krynodes tunnel: refuse inbound"
-	nrptKey     = `SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig\Krynodes`
+	nrptRoot    = `SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig`
 	defaultMTU  = 1420
 )
 
@@ -306,7 +306,7 @@ func (t *Tunnel) route(luid winipcfg.LUID, plan Plan, six bool) error {
 	policy, on := NRPT(plan)
 	switch {
 	case on && (t.policy == nil || !reflect.DeepEqual(*t.policy, policy)):
-		if err := writeNRPT(policy); err != nil {
+		if err := writeNRPT(nrptName, policy); err != nil {
 			return fmt.Errorf("send every name to the exit's DNS: %w", err)
 		}
 		t.policy = &policy
@@ -315,6 +315,24 @@ func (t *Tunnel) route(luid winipcfg.LUID, plan Plan, six bool) error {
 			return err
 		}
 		t.policy = nil
+	}
+	if !on {
+		return nil
+	}
+	existing, err := readNRPT()
+	if err != nil {
+		return fmt.Errorf("read the other DNS rules: %w", err)
+	}
+	write, remove := nrptChanges(true, existing)
+	for _, key := range remove {
+		if err := deleteNRPT(key); err != nil {
+			return err
+		}
+	}
+	for _, rule := range write {
+		if err := writeNRPT(rule.Key, rule.Policy); err != nil {
+			return fmt.Errorf("keep another VPN's names on its DNS: %w", err)
+		}
 	}
 	return nil
 }
@@ -570,8 +588,36 @@ func firewallWarning() string {
 	return ""
 }
 
-func writeNRPT(policy Policy) error {
-	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, nrptKey, registry.SET_VALUE)
+func readNRPT() ([]nrptRule, error) {
+	root, err := registry.OpenKey(registry.LOCAL_MACHINE, nrptRoot, registry.ENUMERATE_SUB_KEYS)
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	names, err := root.ReadSubKeyNames(-1)
+	if err != nil {
+		return nil, err
+	}
+	var rules []nrptRule
+	for _, name := range names {
+		key, err := registry.OpenKey(root, name, registry.QUERY_VALUE)
+		if err != nil {
+			continue
+		}
+		rule := nrptRule{Key: name}
+		rule.Name, _, _ = key.GetStringsValue("Name")
+		rule.Servers, _, _ = key.GetStringValue("GenericDNSServers")
+		key.Close()
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func writeNRPT(name string, policy Policy) error {
+	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, nrptRoot+`\`+name, registry.SET_VALUE)
 	if err != nil {
 		return err
 	}
@@ -593,13 +639,26 @@ func writeNRPT(policy Policy) error {
 	return nil
 }
 
-func RemoveNRPT() error {
-	err := registry.DeleteKey(registry.LOCAL_MACHINE, nrptKey)
+func deleteNRPT(name string) error {
+	err := registry.DeleteKey(registry.LOCAL_MACHINE, nrptRoot+`\`+name)
 	if err != nil && !errors.Is(err, registry.ErrNotExist) {
 		return fmt.Errorf("remove the exit's DNS rule: %w", err)
 	}
 	flushResolver.Call()
 	return nil
+}
+
+func RemoveNRPT() error {
+	failed := []error{deleteNRPT(nrptName)}
+	existing, err := readNRPT()
+	if err != nil {
+		failed = append(failed, fmt.Errorf("read the other DNS rules: %w", err))
+	}
+	_, remove := nrptChanges(false, existing)
+	for _, name := range remove {
+		failed = append(failed, deleteNRPT(name))
+	}
+	return errors.Join(failed...)
 }
 
 func Ping(address string, timeout time.Duration) (time.Duration, bool) {

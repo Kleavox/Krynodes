@@ -440,3 +440,46 @@ func TestRoamingNeverMovesARelayPeerOffTheChosenMeetingPoint(t *testing.T) {
 		t.Fatalf("a relay peer with no endpoint yet:\n%s", got)
 	}
 }
+
+var (
+	tailscale = nrptRule{Key: "{5ABEB4A5-0000-4000-8000-000000000001}", Policy: Policy{Name: []string{"."}, Servers: "100.100.100.100;fd7a:115c:a1e0::53", ConfigOptions: 8, Version: 2}}
+	added     = nrptRule{Key: "Krynodes for {5ABEB4A5-0000-4000-8000-000000000001}", Policy: Policy{Name: []string{".ts.net"}, Servers: "100.100.100.100;fd7a:115c:a1e0::53", ConfigOptions: 8, Version: 2}}
+	exitRule  = nrptRule{Key: "Krynodes", Policy: Policy{Name: []string{"."}, Servers: "10.88.0.1;1.1.1.1", ConfigOptions: 8, Version: 2}}
+	split     = nrptRule{Key: "{0C0A0000-0000-4000-8000-000000000002}", Policy: Policy{Name: []string{".corp.example"}, Servers: "10.88.37.53"}}
+	unknown   = nrptRule{Key: "{0C0A0000-0000-4000-8000-000000000003}", Policy: Policy{Name: []string{"."}, Servers: "203.0.113.53"}}
+)
+
+func TestAnotherVPNsCatchAllGetsItsOwnSuffixWhileExitIsOn(t *testing.T) {
+	existing := []nrptRule{exitRule, tailscale, split, unknown}
+	if got := otherVPNRules(existing); !reflect.DeepEqual(got, []nrptRule{added}) {
+		t.Fatalf("rules %+v", got)
+	}
+	write, remove := nrptChanges(true, existing)
+	if !reflect.DeepEqual(write, []nrptRule{added}) || len(remove) != 0 {
+		t.Fatalf("write %+v, remove %q", write, remove)
+	}
+	write, remove = nrptChanges(true, append(existing, added))
+	if len(write) != 0 || len(remove) != 0 {
+		t.Fatalf("an added rule is written again: write %+v, remove %q", write, remove)
+	}
+	if got := otherVPNRules([]nrptRule{exitRule, split, unknown, added}); len(got) != 0 {
+		t.Fatalf("rules without another VPN's catch-all: %+v", got)
+	}
+}
+
+func TestTheAddedRulesGoWhenExitGoesOff(t *testing.T) {
+	stale := nrptRule{Key: "Krynodes for {5ABEB4A5-0000-4000-8000-000000000009}", Policy: Policy{Name: []string{".ts.net"}, Servers: "100.100.100.100"}}
+	existing := []nrptRule{exitRule, tailscale, split, added, unknown, stale}
+	write, remove := nrptChanges(false, existing)
+	if len(write) != 0 || !slices.Equal(remove, []string{added.Key, stale.Key}) {
+		t.Fatalf("write %+v, remove %q", write, remove)
+	}
+	write, remove = nrptChanges(true, []nrptRule{exitRule, split, added})
+	if len(write) != 0 || !slices.Equal(remove, []string{added.Key}) {
+		t.Fatalf("after the other VPN went: write %+v, remove %q", write, remove)
+	}
+	write, remove = nrptChanges(false, []nrptRule{tailscale, split, unknown})
+	if len(write) != 0 || len(remove) != 0 {
+		t.Fatalf("with nothing added: write %+v, remove %q", write, remove)
+	}
+}

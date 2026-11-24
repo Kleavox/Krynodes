@@ -75,7 +75,7 @@ func (t *tray) refresh() {
 			return
 		}
 	}
-	t.show(menu(status, reachable), reachable && status.Connected && status.Joined && !status.Removed)
+	t.show(menu(status, reachable), reachable && status.Connected && status.Joined)
 	if !reachable {
 		return
 	}
@@ -173,6 +173,8 @@ func (t *tray) act(key string) {
 		pipe.Ask(pipe.Request{Request: "disconnect"})
 		systray.Quit()
 		return
+	case chosen.Show != "":
+		show(chosen.Show)
 	case chosen.Copy != "":
 		if err := copyText(chosen.Copy); err != nil {
 			failed = err.Error()

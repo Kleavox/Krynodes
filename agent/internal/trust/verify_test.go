@@ -1,6 +1,7 @@
 package trust
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -363,4 +364,162 @@ func TestACorePasskeyWithoutAccessCannotCommand(t *testing.T) {
 	c.trust.Core = append(c.trust.Core, "cred-2")
 	c.trust.Access = []string{"cred-2"}
 	refused(t, c.verify(t, testNow), "no access to this server")
+}
+
+var testDocument = []byte(`{"v":1,"version":4,"range":"10.88.0.0/24","allow":[{"from":{"group":"laptops"},"to":{"group":"servers"},"ports":"all"}]}`)
+
+func (c *deployCase) signedDocument(t *testing.T, document []byte) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"grant":     c.approval(t),
+		"document":  b64.EncodeToString(document),
+		"signature": p1363(t, c.signer, append([]byte(documentTag), document...)),
+	}
+}
+
+func marshalled(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func (c *deployCase) verifyDocument(t *testing.T, now time.Time) ([]byte, error) {
+	t.Helper()
+	return VerifyDocument(c.trust, marshalled(t, c.signedDocument(t, testDocument)), now)
+}
+
+func TestAValidDocumentVerifies(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	document, err := c.verifyDocument(t, testNow)
+	if err != nil || !bytes.Equal(document, testDocument) {
+		t.Fatalf("document %s err %v", document, err)
+	}
+}
+
+func TestAnRS256PasskeyVerifiesADocument(t *testing.T) {
+	if _, err := newDeployCase(t, algRS256).verifyDocument(t, testNow); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestADocumentFromAPasskeyOutsideAccessIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	c.trust.Access = nil
+	_, err := c.verifyDocument(t, testNow)
+	refused(t, err, "no access to this server")
+}
+
+func TestADocumentFromAnUntrustedPasskeyIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	_, stranger := newPasskey(t, "cred-2", algES256)
+	c.passkey = stranger
+	c.credentialID = "cred-2"
+	_, err := c.verifyDocument(t, testNow)
+	refused(t, err, "passkey is not trusted")
+}
+
+func TestADocumentWithoutUVIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	c.assertion.flags = flagPresent
+	_, err := c.verifyDocument(t, testNow)
+	refused(t, err, "was opened without a fingerprint, face or PIN")
+}
+
+func TestADocumentWithABadGrantIsRefused(t *testing.T) {
+	for reason, change := range map[string]func(*deployCase){
+		"longer than 15 minutes": func(c *deployCase) { c.grant["expiresAt"] = testNow.Add(15 * time.Minute).Format(time.RFC3339Nano) },
+		"from the future": func(c *deployCase) {
+			c.grant["issuedAt"] = testNow.Add(5 * time.Minute).Format(time.RFC3339Nano)
+			c.grant["expiresAt"] = testNow.Add(10 * time.Minute).Format(time.RFC3339Nano)
+		},
+		"another rp id":      func(c *deployCase) { c.grant["rpId"] = "evil.example" },
+		"grant is malformed": func(c *deployCase) { c.grant["v"] = 2 },
+	} {
+		c := newDeployCase(t, algES256)
+		change(c)
+		_, err := c.verifyDocument(t, testNow)
+		refused(t, err, reason)
+	}
+}
+
+func TestADocumentSignedByAnotherKeyIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.signer = other
+	_, err = c.verifyDocument(t, testNow)
+	refused(t, err, "document signature is invalid")
+}
+
+func TestAChangedByteInTheDocumentIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	signed := c.signedDocument(t, testDocument)
+	signed["document"] = b64.EncodeToString(bytes.Replace(testDocument, []byte(`"version":4`), []byte(`"version":5`), 1))
+	_, err := VerifyDocument(c.trust, marshalled(t, signed), testNow)
+	refused(t, err, "document signature is invalid")
+}
+
+func TestARuleAddedAfterSigningIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	signed := c.signedDocument(t, testDocument)
+	var document map[string]any
+	if err := json.Unmarshal(testDocument, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["allow"] = append(document["allow"].([]any), map[string]any{
+		"from": map[string]any{"group": "servers"}, "to": map[string]any{"group": "servers"}, "ports": "all",
+	})
+	signed["document"] = b64.EncodeToString(marshalled(t, document))
+	_, err := VerifyDocument(c.trust, marshalled(t, signed), testNow)
+	refused(t, err, "document signature is invalid")
+}
+
+func TestACommandRewrappedAsADocumentIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	var command SignedCommand
+	if err := json.Unmarshal([]byte(c.request(t).Signed), &command); err != nil {
+		t.Fatal(err)
+	}
+	rewrapped := map[string]any{"grant": command.Grant, "document": command.Command, "signature": command.Signature}
+	_, err := VerifyDocument(c.trust, marshalled(t, rewrapped), testNow)
+	refused(t, err, "document signature is invalid")
+}
+
+func TestUnknownFieldsInASignedDocumentAreRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	signed := c.signedDocument(t, testDocument)
+	signed["extra"] = true
+	_, err := VerifyDocument(c.trust, marshalled(t, signed), testNow)
+	refused(t, err, "malformed")
+}
+
+func TestAMissingDocumentIsRefused(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	_, err := VerifyDocument(c.trust, nil, testNow)
+	refused(t, err, "malformed")
+	signed := c.signedDocument(t, testDocument)
+	signed["document"] = ""
+	_, err = VerifyDocument(c.trust, marshalled(t, signed), testNow)
+	refused(t, err, "document is not base64url")
+}
+
+func TestCommandsStillVerifyAfterTheSplit(t *testing.T) {
+	c := newDeployCase(t, algES256)
+	command, err := VerifyCommand(c.trust, c.request(t), testNow)
+	if err != nil || command.Action != "restart" {
+		t.Fatalf("command %+v err %v", command, err)
+	}
+	if _, err := c.verifyDocument(t, testNow); err != nil {
+		t.Fatal(err)
+	}
+	asCommand := reporter.Command{Type: "command", ID: testID, Kind: "host", Name: "server-1", Action: "restart", Signed: string(marshalled(t, c.signedDocument(t, testDocument)))}
+	_, err = VerifyCommand(c.trust, asCommand, testNow)
+	refused(t, err, "malformed")
+	_, err = VerifyDocument(c.trust, []byte(c.request(t).Signed), testNow)
+	refused(t, err, "malformed")
 }

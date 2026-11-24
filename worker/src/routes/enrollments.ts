@@ -1,14 +1,15 @@
 import { z } from "zod";
 
 import { readAgentRelease } from "../agent/releases";
-import type { KrynodesApp } from "../env";
+import type { KrynodesApp, KrynodesContext } from "../env";
 import { randomToken, sha256 } from "../lib/crypto";
-import { agentOrigin, invalidRequest, readJson } from "./shared";
+import { agentOrigin, dnsClash, invalidRequest, readJson } from "./shared";
 
-const ENROLLMENT_TTL_MS = 60 * 60_000;
+const ENROLLMENT_TTL_MS = { server: 60 * 60_000, laptop: 10 * 60_000 };
 const SHELL_SAFE = /^[A-Za-z0-9:/._,-]+$/u;
 const TAIL = /\nmain "\$@"\n$/u;
-const DOWNLOADS = "https://github.com/Kleavox/Krynodes/releases/download";
+export const DOWNLOADS =
+  "https://github.com/Kleavox/Krynodes/releases/download";
 
 const createSchema = z.strictObject({
   name: z.string().trim().min(1).max(64),
@@ -27,65 +28,80 @@ const script = (body: string, status = 200) =>
     },
   });
 
-export function registerEnrollmentRoutes(app: KrynodesApp): void {
-  app.post("/api/enrollments", async (context) => {
-    const body = createSchema.safeParse(await readJson(context));
-    if (
-      !body.success ||
-      new Set(body.data.trust).size !== body.data.trust.length
-    ) {
-      return invalidRequest(context);
-    }
-    const { name, trust } = body.data;
-    const db = context.env.DB;
-    const known = await db
-      .prepare(
-        "SELECT COUNT(*) AS count FROM devices WHERE id IN (SELECT value FROM json_each(?))",
-      )
-      .bind(JSON.stringify(trust))
-      .first<{ count: number }>();
-    if (known?.count !== trust.length) {
-      return context.json(
-        {
-          code: "UNKNOWN_DEVICE",
-          message: "A passkey to trust is not registered here.",
-        },
-        422,
-      );
-    }
-    if (
-      await db.prepare("SELECT 1 FROM nodes WHERE name = ?").bind(name).first()
-    ) {
-      return context.json(
-        {
-          code: "NAME_TAKEN",
-          message: `${name} is already a server. Choose another name.`,
-        },
-        409,
-      );
-    }
-    const id = crypto.randomUUID();
-    const token = randomToken();
-    const now = Date.now();
-    const expiresAt = new Date(now + ENROLLMENT_TTL_MS).toISOString();
-    await db
-      .prepare(
-        "INSERT INTO enrollments (id, token_hash, name, trust, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-      )
-      .bind(
-        id,
-        await sha256(token),
-        name,
-        JSON.stringify(trust),
-        new Date(now).toISOString(),
-        expiresAt,
-      )
-      .run();
+export async function createEnrollment(
+  context: KrynodesContext,
+  kind: "server" | "laptop",
+): Promise<Response | { id: string; token: string; expiresAt: string }> {
+  const body = createSchema.safeParse(await readJson(context));
+  if (
+    !body.success ||
+    new Set(body.data.trust).size !== body.data.trust.length
+  ) {
+    return invalidRequest(context);
+  }
+  const { name, trust } = body.data;
+  const db = context.env.DB;
+  const known = await db
+    .prepare(
+      "SELECT COUNT(*) AS count FROM devices WHERE id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(JSON.stringify(trust))
+    .first<{ count: number }>();
+  if (known?.count !== trust.length) {
     return context.json(
       {
-        id,
-        command: `curl -fsSL ${agentOrigin(context.env)}/i/${token} | sudo sh`,
-        expiresAt,
+        code: "UNKNOWN_DEVICE",
+        message: "A passkey to trust is not registered here.",
+      },
+      422,
+    );
+  }
+  if (
+    await db.prepare("SELECT 1 FROM nodes WHERE name = ?").bind(name).first()
+  ) {
+    return context.json(
+      {
+        code: "NAME_TAKEN",
+        message:
+          kind === "server"
+            ? `${name} is already a server. Choose another name.`
+            : `${name} is taken by another machine. Choose another name.`,
+      },
+      409,
+    );
+  }
+  const clash = await dnsClash(db, name, "Choose another name.");
+  if (clash) return context.json({ code: "NAME_TAKEN", message: clash }, 409);
+  const id = crypto.randomUUID();
+  const token = randomToken();
+  const now = Date.now();
+  const expiresAt = new Date(now + ENROLLMENT_TTL_MS[kind]).toISOString();
+  await db
+    .prepare(
+      "INSERT INTO enrollments (id, token_hash, name, trust, created_at, expires_at, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )
+    .bind(
+      id,
+      await sha256(token),
+      name,
+      JSON.stringify(trust),
+      new Date(now).toISOString(),
+      expiresAt,
+      kind,
+    )
+    .run();
+  return { id, token, expiresAt };
+}
+
+export function registerEnrollmentRoutes(app: KrynodesApp): void {
+  app.post("/api/enrollments", async (context) => {
+    const created = await createEnrollment(context, "server");
+    if (created instanceof Response) return created;
+    return context.json(
+      {
+        id: created.id,
+        command: `curl -fsSL ${agentOrigin(context.env)}/i/${created.token} | sudo sh`,
+        expiresAt: created.expiresAt,
       },
       201,
     );
@@ -113,7 +129,7 @@ export function registerEnrollmentRoutes(app: KrynodesApp): void {
     const db = context.env.DB;
     const row = await db
       .prepare(
-        "SELECT trust FROM enrollments WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+        "SELECT trust FROM enrollments WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? AND kind = 'server'",
       )
       .bind(await sha256(token), new Date().toISOString())
       .first<{ trust: string }>();

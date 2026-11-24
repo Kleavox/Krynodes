@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -10,19 +11,24 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/config"
 	"github.com/Kleavox/krynodes/agent/internal/daemon"
 	"github.com/Kleavox/krynodes/agent/internal/host"
+	"github.com/Kleavox/krynodes/agent/internal/mesh"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/safefile"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
@@ -43,7 +49,7 @@ const (
 	unitName    = "krynodes.service"
 	ackWait     = 10 * time.Second
 	updateGrace = 10 * time.Second
-	usage       = "usage: kry run | enroll --endpoint <url> --token <code> --origin <dashboard> --trust <id.alg.key,...> | install-service | uninstall-service | self-update | trust --reset --origin <dashboard> --trust <id.alg.key,...> | version"
+	usage       = "usage: kry run | enroll --endpoint <url> --token <code> --origin <dashboard> --trust <id.alg.key,...> | install-service | uninstall-service | self-update | trust --reset --origin <dashboard> --trust <id.alg.key,...> | network fingerprint | network rules | version"
 )
 
 const unit = `[Unit]
@@ -104,6 +110,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = selfUpdate()
 	case args[0] == "trust":
 		err = resetTrust(args[1:], stdout)
+	case args[0] == "network" && len(args) == 2 && (args[1] == "fingerprint" || args[1] == "rules"):
+		err = networkCommand(args[1], stdout)
 	default:
 		fmt.Fprintln(stderr, usage)
 		return 2
@@ -141,8 +149,8 @@ func (f facts) known() facts {
 	return f
 }
 
-func hello(f facts, sealKey string, current trust.Trust) reporter.Hello {
-	message := reporter.Hello{Type: "hello", V: 1, Version: version, Hostname: f.Hostname, OS: f.OS, Arch: f.Arch, Kernel: f.Kernel, SealKey: sealKey}
+func hello(f facts, sealKey string, current trust.Trust, network *reporter.NetworkHello) reporter.Hello {
+	message := reporter.Hello{Type: "hello", V: 1, Version: version, Hostname: f.Hostname, OS: f.OS, Arch: f.Arch, Kernel: f.Kernel, Kind: "server", SealKey: sealKey, Network: network}
 	if len(current.Core) > 0 {
 		report := current.Report()
 		message.Trust = &report
@@ -247,6 +255,9 @@ func enrollWith(client *http.Client, options enrollOptions, f facts, configPath,
 	if _, err := seal.Load(state); err != nil {
 		return "", err
 	}
+	if err := (&mesh.Mesh{State: state}).Ensure(ctx); err != nil {
+		return "", fmt.Errorf("make the network keys: %w", err)
+	}
 	return enrolled.NodeID, nil
 }
 
@@ -288,6 +299,17 @@ func runDaemon(args []string) error {
 		Now:       time.Now,
 		Resume:    daemon.Resume(version, updateFailure),
 	}
+	sealKey := seal.Public(key)
+	network := &mesh.Mesh{State: stateDir, Executable: executable, Run: runCommand, Now: time.Now, Trust: d.Trust, SealKey: func() string { return sealKey }, Send: client.Send,
+		Unseal: func(sealed string) ([]byte, error) { return seal.Open(key, sealed) },
+		Left: func() {
+			if err := client.HelloAgain(); err != nil {
+				log.Printf("tell Krynodes the new network keys: %v", err)
+			}
+		}}
+	if err := network.Ensure(ctx); err != nil {
+		log.Printf("make the network keys: %v", err)
+	}
 	d.Handlers = map[string]daemon.Handler{
 		"trust/apply":  d.ApplyTrust,
 		"agent/update": daemon.Update(version, updateGrace, updater(executable)),
@@ -296,15 +318,147 @@ func runDaemon(args []string) error {
 			runLogged("systemd-run", "--unit=krynodes-remove", "--collect", "--quiet", executable, "uninstall-service")
 		}),
 	}
-	sealKey := seal.Public(key)
-	client.Hello = func() any { return hello(currentFacts(), sealKey, d.Trust()) }
+	maps.Copy(d.Handlers, network.Handlers())
+	client.Hello = func() any { return hello(currentFacts(), sealKey, d.Trust(), network.Hello(ctx)) }
 	client.Connected = d.Resend
 	client.Command = func(command reporter.Command) { go d.Handle(ctx, command) }
 	client.Ack = d.Ack
+	client.Network = networkWorker(ctx, network)
+	go network.Guard(ctx, 10*time.Second)
+	go network.WatchLinks(ctx, 10*time.Second)
 	go d.Start(ctx)
 	log.Printf("krynodes %s started for server %s", version, cfg.NodeID)
 	client.Run(ctx)
 	log.Printf("krynodes stopped")
+	return nil
+}
+
+const (
+	maxHints     = 32
+	maxDocuments = 64
+)
+
+func networkWorker(ctx context.Context, network *mesh.Mesh) func(any) {
+	var mu sync.Mutex
+	var documents []reporter.Document
+	var hints []reporter.Hints
+	var refreshing atomic.Bool
+	wake := make(chan struct{}, 1)
+	next := func() (any, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(documents) > 0 {
+			document := documents[0]
+			documents = documents[1:]
+			return document, true
+		}
+		if len(hints) > 0 {
+			hint := hints[0]
+			hints = hints[1:]
+			return hint, true
+		}
+		return nil, false
+	}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-wake:
+			}
+			for message, ok := next(); ok; message, ok = next() {
+				switch value := message.(type) {
+				case reporter.Document:
+					network.Document(ctx, value.Version, value.Signed)
+				case reporter.Hints:
+					network.Hints(ctx, value)
+				}
+			}
+		}
+	}()
+	return func(message any) {
+		switch value := message.(type) {
+		case reporter.Refresh:
+			if !refreshing.CompareAndSwap(false, true) {
+				return
+			}
+			go func() {
+				defer refreshing.Store(false)
+				if err := network.SendLinks(ctx); err != nil {
+					log.Printf("private network links: %v", err)
+				}
+			}()
+			return
+		case reporter.Document:
+			mu.Lock()
+			documents = append(slices.DeleteFunc(documents, func(queued reporter.Document) bool { return queued.Version == value.Version }), value)
+			slices.SortFunc(documents, func(a, b reporter.Document) int { return cmp.Compare(a.Version, b.Version) })
+			documents = documents[:min(len(documents), maxDocuments)]
+			mu.Unlock()
+		case reporter.Hints:
+			mu.Lock()
+			if hints = append(hints, value); len(hints) > maxHints {
+				hints = hints[len(hints)-maxHints:]
+			}
+			mu.Unlock()
+		}
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, int, error) {
+	command := exec.CommandContext(ctx, name, args...)
+	command.WaitDelay = 5 * time.Second
+	output, err := command.CombinedOutput()
+	if exit, ok := errors.AsType[*exec.ExitError](err); ok {
+		return output, exit.ExitCode(), err
+	}
+	if err != nil {
+		return output, -1, err
+	}
+	return output, 0, nil
+}
+
+func localMesh(state string) *mesh.Mesh {
+	return &mesh.Mesh{
+		State: state,
+		Run:   runCommand,
+		Now:   time.Now,
+		Trust: func() trust.Trust {
+			current, _ := trust.Load(state)
+			return current
+		},
+		SealKey: func() string {
+			key, err := seal.Read(state)
+			if err != nil {
+				return ""
+			}
+			return seal.Public(key)
+		},
+	}
+}
+
+func networkCommand(what string, stdout io.Writer) error {
+	if err := asRoot("network " + what); err != nil {
+		return err
+	}
+	return networkWith(what, localMesh(stateDir), stdout)
+}
+
+func networkWith(what string, m *mesh.Mesh, stdout io.Writer) error {
+	if what == "rules" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		return m.Rules(ctx)
+	}
+	fingerprint, err := m.Fingerprint()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, fingerprint)
 	return nil
 }
 
@@ -389,10 +543,15 @@ func uninstallService(stdout io.Writer) error {
 		return err
 	}
 	_ = exec.Command("systemctl", "disable", "--now", unitName).Run()
+	var problems []string
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := localMesh(stateDir).Leave(ctx); err != nil {
+		problems = append(problems, err.Error())
+	}
 	if target, err := os.Readlink(sudoLink); err == nil && target == binPath {
 		_ = os.Remove(sudoLink)
 	}
-	var problems []string
 	for _, path := range removed {
 		if err := os.RemoveAll(path); err != nil {
 			problems = append(problems, fmt.Sprintf("remove %s: %v", path, err))

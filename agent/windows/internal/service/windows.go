@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -24,7 +26,6 @@ import (
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 
-	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/safefile"
 	"github.com/Kleavox/krynodes/agent/internal/update"
 	"github.com/Kleavox/krynodes/agent/windows/internal/bundle"
@@ -164,6 +165,101 @@ func (system) Register(executable string) error {
 
 func (system) Tray(executable string) error {
 	return startTray(executable, true)
+}
+
+var createProcessWithToken = windows.NewLazySystemDLL("advapi32.dll").NewProc("CreateProcessWithTokenW")
+
+func (system) StartTray(executable string) error {
+	return startTrayAsShellUser(executable)
+}
+
+func startTrayAsShellUser(executable string) error {
+	return shellUser{
+		Session:   ownSession,
+		Processes: processes,
+		Token:     shellToken,
+		Elevated:  func(token uintptr) bool { return windows.Token(token).IsElevated() },
+		Start: func(token uintptr, command string) error {
+			return startAs(windows.Token(token), executable, command)
+		},
+		Close: func(token uintptr) { windows.Token(token).Close() },
+	}.startTray(executable)
+}
+
+func ownSession() (uint32, error) {
+	var session uint32
+	err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session)
+	return session, err
+}
+
+func processes() ([]shellProcess, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer windows.CloseHandle(snapshot)
+	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	var list []shellProcess
+	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
+		var session uint32
+		if windows.ProcessIdToSessionId(entry.ProcessID, &session) != nil {
+			continue
+		}
+		list = append(list, shellProcess{ID: entry.ProcessID, Session: session, Name: windows.UTF16ToString(entry.ExeFile[:])})
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return nil, err
+	}
+	return list, nil
+}
+
+func shellToken(id uint32) (uintptr, error) {
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, id)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(process)
+	var token windows.Token
+	if err := windows.OpenProcessToken(process, windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY, &token); err != nil {
+		return 0, err
+	}
+	defer token.Close()
+	var primary windows.Token
+	access := uint32(windows.TOKEN_QUERY | windows.TOKEN_DUPLICATE | windows.TOKEN_ASSIGN_PRIMARY)
+	if err := windows.DuplicateTokenEx(token, access, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary); err != nil {
+		return 0, err
+	}
+	return uintptr(primary), nil
+}
+
+func startAs(token windows.Token, executable, command string) error {
+	application, err := windows.UTF16PtrFromString(executable)
+	if err != nil {
+		return err
+	}
+	line, err := windows.UTF16FromString(command)
+	if err != nil {
+		return err
+	}
+	folder, err := windows.UTF16PtrFromString(filepath.Dir(executable))
+	if err != nil {
+		return err
+	}
+	desktop, _ := windows.UTF16PtrFromString(`winsta0\default`)
+	var environment *uint16
+	if err := windows.CreateEnvironmentBlock(&environment, token, false); err != nil {
+		return err
+	}
+	defer windows.DestroyEnvironmentBlock(environment)
+	startup := windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfo{})), Desktop: desktop}
+	var info windows.ProcessInformation
+	started, _, err := createProcessWithToken.Call(uintptr(token), 0, uintptr(unsafe.Pointer(application)), uintptr(unsafe.Pointer(&line[0])), windows.CREATE_UNICODE_ENVIRONMENT, uintptr(unsafe.Pointer(environment)), uintptr(unsafe.Pointer(folder)), uintptr(unsafe.Pointer(&startup)), uintptr(unsafe.Pointer(&info)))
+	if started == 0 {
+		return err
+	}
+	windows.CloseHandle(info.Thread)
+	windows.CloseHandle(info.Process)
+	return nil
 }
 
 func startTray(executable string, on bool) error {
@@ -327,7 +423,7 @@ func (c control) release() Release {
 		log.Printf("the release key: %v", err)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = reporter.TLSConfig()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
 	transport.ResponseHeaderTimeout = time.Minute
 	return Release{
 		Current:    c.version,
@@ -410,7 +506,7 @@ func openStore() (store.Store, error) {
 	return store.Open(dir)
 }
 
-func InstallCommand(args []string, version string) error {
+func InstallCommand(args []string, version string, out io.Writer) error {
 	flags := flag.NewFlagSet("install", flag.ContinueOnError)
 	code := flags.String("code", "", "the code from Add Laptop")
 	origin := flags.String("origin", "", "your dashboard's origin")
@@ -435,10 +531,10 @@ func InstallCommand(args []string, version string) error {
 		return err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = reporter.TLSConfig()
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	return Install(ctx, &http.Client{Transport: transport}, secrets.Dir, secrets, system{}, Enrollment{Code: strings.TrimSpace(*code), Origin: *origin, Endpoint: *endpoint, Version: version})
+	return Install(ctx, &http.Client{Transport: transport}, secrets.Dir, secrets, system{}, Enrollment{Code: strings.TrimSpace(*code), Origin: *origin, Endpoint: *endpoint, Version: version, Kernel: kernel()}, out)
 }
 
 type handler struct {
@@ -464,7 +560,7 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 	} else if err := bundle.Unpack(filepath.Dir(executable)); err != nil {
 		log.Printf("place wintun.dll and the licences beside the agent: %v", err)
 	}
-	service := &Service{Dir: secrets.Dir, Secrets: secrets, Now: time.Now}
+	service := &Service{Dir: secrets.Dir, Secrets: secrets, Now: time.Now, Kernel: kernel()}
 	notePath := filepath.Join(secrets.Dir, updateNote)
 	if line, err := safefile.Read(notePath, 4096); err == nil {
 		_ = os.Remove(notePath)
@@ -538,6 +634,11 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 			}
 		}
 	}
+}
+
+func kernel() string {
+	version := windows.RtlGetVersion()
+	return fmt.Sprintf("%d.%d.%d", version.MajorVersion, version.MinorVersion, version.BuildNumber)
 }
 
 func configOf(wanted Wanted) tunnel.Config {

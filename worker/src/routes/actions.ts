@@ -1,8 +1,16 @@
+import { networkArgsValid, signedCommandSchema } from "@krynodes/protocol";
 import { z } from "zod";
 
 import type { KrynodesApp } from "../env";
 import { announce, sendCommand } from "../fleet/client";
-import { invalidRequest, isUnique, readJson } from "./shared";
+import { fromB64url } from "../lib/b64url";
+import {
+  invalidRequest,
+  isMember,
+  isUnique,
+  networkMember,
+  readJson,
+} from "./shared";
 
 const NO_ANSWER_MS = 30 * 60_000;
 const MAX_LIMIT = 50;
@@ -11,21 +19,42 @@ const ACTIONS = {
   trust: ["apply"],
   agent: ["update", "remove"],
   host: ["restart"],
+  network: [],
 } as const;
 
 const actionSchema = z
   .strictObject({
     nodeId: z.string().min(1).max(64),
     id: z.string().min(1).max(64),
-    kind: z.enum(["trust", "agent", "host"]),
+    kind: z.enum(["trust", "agent", "host", "network"]),
     name: z.string().min(1).max(128),
     action: z.string().min(1).max(64),
     title: z.string().min(1).max(200),
     signed: z.string().min(1).max(262144),
   })
-  .refine((value) =>
-    (ACTIONS[value.kind] as readonly string[]).includes(value.action),
+  .refine(
+    (value) =>
+      value.kind === "network" ||
+      (ACTIONS[value.kind] as readonly string[]).includes(value.action),
   );
+
+function networkCommandHolds(action: z.infer<typeof actionSchema>): boolean {
+  try {
+    const signed = signedCommandSchema.parse(JSON.parse(action.signed));
+    const command = JSON.parse(
+      new TextDecoder().decode(fromB64url(signed.command)),
+    ) as Record<string, unknown>;
+    return (
+      command.kind === "network" &&
+      command.action === action.action &&
+      command.id === action.id &&
+      command.nodeId === action.nodeId &&
+      networkArgsValid(action.action, command.args ?? {})
+    );
+  } catch {
+    return false;
+  }
+}
 
 interface ActionRow {
   id: string;
@@ -67,7 +96,12 @@ const SELECT =
 export function registerActionRoutes(app: KrynodesApp): void {
   app.post("/api/actions", async (context) => {
     const body = actionSchema.safeParse(await readJson(context));
-    if (!body.success) return invalidRequest(context);
+    if (
+      !body.success ||
+      (body.data.kind === "network" && !networkCommandHolds(body.data))
+    ) {
+      return invalidRequest(context);
+    }
     const { nodeId, id, kind, name, action, title, signed } = body.data;
     const db = context.env.DB;
     const node = await db
@@ -79,6 +113,30 @@ export function registerActionRoutes(app: KrynodesApp): void {
         { code: "NOT_FOUND", message: "The server was not found." },
         404,
       );
+    }
+    if (
+      kind === "agent" &&
+      action === "remove" &&
+      (await isMember(db, nodeId))
+    ) {
+      return networkMember(context, node.name);
+    }
+    if (kind === "network" && action === "prepare") {
+      const request = await db
+        .prepare("SELECT ready, reason FROM network_members WHERE node_id = ?")
+        .bind(nodeId)
+        .first<{ ready: number; reason: string | null }>();
+      if (request?.ready !== 1) {
+        return context.json(
+          {
+            code: "NOT_READY",
+            message: request?.reason
+              ? `${node.name} cannot join: ${request.reason}`
+              : `${node.name} has not reported whether it can join yet.`,
+          },
+          409,
+        );
+      }
     }
     try {
       await db

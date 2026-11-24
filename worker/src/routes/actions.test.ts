@@ -1,6 +1,45 @@
 import { describe, expect, it } from "vitest";
 
+import { toB64url } from "../lib/b64url";
 import { addNode, testEnv } from "../test/env";
+
+const signedCommand = (command: Record<string, unknown>) =>
+  JSON.stringify({
+    grant: {
+      grant: "e30",
+      credentialId: "cGsx",
+      authenticatorData: "AAAA",
+      clientDataJSON: "e30",
+      signature: "c2ln",
+    },
+    command: toB64url(new TextEncoder().encode(JSON.stringify(command))),
+    signature: "c2ln",
+  });
+
+const network = (
+  verb: string,
+  args?: Record<string, string>,
+  extra: Record<string, unknown> = {},
+) => ({
+  nodeId: "n1",
+  id: `net-${verb}`,
+  kind: "network",
+  name: "server-1",
+  action: verb,
+  title: `Network ${verb}`,
+  signed: signedCommand({
+    v: 1,
+    id: `net-${verb}`,
+    nodeId: "n1",
+    kind: "network",
+    name: "server-1",
+    action: verb,
+    issuedAt: "2026-11-22T00:00:00.000Z",
+    expiresAt: "2026-11-22T01:00:00.000Z",
+    ...(args ? { args } : {}),
+    ...extra,
+  }),
+});
 
 const action = {
   nodeId: "n1",
@@ -127,6 +166,67 @@ describe("POST /api/actions", () => {
     expect(hub.calls.filter((call) => call.path === "/command")).toHaveLength(
       1,
     );
+  });
+});
+
+describe("network commands", () => {
+  const request = (db: D1Database, ready: number, reason: string | null) =>
+    db
+      .prepare(
+        "INSERT INTO network_members (node_id, state, ready, reason, since) VALUES ('n1', 'requested', ?1, ?2, '2026-11-22T00:00:00.000Z')",
+      )
+      .bind(ready, reason)
+      .run();
+
+  it("sends a signed network command whose arguments hold", async () => {
+    const { db, send } = await fleet();
+    await request(db, 1, null);
+    for (const command of [
+      network("inspect"),
+      network("prepare", { range: "10.88.37.0/24", port: "51820" }),
+      network("rekey", {}),
+    ]) {
+      expect((await send("POST", "/api/actions", command)).status).toBe(201);
+    }
+  });
+
+  it("refuses arguments that do not hold or a command that is not the one named", async () => {
+    const { db, send, hub } = await fleet();
+    await request(db, 1, null);
+    for (const command of [
+      network("prepare", { range: "10.89.37.0/24", port: "51820" }),
+      network("inspect", { extra: "1" }),
+      network("tighten"),
+      { ...network("inspect"), action: "rekey" },
+      { ...network("inspect"), id: "other" },
+      network("inspect", undefined, { kind: "host" }),
+      { ...network("inspect"), signed: "c2lnbmVk" },
+    ]) {
+      expect((await send("POST", "/api/actions", command)).status).toBe(400);
+    }
+    expect(hub.calls).toEqual([]);
+  });
+
+  it("refuses to prepare a machine that is not ready, with its reason", async () => {
+    const { db, send } = await fleet();
+    await request(db, 0, "iptables is missing.");
+    const prepare = network("prepare", {
+      range: "10.88.37.0/24",
+      port: "51820",
+    });
+    const response = await send("POST", "/api/actions", prepare);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      code: "NOT_READY",
+      message: "server-1 cannot join: iptables is missing.",
+    });
+    for (const verb of ["inspect", "rekey"]) {
+      expect((await send("POST", "/api/actions", network(verb))).status).toBe(
+        201,
+      );
+    }
+    await db.prepare("DELETE FROM network_members").run();
+    expect((await send("POST", "/api/actions", prepare)).status).toBe(409);
   });
 });
 

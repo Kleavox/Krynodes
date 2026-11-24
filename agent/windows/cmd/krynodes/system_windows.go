@@ -12,15 +12,20 @@ import (
 	"github.com/Kleavox/krynodes/agent/windows/internal/tray"
 )
 
-const (
-	installed   = "Krynodes is installed. Approve this laptop on the Network page of your dashboard."
-	uninstalled = "Krynodes is removed from this laptop. It stays a member of the private network until you choose Remove Laptop on the Network page."
-)
+const uninstalled = "Krynodes is removed from this laptop. It stays a member of the private network until you choose Remove from Network on the Network page."
 
 var attachConsole = windows.NewLazySystemDLL("kernel32.dll").NewProc("AttachConsole")
 
+var terminal bool
+
+var inTerminal = func() bool { return terminal }
+
 func console(command string) {
-	if command == "tray" || command == "service" || (usable(os.Stdout) && usable(os.Stderr)) {
+	if command == "tray" || command == "service" {
+		return
+	}
+	terminal = usable(os.Stdout)
+	if terminal && usable(os.Stderr) {
 		return
 	}
 	if attached, _, _ := attachConsole.Call(uintptr(^uint32(0))); attached == 0 {
@@ -36,6 +41,16 @@ func console(command string) {
 	if !usable(os.Stderr) {
 		os.Stderr = out
 	}
+	terminal = true
+}
+
+var notice = func(text string) {
+	message, err := windows.UTF16PtrFromString(text)
+	if err != nil {
+		return
+	}
+	title, _ := windows.UTF16PtrFromString("Krynodes")
+	_, _ = windows.MessageBox(0, message, title, windows.MB_OK|windows.MB_ICONINFORMATION|windows.MB_SETFOREGROUND)
 }
 
 func usable(file *os.File) bool {
@@ -51,8 +66,7 @@ func system(command string, args []string, stdout, stderr io.Writer) int {
 	done := ""
 	switch command {
 	case "install":
-		err = service.InstallCommand(args, version)
-		done = installed
+		err = service.InstallCommand(args, version, stdout)
 	case "uninstall":
 		if len(args) > 0 {
 			err = errors.New("use uninstall with no arguments")

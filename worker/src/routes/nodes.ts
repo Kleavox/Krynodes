@@ -3,8 +3,15 @@ import { z } from "zod";
 
 import { readAgentRelease } from "../agent/releases";
 import type { KrynodesApp } from "../env";
-import { announce, dropNode, onlineNodes } from "../fleet/client";
-import { invalidRequest, isUnique, readJson } from "./shared";
+import { announce, dropNode, onlineNodes, viaNodes } from "../fleet/client";
+import {
+  dnsClash,
+  invalidRequest,
+  isMember,
+  isUnique,
+  networkMember,
+  readJson,
+} from "./shared";
 
 const renameSchema = z.strictObject({ name: z.string().trim().min(1).max(64) });
 
@@ -16,6 +23,10 @@ interface NodeRow {
   arch: string | null;
   version: string | null;
   last_seen_at: string | null;
+  kind: string;
+  state: string | null;
+  address: string | null;
+  ms: number | null;
   trust_version: number | null;
   core: string | null;
   access: string | null;
@@ -27,15 +38,24 @@ export function registerNodeRoutes(app: KrynodesApp): void {
     const [rows, online, release] = await Promise.all([
       db
         .prepare(
-          `SELECT n.id, n.name, n.hostname, n.os, n.arch, n.version, n.last_seen_at,
-                  t.version AS trust_version, t.core, t.access
+          `SELECT n.id, n.name, n.hostname, n.os, n.arch, n.version, n.last_seen_at, n.kind,
+                  t.version AS trust_version, t.core, t.access, m.state,
+                  CASE WHEN m.state = 'in' THEN m.address END AS address,
+                  (SELECT MIN(l.ms) FROM network_links l
+                   WHERE (l.a = n.id OR l.b = n.id) AND l.answering = 1) AS ms
            FROM nodes n LEFT JOIN node_trust t ON t.node_id = n.id
+           LEFT JOIN network_members m ON m.node_id = n.id
            ORDER BY n.name`,
         )
         .all<NodeRow>(),
       onlineNodes(context.env),
       readAgentRelease(db),
     ]);
+    const via: Record<string, string> = rows.results.some(
+      (row) => row.kind === "laptop",
+    )
+      ? await viaNodes(context.env).catch(() => ({}))
+      : {};
     return context.json(
       rows.results.map((row) => ({
         id: row.id,
@@ -60,6 +80,14 @@ export function registerNodeRoutes(app: KrynodesApp): void {
           compareVersions(release.version, row.version) > 0
             ? release.version
             : null,
+        kind: row.kind,
+        address: row.address,
+        via: via[row.id] ?? null,
+        ms: row.ms,
+        request:
+          row.state === "requested" || row.state === "rejected"
+            ? row.state
+            : null,
       })),
     );
   });
@@ -67,6 +95,13 @@ export function registerNodeRoutes(app: KrynodesApp): void {
   app.patch("/api/nodes/:id", async (context) => {
     const body = renameSchema.safeParse(await readJson(context));
     if (!body.success) return invalidRequest(context);
+    const clash = await dnsClash(
+      context.env.DB,
+      body.data.name,
+      "Choose another name.",
+      context.req.param("id"),
+    );
+    if (clash) return context.json({ code: "NAME_TAKEN", message: clash }, 409);
     let renamed: D1Result;
     try {
       renamed = await context.env.DB.prepare(
@@ -97,6 +132,7 @@ export function registerNodeRoutes(app: KrynodesApp): void {
       .bind(id)
       .first<{ name: string }>();
     if (!node) return context.json({ code: "NOT_FOUND" }, 404);
+    if (await isMember(db, id)) return networkMember(context, node.name);
     if ((await onlineNodes(context.env)).has(id)) {
       const removed = await db
         .prepare(
@@ -114,8 +150,14 @@ export function registerNodeRoutes(app: KrynodesApp): void {
         );
       }
     }
+    const deleted = await db
+      .prepare(
+        "DELETE FROM nodes WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM network_members WHERE node_id = ?1 AND state = 'in')",
+      )
+      .bind(id)
+      .run();
+    if (!deleted.meta.changes) return networkMember(context, node.name);
     await dropNode(context.env, id);
-    await db.prepare("DELETE FROM nodes WHERE id = ?").bind(id).run();
     await announce(context.env, ["fleet"]);
     return context.json({ removed: true });
   });

@@ -46,6 +46,7 @@ export function hubHarness(db: D1Database) {
   const pings = new Map<FakeSocket, number>();
   const joins: Promise<void>[] = [];
   let alarm: number | null = null;
+  const kept = new Map<string, unknown>();
   const ctx = {
     acceptWebSocket(ws: FakeSocket, tags: string[] = []) {
       accepted.push({ ws, tags });
@@ -69,12 +70,18 @@ export function hubHarness(db: D1Database) {
       async setAlarm(at: number) {
         alarm = at;
       },
+      async get(key: string) {
+        return structuredClone(kept.get(key));
+      },
+      async put(key: string, value: unknown) {
+        kept.set(key, structuredClone(value));
+      },
     },
   };
   const env = { DB: db } as unknown as Env;
   const fresh = () => new FleetHub(ctx as unknown as DurableObjectState, env);
   let hub = fresh();
-  const connect = (nodeId: string, version: string | null = "0.7.90") => {
+  const connect = (nodeId: string, version: string | null = "0.7.92") => {
     const ws = new FakeSocket();
     joins.push(hub.join(ws as unknown as WebSocket, nodeId, version));
     return ws;
