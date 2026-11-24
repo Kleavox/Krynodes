@@ -500,6 +500,23 @@ describe("the Network page's changes", () => {
     );
   });
 
+  it("a link whose session is already up and passes pings does not read as unanswered", () => {
+    const answer = {
+      up: true,
+      hasKey: true,
+      version: 4,
+      clock: 1,
+      publicAddress: null,
+      firewall: { lets: true, rule: null },
+      handshakes: { sent: 0, received: 0, answered: 0, third: null },
+      small: { sent: 5, lost: 0, ms: 1.8 },
+      large: { passed: 1420, tried: [1420] },
+    };
+    expect(testLines(JSON.stringify(answer), "server-1", "server-2")[3]).toBe(
+      "server-2 already has a working session; no new handshake was needed.",
+    );
+  });
+
   it("a fleet row shows the path through the network", () => {
     const names = new Map([[S1, "server-1"]]);
     const node = {

@@ -296,7 +296,9 @@ export function testLines(
     `The firewall on ${name} ${firewall.lets ? "lets in" : "blocks"} the network port.`,
     handshakes.answered > 0
       ? `${peer} answered a handshake.`
-      : `${peer} did not answer a handshake.`,
+      : small.lost < small.sent
+        ? `${peer} already has a working session; no new handshake was needed.`
+        : `${peer} did not answer a handshake.`,
     `Round trip ${metricText(small.ms, " ms")}, ${small.lost} of ${small.sent} lost.`,
     `Largest packet ${large.passed ?? "--"}.`,
   ];
