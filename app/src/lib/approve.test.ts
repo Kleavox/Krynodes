@@ -430,6 +430,15 @@ describe("approving a join request", () => {
     expect(run.events).toEqual([]);
   });
 
+  it("names every network command after the interface the agent checks", async () => {
+    const run = await setup({ existing: true, joiner: "server" });
+    await approve(run.request, run.expected, run.deps);
+    expect(run.commands.length).toBeGreaterThan(0);
+    for (const command of run.commands) {
+      expect((command as unknown as { name: string }).name).toBe("kry0");
+    }
+  });
+
   it("signs in the order the flow says", async () => {
     const run = await setup({ existing: true, joiner: "server" });
     await approve(run.request, run.expected, run.deps);
