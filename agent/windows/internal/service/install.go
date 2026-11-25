@@ -33,56 +33,53 @@ type System interface {
 	Write(path string, data []byte) error
 	Register(executable string) error
 	Tray(executable string) error
-	StartTray(executable string) error
 }
 
-type shellProcess struct {
-	ID      uint32
+type process struct {
 	Session uint32
 	Name    string
 }
 
-type shellUser struct {
-	Session   func() (uint32, error)
-	Processes func() ([]shellProcess, error)
-	Token     func(id uint32) (uintptr, error)
+type userSession struct {
+	Processes func() ([]process, error)
+	Token     func(session uint32) (uintptr, error)
 	Elevated  func(token uintptr) bool
 	Start     func(token uintptr, command string) error
 	Close     func(token uintptr)
 }
 
+const noSession = ^uint32(0)
+
 var (
-	errNoShell       = errors.New("Explorer is not running in this session")
-	errElevatedShell = errors.New("Explorer runs elevated in this session, and the tray is never started elevated")
+	errNoUser   = errors.New("no one is signed in at this laptop")
+	errElevated = errors.New("the user's token is elevated, and the tray is never started elevated")
 )
 
-func (s shellUser) startTray(executable string) error {
-	session, err := s.Session()
+func (s userSession) startTray(executable string, session uint32) error {
+	if session == noSession {
+		return fmt.Errorf("start the tray: find the signed-in user: %w", errNoUser)
+	}
+	running, err := s.Processes()
 	if err != nil {
-		return err
+		return fmt.Errorf("start the tray: find the signed-in user: %w", err)
 	}
-	processes, err := s.Processes()
+	for _, found := range running {
+		if found.Session == session && strings.EqualFold(found.Name, executable[strings.LastIndexAny(executable, `\/`)+1:]) {
+			return nil
+		}
+	}
+	token, err := s.Token(session)
 	if err != nil {
-		return err
+		return fmt.Errorf("start the tray: take the user's token: %w", err)
 	}
-	missing := errNoShell
-	for _, process := range processes {
-		if process.Session != session || !strings.EqualFold(process.Name, "explorer.exe") {
-			continue
-		}
-		token, err := s.Token(process.ID)
-		if err != nil {
-			return err
-		}
-		if s.Elevated(token) {
-			s.Close(token)
-			missing = errElevatedShell
-			continue
-		}
-		defer s.Close(token)
-		return s.Start(token, `"`+executable+`" tray`)
+	defer s.Close(token)
+	if s.Elevated(token) {
+		return fmt.Errorf("start the tray: take the user's token: %w", errElevated)
 	}
-	return missing
+	if err := s.Start(token, `"`+executable+`" tray`); err != nil {
+		return fmt.Errorf("start the tray: start the program: %w", err)
+	}
+	return nil
 }
 
 type Enrollment struct {
@@ -120,14 +117,11 @@ func Install(ctx context.Context, client *http.Client, dir string, secrets Secre
 	} else if err != nil {
 		return fail(fmt.Errorf("read the stored agent token: %w", err))
 	}
+	if err := system.Tray(executable); err != nil {
+		return fail(fmt.Errorf("start the tray with Windows: %w; run install again to finish", err))
+	}
 	if err := system.Register(executable); err != nil {
 		return fail(fmt.Errorf("start the Krynodes service: %w; run install again to finish", err))
-	}
-	if err := system.Tray(executable); err != nil {
-		return fmt.Errorf("start the tray with Windows: %w; run install again to finish", err)
-	}
-	if err := system.StartTray(executable); err != nil {
-		approve += fmt.Sprintf("The tray could not start now (%v); it starts the next time you sign in.\n", err)
 	}
 	_, err = fmt.Fprint(out, "Krynodes is installed.\n"+approve)
 	return err

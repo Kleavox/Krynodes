@@ -42,6 +42,14 @@ export async function pushDocument(env: Env, version: number): Promise<void> {
   }
 }
 
+export async function pushChecks(env: Env, nodeId: string): Promise<void> {
+  try {
+    await post(env, "/checks", { nodeId });
+  } catch (error) {
+    console.error("[kry fleet]", error);
+  }
+}
+
 export async function refreshLinks(env: Env): Promise<void> {
   try {
     await post(env, "/refresh", {});

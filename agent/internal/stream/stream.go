@@ -29,6 +29,7 @@ type Client struct {
 	Command      func(reporter.Command)
 	Ack          func(string)
 	Network      func(any)
+	Checks       func(reporter.Checks)
 
 	endpoint string
 	token    string
@@ -264,6 +265,10 @@ func (c *Client) dispatch(message []byte) {
 	case reporter.Document, reporter.Hints, reporter.Refresh:
 		if c.Network != nil {
 			c.Network(value)
+		}
+	case reporter.Checks:
+		if c.Checks != nil {
+			c.Checks(value)
 		}
 	}
 }

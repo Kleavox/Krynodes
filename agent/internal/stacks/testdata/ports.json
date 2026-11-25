@@ -1,0 +1,114 @@
+{
+  "name": "web",
+  "networks": {
+    "default": {
+      "name": "web_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "expose": ["9000"],
+      "image": "nginx:1.27",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "target": 80,
+          "published": "8080",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "host_ip": "0.0.0.0",
+          "target": 80,
+          "published": "8081",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "host_ip": "::",
+          "target": 80,
+          "published": "8082",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 80,
+          "published": "8083",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8000,
+          "published": "8000",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8001,
+          "published": "8001",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8002,
+          "published": "8002",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8003,
+          "published": "8003",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8004,
+          "published": "8004",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8005,
+          "published": "8005",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8006,
+          "published": "8006",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8007,
+          "published": "8007",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8008,
+          "published": "8008",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8009,
+          "published": "8009",
+          "protocol": "tcp"
+        },
+        {
+          "mode": "ingress",
+          "target": 8010,
+          "published": "8010",
+          "protocol": "tcp"
+        }
+      ]
+    }
+  }
+}

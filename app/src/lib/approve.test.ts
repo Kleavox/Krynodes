@@ -22,7 +22,14 @@ import {
 import { withoutMember, withoutNetwork } from "./network";
 import { hashOf, memoryStore, remember, type Unchecked } from "./pins";
 import { open, recipient } from "./seal-test-utils";
-import { buildCommand, signCommand, signDocument, type Session } from "./sign";
+import {
+  buildCommand,
+  endSession,
+  openSession,
+  signCommand,
+  signDocument,
+  type Session,
+} from "./sign";
 
 const S1 = "11111111-1111-4111-8111-111111111111";
 const S2 = "22222222-2222-4222-8222-222222222222";
@@ -460,7 +467,8 @@ describe("approving a join request", () => {
       "send:prepare",
     ]);
     expect(signedOrSent.at(-1)).toBe("session:pk1");
-    expect(signedOrSent.slice(8, -1).sort()).toEqual([
+    expect(signedOrSent[8]).toBe("session:pk1");
+    expect(signedOrSent.slice(9, -1).sort()).toEqual([
       "send:probe",
       "send:probe",
       "send:probe",
@@ -520,6 +528,58 @@ describe("approving a join request", () => {
         { name: "server-3", state: "Applied" },
       ],
     });
+  });
+
+  it("opens one passkey session before probing several servers", async () => {
+    const run = await setup({ existing: true, joiner: "server" });
+    const { events } = run;
+    vi.stubGlobal("navigator", {
+      credentials: {
+        get: async () => {
+          events.push("touch");
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          const authenticatorData = new Uint8Array(37);
+          authenticatorData[32] = 0x05;
+          return {
+            id: "pk1",
+            authenticatorAttachment: "platform",
+            response: {
+              authenticatorData: authenticatorData.buffer,
+              clientDataJSON: new TextEncoder().encode("{}").buffer,
+              signature: new Uint8Array([1, 2]).buffer,
+            },
+          };
+        },
+      },
+    });
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      addEventListener: () => undefined,
+    });
+    vi.stubGlobal("location", { hostname: "kry.example.org" });
+    endSession();
+    try {
+      await approve(run.request, run.expected, {
+        ...run.deps,
+        api: {
+          ...run.deps.api,
+          sendAction: async (body) => {
+            const row = await run.deps.api.sendAction(body);
+            if (body.action === "prepare") endSession();
+            return row;
+          },
+        },
+        sign: { openSession, buildCommand, signCommand, signDocument },
+      });
+    } finally {
+      endSession();
+      vi.unstubAllGlobals();
+    }
+    const after = events.slice(events.indexOf("send:prepare") + 1);
+    expect(events.filter((one) => one === "touch")).toHaveLength(2);
+    expect(after.filter((one) => one === "touch")).toHaveLength(1);
+    expect(after.indexOf("touch")).toBeLessThan(after.indexOf("send:probe"));
+    expect(after.filter((one) => one === "send:probe")).toHaveLength(3);
   });
 
   it("different prepared keys stop the approval and sign nothing", async () => {
@@ -1172,12 +1232,12 @@ describe("the browser's own anchor in every flow", () => {
       {
         keep: (run: Awaited<ReturnType<typeof setup>>) =>
           remember(run.store, [], { version: 6, hash: HASH }),
-        line: "The network document is older than the one this browser last signed or checked. Nothing was signed.",
+        line: "The network document is older than the one this browser last signed or checked, so nothing was signed. If this browser's saved network is from an earlier test, delete this site's data and check each member again.",
       },
       {
         keep: (run: Awaited<ReturnType<typeof setup>>) =>
           remember(run.store, [], { version: 4, hash: "r".repeat(43) }),
-        line: "The network document is not the one this browser last signed or checked. Nothing was signed.",
+        line: "The network document is not the one this browser last signed or checked, so nothing was signed. If this browser's saved network is from an earlier test, delete this site's data and check each member again.",
       },
     ];
     for (const { keep, line } of problems) {

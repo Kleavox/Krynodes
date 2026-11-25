@@ -11,12 +11,14 @@ import {
 } from "./lib/session";
 import { registerActionRoutes } from "./routes/actions";
 import { registerAgentRoutes } from "./routes/agent";
+import { registerCheckRoutes } from "./routes/checks";
 import { registerDeviceRoutes } from "./routes/devices";
 import { registerEnrollmentRoutes } from "./routes/enrollments";
 import { registerLaptopRoutes } from "./routes/laptops";
 import { registerNetworkRoutes } from "./routes/network";
 import { registerNodeRoutes } from "./routes/nodes";
 import { registerReleaseRoutes } from "./routes/release";
+import { registerStackRoutes } from "./routes/stacks";
 
 const app = new Hono<KrynodesEnv>();
 
@@ -95,6 +97,8 @@ registerActionRoutes(app);
 registerReleaseRoutes(app);
 registerNetworkRoutes(app);
 registerLaptopRoutes(app);
+registerStackRoutes(app);
+registerCheckRoutes(app);
 
 app.get("/api/live", async (context) => {
   if (context.req.header("upgrade")?.toLowerCase() !== "websocket") {

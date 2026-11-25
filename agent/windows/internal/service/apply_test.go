@@ -3,6 +3,8 @@ package service
 import (
 	"bytes"
 	"encoding/base64"
+	"log"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
+	"github.com/Kleavox/krynodes/agent/windows/internal/pipe"
 )
 
 func reach() (network.Document, network.Member, map[string]string) {
@@ -183,6 +186,66 @@ func TestADocumentWithoutThisLaptopTakesTheTunnelDown(t *testing.T) {
 		}
 	}
 }
+
+func (f *fixture) onePeer(version int, parent string) []byte {
+	return f.edited(f.document(version, parent, true), func(document *network.Document) {
+		document.Members = slices.DeleteFunc(document.Members, func(entry network.Member) bool { return entry.Node == server2 })
+		for index := range document.Members {
+			delete(document.Members[index].PSK, server2)
+			delete(document.Members[index].Relay, server2)
+		}
+	})
+}
+
+func TestTheFirstApprovedDocumentRaisesTheTunnel(t *testing.T) {
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	f := newFixture(t)
+	f.service.mu.Lock()
+	f.service.refresh()
+	f.service.mu.Unlock()
+	f.service.push()
+	f.hint(reporter.Hints{})
+	if reply := pipe.Handle(trayOf{f.service}, []byte(`{"request":"disconnect"}`+"\n")); !reply.OK {
+		t.Fatalf("the tray's Quit before Approve: %+v", reply)
+	}
+	f.hint(reporter.Hints{Connected: []string{server1}})
+	first := f.onePeer(1, "")
+	if got := f.deliver(1, f.sign(first)); !got.OK {
+		t.Fatal(got.Message)
+	}
+	f.hint(reporter.Hints{Connected: []string{server1}})
+	if len(f.applied) == 0 {
+		t.Fatalf("joined %v, but nothing reached the tunnel; the log says %q", f.record().Joined, logged.String())
+	}
+	if up := f.last(); up.Address != "10.88.0.10" || len(up.Peers) != 1 || up.Peers[0].Node != server1 || !f.service.Status(0).Connected {
+		t.Fatalf("the tunnel after the first document %+v", up)
+	}
+	if !strings.Contains(logged.String(), "tunnel up (v1, 1 peers)\n") {
+		t.Fatalf("the log says %q", logged.String())
+	}
+	if err := f.service.Connect(false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logged.String(), "tunnel down (disconnected in the tray)\n") {
+		t.Fatalf("the log says %q", logged.String())
+	}
+	if err := f.service.Connect(true); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.deliver(2, f.sign(f.document(2, network.BodyHash(first), false))); !got.OK || len(f.last().Peers) != 0 {
+		t.Fatalf("leaving %+v", got)
+	}
+	if !strings.Contains(logged.String(), "tunnel down (this laptop is not in the private network)\n") {
+		t.Fatalf("the log says %q", logged.String())
+	}
+}
+
+type trayOf struct{ *Service }
+
+func (trayOf) Settings(pipe.Settings) error { return nil }
+func (trayOf) Update() error                { return nil }
 
 func TestTheHelloSaysWhatTheLaptopIs(t *testing.T) {
 	f := newFixture(t)

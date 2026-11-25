@@ -1,0 +1,26 @@
+{
+  "name": "web",
+  "networks": {
+    "default": {
+      "name": "web_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "devices": [
+        {
+          "source": "/dev/sda",
+          "target": "/dev/sda",
+          "permissions": "rwm"
+        }
+      ],
+      "image": "nginx:1.27",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

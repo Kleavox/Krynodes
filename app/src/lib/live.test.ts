@@ -83,7 +83,21 @@ describe("live updates", () => {
     current().deliver(JSON.stringify({ type: "changed", topics: ["fleet"] }));
     expect(keys()).toEqual([]);
     vi.advanceTimersByTime(300);
-    expect(keys()).toEqual([["fleet"], ["actions"], ["network"]]);
+    expect(keys()).toEqual([
+      ["fleet"],
+      ["actions"],
+      ["network"],
+      ["stacks"],
+      ["checks"],
+    ]);
+  });
+
+  it("a fleet announce refreshes checks, so an offline server stops reading Up", () => {
+    const { keys } = start();
+    current().deliver(JSON.stringify({ type: "changed", topics: ["fleet"] }));
+    vi.advanceTimersByTime(300);
+    expect(keys()).toContainEqual(["checks"]);
+    expect(keys()).toContainEqual(["stacks"]);
   });
 
   it("ignores pongs and anything unreadable", () => {
@@ -105,7 +119,23 @@ describe("live updates", () => {
     expect(FakeSocket.all).toHaveLength(2);
     current().onopen?.();
     vi.advanceTimersByTime(300);
-    expect(keys()).toEqual([["fleet"], ["actions"], ["network"]]);
+    expect(keys()).toEqual([
+      ["fleet"],
+      ["actions"],
+      ["network"],
+      ["stacks"],
+      ["checks"],
+    ]);
+  });
+
+  it("a stacks or checks announce refreshes only its own list", () => {
+    const { keys } = start();
+    current().deliver(JSON.stringify({ type: "changed", topics: ["stacks"] }));
+    vi.advanceTimersByTime(300);
+    expect(keys()).toEqual([["stacks"]]);
+    current().deliver(JSON.stringify({ type: "changed", topics: ["checks"] }));
+    vi.advanceTimersByTime(300);
+    expect(keys()).toEqual([["stacks"], ["checks"]]);
   });
 
   it("backs off further while the server stays away", () => {

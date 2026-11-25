@@ -1,4 +1,13 @@
-import type { NetworkDocument, NetworkRule } from "@krynodes/protocol";
+import type {
+  CommandKind,
+  ContainerEntry,
+  Inventory,
+  NetworkDocument,
+  NetworkRule,
+  RemovedEntry,
+  StackEntry,
+  UnitEntry,
+} from "@krynodes/protocol";
 
 export interface Identity {
   id: string;
@@ -14,7 +23,7 @@ export interface SessionResponse {
   identity?: Identity;
 }
 
-export type ActionKind = "trust" | "agent" | "host" | "network";
+export type ActionKind = CommandKind;
 
 export interface ActionRow {
   id: string;
@@ -25,7 +34,7 @@ export interface ActionRow {
   title: string;
   status: "sent" | "running" | "done" | "failed";
   message: string | null;
-  output: string | null;
+  output?: string | null;
   createdAt: string;
   finishedAt: string | null;
 }
@@ -168,4 +177,35 @@ export interface LaptopCode {
   origin: string;
   endpoint: string;
   download: string;
+}
+
+export interface StackNode {
+  nodeId: string;
+  name: string;
+  online: boolean;
+  docker: Inventory["docker"] | null;
+  compose: string | null;
+  stacks: StackEntry[];
+  containers: ContainerEntry[];
+  units: UnitEntry[];
+  removed: RemovedEntry[];
+  updatedAt: string | null;
+}
+
+type CheckState = "up" | "down" | "gone" | "unknown";
+
+export interface CheckView {
+  id: string;
+  nodeId: string;
+  nodeName: string;
+  online: boolean;
+  container: string;
+  name: string;
+  public: boolean;
+  note: string | null;
+  state: CheckState;
+  lastState: CheckState;
+  cause: "owner" | "offline" | null;
+  since: string | null;
+  createdAt: string;
 }

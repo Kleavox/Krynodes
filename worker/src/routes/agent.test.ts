@@ -46,7 +46,7 @@ async function setup() {
 const agent = {
   upgrade: "websocket",
   authorization: "Bearer agent-token",
-  "user-agent": "kry-agent/0.7.92",
+  "user-agent": "kry-agent/0.7.93",
 };
 
 describe("agent stream", () => {
@@ -64,7 +64,7 @@ describe("agent stream", () => {
     const forwarded = hub[0]!;
     expect(new URL(forwarded.url).pathname).toBe("/connect");
     expect(forwarded.headers.get("x-kry-node")).toBe("n1");
-    expect(forwarded.headers.get("x-kry-version")).toBe("0.7.92");
+    expect(forwarded.headers.get("x-kry-version")).toBe("0.7.93");
     expect(forwarded.headers.get("authorization")).toBeNull();
     expect(forwarded.headers.get("upgrade")).toBe("websocket");
   });
@@ -218,7 +218,7 @@ const host = {
   os: "linux",
   arch: "amd64",
   kernel: "6.8.0-45-generic",
-  version: "0.7.92",
+  version: "0.7.93",
 };
 
 const enroll = (
@@ -259,7 +259,7 @@ describe("enroll", () => {
       os: "linux",
       arch: "amd64",
       kernel: "6.8.0-45-generic",
-      version: "0.7.92",
+      version: "0.7.93",
       agent_token_hash: await sha256(token),
     });
     expect(
@@ -348,7 +348,7 @@ describe("enroll", () => {
       headers: {
         upgrade: "websocket",
         authorization: `Bearer ${token}`,
-        "user-agent": "kry-agent/0.7.92",
+        "user-agent": "kry-agent/0.7.93",
       },
     });
     const connect = hub.calls.find((entry) => entry.path === "/connect");

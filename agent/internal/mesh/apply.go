@@ -506,11 +506,14 @@ func (m *Mesh) takeDown(ctx context.Context, current record) []string {
 	step("laptop exit", m.exitOff(ctx, rangeOf(current.Document)))
 	step("remove the Docker drop-in", os.Remove(m.path(network.DropInPath)))
 	step("remove the rules drop-in", os.Remove(m.path(network.RulesDropInPath)))
+	for _, name := range []string{network.RulesDropInPath, network.DropInPath} {
+		os.Remove(filepath.Dir(m.path(name)))
+	}
 	step("reload systemd", m.command(ctx, "systemctl", "daemon-reload"))
 	return problems
 }
 
-func (m *Mesh) leave(ctx context.Context, current record) (bool, []string) {
+func (m *Mesh) leave(ctx context.Context, current record) (record, []string) {
 	var problems []string
 	if current.Next != nil {
 		current = m.staged(ctx, current)
@@ -521,8 +524,8 @@ func (m *Mesh) leave(ctx context.Context, current record) (bool, []string) {
 	if err := m.writeHosts(nil); err != nil {
 		problems = append(problems, "hosts: "+err.Error())
 	}
-	kept := current.Tools
-	if kept {
+	kept := record{Tools: current.Tools, Iptables: current.Iptables}
+	if kept.Tools {
 		found, _, err := m.read(ctx)
 		switch {
 		case err != nil:
@@ -531,9 +534,12 @@ func (m *Mesh) leave(ctx context.Context, current record) (bool, []string) {
 			if err := platform.Purge(ctx, m.platform(), tools); err != nil {
 				problems = append(problems, "remove "+tools+": "+err.Error())
 			} else {
-				kept = false
+				kept.Tools = false
 			}
 		}
+	}
+	if err := m.purgeTables(ctx, &kept); err != nil {
+		problems = append(problems, err.Error())
 	}
 	if err := network.Forget(m.keysDir()); err != nil {
 		problems = append(problems, "remove the network keys: "+err.Error())
@@ -569,7 +575,8 @@ func (m *Mesh) leaveBy(ctx context.Context, current record, applied network.Appl
 	if _, err := network.Load(m.keysDir(), true); err != nil {
 		problems = append(problems, "make new network keys: "+err.Error())
 	}
-	if err := m.save(record{Applied: applied, Tools: kept}); err != nil {
+	kept.Applied = applied
+	if err := m.save(kept); err != nil {
 		problems = append(problems, err.Error())
 	} else {
 		m.left = true

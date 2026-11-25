@@ -37,7 +37,7 @@ class AutoResponse {
   }
 }
 
-export function hubHarness(db: D1Database) {
+export function hubHarness(db: D1Database, extra: Partial<Env> = {}) {
   if (!("WebSocketRequestResponsePair" in globalThis)) {
     Object.assign(globalThis, { WebSocketRequestResponsePair: AutoResponse });
   }
@@ -47,7 +47,16 @@ export function hubHarness(db: D1Database) {
   const joins: Promise<void>[] = [];
   let alarm: number | null = null;
   const kept = new Map<string, unknown>();
+  let gate: Promise<unknown> = Promise.resolve();
+  let resets = 0;
   const ctx = {
+    blockConcurrencyWhile<T>(work: () => Promise<T>): Promise<T> {
+      const run = gate.then(work);
+      gate = run.catch(() => {
+        resets += 1;
+      });
+      return run;
+    },
     acceptWebSocket(ws: FakeSocket, tags: string[] = []) {
       accepted.push({ ws, tags });
     },
@@ -76,12 +85,15 @@ export function hubHarness(db: D1Database) {
       async put(key: string, value: unknown) {
         kept.set(key, structuredClone(value));
       },
+      async delete(key: string) {
+        return kept.delete(key);
+      },
     },
   };
-  const env = { DB: db } as unknown as Env;
+  const env = { DB: db, ...extra } as unknown as Env;
   const fresh = () => new FleetHub(ctx as unknown as DurableObjectState, env);
   let hub = fresh();
-  const connect = (nodeId: string, version: string | null = "0.7.92") => {
+  const connect = (nodeId: string, version: string | null = "0.7.93") => {
     const ws = new FakeSocket();
     joins.push(hub.join(ws as unknown as WebSocket, nodeId, version));
     return ws;
@@ -91,11 +103,16 @@ export function hubHarness(db: D1Database) {
     hub.watch(ws as unknown as WebSocket);
     return ws;
   };
-  const say = (ws: FakeSocket, message: Record<string, unknown> | string) =>
-    hub.webSocketMessage(
+  const say = async (
+    ws: FakeSocket,
+    message: Record<string, unknown> | string,
+  ) => {
+    await gate;
+    return hub.webSocketMessage(
       ws as unknown as WebSocket,
       typeof message === "string" ? message : JSON.stringify(message),
     );
+  };
   return {
     get hub() {
       return hub;
@@ -104,6 +121,8 @@ export function hubHarness(db: D1Database) {
       hub = fresh();
     },
     alarmAt: () => alarm,
+    resets: () => resets,
+    stored: (key: string) => structuredClone(kept.get(key)),
     async settled() {
       await Promise.all(joins.splice(0));
     },

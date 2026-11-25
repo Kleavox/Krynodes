@@ -5,6 +5,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -27,7 +28,7 @@ type remover struct {
 	program string
 }
 
-func UninstallCommand() error {
+func UninstallCommand(out io.Writer) error {
 	if !windows.GetCurrentProcessToken().IsElevated() {
 		return errors.New("run uninstall as Administrator")
 	}
@@ -35,7 +36,7 @@ func UninstallCommand() error {
 	if err != nil {
 		return err
 	}
-	return Uninstall(remover{program: program})
+	return Uninstall(remover{program: program}, out)
 }
 
 func (remover) StopService() error {
@@ -141,7 +142,7 @@ func (remover) RemoveNRPT() error {
 }
 
 func (remover) RemoveRunEntry() error {
-	return startTray("", false)
+	return startWithWindows("", false)
 }
 
 func (remover) RemoveData() error {
@@ -152,10 +153,10 @@ func (remover) RemoveData() error {
 	return os.RemoveAll(dir)
 }
 
-func (r remover) RemoveProgram() error {
+func (r remover) RemoveProgram() (bool, error) {
 	dir := filepath.Dir(r.program)
 	if os.RemoveAll(dir) == nil {
-		return nil
+		return false, nil
 	}
 	var left []string
 	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
@@ -164,17 +165,17 @@ func (r remover) RemoveProgram() error {
 		}
 		return nil
 	}); err != nil {
-		return err
+		return false, err
 	}
 	slices.Reverse(left)
 	for _, path := range left {
 		name, err := windows.UTF16PtrFromString(path)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := windows.MoveFileEx(name, nil, windows.MOVEFILE_DELAY_UNTIL_REBOOT); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return nil
+	return len(left) > 0, nil
 }

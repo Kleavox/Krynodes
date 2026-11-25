@@ -4,7 +4,7 @@ import targets from "./fixtures/targets.json";
 import {
   assertionSchema,
   COMMAND_GRACE_MS,
-  isProtectedTarget,
+  isProtected,
   isValidTarget,
   parseStackNames,
   SESSION_MS,
@@ -21,14 +21,18 @@ describe("service targets", () => {
   it("protects what keeps a server reachable, and Krynodes itself", () => {
     for (const { kind, name } of pairs(targets.protected)) {
       expect(isValidTarget(kind, name), name).toBe(true);
-      expect(isProtectedTarget(kind, name), name).toBe(true);
+      const held =
+        (kind === "container" || kind === "unit") && isProtected(kind, name);
+      expect(held, name).toBe(true);
     }
   });
 
   it("lets every other well-formed service through", () => {
     for (const { kind, name } of pairs(targets.allowed)) {
       expect(isValidTarget(kind, name), name).toBe(true);
-      expect(isProtectedTarget(kind, name), name).toBe(false);
+      if (kind === "container" || kind === "unit") {
+        expect(isProtected(kind, name), name).toBe(false);
+      }
     }
   });
 
@@ -39,8 +43,15 @@ describe("service targets", () => {
   });
 
   it("stops names at 128 characters", () => {
-    expect(isValidTarget("docker", "a".repeat(128))).toBe(true);
-    expect(isValidTarget("docker", "a".repeat(129))).toBe(false);
+    expect(isValidTarget("container", "a".repeat(128))).toBe(true);
+    expect(isValidTarget("container", "a".repeat(129))).toBe(false);
+  });
+
+  it("names the one Docker target docker, and nothing else", () => {
+    expect(isValidTarget("docker", "docker")).toBe(true);
+    expect(isValidTarget("docker", "resolver")).toBe(false);
+    expect(isValidTarget("stack", "Web")).toBe(false);
+    expect(isValidTarget("unit", "nginx")).toBe(false);
   });
 
   it("names no target after Tailscale", () => {
@@ -71,6 +82,15 @@ describe("stack names", () => {
       broker: "redis.1",
     });
     expect(parseStackNames("")).toEqual({});
+    expect(parseStackNames("__proto__=not a name")).toBeNull();
+    expect(parseStackNames("__proto__=a")).toBeNull();
+    expect(parseStackNames("__proto__=one,__proto__=two")).toBeNull();
+    expect(parseStackNames("__proto__=proxy-1")).toEqual(
+      JSON.parse('{"__proto__":"proxy-1"}'),
+    );
+    expect(Object.keys(parseStackNames("__proto__=proxy-1")!)).toEqual([
+      "__proto__",
+    ]);
     expect(parseStackNames("web=a")).toBeNull();
     expect(parseStackNames("web=-web")).toBeNull();
     expect(parseStackNames("web=my web")).toBeNull();

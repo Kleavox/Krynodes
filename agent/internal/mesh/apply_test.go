@@ -953,6 +953,113 @@ func TestALeaveRemovesOnlyToolsKrynodesInstalled(t *testing.T) {
 	}
 }
 
+func TestALeavePurgesTheIptablesKrynodesInstalledOnlyWhenNothingElseNeedsIt(t *testing.T) {
+	purge := aptPurge + "iptables"
+	simulation := "apt-get -s purge iptables"
+	rememberIptables := func(n *testNet, simulated string) {
+		current, _ := n.m.load()
+		current.Iptables = true
+		n.m.save(current)
+		n.run.respond[simulation] = simulated
+	}
+	leaveByDocument := func(t *testing.T, n *testNet) record {
+		t.Helper()
+		alone := n.next(t, pair)
+		alone.Members = alone.Members[:1]
+		alone.Members[0].PSK = map[string]string{}
+		alone.Allow = []network.Rule{}
+		if applied := n.offer(t, alone); !applied.OK {
+			t.Fatalf("leave %+v", applied)
+		}
+		current, _ := n.m.load()
+		return current
+	}
+	logged := &bytes.Buffer{}
+	log.SetOutput(logged)
+	defer log.SetOutput(os.Stderr)
+	const kept = "iptables was kept because other packages need it"
+
+	n := joinedNet(t)
+	rememberIptables(n, "Purg iptables [1.8.9-2]\n")
+	if err := n.m.Leave(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(n.run.calls, purge) || strings.Contains(logged.String(), kept) {
+		t.Fatalf("Krynodes' iptables stays: %v\n%s", n.run.calls, logged)
+	}
+
+	n = joinedNet(t)
+	rememberIptables(n, "Remv iptables [1.8.9-2]\nPurg iptables [1.8.9-2]\n")
+	if current := leaveByDocument(t, n); !slices.Contains(n.run.calls, purge) || current.Iptables {
+		t.Fatalf("a leave by document: %v %+v", n.run.calls, current)
+	}
+
+	for name, simulated := range map[string]string{
+		"another package goes": "Remv kubelet [1.30.0]\nRemv netfilter-persistent [1.0]\nPurg iptables [1.8.9-2]\n",
+		"docker goes":          "Remv docker-ce [5:27.0]\nPurg iptables [1.8.9-2]\n",
+		"nothing is simulated": "",
+	} {
+		for _, byDocument := range []bool{false, true} {
+			logged.Reset()
+			n = joinedNet(t)
+			rememberIptables(n, simulated)
+			var current record
+			if byDocument {
+				current = leaveByDocument(t, n)
+			} else if err := n.m.Leave(context.Background()); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if slices.Contains(n.run.calls, purge) || !strings.Contains(logged.String(), kept) || current.Iptables {
+				t.Fatalf("%s (by document %v): purged %v, log %q, record %+v", name, byDocument, slices.Contains(n.run.calls, purge), logged, current)
+			}
+		}
+	}
+
+	logged.Reset()
+	n = joinedNet(t)
+	n.run.respond[simulation] = "Purg iptables [1.8.9-2]\n"
+	if err := n.m.Leave(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(n.run.calls, purge) || slices.Contains(n.run.calls, simulation) || logged.Len() > 0 {
+		t.Fatalf("the owner's iptables was touched: %v %q", n.run.calls, logged)
+	}
+}
+
+func TestLeavingRemovesTheEmptyDropInFolder(t *testing.T) {
+	folders := []string{filepath.ToSlash(filepath.Dir(network.RulesDropInPath)), filepath.ToSlash(filepath.Dir(network.DropInPath))}
+	n := joinedNet(t)
+	for _, folder := range folders {
+		if !exists(n.m, folder) {
+			t.Fatalf("%s was never made", folder)
+		}
+	}
+	if err := n.m.Leave(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, folder := range folders {
+		if exists(n.m, folder) {
+			t.Fatalf("the empty %s stays", folder)
+		}
+	}
+
+	n = joinedNet(t)
+	for _, folder := range folders {
+		rootFile(t, n.m, folder+"/other.conf", "[Service]\n")
+	}
+	if err := n.m.Leave(context.Background()); err != nil {
+		t.Fatalf("a folder with another file is a problem: %v", err)
+	}
+	for index, folder := range folders {
+		if !exists(n.m, folder+"/other.conf") {
+			t.Fatalf("%s lost a file that is not Krynodes'", folder)
+		}
+		if exists(n.m, []string{network.RulesDropInPath, network.DropInPath}[index]) {
+			t.Fatalf("Krynodes' file stays in %s", folder)
+		}
+	}
+}
+
 func TestADockerPortOnAllAddressesIsClosedToOtherServers(t *testing.T) {
 	n := joinedNet(t)
 	n.apply(t, withoutLaptop)

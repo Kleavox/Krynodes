@@ -109,8 +109,13 @@ describe("POST /api/actions", () => {
     expect(hub.calls.map((call) => call.path)).toEqual(["/command"]);
   });
 
-  it("accepts the four actions a node can run and nothing else", async () => {
-    const { send } = await fleet();
+  it("accepts the actions a node can run and nothing else", async () => {
+    const { db, send } = await fleet();
+    await db
+      .prepare(
+        "INSERT INTO node_inventory (node_id, hash, body, updated_at) VALUES ('n1', 'h', '{\"stacks\":[{\"project\":\"web\"}],\"removed\":[]}', '2026-11-22T00:00:00.000Z')",
+      )
+      .run();
     const status = async (
       kind: string,
       name: string,
@@ -124,6 +129,17 @@ describe("POST /api/actions", () => {
           kind,
           name,
           action: act,
+          signed: signedCommand({
+            v: 1,
+            id,
+            nodeId: "n1",
+            kind,
+            name,
+            action: act,
+            issuedAt: "2026-11-22T00:00:00.000Z",
+            expiresAt: "2026-11-22T01:00:00.000Z",
+            ...(act === "logs" ? { args: { lines: "10" } } : {}),
+          }),
         })
       ).status;
     expect(await status("trust", "devices", "apply", "t1")).toBe(201);
@@ -134,6 +150,14 @@ describe("POST /api/actions", () => {
     expect(await status("trust", "devices", "update", "t6")).toBe(400);
     expect(await status("agent", "server-1", "restart", "t7")).toBe(400);
     expect(await status("stack", "x", "apply", "t8")).toBe(400);
+    expect(await status("stack", "web", "deploy", "t9")).toBe(201);
+    expect(await status("container", "web-app-1", "logs", "t10")).toBe(201);
+    expect(await status("unit", "nginx.service", "restart", "t11")).toBe(201);
+    expect(await status("docker", "docker", "install", "t12")).toBe(201);
+    expect(await status("stack", "web", "export", "t13")).toBe(400);
+    expect(await status("unit", "nginx.service", "remove", "t14")).toBe(400);
+    expect(await status("container", "web-app-1", "deploy", "t15")).toBe(400);
+    expect(await status("pod", "web", "start", "t16")).toBe(400);
   });
 
   it("refuses a malformed action before it touches anything", async () => {

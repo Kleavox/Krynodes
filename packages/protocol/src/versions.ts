@@ -1,4 +1,4 @@
-export const MIN_AGENT = "0.7.92";
+export const MIN_AGENT = "0.7.93";
 
 const RELEASE = /^\d+\.\d+\.\d+$/u;
 

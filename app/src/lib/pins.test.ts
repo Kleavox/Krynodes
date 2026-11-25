@@ -109,11 +109,15 @@ describe("the browser's own anchor", () => {
     remember(store, [], { version: 6, hash: HASH });
     const older = { document: documentOf(5, []), hash: HASH };
     await expect(checkAnchor(older, store)).rejects.toThrow(
-      "The network document is older than the one this browser last signed or checked. Nothing was signed.",
+      new Error(
+        "The network document is older than the one this browser last signed or checked, so nothing was signed. If this browser's saved network is from an earlier test, delete this site's data and check each member again.",
+      ),
     );
     const other = { document: documentOf(6, []), hash: "r".repeat(43) };
     await expect(checkAnchor(other, store)).rejects.toThrow(
-      "The network document is not the one this browser last signed or checked. Nothing was signed.",
+      new Error(
+        "The network document is not the one this browser last signed or checked, so nothing was signed. If this browser's saved network is from an earlier test, delete this site's data and check each member again.",
+      ),
     );
     expect(() =>
       checkBase({ document: documentOf(6, []), hash: HASH }, store),

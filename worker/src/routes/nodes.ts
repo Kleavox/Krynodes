@@ -9,11 +9,12 @@ import {
   invalidRequest,
   isMember,
   isUnique,
+  machineName,
   networkMember,
   readJson,
 } from "./shared";
 
-const renameSchema = z.strictObject({ name: z.string().trim().min(1).max(64) });
+const renameSchema = z.strictObject({ name: machineName });
 
 interface NodeRow {
   id: string;

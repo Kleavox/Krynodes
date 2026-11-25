@@ -252,3 +252,36 @@ func TestPackageListsAreWaitedForTenMinutesAndNothingElseIsWaitedFor(t *testing.
 		t.Fatalf("err %v slept %v calls %q", err, run.slept, run.calls)
 	}
 }
+
+func TestAnInstalledPackageIsAloneOnlyWhenNothingElseWouldGoWithIt(t *testing.T) {
+	ctx := context.Background()
+	apt := "apt-get -s purge iptables"
+	dnf := "env LC_ALL=C dnf remove --assumeno iptables-nft"
+	for name, test := range map[string]struct {
+		release, call, pkg, answer string
+		fail                       bool
+		want                       bool
+	}{
+		"apt only the package":              {"debian 12", apt, "iptables", "Reading package lists...\nPurg iptables [1.8.9-2]\n", false, true},
+		"apt removed and purged":            {"ubuntu", apt, "iptables", "Remv iptables [1.8.10-3]\nPurg iptables [1.8.10-3]\n", false, true},
+		"apt another package goes":          {"debian 12", apt, "iptables", "Remv kubelet [1.30.0]\nRemv docker-ce [5:27.0]\nPurg iptables [1.8.9-2]\n", false, false},
+		"apt another one first":             {"debian 12", apt, "iptables", "Purg iptables [1.8.9-2]\nPurg ufw [0.36]\n", false, false},
+		"apt a name that only starts alike": {"debian 12", apt, "iptables", "Purg iptables-persistent [1.0]\n", false, false},
+		"apt the simulation says nothing":   {"debian 12", apt, "iptables", "", false, false},
+		"apt the simulation fails":          {"debian 12", apt, "iptables", "E: Unable to locate package iptables", true, false},
+		"dnf only the package":              {"rocky", dnf, "iptables-nft", "Removing:\n iptables-nft x86_64 1.8.10 @baseos 80 k\nRemoving unused dependencies:\n iptables-libs x86_64 1.8.10 @baseos 70 k\nOperation aborted.\n", false, true},
+		"dnf dependent packages":            {"rocky", dnf, "iptables-nft", "Removing:\n iptables-nft x86_64 1.8.10 @baseos 80 k\nRemoving dependent packages:\n docker-ce x86_64 27.0 @docker 100 M\nOperation aborted.\n", false, false},
+		"dnf nothing matches":               {"rocky", dnf, "iptables-nft", "No match for argument: iptables-nft\nNo packages marked for removal.\n", false, false},
+		"yum dependencies":                  {"centos 7", "env LC_ALL=C yum remove --assumeno iptables-nft", "iptables-nft", "Removing:\n iptables-nft x86_64 1.8.10 @base 80 k\nRemoving for dependencies:\n kubelet x86_64 1.30 @k8s 90 M\n", false, false},
+		"pacman cannot say":                 {"arch", "pacman -Rns --print iptables", "iptables", "iptables\n", false, false},
+	} {
+		env, run := onRelease(t, test.release)
+		run.respond[test.call] = test.answer
+		if test.fail {
+			run.failing[test.call] = true
+		}
+		if got := Alone(ctx, env, test.pkg); got != test.want {
+			t.Fatalf("%s: %v, calls %q", name, got, run.calls)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"reflect"
@@ -102,13 +103,15 @@ func TestWireMatchesTheSharedFixture(t *testing.T) {
 		t.Fatal("the fixture holds no valid messages")
 	}
 	check(t, "agent", f.Agent, map[string]func() any{
-		"hello":    func() any { return new(Hello) },
-		"progress": func() any { return new(Progress) },
-		"result":   func() any { return new(Result) },
-		"applied":  func() any { return new(Applied) },
-		"links":    func() any { return new(Links) },
-		"announce": func() any { return new(Announce) },
-		"meet":     func() any { return new(Meet) },
+		"hello":     func() any { return new(Hello) },
+		"progress":  func() any { return new(Progress) },
+		"result":    func() any { return new(Result) },
+		"applied":   func() any { return new(Applied) },
+		"links":     func() any { return new(Links) },
+		"announce":  func() any { return new(Announce) },
+		"meet":      func() any { return new(Meet) },
+		"inventory": func() any { return new(Inventory) },
+		"check":     func() any { return new(Check) },
 	})
 	check(t, "hub", f.Hub, map[string]func() any{
 		"command":  func() any { return new(Command) },
@@ -116,6 +119,7 @@ func TestWireMatchesTheSharedFixture(t *testing.T) {
 		"document": func() any { return new(Document) },
 		"hints":    func() any { return new(Hints) },
 		"refresh":  func() any { return new(Refresh) },
+		"checks":   func() any { return new(Checks) },
 	})
 }
 
@@ -125,8 +129,8 @@ func TestTheFixtureHoldsEveryKindOfMessage(t *testing.T) {
 		side  side
 		kinds []string
 	}{
-		"agent": {f.Agent, []string{"hello", "progress", "result", "applied", "links", "announce", "meet"}},
-		"hub":   {f.Hub, []string{"command", "ack", "document", "hints", "refresh"}},
+		"agent": {f.Agent, []string{"hello", "progress", "result", "applied", "links", "announce", "meet", "inventory", "check"}},
+		"hub":   {f.Hub, []string{"command", "ack", "document", "hints", "refresh", "checks"}},
 	} {
 		seen := map[string]bool{}
 		for _, raw := range want.side.Valid {
@@ -309,6 +313,115 @@ func TestDecodeHubRefusesMalformedNetworkMessages(t *testing.T) {
 		}
 		if value != nil {
 			t.Fatalf("%.120s was refused with %#v in hand", message, value)
+		}
+	}
+}
+
+func TestDecodeHubReadsTheChecksTheOwnerChose(t *testing.T) {
+	value, err := DecodeHub([]byte(`{"type":"checks","names":["web-app-1","db.1"]}`))
+	want := Checks{Type: "checks", Names: []string{"web-app-1", "db.1"}}
+	if got, ok := value.(Checks); err != nil || !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("checks %#v %v", value, err)
+	}
+	value, err = DecodeHub([]byte(`{"type":"checks","names":[]}`))
+	if got, ok := value.(Checks); err != nil || !ok || got.Names == nil || len(got.Names) != 0 {
+		t.Fatalf("empty checks %#v %v", value, err)
+	}
+	full := make([]string, 64)
+	for i := range full {
+		full[i] = fmt.Sprintf("web-%d", i)
+	}
+	encoded, _ := json.Marshal(Checks{Type: "checks", Names: full})
+	if value, err = DecodeHub(encoded); err != nil || len(value.(Checks).Names) != 64 {
+		t.Fatalf("64 checks %v", err)
+	}
+}
+
+func TestDecodeHubRefusesMalformedChecks(t *testing.T) {
+	over := make([]string, 65)
+	for i := range over {
+		over[i] = fmt.Sprintf("web-%d", i)
+	}
+	tooMany, _ := json.Marshal(Checks{Type: "checks", Names: over})
+	for _, message := range []string{
+		string(tooMany),
+		`{"type":"checks"}`,
+		`{"type":"checks","names":null}`,
+		`{"type":"checks","names":{}}`,
+		`{"type":"checks","names":"web-app-1"}`,
+		`{"type":"checks","names":[7]}`,
+		`{"type":"checks","names":[null]}`,
+		`{"type":"checks","names":[""]}`,
+		`{"type":"checks","names":["a"]}`,
+		`{"type":"checks","names":["-web"]}`,
+		`{"type":"checks","names":["web app"]}`,
+		`{"type":"checks","names":["web/app"]}`,
+		`{"type":"checks","names":["web-app
+"]}`,
+		`{"type":"checks","names":["` + strings.Repeat("a", 129) + `"]}`,
+		`{"type":"checks","names":[],"extra":1}`,
+		`{"type":"checks","Names":[]}`,
+		`{"type":"Checks","names":[]}`,
+		`{"type":"checks","id":"a","names":[]}`,
+	} {
+		value, err := DecodeHub([]byte(message))
+		if err == nil {
+			t.Fatalf("%.120s was accepted as %#v", message, value)
+		}
+		if value != nil {
+			t.Fatalf("%.120s was refused with %#v in hand", message, value)
+		}
+	}
+	if _, err := DecodeHub([]byte(`{"type":"checks","names":["` + strings.Repeat("a", 128) + `"]}`)); err != nil {
+		t.Fatalf("a name of 128 characters was refused: %v", err)
+	}
+}
+
+func TestTheStackArgumentsFixtureHasTheShapeTheNodeReads(t *testing.T) {
+	raw, err := os.ReadFile("../../../packages/protocol/src/fixtures/stack-args.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type entry struct {
+		Kind   string          `json:"kind"`
+		Action string          `json:"action"`
+		Args   json.RawMessage `json:"args"`
+		Why    string          `json:"why"`
+	}
+	var args struct {
+		Valid   []entry `json:"valid"`
+		Invalid []entry `json:"invalid"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
+		t.Fatal(err)
+	}
+	if len(args.Valid) == 0 || len(args.Invalid) == 0 {
+		t.Fatal("the fixture holds no arguments of one kind")
+	}
+	kinds := map[string]bool{}
+	for _, one := range args.Valid {
+		if one.Why != "" {
+			t.Fatalf("a valid %s/%s carries a why", one.Kind, one.Action)
+		}
+		var values map[string]string
+		if err := json.Unmarshal(one.Args, &values); err != nil || values == nil {
+			t.Fatalf("the valid %s/%s has args that are not an object of strings: %s", one.Kind, one.Action, one.Args)
+		}
+		kinds[one.Kind] = true
+	}
+	for _, kind := range []string{"stack", "container", "unit", "docker"} {
+		if !kinds[kind] {
+			t.Fatalf("the fixture has no valid %s entry", kind)
+		}
+	}
+	for _, one := range args.Invalid {
+		if one.Why == "" {
+			t.Fatalf("an invalid %s/%s says no why", one.Kind, one.Action)
+		}
+		if len(one.Args) == 0 {
+			t.Fatalf("an invalid %s/%s has no args member", one.Kind, one.Action)
 		}
 	}
 }

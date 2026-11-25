@@ -1,0 +1,29 @@
+{
+  "name": "web",
+  "networks": {
+    "default": {
+      "name": "web_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "image": "nginx:1.27",
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "/",
+          "target": "/host",
+          "bind": {
+            "create_host_path": true
+          }
+        }
+      ],
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

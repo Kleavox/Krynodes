@@ -70,7 +70,7 @@ type Service struct {
 	Dir     string
 	Secrets Secrets
 	Now     func() time.Time
-	Apply   func(Wanted)
+	Apply   func(Wanted) error
 	Ping    func(address string) (time.Duration, bool)
 	Kernel  string
 
@@ -78,6 +78,7 @@ type Service struct {
 	mu        sync.Mutex
 	applying  sync.Mutex
 	pending   *Wanted
+	why       string
 	off       bool
 	linked    bool
 	notes     []note
@@ -347,6 +348,9 @@ func (s *Service) apply(version int, signed []byte) (string, int, *reporter.Anno
 			delete(record.Announced, node)
 		}
 	}
+	if !record.Joined {
+		s.off = false
+	}
 	record.Applied, record.Joined, record.Document, record.Endpoints = record.Applied.After(document, hash), true, &document, nil
 	if err := s.save(record); err != nil {
 		return "", version, nil, false, err
@@ -429,25 +433,31 @@ func (s *Service) takeHints(hints reporter.Hints) error {
 	return s.save(record)
 }
 
-func (s *Service) wanted() Wanted {
+func (s *Service) wanted() (Wanted, string) {
+	const outside = "this laptop is not in the private network"
 	record, err := s.read()
-	if err != nil || s.off || !record.Joined || record.Document == nil {
-		return Wanted{}
+	switch {
+	case err != nil:
+		return Wanted{}, err.Error()
+	case s.off:
+		return Wanted{}, "disconnected in the tray"
+	case !record.Joined || record.Document == nil:
+		return Wanted{}, outside
 	}
 	document := current(*record.Document, record.Announced, record.Endpoints)
 	self, ok := member(document, record.NodeID)
 	if !ok {
-		return Wanted{}
+		return Wanted{}, outside
 	}
 	psk, err := s.presharedKeys(self, document)
 	if err != nil {
 		log.Printf("the tunnel stays down: %v", err)
-		return Wanted{}
+		return Wanted{}, err.Error()
 	}
 	private, err := s.Secrets.Get(wireguardSecret)
 	if err != nil {
 		log.Printf("the tunnel stays down: %v", err)
-		return Wanted{}
+		return Wanted{}, err.Error()
 	}
 	chosen := ""
 	if entry, ok := member(document, s.exit); ok && exit.Offered(*record.Document, s.held, s.exit) {
@@ -471,7 +481,7 @@ func (s *Service) wanted() Wanted {
 		Key:     private,
 		MTU:     mtu,
 		Local:   s.local,
-	}
+	}, fmt.Sprintf("v%d, %d peers", record.Document.Version, len(peers))
 }
 
 type answer struct {
@@ -619,22 +629,30 @@ func (s *Service) pings(ctx context.Context) {
 }
 
 func (s *Service) refresh() {
-	next := s.wanted()
+	next, why := s.wanted()
 	if reflect.DeepEqual(next, s.last) {
 		return
 	}
-	s.last, s.pending = next, &next
+	s.last, s.pending, s.why = next, &next, why
 }
 
 func (s *Service) push() {
 	s.applying.Lock()
 	defer s.applying.Unlock()
 	s.mu.Lock()
-	next := s.pending
+	next, why := s.pending, s.why
 	s.pending = nil
 	s.mu.Unlock()
-	if next != nil && s.Apply != nil {
-		s.Apply(*next)
+	if next == nil || s.Apply == nil {
+		return
+	}
+	switch err := s.Apply(*next); {
+	case err != nil:
+		log.Printf("tunnel: %v", err)
+	case next.Address != "":
+		log.Printf("tunnel up (%s)", why)
+	default:
+		log.Printf("tunnel down (%s)", why)
 	}
 }
 

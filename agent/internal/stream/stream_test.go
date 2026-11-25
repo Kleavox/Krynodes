@@ -592,6 +592,29 @@ func TestNetworkMessagesArriveDecoded(t *testing.T) {
 	}
 }
 
+func TestTheChosenChecksArriveDecoded(t *testing.T) {
+	srv, _ := server(t, func(p *peer) {
+		p.write(opText, []byte(`{"type":"checks","names":["bad/name"]}`), true)
+		p.write(opText, []byte(`{"type":"checks","names":["web-1","web-2"]}`), true)
+		drain(p)
+	})
+	c, events := fresh(srv.URL)
+	arrived := make(chan reporter.Checks, 4)
+	c.Checks = func(checks reporter.Checks) { arrived <- checks }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.Run(ctx)
+	<-events.connected
+	select {
+	case checks := <-arrived:
+		if checks.Type != "checks" || len(checks.Names) != 2 || checks.Names[0] != "web-1" || checks.Names[1] != "web-2" {
+			t.Fatalf("arrived %+v", checks)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the checks did not arrive")
+	}
+}
+
 func TestHelloAgainGoesOutOnTheLiveConnection(t *testing.T) {
 	got := make(chan []string, 1)
 	srv, dials := server(t, func(p *peer) {

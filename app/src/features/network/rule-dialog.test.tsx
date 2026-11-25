@@ -2,10 +2,12 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { checkAnchor, memoryStore } from "@/lib/pins";
 import { type RuleForm } from "@/lib/rules";
 import { document, L1, L2, S1, S2, S3 } from "@/lib/rules-test-utils";
 
-import { RuleFields } from "./rule-dialog";
+import { OneTimeCheck } from "./one-time-check";
+import { RuleBody, RuleFields } from "./rule-dialog";
 
 const none = () => {};
 
@@ -135,5 +137,47 @@ describe("the rule dialog", () => {
   it("takes the port field only for Specific Ports", () => {
     expect(html(specific(S1, S2, ""))).toContain('id="rule-ports"');
     expect(html(all(S1, S2))).not.toContain('id="rule-ports"');
+  });
+});
+
+describe("the rule dialog while a fingerprint check is open", () => {
+  const body = async (checking: boolean) => {
+    const members = await checkAnchor(
+      { document: document(), hash: "q".repeat(43) },
+      memoryStore(),
+    );
+    expect(members.length).toBeGreaterThan(0);
+    return renderToStaticMarkup(
+      <RuleBody
+        document={document()}
+        form={all(S1, S2)}
+        touched={false}
+        state={{ phase: "running" }}
+        failed={null}
+        lines={[]}
+        saveable
+        checking={checking}
+        onTouch={none}
+        onChange={none}
+        onSave={none}
+        onClose={none}
+      >
+        {checking && <OneTimeCheck members={members} onAnswer={none} />}
+      </RuleBody>,
+    );
+  };
+
+  it("shows the fingerprint check, not the wait for the passkey", async () => {
+    const shown = await body(true);
+    expect(shown).toContain('aria-label="Check Fingerprints"');
+    expect(shown).toContain("server-1");
+    expect(shown).toContain("They Match");
+    expect(shown).not.toContain("Waiting for your passkey");
+  });
+
+  it("waits for the passkey once nothing is left to check", async () => {
+    const shown = await body(false);
+    expect(shown).not.toContain("Check Fingerprints");
+    expect(shown).toContain("Waiting for your passkey");
   });
 });

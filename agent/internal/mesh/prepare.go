@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"net/netip"
 	"slices"
 	"strings"
@@ -19,6 +20,29 @@ var errJoined = errors.New("this server is already in the private network")
 
 func (m *Mesh) platform() platform.Env {
 	return platform.Env{Root: m.Root, Run: platform.Runner(m.Run)}
+}
+
+func (m *Mesh) tablesPackage() string {
+	if manager := platform.Detect(m.platform()).Manager; manager == "dnf" || manager == "yum" {
+		return "iptables-nft"
+	}
+	return "iptables"
+}
+
+func (m *Mesh) purgeTables(ctx context.Context, current *record) error {
+	if !current.Iptables {
+		return nil
+	}
+	pkg := m.tablesPackage()
+	if platform.Alone(ctx, m.platform(), pkg) {
+		if err := platform.Purge(ctx, m.platform(), pkg); err != nil {
+			return fmt.Errorf("remove %s: %w", pkg, err)
+		}
+	} else {
+		log.Printf("private network: %s was kept because other packages need it", pkg)
+	}
+	current.Iptables = false
+	return nil
 }
 
 func (m *Mesh) locked(change func(*record) error) error {
@@ -66,10 +90,22 @@ func (m *Mesh) prepare(ctx context.Context, args map[string]string) (string, err
 	case network.Clashes(networkRange, found.Used):
 		return "", fmt.Errorf("%s is already used on this server", networkRange)
 	}
-	var installed []string
+	var wanted, installed []string
 	var failed error
+	tablesPackage := m.tablesPackage()
 	if !found.Tools {
-		installed, failed = platform.Install(ctx, m.platform(), tools)
+		wanted = append(wanted, tools)
+	}
+	if !found.Iptables {
+		wanted = append(wanted, tablesPackage)
+	}
+	if len(wanted) > 0 {
+		installed, failed = platform.Install(ctx, m.platform(), wanted...)
+		if failed == nil && !found.Iptables {
+			if said := m.tables(ctx); said != "" {
+				failed = errors.New(said)
+			}
+		}
 	}
 	keys, keyErr := network.Load(m.keysDir(), true)
 	saved := m.locked(func(current *record) error {
@@ -77,6 +113,7 @@ func (m *Mesh) prepare(ctx context.Context, args map[string]string) (string, err
 			return err
 		}
 		current.Tools = current.Tools || slices.Contains(installed, tools)
+		current.Iptables = current.Iptables || slices.Contains(installed, tablesPackage)
 		if failed == nil && keyErr == nil {
 			current.Prepared = &prepared{Range: networkRange, Port: port, MTU: found.MTU, Parent: parent}
 		}
@@ -84,7 +121,7 @@ func (m *Mesh) prepare(ctx context.Context, args map[string]string) (string, err
 	})
 	switch {
 	case failed != nil:
-		return "", errors.Join(fmt.Errorf("install %s: %w", tools, failed), saved)
+		return "", errors.Join(fmt.Errorf("install %s: %w", strings.Join(wanted, " and "), failed), saved)
 	case keyErr != nil:
 		return "", errors.Join(keyErr, saved)
 	case saved != nil:
@@ -122,6 +159,9 @@ func (m *Mesh) unprepare(ctx context.Context, args map[string]string) (string, e
 		} else {
 			current.Tools = false
 		}
+	}
+	if err := m.purgeTables(ctx, &current); err != nil {
+		problems = append(problems, err)
 	}
 	current.Prepared = nil
 	if err := m.save(current); err != nil {

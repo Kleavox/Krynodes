@@ -22,6 +22,7 @@ const (
 	maxMessage = 2048
 	maxLine    = 512
 	maxRefused = 256
+	maxOutput  = 64 << 10
 )
 
 var commandID = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
@@ -85,11 +86,24 @@ func (d *Daemon) Handle(ctx context.Context, msg reporter.Command) {
 	progress := func(line string) {
 		_ = d.Send(reporter.Progress{Type: "progress", ID: msg.ID, Line: clip(line, maxLine)})
 	}
-	message, err := d.Handlers[msg.Kind+"/"+msg.Action](ctx, cmd, progress)
+	var output string
+	message, err := d.Handlers[msg.Kind+"/"+msg.Action](context.WithValue(ctx, outputKey{}, &output), cmd, progress)
 	if ctx.Err() != nil {
 		return
 	}
-	d.finish(msg.ID, outcome(msg.ID, message, err))
+	result := outcome(msg.ID, message, err)
+	if err == nil {
+		result.Output = output
+	}
+	d.finish(msg.ID, result)
+}
+
+type outputKey struct{}
+
+func Output(ctx context.Context, text string) {
+	if slot, ok := ctx.Value(outputKey{}).(*string); ok {
+		*slot = clip(text, maxOutput)
+	}
 }
 
 func (d *Daemon) verify(msg reporter.Command) (trust.Command, error) {
@@ -114,7 +128,7 @@ func (d *Daemon) Ack(id string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if stored, found, err := d.read(id); err == nil && found && stored.Result != nil && !stored.Acked {
-		stored.Acked = true
+		stored.Acked, stored.Result.Output = true, ""
 		if err := d.write(id, stored); err != nil {
 			log.Printf("record the ack for %s: %v", id, err)
 		}

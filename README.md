@@ -20,7 +20,7 @@ anchored by the fingerprint the owner checks and the fresh keys it makes.
 
 This is an overhaul that turns Krynodes into a private network between servers
 and laptops, with Docker stacks that move between servers. This tree holds the
-first two parts:
+first three parts:
 
 - **Fleet.** Enroll a server with one command; see it Online or Offline live.
 - **Passkeys.** Add a passkey, rename it, choose which machines trust it,
@@ -32,11 +32,17 @@ first two parts:
   or rejects each one. Servers refuse each other unless a Connections rule
   allows it. Laptops reach the servers and can send their internet traffic out
   through one server, the exit node.
+- **Stacks.** Install Docker, then run Docker Compose stacks on any server:
+  New Stack, Deploy, Edit Compose, Rollback, Start, Stop, Restart, Logs,
+  Remove and Adopt, each signed by a trusted passkey.
+- **Checks.** Choose containers to watch; a lasting failure and a server that
+  stays offline send one mail.
+- **Status page.** A public page with the checks the owner makes public.
 - **History.** Every action and every network change, who it went to and how
   it ended.
 
 The dashboard's pages are plain for now; their visual design comes later.
-Moving stacks, container checks and web addresses come in later parts. The 0.7
+Moving stacks between servers and web addresses come in later parts. The 0.7
 line's metrics, incidents, quarantine and hardening are not in this tree; they
 are not hidden, they are removed.
 
@@ -51,13 +57,13 @@ server-1 ══ WireGuard (kry0) ══ server-2 ══ … ══ laptop-1
 
 ## Layout
 
-| Path                | What                                                                       |
-| ------------------- | -------------------------------------------------------------------------- |
-| `worker/`           | Hono Worker: dashboard API, agent API, the `FleetHub` Durable Object, D1   |
-| `app/`              | React dashboard (Tailwind v4, shadcn/ui, TanStack Query)                   |
-| `agent/`            | Go daemon `kry`, standard library only                                     |
-| `packages/protocol` | Zod schemas for the agent and Worker wire, with fixtures the Go tests read |
-| `tooling/`          | TypeScript presets, Vite config, lint scripts                              |
+| Path                | What                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------- |
+| `worker/`           | Hono Worker: dashboard API, agent API, the `FleetHub` Durable Object, D1; the `stats` Worker |
+| `app/`              | React dashboard (Tailwind v4, shadcn/ui, TanStack Query)                                     |
+| `agent/`            | Go daemon `kry`, standard library only                                                       |
+| `packages/protocol` | Zod schemas for the agent and Worker wire, with fixtures the Go tests read                   |
+| `tooling/`          | TypeScript presets, Vite config, lint scripts                                                |
 
 ## Develop
 
@@ -70,7 +76,8 @@ pnpm exec wrangler dev --config worker/wrangler.jsonc --port 8790
 With no Access variables set, the Worker runs as a local standalone operator,
 so the dashboard opens without signing in. Production refuses to serve at all
 without Access. Rebuild the app and restart `wrangler dev` after every app
-change; it serves the built assets from `app/dist`.
+change; it serves the built assets from `app/dist`. The status page runs with
+`pnpm exec wrangler dev --config worker/wrangler.stats.jsonc` on port 8791.
 
 ## Check
 
@@ -197,6 +204,74 @@ missed lost its trust cannot check those changes: take it off locally
 (`sudo kry uninstall-service`, or `krynodes uninstall` on a laptop), enroll it
 again and approve it.
 
+## Stacks
+
+The Stacks page lists each server's Docker Compose stacks, its containers that
+belong to no stack and its systemd units. **Install Docker** puts Docker and
+Docker Compose from Docker's own packages on a Debian or RHEL family server.
+**New Stack** takes a name such as `web`, an optional title, the compose file,
+an access level, a choice for each published port and an optional `.env`. The
+server keeps them in `/var/lib/kry/compose/<name>`.
+
+From a stack's ⋯ menu, **Deploy** pulls the newest images and starts them. When
+the new images fail their health check within two minutes, the previous images
+come back and the result says so; a stopped stack stays stopped. **Edit
+Compose** changes the file and deploys it, and puts the previous file back when
+the new one fails. **Rollback** goes back one step, to the images that ran
+before the last deploy. **Remove** stops a stack and keeps it under Removed for
+7 days, where **Restore** brings it back and **Delete Permanently** deletes it
+with its volumes. A stack started by hand with Compose shows as Not Managed;
+**Adopt** lets Krynodes manage it. Containers and units have Start, Stop and
+Restart, and containers have Logs; protected ones, such as ssh, Docker and
+Krynodes itself, are left alone.
+
+**Access.** A **Contained** stack, the default, keeps to its own named volumes
+and its own networks: host paths, privileged mode, extra capabilities, devices,
+host namespaces, the Docker socket, building from source and images from the
+server itself are refused, and the refusal names the setting. Its containers
+cannot reach the server's own services or other members of the private
+network. **Full** access lets a stack reach the server itself, its folders,
+devices and network; the owner chooses it in the dialog.
+
+**Ports.** At every access level each published port is bound to
+`127.0.0.1`, so a published port never listens on the internet; a Full stack
+that shares the server's network can still listen by itself. A port set to **Private Network** is also bound to
+the server's `kry0` address and is reachable from the members a Connections
+rule allows, for example `server-2 → server-1 · 8080/tcp`. Without such a rule
+the dialog says "Nothing reaches this port until a rule in Connections allows
+it."
+
+**.env.** The browser seals the `.env` to the server's own key before it is
+signed, so the Worker never reads it. The server writes it with mode `0600` and
+never sends it back; Edit Compose shows only the names of its variables. A
+compose file is at most 32 KB and an `.env` at most 16 KB.
+
+## Checks
+
+**Add Check** in a stack's ⋯ menu watches one container under a name the owner
+chooses. A check reads **Up** (running, and healthy when the container has a
+health check), **Down**, **Paused** (stopped by the owner) or "--" (no such
+container, nothing reported yet, or the server is offline). Adding, renaming,
+making public and deleting a check change no machine, so they need no passkey.
+A server reports a check only when its state changes.
+
+A check that stays down for five minutes, and a server that stays offline for
+five minutes, send one mail each, at most once an hour per check or server.
+There is no mail for a recovery or for the owner's own stop, remove or deploy.
+Mail goes through the Worker's `EMAIL` binding from `FROM_EMAIL` to
+`ALERT_EMAIL`; without them nothing is sent. A server holds at most 64 checks.
+
+## Status page
+
+The `stats` Worker (`worker/wrangler.stats.jsonc`) is a public page, for
+example `https://stats.example.test`, that reads the same D1 database. It shows
+only the checks marked public, each by its public name and note: its state, 24
+hourly bars, 90 daily bars and the uptime. It names no server and no
+container. A check whose server has been offline for five minutes shows No
+data, and time without data does not count against the uptime. History older
+than 90 days is deleted. The Checks page links to the page when the Worker's
+`STATUS_PAGE_URL` variable is set.
+
 ## Security model in plain words
 
 - **The machine decides.** A server or laptop applies a network document only
@@ -219,6 +294,28 @@ again and approve it.
 - **Unsigned hints cost availability only.** The Worker suggests endpoints and
   meeting points, which can change where packets go but never who is a peer or
   what is allowed.
+- **Every stack command is signed.** The compose file, the access level, the
+  served ports, the title and the sealed `.env` are part of the signed
+  command, and the server runs nothing it did not receive inside one. Logs and
+  reading a compose file are signed too, since both can hold secrets.
+- **A Contained stack is vetted on the server.** The server checks the
+  pasted text, then runs `docker compose config` as a user with no privileges
+  and vets that output too, so anchors, `extends`, `include` and `${…}` cannot
+  hide a setting. Host networking, privileged mode and the other settings
+  listed under Stacks are refused. A Full stack is normalised as root and is
+  refused only builds from source and networks that overlap the private
+  network; Full is the owner's signed choice.
+- **No port reaches the internet by accident.** At every access level a
+  published port is bound to `127.0.0.1`, and a Private Network port also to
+  the server's `kry0` address; `0.0.0.0`, `::` and empty addresses never reach
+  Docker. A Full stack that shares the server's network can still listen on
+  any address by itself.
+- **The Worker never reads an `.env`.** It is sealed in the browser, and only
+  for a server whose fingerprint this browser has checked.
+- **Reports cost availability only.** Container states and inventories are
+  unsigned reports: a Worker that has been taken over can hide a failure or
+  invent one, but cannot start, stop or read anything. Logs and compose text
+  a server sends back are kept for 24 hours and left out of the action list.
 - **Stated limits.** At enroll a machine takes its first passkey trust from the
   Worker once; the fingerprint check is how the owner closes that gap for the
   network. A fresh browser must check every member's fingerprint once before it
@@ -247,7 +344,7 @@ is never seen by a production Worker, which follows `releases/latest`. Test buil
 overhaul branch are `0.7.90` and up; the first release of the new line is
 `0.8.0`, made from `main`.
 
-Agents older than `0.7.92` are refused by the Worker.
+Agents older than `0.7.93` are refused by the Worker.
 
 ## Test deployment
 
@@ -272,7 +369,9 @@ deletes it once the change lands.
   public values. The GitHub environment `production` supplies the rest:
   secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `KRY_D1_ID`,
   `ALERT_EMAIL`, and variables `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`.
-- **Bindings.** D1 `DB`, the `FLEET` Durable Object, static assets `ASSETS`.
+- **Bindings.** D1 `DB`, the `FLEET` Durable Object, static assets `ASSETS`,
+  the `EMAIL` send binding. CI deploys the `stats` Worker after `kry`, on the
+  same D1 database.
 - **HTTPS.** The Worker sends `Strict-Transport-Security` on its own
   hostnames. Set the zone's minimum TLS version to 1.2 in Cloudflare.
 - **GitHub.** CI's token is read-only; only the release workflow may write.

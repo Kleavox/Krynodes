@@ -131,7 +131,7 @@ func newFixture(t *testing.T) *fixture {
 	if err := trust.Save(dir, trust.Trust{V: 1, NodeID: laptop1, Origin: testOrigin, RPID: testRPID, Version: 1, Keys: []trust.TrustKey{f.device}, Core: []string{"cred-1"}, Access: []string{"cred-1"}, RequireUV: true}); err != nil {
 		t.Fatal(err)
 	}
-	f.service = &Service{Dir: dir, Secrets: f.secrets, Now: func() time.Time { return testNow }, Apply: func(wanted Wanted) { f.applied = append(f.applied, wanted) }, hub: f.hub}
+	f.service = &Service{Dir: dir, Secrets: f.secrets, Now: func() time.Time { return testNow }, Apply: func(wanted Wanted) error { f.applied = append(f.applied, wanted); return nil }, hub: f.hub}
 	if err := f.service.save(state{Endpoint: testOrigin, NodeID: laptop1}); err != nil {
 		t.Fatal(err)
 	}

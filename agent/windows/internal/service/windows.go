@@ -164,48 +164,44 @@ func (system) Register(executable string) error {
 }
 
 func (system) Tray(executable string) error {
-	return startTray(executable, true)
+	return startWithWindows(executable, true)
 }
 
-var createProcessWithToken = windows.NewLazySystemDLL("advapi32.dll").NewProc("CreateProcessWithTokenW")
-
-func (system) StartTray(executable string) error {
-	return startTrayAsShellUser(executable)
-}
-
-func startTrayAsShellUser(executable string) error {
-	return shellUser{
-		Session:   ownSession,
+func (c control) startTray(session uint32) error {
+	return userSession{
 		Processes: processes,
-		Token:     shellToken,
+		Token:     userToken,
 		Elevated:  func(token uintptr) bool { return windows.Token(token).IsElevated() },
 		Start: func(token uintptr, command string) error {
-			return startAs(windows.Token(token), executable, command)
+			return startAs(windows.Token(token), c.executable, command)
 		},
 		Close: func(token uintptr) { windows.Token(token).Close() },
-	}.startTray(executable)
+	}.startTray(c.executable, session)
 }
 
-func ownSession() (uint32, error) {
-	var session uint32
-	err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &session)
-	return session, err
+func (c control) trayFor(session uint32) {
+	if !trayStarts() {
+		return
+	}
+	if err := c.startTray(session); err != nil && !errors.Is(err, errNoUser) {
+		log.Print(err)
+	}
 }
 
-func processes() ([]shellProcess, error) {
+func processes() ([]process, error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer windows.CloseHandle(snapshot)
 	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
-	var list []shellProcess
+	var list []process
 	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
 		var session uint32
 		if windows.ProcessIdToSessionId(entry.ProcessID, &session) != nil {
 			continue
 		}
-		list = append(list, shellProcess{ID: entry.ProcessID, Session: session, Name: windows.UTF16ToString(entry.ExeFile[:])})
+		list = append(list, process{Session: session, Name: windows.UTF16ToString(entry.ExeFile[:])})
 	}
 	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
 		return nil, err
@@ -213,23 +209,13 @@ func processes() ([]shellProcess, error) {
 	return list, nil
 }
 
-func shellToken(id uint32) (uintptr, error) {
-	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, id)
-	if err != nil {
-		return 0, err
-	}
-	defer windows.CloseHandle(process)
+func userToken(session uint32) (uintptr, error) {
 	var token windows.Token
-	if err := windows.OpenProcessToken(process, windows.TOKEN_DUPLICATE|windows.TOKEN_QUERY, &token); err != nil {
-		return 0, err
+	err := windows.WTSQueryUserToken(session, &token)
+	if errors.Is(err, windows.ERROR_NO_TOKEN) {
+		return 0, errNoUser
 	}
-	defer token.Close()
-	var primary windows.Token
-	access := uint32(windows.TOKEN_QUERY | windows.TOKEN_DUPLICATE | windows.TOKEN_ASSIGN_PRIMARY)
-	if err := windows.DuplicateTokenEx(token, access, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary); err != nil {
-		return 0, err
-	}
-	return uintptr(primary), nil
+	return uintptr(token), err
 }
 
 func startAs(token windows.Token, executable, command string) error {
@@ -253,8 +239,7 @@ func startAs(token windows.Token, executable, command string) error {
 	defer windows.DestroyEnvironmentBlock(environment)
 	startup := windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfo{})), Desktop: desktop}
 	var info windows.ProcessInformation
-	started, _, err := createProcessWithToken.Call(uintptr(token), 0, uintptr(unsafe.Pointer(application)), uintptr(unsafe.Pointer(&line[0])), windows.CREATE_UNICODE_ENVIRONMENT, uintptr(unsafe.Pointer(environment)), uintptr(unsafe.Pointer(folder)), uintptr(unsafe.Pointer(&startup)), uintptr(unsafe.Pointer(&info)))
-	if started == 0 {
+	if err := windows.CreateProcessAsUser(token, application, &line[0], nil, nil, false, windows.CREATE_UNICODE_ENVIRONMENT|windows.CREATE_NO_WINDOW, environment, folder, &startup, &info); err != nil {
 		return err
 	}
 	windows.CloseHandle(info.Thread)
@@ -262,7 +247,7 @@ func startAs(token windows.Token, executable, command string) error {
 	return nil
 }
 
-func startTray(executable string, on bool) error {
+func startWithWindows(executable string, on bool) error {
 	key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, runKey, registry.SET_VALUE)
 	if err != nil {
 		return err
@@ -305,7 +290,7 @@ func (c control) Status(seen uint64) pipe.Status {
 
 func (c control) Settings(settings pipe.Settings) error {
 	if settings.StartWithWindows != nil {
-		if err := startTray(c.executable, *settings.StartWithWindows); err != nil {
+		if err := startWithWindows(c.executable, *settings.StartWithWindows); err != nil {
 			log.Printf("start the tray with Windows: %v", err)
 			return errors.New("Start with Windows could not be changed. The service log says why.")
 		}
@@ -574,10 +559,8 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 	}
 	adapter := tunnel.New(record.NodeID)
 	defer adapter.Close()
-	service.Apply = func(wanted Wanted) {
-		if err := adapter.Apply(configOf(wanted)); err != nil {
-			log.Printf("tunnel: %v", err)
-		}
+	service.Apply = func(wanted Wanted) error {
+		return adapter.Apply(configOf(wanted))
 	}
 	service.Ping = func(address string) (time.Duration, bool) {
 		return tunnel.Ping(address, 800*time.Millisecond)
@@ -586,15 +569,16 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 	defer cancel()
 	go refresh(ctx, adapter)
 	restart := make(chan struct{}, 1)
+	backend := control{Service: service, executable: executable, version: h.version, updating: &atomic.Bool{}, restart: restart}
 	if executable != "" {
-		backend := control{Service: service, executable: executable, version: h.version, updating: &atomic.Bool{}, restart: restart}
 		go serve(ctx, backend)
 		go backend.offer(ctx)
 	}
 	done := make(chan error, 1)
 	go func() { done <- service.Run(ctx, h.version) }()
-	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown | svc.AcceptSessionChange}
 	if executable != "" {
+		go backend.trayFor(windows.WTSGetActiveConsoleSessionId())
 		go func() {
 			select {
 			case <-ctx.Done():
@@ -623,6 +607,10 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 			switch request.Cmd {
 			case svc.Interrogate:
 				status <- request.CurrentStatus
+			case svc.SessionChange:
+				if session, logon := loggedOn(request); logon && executable != "" {
+					go backend.trayFor(session)
+				}
 			case svc.Stop, svc.Shutdown:
 				status <- svc.Status{State: svc.StopPending}
 				cancel()
@@ -634,6 +622,15 @@ func (h handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status c
 			}
 		}
 	}
+}
+
+var consoleSession = windows.WTSGetActiveConsoleSessionId
+
+func loggedOn(request svc.ChangeRequest) (uint32, bool) {
+	if request.Cmd != svc.SessionChange || request.EventType != windows.WTS_SESSION_LOGON {
+		return 0, false
+	}
+	return consoleSession(), true
 }
 
 func kernel() string {

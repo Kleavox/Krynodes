@@ -13,6 +13,10 @@ export interface Env {
   RELEASES?: string;
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
+  EMAIL?: SendEmail;
+  ALERT_EMAIL?: string;
+  FROM_EMAIL?: string;
+  STATUS_PAGE_URL?: string;
 }
 
 export type KrynodesEnv = {

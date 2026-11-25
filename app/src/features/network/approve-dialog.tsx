@@ -80,6 +80,7 @@ export function ApproveBody({
   shown,
   error,
   state,
+  checking,
   onApprove,
   onClose,
   children,
@@ -88,6 +89,7 @@ export function ApproveBody({
   shown: Shown | undefined;
   error?: string;
   state: ApproveState;
+  checking: boolean;
   onApprove: (expected: string) => void;
   onClose: () => void;
   children?: ReactNode;
@@ -133,7 +135,7 @@ export function ApproveBody({
             disabled={!shown || state.phase === "running"}
             onClick={() => shown && onApprove(shown.fingerprint)}
           >
-            {state.phase === "running" ? <Waiting /> : "Approve"}
+            {state.phase === "running" && !checking ? <Waiting /> : "Approve"}
           </Button>
         )}
       </DialogFooter>
@@ -149,7 +151,7 @@ export function ApproveDialog({
   onClose: () => void;
 }) {
   const refresh = useRefreshNetwork();
-  const { check, panel } = useOneTimeCheck();
+  const { check, panel, checking } = useOneTimeCheck();
   const shown = useQuery({
     queryKey: [
       "fingerprint",
@@ -189,6 +191,7 @@ export function ApproveDialog({
           shown={shown.data}
           error={shown.error ? networkFailure(shown.error) : undefined}
           state={state}
+          checking={checking}
           onApprove={(expected) =>
             void runApprove(request, expected, { check }, setState).finally(
               refresh,

@@ -1,5 +1,5 @@
-const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$/u;
-const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
+export const TARGET_NAME = /^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$/u;
+export const PROJECT_NAME = /^[a-z0-9][a-z0-9_-]{0,62}$/u;
 export const BRIDGE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/u;
 const APT_NAME = /^[a-z0-9][a-z0-9+.-]{0,127}$/u;
 export const SELINUX_BOOLEAN = /^[a-z][a-z0-9_]{0,63}$/u;
@@ -27,7 +27,7 @@ export const stackNamesValid = (names: Record<string, string>) => {
 
 export function parseStackNames(text: string): Record<string, string> | null {
   if (text === "") return {};
-  const names: Record<string, string> = {};
+  const names: Record<string, string> = Object.create(null);
   for (const entry of text.split(",")) {
     const [service = "", name, ...rest] = entry.split("=");
     if (
@@ -77,10 +77,11 @@ const PROTECTED_UNITS = [
   /^netfilter-persistent\.service$/u,
   /^iptables\.service$/u,
   /^ip6tables\.service$/u,
+  /^wg-quick@kry0\.service$/u,
 ];
 
 export function isValidTarget(kind: string, name: string): boolean {
-  if (kind === "compose") return PROJECT_NAME.test(name);
+  if (kind === "stack") return PROJECT_NAME.test(name);
   if (kind === "trust") return name === "devices";
   if (kind === "host") {
     return (
@@ -91,16 +92,15 @@ export function isValidTarget(kind: string, name: string): boolean {
   }
   if (kind === "vault") return name === "cloudflare";
   if (kind === "apt") return APT_NAME.test(name);
+  if (kind === "docker") return name === "docker";
   if (kind === "network") return name === "kry0";
   if (kind === "bridge") return BRIDGE_NAME.test(name);
   if (!TARGET_NAME.test(name)) return false;
-  if (kind === "systemd") return name.endsWith(".service");
-  return kind === "docker";
+  if (kind === "unit") return name.endsWith(".service");
+  return kind === "container";
 }
 
-export function isProtectedTarget(kind: string, name: string): boolean {
-  if (kind === "docker") return name === "krynodes-tunnel";
-  return (
-    kind === "systemd" && PROTECTED_UNITS.some((pattern) => pattern.test(name))
-  );
+export function isProtected(kind: "container" | "unit", name: string): boolean {
+  if (kind === "container") return name === "krynodes-tunnel";
+  return PROTECTED_UNITS.some((pattern) => pattern.test(name));
 }

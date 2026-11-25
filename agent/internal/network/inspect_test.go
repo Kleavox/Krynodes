@@ -108,8 +108,11 @@ func TestAKernelWithoutWireGuardSaysWhy(t *testing.T) {
 	}
 }
 
-func TestIptablesCountsOnlyWhenBothFamiliesAreThere(t *testing.T) {
-	for _, tools := range [][]string{{"usr/sbin/iptables", "usr/sbin/ip6tables"}, {"sbin/iptables", "usr/bin/ip6tables"}} {
+func TestIptablesCountsOnlyWhenEveryToolIsThere(t *testing.T) {
+	for _, tools := range [][]string{
+		{"usr/sbin/iptables", "usr/sbin/ip6tables", "usr/sbin/iptables-restore", "usr/sbin/ip6tables-restore"},
+		{"sbin/iptables", "usr/bin/ip6tables", "sbin/iptables-restore", "usr/bin/ip6tables-restore"},
+	} {
 		root := t.TempDir()
 		for _, tool := range tools {
 			os.MkdirAll(filepath.Join(root, filepath.Dir(tool)), 0o755)
@@ -118,9 +121,12 @@ func TestIptablesCountsOnlyWhenBothFamiliesAreThere(t *testing.T) {
 		if found := Read(context.Background(), root, (&fakeRun{}).run); !found.Iptables {
 			t.Fatalf("%q: no iptables", tools)
 		}
-		os.Remove(filepath.Join(root, tools[1]))
-		if found := Read(context.Background(), root, (&fakeRun{}).run); found.Iptables {
-			t.Fatalf("%q: iptables without ip6tables", tools)
+		for _, missing := range tools {
+			os.Rename(filepath.Join(root, missing), filepath.Join(root, missing+".gone"))
+			if found := Read(context.Background(), root, (&fakeRun{}).run); found.Iptables {
+				t.Fatalf("%q: iptables without %s", tools, missing)
+			}
+			os.Rename(filepath.Join(root, missing+".gone"), filepath.Join(root, missing))
 		}
 	}
 }

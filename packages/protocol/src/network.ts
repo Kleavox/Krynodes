@@ -296,11 +296,15 @@ const NETWORK_ARGS: Record<string, z.ZodType> = {
   }),
 };
 
-export const isNetworkVerb = (verb: string) =>
-  Object.hasOwn(NETWORK_ARGS, verb);
+export const NETWORK_VERBS: readonly string[] = Object.freeze(
+  Object.keys(NETWORK_ARGS),
+);
 
 export function networkArgsValid(verb: string, args: unknown): boolean {
-  return isNetworkVerb(verb) && NETWORK_ARGS[verb]!.safeParse(args).success;
+  return (
+    Object.hasOwn(NETWORK_ARGS, verb) &&
+    NETWORK_ARGS[verb]!.safeParse(args).success
+  );
 }
 
 const unix = z.number().int().nonnegative();

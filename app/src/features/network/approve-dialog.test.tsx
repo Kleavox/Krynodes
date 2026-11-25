@@ -6,6 +6,7 @@ import { recipient } from "@/lib/seal-test-utils";
 import type { ActionRow, FleetNode, JoinRequest, NetworkView } from "@/types";
 
 import { ApproveBody, runApprove, type ApproveState } from "./approve-dialog";
+import { OneTimeCheck } from "./one-time-check";
 
 const S2 = "22222222-2222-4222-8222-222222222222";
 const AT = "2026-11-22T00:00:00.000Z";
@@ -31,18 +32,31 @@ const shown = await fingerprintOf(request);
 
 const idle: ApproveState = { phase: "confirm", steps: [] };
 
+const unchecked = [
+  {
+    node: "11111111-1111-4111-8111-111111111111",
+    name: "server-1",
+    fingerprint: "ABCD-EFGH-JKLM-NPQR",
+    line: "Check that server-1 shows the same fingerprint: run sudo kry network fingerprint on it.",
+  },
+];
+
 const body = (
   state: ApproveState,
   fingerprint: typeof shown | undefined = shown,
+  checking = false,
 ) =>
   renderToStaticMarkup(
     <ApproveBody
       request={request}
       shown={fingerprint}
       state={state}
+      checking={checking}
       onApprove={() => {}}
       onClose={() => {}}
-    />,
+    >
+      {checking && <OneTimeCheck members={unchecked} onAnswer={() => {}} />}
+    </ApproveBody>,
   );
 
 describe("the approve dialog", () => {
@@ -83,6 +97,15 @@ describe("the approve dialog", () => {
     expect(html).toContain("server-1: Applied");
     expect(html).toContain("server-2: Applying…");
     expect(html).not.toMatch(/>Approve<\/button>/u);
+  });
+
+  it("shows the fingerprint check, not the wait for the passkey, while a check is open", () => {
+    const running: ApproveState = { phase: "running", steps: [] };
+    const checking = body(running, shown, true);
+    expect(checking).toContain('aria-label="Check Fingerprints"');
+    expect(checking).toContain("They Match");
+    expect(checking).not.toContain("Waiting for your passkey");
+    expect(body(running)).toContain("Waiting for your passkey");
   });
 
   it("cannot be closed while the approval runs", () => {

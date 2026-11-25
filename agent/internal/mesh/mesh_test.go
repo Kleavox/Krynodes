@@ -132,6 +132,8 @@ func networkMesh(t *testing.T) (*Mesh, *fakeRun) {
 	rootFile(t, m, "/usr/bin/wg", "")
 	rootFile(t, m, "/usr/sbin/iptables", "")
 	rootFile(t, m, "/usr/sbin/ip6tables", "")
+	rootFile(t, m, "/usr/sbin/iptables-restore", "")
+	rootFile(t, m, "/usr/sbin/ip6tables-restore", "")
 	rootFile(t, m, "/etc/ufw/ufw.conf", "ENABLED=yes\n")
 	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[{"family":"inet","local":"203.0.113.30","prefixlen":24}]},` + wg0Address + `]`
 	run.respond["ip -j route show default"] = `[{"dev":"eth0"}]`
@@ -248,8 +250,9 @@ func TestHelloSaysWhyAServerIsNotReady(t *testing.T) {
 			run.failing["modprobe -n -q wireguard"] = ""
 			run.respond["systemd-detect-virt --container"] = "lxc\n"
 		},
-		"no iptables": func(m *Mesh, run *fakeRun) {
+		"no iptables and ip6tables, and none of apt, dnf or yum": func(m *Mesh, run *fakeRun) {
 			os.Remove(filepath.Join(m.Root, "usr", "sbin", "ip6tables"))
+			os.Remove(filepath.Join(m.Root, "etc", "os-release"))
 		},
 		"ip6tables does not work: ip6tables v1.8.9 (nf_tables): Could not fetch rule set generation id": func(m *Mesh, run *fakeRun) {
 			run.failing["ip6tables -w -S"] = "ip6tables v1.8.9 (nf_tables): Could not fetch rule set generation id: Permission denied (you must be root)\nmore"

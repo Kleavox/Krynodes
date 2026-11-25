@@ -66,7 +66,7 @@ func installed(root, tool string) bool {
 }
 
 func Read(ctx context.Context, root string, run Runner) Inspect {
-	found := Inspect{Kernel: kernel(ctx, root, run), Tools: exists(root, "/usr/bin/wg") || exists(root, "/usr/sbin/wg"), Iptables: installed(root, "iptables") && installed(root, "ip6tables"), Used: []string{}, Others: []Other{}}
+	found := Inspect{Kernel: kernel(ctx, root, run), Tools: exists(root, "/usr/bin/wg") || exists(root, "/usr/sbin/wg"), Iptables: !slices.ContainsFunc([]string{"iptables", "ip6tables", "iptables-restore", "ip6tables-restore"}, func(tool string) bool { return !installed(root, tool) }), Used: []string{}, Others: []Other{}}
 	var links []link
 	if output, _, err := run(ctx, "ip", "-d", "-j", "addr", "show"); err == nil {
 		json.Unmarshal(output, &links)

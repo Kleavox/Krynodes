@@ -1,0 +1,6 @@
+x-mounts: &mounts
+  - /etc:/host-etc
+services:
+  app:
+    image: nginx:1.27
+    volumes: *mounts

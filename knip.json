@@ -3,7 +3,7 @@
   "ignoreBinaries": ["go"],
   "workspaces": {
     "worker": {
-      "entry": ["src/index.ts"],
+      "entry": ["src/index.ts", "src/stats/index.ts"],
       "ignoreDependencies": ["@krynodes/app"]
     },
     "app": {

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export {
   CONTAINER_NAME,
-  isProtectedTarget,
+  isProtected,
   isValidTarget,
   parseStackNames,
   RECIPES,
@@ -43,9 +43,29 @@ export {
   type NetworkTest,
   type StackNetwork,
 } from "./network";
+export {
+  checkSchema,
+  checksSchema,
+  containerEntrySchema,
+  inventorySchema,
+  removedEntrySchema,
+  STACK_ACTIONS,
+  stackArgsValid,
+  stackEntrySchema,
+  unitEntrySchema,
+  type ContainerCheck,
+  type ContainerEntry,
+  type Inventory,
+  type RemovedEntry,
+  type StackEntry,
+  type StackKind,
+  type UnitEntry,
+} from "./stacks";
 export { agentSupported, compareVersions, MIN_AGENT } from "./versions";
 export {
   agentMessageSchema,
+  COMMAND_ACTIONS,
+  COMMAND_KINDS,
   hubMessageSchema,
   networkHelloSchema,
   parseAgentMessage,
@@ -53,6 +73,7 @@ export {
   trustReportSchema,
   WIRE_VERSION,
   type AgentMessage,
+  type CommandKind,
   type HubMessage,
   type NetworkHello,
   type TrustReport,

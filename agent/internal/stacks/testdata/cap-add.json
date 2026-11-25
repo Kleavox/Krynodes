@@ -1,0 +1,20 @@
+{
+  "name": "web",
+  "networks": {
+    "default": {
+      "name": "web_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "cap_add": ["SYS_ADMIN"],
+      "image": "nginx:1.27",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

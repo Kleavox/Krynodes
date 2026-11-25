@@ -45,9 +45,8 @@ export function RequestList({
                         request.ready ? "text-success" : "text-destructive"
                       }
                     >
-                      {request.ready
-                        ? "Ready"
-                        : (request.reason ?? "Not ready yet")}
+                      {request.reason ??
+                        (request.ready ? "Ready" : "Not ready yet")}
                     </span>
                   </p>
                 </div>

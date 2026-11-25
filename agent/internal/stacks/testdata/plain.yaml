@@ -1,0 +1,9 @@
+services:
+  app:
+    image: nginx:1.27
+    volumes:
+      - data:/data
+    environment:
+      TZ: UTC
+volumes:
+  data:

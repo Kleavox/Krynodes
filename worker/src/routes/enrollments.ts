@@ -3,7 +3,13 @@ import { z } from "zod";
 import { readAgentRelease } from "../agent/releases";
 import type { KrynodesApp, KrynodesContext } from "../env";
 import { randomToken, sha256 } from "../lib/crypto";
-import { agentOrigin, dnsClash, invalidRequest, readJson } from "./shared";
+import {
+  agentOrigin,
+  dnsClash,
+  invalidRequest,
+  machineName,
+  readJson,
+} from "./shared";
 
 const ENROLLMENT_TTL_MS = { server: 60 * 60_000, laptop: 10 * 60_000 };
 const SHELL_SAFE = /^[A-Za-z0-9:/._,-]+$/u;
@@ -12,7 +18,7 @@ export const DOWNLOADS =
   "https://github.com/Kleavox/Krynodes/releases/download";
 
 const createSchema = z.strictObject({
-  name: z.string().trim().min(1).max(64),
+  name: machineName,
   trust: z.array(z.string().min(1).max(1400)).min(1).max(20),
 });
 

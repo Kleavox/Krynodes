@@ -8,6 +8,8 @@ export const queryKeys = {
   devices: ["devices"],
   actions: ["actions"],
   network: ["network"],
+  stacks: ["stacks"],
+  checks: ["checks"],
 } as const;
 
 export function createQueryClient(): QueryClient {

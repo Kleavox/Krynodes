@@ -62,6 +62,15 @@ describe("join requests", () => {
     expect(html).toMatch(/<button[^>]*>Reject<\/button>/u);
   });
 
+  it("a ready request that carries a note shows the note and Approve", () => {
+    const html = text([
+      request({ reason: "Iptables will be installed when you approve." }),
+    ]);
+    expect(html).toContain("Iptables will be installed when you approve.");
+    expect(html).not.toContain(">Ready<");
+    expect(html).toMatch(/<button[^>]*>Approve<\/button>/u);
+  });
+
   it("a request that is not ready shows its reason and no Approve", () => {
     const html = text([
       request({ ready: false, reason: "WireGuard is not installed." }),

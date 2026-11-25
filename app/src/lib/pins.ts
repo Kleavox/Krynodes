@@ -110,17 +110,18 @@ export async function fingerprintOf(
   };
 }
 
+const refused = (is: string) =>
+  new Error(
+    `The network document ${is} the one this browser last signed or checked, so nothing was signed. If this browser's saved network is from an earlier test, delete this site's data and check each member again.`,
+  );
+
 export function checkBase(base: Base, store: PinStore | null): void {
   const anchor = read(store);
   if (base.document.version < anchor.version) {
-    throw new Error(
-      "The network document is older than the one this browser last signed or checked. Nothing was signed.",
-    );
+    throw refused("is older than");
   }
   if (base.document.version === anchor.version && base.hash !== anchor.hash) {
-    throw new Error(
-      "The network document is not the one this browser last signed or checked. Nothing was signed.",
-    );
+    throw refused("is not");
   }
 }
 

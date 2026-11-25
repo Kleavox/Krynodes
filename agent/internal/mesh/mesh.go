@@ -12,6 +12,7 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/daemon"
 	"github.com/Kleavox/krynodes/agent/internal/network"
+	"github.com/Kleavox/krynodes/agent/internal/platform"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
@@ -59,14 +60,14 @@ func (m *Mesh) Fingerprint() (string, error) {
 	return network.Fingerprint(keys.Public, keys.Signer, sealKey), nil
 }
 
-func notReady(found network.Inspect) string {
+func notReady(found network.Inspect, installable bool) string {
 	switch {
 	case !found.Kernel.OK && found.Kernel.Reason != nil && *found.Kernel.Reason == "container":
 		return "This server is a container that cannot load WireGuard; its host has to provide it."
 	case !found.Kernel.OK:
 		return "This server's kernel has no WireGuard."
-	case !found.Iptables:
-		return "This server has no iptables and ip6tables, which the private network needs."
+	case !found.Iptables && !installable:
+		return "This server has no iptables and ip6tables, and none of apt, dnf or yum to install them."
 	case found.Port == nil:
 		return "No UDP port from 51820 to 51919 is free on this server."
 	}
@@ -87,8 +88,8 @@ func (m *Mesh) read(ctx context.Context) (network.Inspect, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, readLimit)
 	defer cancel()
 	found := network.Read(ctx, m.Root, m.Run)
-	reason := notReady(found)
-	if reason == "" {
+	reason := notReady(found, platform.Detect(m.platform()).Manager != "")
+	if reason == "" && found.Iptables {
 		reason = m.tables(ctx)
 		found.Iptables = reason == ""
 	}
@@ -113,14 +114,19 @@ func (m *Mesh) Hello(ctx context.Context) *reporter.NetworkHello {
 	hello := &reporter.NetworkHello{Key: keys.Public, Signer: keys.Signer}
 	current, err := m.load()
 	reason := ""
+	var found network.Inspect
 	if err != nil {
 		reason = clip("This server cannot read its network record: "+err.Error(), 300)
-	} else if _, reason, err = m.read(ctx); err != nil {
+	} else if found, reason, err = m.read(ctx); err != nil {
 		reason = "This server did not finish checking itself in time; it checks again when it reconnects."
 	}
 	hello.Version, hello.Ready = current.Applied.Version, reason == ""
-	if reason != "" {
+	switch {
+	case reason != "":
 		hello.Reason = &reason
+	case !found.Iptables:
+		note := "Iptables will be installed when you approve."
+		hello.Reason = &note
 	}
 	return hello
 }

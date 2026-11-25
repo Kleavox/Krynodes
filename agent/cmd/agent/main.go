@@ -27,11 +27,14 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/config"
 	"github.com/Kleavox/krynodes/agent/internal/daemon"
+	"github.com/Kleavox/krynodes/agent/internal/docker"
 	"github.com/Kleavox/krynodes/agent/internal/host"
 	"github.com/Kleavox/krynodes/agent/internal/mesh"
+	"github.com/Kleavox/krynodes/agent/internal/platform"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/safefile"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
+	"github.com/Kleavox/krynodes/agent/internal/stacks"
 	"github.com/Kleavox/krynodes/agent/internal/stream"
 	"github.com/Kleavox/krynodes/agent/internal/trust"
 	"github.com/Kleavox/krynodes/agent/internal/update"
@@ -49,7 +52,7 @@ const (
 	unitName    = "krynodes.service"
 	ackWait     = 10 * time.Second
 	updateGrace = 10 * time.Second
-	usage       = "usage: kry run | enroll --endpoint <url> --token <code> --origin <dashboard> --trust <id.alg.key,...> | install-service | uninstall-service | self-update | trust --reset --origin <dashboard> --trust <id.alg.key,...> | network fingerprint | network rules | version"
+	usage       = "usage: kry run | enroll --endpoint <url> --token <code> --origin <dashboard> --trust <id.alg.key,...> | install-service | uninstall-service [--delete-apps] | self-update | trust --reset --origin <dashboard> --trust <id.alg.key,...> | network fingerprint | network rules | version"
 )
 
 const unit = `[Unit]
@@ -104,8 +107,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = enroll(args[1:], stdout)
 	case args[0] == "install-service" && bare:
 		err = installService(stdout)
-	case args[0] == "uninstall-service" && bare:
-		err = uninstallService(stdout)
+	case args[0] == "uninstall-service" && (bare || len(args) == 2 && args[1] == "--delete-apps"):
+		err = uninstallService(!bare, stdout)
 	case args[0] == "self-update" && bare:
 		err = selfUpdate()
 	case args[0] == "trust":
@@ -319,11 +322,24 @@ func runDaemon(args []string) error {
 		}),
 	}
 	maps.Copy(d.Handlers, network.Handlers())
+	stacks.ClearTemp(os.TempDir())
+	checks := docker.NewChecks()
+	apps := stacks.Env{Run: runCommand, State: stateDir, Server: currentFacts().Hostname, Own: network.Own, Checks: checks, Now: time.Now,
+		Unseal:   func(sealed string) ([]byte, error) { return seal.Open(key, sealed) },
+		Platform: platform.Env{Run: platform.Runner(runCommand)}}
+	maps.Copy(d.Handlers, stacks.Handlers(apps))
 	client.Hello = func() any { return hello(currentFacts(), sealKey, d.Trust(), network.Hello(ctx)) }
-	client.Connected = d.Resend
+	client.Connected = func() {
+		d.Resend()
+		checks.Restate()
+	}
 	client.Command = func(command reporter.Command) { go d.Handle(ctx, command) }
 	client.Ack = d.Ack
 	client.Network = networkWorker(ctx, network)
+	client.Checks = func(chosen reporter.Checks) { checks.Choose(chosen.Names) }
+	go docker.Watch(ctx, runCommand, client.Send, checks, apps.Meta(ctx))
+	go apps.GuardContained(ctx, 10*time.Second)
+	go apps.SweepRemoved(ctx, time.Hour)
 	go network.Guard(ctx, 10*time.Second)
 	go network.WatchLinks(ctx, 10*time.Second)
 	go d.Start(ctx)
@@ -538,7 +554,7 @@ func installService(stdout io.Writer) error {
 	return nil
 }
 
-func uninstallService(stdout io.Writer) error {
+func uninstallService(deleteApps bool, stdout io.Writer) error {
 	if err := asRoot("uninstall-service"); err != nil {
 		return err
 	}
@@ -549,10 +565,18 @@ func uninstallService(stdout io.Writer) error {
 	if err := localMesh(stateDir).Leave(ctx); err != nil {
 		problems = append(problems, err.Error())
 	}
+	said, kept, stayed := stacks.Uninstall(ctx, runCommand, stateDir, deleteApps)
+	problems = append(problems, kept...)
+	for _, line := range said {
+		fmt.Fprintln(stdout, "  "+line)
+	}
 	if target, err := os.Readlink(sudoLink); err == nil && target == binPath {
 		_ = os.Remove(sudoLink)
 	}
 	for _, path := range removed {
+		if path == stateDir && stayed {
+			continue
+		}
 		if err := os.RemoveAll(path); err != nil {
 			problems = append(problems, fmt.Sprintf("remove %s: %v", path, err))
 		}

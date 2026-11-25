@@ -5,6 +5,7 @@ import { queryKeys } from "./query-client";
 
 const PING_MS = 25_000;
 const SETTLE_MS = 300;
+const OWN_QUERY = new Set(["stacks", "checks"]);
 
 export interface Progress {
   id: string;
@@ -45,12 +46,30 @@ export function watch(client: QueryClient, url: string): () => void {
   let flush: ReturnType<typeof setTimeout> | undefined;
   let ping: ReturnType<typeof setInterval> | undefined;
 
-  const refresh = () => {
+  const heard = new Set<string>();
+  const refresh = (topics: unknown) => {
+    const named = Array.isArray(topics)
+      ? topics.filter((topic) => typeof topic === "string")
+      : [];
+    if (named.length === 0 || named.some((topic) => !OWN_QUERY.has(topic))) {
+      heard.add("fleet");
+    }
+    for (const topic of named) heard.add(topic);
     clearTimeout(flush);
     flush = setTimeout(() => {
-      void client.invalidateQueries({ queryKey: queryKeys.fleet });
-      void client.invalidateQueries({ queryKey: queryKeys.actions });
-      void client.invalidateQueries({ queryKey: queryKeys.network });
+      const fleet = heard.has("fleet");
+      if (fleet) {
+        void client.invalidateQueries({ queryKey: queryKeys.fleet });
+        void client.invalidateQueries({ queryKey: queryKeys.actions });
+        void client.invalidateQueries({ queryKey: queryKeys.network });
+      }
+      if (fleet || heard.has("stacks")) {
+        void client.invalidateQueries({ queryKey: queryKeys.stacks });
+      }
+      if (fleet || heard.has("checks")) {
+        void client.invalidateQueries({ queryKey: queryKeys.checks });
+      }
+      heard.clear();
     }, SETTLE_MS);
   };
 
@@ -58,7 +77,7 @@ export function watch(client: QueryClient, url: string): () => void {
     const current = new WebSocket(url);
     socket = current;
     current.onopen = () => {
-      if (attempt > 0) refresh();
+      if (attempt > 0) refresh(["fleet"]);
       attempt = 0;
       ping = setInterval(() => current.send("ping"), PING_MS);
     };
@@ -72,7 +91,7 @@ export function watch(client: QueryClient, url: string): () => void {
         return;
       }
       if (message?.type === "changed") {
-        refresh();
+        refresh(message.topics);
         if (
           Array.isArray(message.topics) &&
           message.topics.includes("network")

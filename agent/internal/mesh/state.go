@@ -40,6 +40,7 @@ type record struct {
 	Port      int               `json:"port,omitempty"`
 	Firewall  string            `json:"firewall,omitempty"`
 	Tools     bool              `json:"tools,omitempty"`
+	Iptables  bool              `json:"iptables,omitempty"`
 	Dropped   []string          `json:"dropped,omitempty"`
 	Meetings  map[string]string `json:"meetings,omitempty"`
 	Relays    []int             `json:"relays,omitempty"`
@@ -226,6 +227,15 @@ func (m *Mesh) jumps(ctx context.Context, tool string, exit bool) (int, error) {
 		inserted++
 	}
 	return inserted, nil
+}
+
+func (m *Mesh) Own() string {
+	current, err := m.load()
+	if err != nil || !current.Joined || current.Document == nil {
+		return ""
+	}
+	me, _ := member(*current.Document, m.Trust().NodeID)
+	return me.Address
 }
 
 func member(document network.Document, node string) (network.Member, bool) {

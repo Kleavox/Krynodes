@@ -180,3 +180,14 @@ func TestTheUplinkIsTheLowestMetricDefaultRouteThatIsUp(t *testing.T) {
 		t.Fatalf("v6 %v", got)
 	}
 }
+
+func TestOwnIsThisServersAddressInTheAppliedDocument(t *testing.T) {
+	n := newNet(t)
+	if own := n.m.Own(); own != "" {
+		t.Fatalf("a server that never joined owns %q", own)
+	}
+	n.apply(t, pair)
+	if own := n.m.Own(); own != "10.88.0.2" {
+		t.Fatalf("own %q", own)
+	}
+}

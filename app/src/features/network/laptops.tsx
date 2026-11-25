@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Waiting } from "@/components/busy";
 import { CopyCommand } from "@/components/copy-command";
@@ -91,26 +91,35 @@ export function AddLaptopDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function LaptopDns({ dns }: { dns: string[] | null }) {
-  const refresh = useRefreshNetwork();
-  const { check, panel } = useOneTimeCheck();
-  const [first, setFirst] = useState(dns?.[0] ?? "");
-  const [second, setSecond] = useState(dns?.[1] ?? "");
-  const save = useMutation({
-    mutationFn: (typed: string[]) =>
-      changeNetwork(
-        (next) => withDns(next, typed),
-        "Change the DNS for laptops on an exit node",
-        { check },
-      ),
-    onSettled: refresh,
-  });
+export function LaptopDnsBody({
+  first,
+  second,
+  error,
+  saved,
+  pending,
+  checking,
+  onFirst,
+  onSecond,
+  onSave,
+  children,
+}: {
+  first: string;
+  second: string;
+  error: string | null;
+  saved: boolean;
+  pending: boolean;
+  checking: boolean;
+  onFirst: (value: string) => void;
+  onSecond: (value: string) => void;
+  onSave: () => void;
+  children?: ReactNode;
+}) {
   return (
     <form
       className="space-y-3 rounded-lg border bg-card p-4"
       onSubmit={(event) => {
         event.preventDefault();
-        save.mutate([first, second]);
+        onSave();
       }}
     >
       <div>
@@ -130,7 +139,7 @@ export function LaptopDns({ dns }: { dns: string[] | null }) {
             spellCheck={false}
             className="font-mono"
             placeholder="--"
-            onChange={(event) => setFirst(event.target.value)}
+            onChange={(event) => onFirst(event.target.value)}
           />
         </div>
         <div className="space-y-2">
@@ -142,26 +151,57 @@ export function LaptopDns({ dns }: { dns: string[] | null }) {
             spellCheck={false}
             className="font-mono"
             placeholder="--"
-            onChange={(event) => setSecond(event.target.value)}
+            onChange={(event) => onSecond(event.target.value)}
           />
         </div>
       </div>
-      {save.error && (
+      {error && (
         <p role="alert" className="text-sm text-destructive">
-          {networkFailure(save.error)}
+          {error}
         </p>
       )}
-      {panel}
+      {children}
       <div className="flex items-center justify-end gap-3">
-        {save.isSuccess && (
+        {saved && (
           <span role="status" className="text-xs text-success">
             Saved
           </span>
         )}
-        <Button type="submit" size="sm" disabled={save.isPending}>
-          {save.isPending ? <Waiting /> : "Save"}
+        <Button type="submit" size="sm" disabled={pending}>
+          {pending && !checking ? <Waiting /> : "Save"}
         </Button>
       </div>
     </form>
+  );
+}
+
+export function LaptopDns({ dns }: { dns: string[] | null }) {
+  const refresh = useRefreshNetwork();
+  const { check, panel, checking } = useOneTimeCheck();
+  const [first, setFirst] = useState(dns?.[0] ?? "");
+  const [second, setSecond] = useState(dns?.[1] ?? "");
+  const save = useMutation({
+    mutationFn: (typed: string[]) =>
+      changeNetwork(
+        (next) => withDns(next, typed),
+        "Change the DNS for laptops on an exit node",
+        { check },
+      ),
+    onSettled: refresh,
+  });
+  return (
+    <LaptopDnsBody
+      first={first}
+      second={second}
+      error={save.error ? networkFailure(save.error) : null}
+      saved={save.isSuccess}
+      pending={save.isPending}
+      checking={checking}
+      onFirst={setFirst}
+      onSecond={setSecond}
+      onSave={() => save.mutate([first, second])}
+    >
+      {panel}
+    </LaptopDnsBody>
   );
 }

@@ -1,7 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Busy } from "@/components/busy";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -74,15 +82,40 @@ export function ActionBody({ state, name }: { state: RunState; name: string }) {
   );
 }
 
+const PLAIN = {
+  Root: Dialog,
+  Content: DialogContent,
+  Header: DialogHeader,
+  Title: DialogTitle,
+  Description: DialogDescription,
+  Footer: DialogFooter,
+};
+
+const ALERT = {
+  Root: AlertDialog,
+  Content: AlertDialogContent,
+  Header: AlertDialogHeader,
+  Title: AlertDialogTitle,
+  Description: AlertDialogDescription,
+  Footer: AlertDialogFooter,
+};
+
 export function ActionDialog({
   node,
   ask,
   onClose,
+  onDone,
+  ready = true,
+  children,
 }: {
   node: FleetNode;
   ask: Ask;
   onClose: () => void;
+  onDone?: (row: ActionRow) => void;
+  ready?: boolean;
+  children?: ReactNode;
 }) {
+  const Part = ask.destructive ? ALERT : PLAIN;
   const client = useQueryClient();
   const [state, setState] = useState<RunState>({ phase: "confirm", lines: [] });
   const quit = useRef<AbortController | null>(null);
@@ -98,7 +131,10 @@ export function ActionDialog({
       (line) => setState((now) => ({ ...now, lines: [...now.lines, line] })),
       quit.current.signal,
     ).then(
-      (row) => setState((now) => ({ ...now, phase: "result", row })),
+      (row) => {
+        setState((now) => ({ ...now, phase: "result", row }));
+        onDone?.(row);
+      },
       (error: unknown) =>
         setState((now) => ({ ...now, phase: "result", error: failure(error) })),
     );
@@ -109,29 +145,31 @@ export function ActionDialog({
     state.row?.status === "done";
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{ask.heading}</DialogTitle>
-          <DialogDescription>
+    <Part.Root open onOpenChange={(open) => !open && onClose()}>
+      <Part.Content>
+        <Part.Header>
+          <Part.Title>{ask.heading}</Part.Title>
+          <Part.Description>
             {removed
               ? `${node.name} no longer runs Krynodes. Delete it from Fleet.`
               : ask.body}
-          </DialogDescription>
-        </DialogHeader>
+          </Part.Description>
+        </Part.Header>
+        {state.phase === "confirm" && children}
         <ActionBody state={state} name={node.name} />
         {drop.error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(drop.error)}
           </p>
         )}
-        <DialogFooter>
+        <Part.Footer>
           <Button variant="ghost" onClick={onClose}>
             {state.phase === "confirm" ? "Cancel" : "Close"}
           </Button>
           {state.phase === "confirm" && (
             <Button
               variant={ask.destructive ? "destructive" : "default"}
+              disabled={!ready}
               onClick={start}
             >
               {ask.confirm}
@@ -146,8 +184,8 @@ export function ActionDialog({
               {drop.isPending ? <Busy>Deleting</Busy> : `Delete ${node.name}`}
             </Button>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Part.Footer>
+      </Part.Content>
+    </Part.Root>
   );
 }

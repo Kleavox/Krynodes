@@ -1,4 +1,13 @@
+import { z } from "zod";
+
 import type { Env, KrynodesContext } from "../env";
+
+export const machineName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine((name) => !/\p{Cc}/u.test(name));
 
 export const isMember = async (db: D1Database, nodeId: string) =>
   (await db

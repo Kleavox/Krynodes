@@ -1,0 +1,27 @@
+{
+  "name": "web",
+  "networks": {
+    "default": {
+      "name": "web_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "image": "nginx:1.27",
+      "networks": {
+        "default": null
+      }
+    },
+    "extra": {
+      "command": null,
+      "entrypoint": null,
+      "image": "busybox:1.36",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

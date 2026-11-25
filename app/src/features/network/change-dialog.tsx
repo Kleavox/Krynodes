@@ -1,5 +1,5 @@
 import type { NetworkDocument, NetworkRule } from "@krynodes/protocol";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
@@ -86,6 +86,54 @@ export const deleteChange: Change = {
   edit: withoutNetwork,
 };
 
+type ChangePhase = "confirm" | "running" | "done";
+
+export function ChangeBody({
+  change,
+  phase,
+  said,
+  checking,
+  onStart,
+  onClose,
+  children,
+}: {
+  change: Change;
+  phase: ChangePhase;
+  said: { text: string; failed: boolean } | null;
+  checking: boolean;
+  onStart: () => void;
+  onClose: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <>
+      {said && (
+        <p
+          role={said.failed ? "alert" : "status"}
+          className={said.failed ? "text-sm text-destructive" : "text-sm"}
+        >
+          {said.text}
+        </p>
+      )}
+      {children}
+      <DialogFooter>
+        <Button variant="ghost" onClick={onClose}>
+          {phase === "confirm" ? "Cancel" : "Close"}
+        </Button>
+        {phase !== "done" && (
+          <Button
+            variant={change.destructive ? "destructive" : "default"}
+            disabled={phase === "running"}
+            onClick={onStart}
+          >
+            {phase === "running" && !checking ? <Waiting /> : change.confirm}
+          </Button>
+        )}
+      </DialogFooter>
+    </>
+  );
+}
+
 export function ChangeDialog({
   change,
   onClose,
@@ -94,8 +142,8 @@ export function ChangeDialog({
   onClose: () => void;
 }) {
   const refresh = useRefreshNetwork();
-  const { check, panel } = useOneTimeCheck();
-  const [phase, setPhase] = useState<"confirm" | "running" | "done">("confirm");
+  const { check, panel, checking } = useOneTimeCheck();
+  const [phase, setPhase] = useState<ChangePhase>("confirm");
   const [said, setSaid] = useState<{ text: string; failed: boolean } | null>(
     null,
   );
@@ -124,29 +172,16 @@ export function ChangeDialog({
           <DialogTitle>{change.heading}</DialogTitle>
           <DialogDescription>{change.body}</DialogDescription>
         </DialogHeader>
-        {said && (
-          <p
-            role={said.failed ? "alert" : "status"}
-            className={said.failed ? "text-sm text-destructive" : "text-sm"}
-          >
-            {said.text}
-          </p>
-        )}
-        {panel}
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            {phase === "confirm" ? "Cancel" : "Close"}
-          </Button>
-          {phase !== "done" && (
-            <Button
-              variant={change.destructive ? "destructive" : "default"}
-              disabled={phase === "running"}
-              onClick={start}
-            >
-              {phase === "running" ? <Waiting /> : change.confirm}
-            </Button>
-          )}
-        </DialogFooter>
+        <ChangeBody
+          change={change}
+          phase={phase}
+          said={said}
+          checking={checking}
+          onStart={start}
+          onClose={onClose}
+        >
+          {panel}
+        </ChangeBody>
       </DialogContent>
     </Dialog>
   );

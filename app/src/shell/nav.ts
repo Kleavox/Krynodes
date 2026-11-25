@@ -1,4 +1,6 @@
 import {
+  Activity,
+  Boxes,
   History,
   KeyRound,
   Network,
@@ -16,6 +18,8 @@ interface Section {
 export const SECTIONS: readonly Section[] = [
   { to: "/", label: "Fleet", icon: Server, end: true },
   { to: "/network", label: "Network", icon: Network },
+  { to: "/stacks", label: "Stacks", icon: Boxes },
+  { to: "/checks", label: "Checks", icon: Activity },
   { to: "/passkeys", label: "Passkeys", icon: KeyRound },
   { to: "/history", label: "History", icon: History },
 ];

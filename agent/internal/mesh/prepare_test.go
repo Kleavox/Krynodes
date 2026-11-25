@@ -1,8 +1,10 @@
 package mesh
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -122,6 +124,141 @@ func TestAToolInstallThatFailsPartwayIsStillRemembered(t *testing.T) {
 	}
 	if current, _ := m.load(); !current.Tools || current.Prepared != nil {
 		t.Fatalf("record %+v", current)
+	}
+}
+
+const (
+	aptInstall = "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y -q "
+	aptPurge   = "env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 purge -y -q "
+)
+
+func withoutIptables(t *testing.T, m *Mesh) {
+	t.Helper()
+	for _, tool := range []string{"iptables", "ip6tables", "iptables-restore", "ip6tables-restore"} {
+		if err := os.Remove(filepath.Join(m.Root, "usr", "sbin", tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPrepareInstallsIptablesWhenMissing(t *testing.T) {
+	m, run := networkMesh(t)
+	withoutIptables(t, m)
+	hello := m.Hello(context.Background())
+	if hello == nil || !hello.Ready || hello.Reason == nil || *hello.Reason != "Iptables will be installed when you approve." {
+		t.Fatalf("hello %+v", hello)
+	}
+	prepare(t, m)
+	if !slices.Contains(run.calls, aptInstall+"iptables") {
+		t.Fatalf("iptables was not installed: %v", run.calls)
+	}
+	if current, _ := m.load(); !current.Iptables || current.Tools || current.Prepared == nil {
+		t.Fatalf("record %+v", current)
+	}
+	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[]}]`
+	run.respond["apt-get -s purge iptables"] = "Purg iptables [1.8.9-2]\n"
+	if _, err := call(t, m, "unprepare", nil); err != nil {
+		t.Fatalf("unprepare: %v", err)
+	}
+	if !slices.Contains(run.calls, aptPurge+"iptables") {
+		t.Fatalf("Krynodes' iptables stays: %v", run.calls)
+	}
+	if current, _ := m.load(); current.Iptables || current.Prepared != nil {
+		t.Fatalf("record %+v", current)
+	}
+
+	m, run = networkMesh(t)
+	prepare(t, m)
+	if slices.ContainsFunc(run.calls, func(call string) bool { return strings.Contains(call, "iptables") && strings.Contains(call, "apt-get") }) {
+		t.Fatalf("iptables was installed on a server that has it: %v", run.calls)
+	}
+	if current, _ := m.load(); current.Iptables {
+		t.Fatalf("record %+v", current)
+	}
+}
+
+func TestPrepareInstallsBothToolsInOneCall(t *testing.T) {
+	m, run := networkMesh(t)
+	withoutIptables(t, m)
+	os.Remove(filepath.Join(m.Root, "usr", "bin", "wg"))
+	prepare(t, m)
+	if !slices.Contains(run.calls, aptInstall+"wireguard-tools iptables") {
+		t.Fatalf("calls %v", run.calls)
+	}
+	if current, _ := m.load(); !current.Iptables || !current.Tools {
+		t.Fatalf("record %+v", current)
+	}
+}
+
+func TestAFailedIptablesInstallStopsPrepareWithThePackageManagersLine(t *testing.T) {
+	m, run := networkMesh(t)
+	withoutIptables(t, m)
+	run.failing[aptInstall+"iptables"] = "E: Unable to locate package iptables"
+	_, err := call(t, m, "prepare", map[string]string{"range": "10.88.0.0/24", "port": "51821"})
+	if err == nil || !strings.Contains(err.Error(), "Unable to locate package iptables") {
+		t.Fatalf("prepare: %v", err)
+	}
+	if current, _ := m.load(); current.Iptables || current.Prepared != nil {
+		t.Fatalf("record %+v", current)
+	}
+}
+
+func TestUnprepareKeepsTheIptablesOtherPackagesNeed(t *testing.T) {
+	for name, simulated := range map[string]string{
+		"another package goes": "Remv kubelet [1.30.0]\nPurg iptables [1.8.9-2]\n",
+		"nothing is simulated": "",
+	} {
+		m, run := networkMesh(t)
+		withoutIptables(t, m)
+		prepare(t, m)
+		run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[]}]`
+		run.respond["apt-get -s purge iptables"] = simulated
+		if _, err := call(t, m, "unprepare", nil); err != nil {
+			t.Fatalf("%s: unprepare: %v", name, err)
+		}
+		if slices.Contains(run.calls, aptPurge+"iptables") {
+			t.Fatalf("%s: iptables was purged: %v", name, run.calls)
+		}
+		if current, _ := m.load(); current.Iptables || current.Prepared != nil {
+			t.Fatalf("%s: record %+v", name, current)
+		}
+	}
+}
+
+func TestIptablesComesFromIptablesNftOnRHEL(t *testing.T) {
+	m, run := networkMesh(t)
+	rootFile(t, m, "/etc/os-release", "ID=rocky\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.4\"\n")
+	withoutIptables(t, m)
+	run.failing["rpm -q iptables-nft"] = "package iptables-nft is not installed"
+	prepare(t, m)
+	if !slices.Contains(run.calls, "yum install -y -q iptables-nft") {
+		t.Fatalf("calls %v", run.calls)
+	}
+	if current, _ := m.load(); !current.Iptables {
+		t.Fatalf("record %+v", current)
+	}
+	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[]}]`
+	simulation := "env LC_ALL=C yum remove --assumeno iptables-nft"
+	run.respond[simulation] = "Removing:\n iptables-nft x86_64 1.8.10 @baseos 80 k\nRemoving dependent packages:\n docker-ce x86_64 27.0 @docker 100 M\nOperation aborted.\n"
+	if _, err := call(t, m, "unprepare", nil); err != nil {
+		t.Fatalf("unprepare: %v", err)
+	}
+	if slices.Contains(run.calls, "yum remove -y -q iptables-nft") {
+		t.Fatalf("iptables-nft was purged under docker: %v", run.calls)
+	}
+
+	m, run = networkMesh(t)
+	rootFile(t, m, "/etc/os-release", "ID=rocky\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.4\"\n")
+	withoutIptables(t, m)
+	run.failing["rpm -q iptables-nft"] = "package iptables-nft is not installed"
+	prepare(t, m)
+	run.respond["ip -d -j addr show"] = `[{"ifname":"eth0","mtu":1500,"addr_info":[]}]`
+	run.respond[simulation] = "Removing:\n iptables-nft x86_64 1.8.10 @baseos 80 k\nOperation aborted.\n"
+	if _, err := call(t, m, "unprepare", nil); err != nil {
+		t.Fatalf("unprepare: %v", err)
+	}
+	if !slices.Contains(run.calls, "yum remove -y -q iptables-nft") {
+		t.Fatalf("Krynodes' iptables-nft stays: %v", run.calls)
 	}
 }
 

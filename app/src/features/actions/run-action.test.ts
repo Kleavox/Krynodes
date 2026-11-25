@@ -228,6 +228,12 @@ describe("running a signed action", () => {
         id = String(call.body!.id);
         return { status: 201, body: row(id) };
       }
+      if (call.url === `/api/actions/${id}`) {
+        return {
+          status: 200,
+          body: row(id, { status: "done", message: "Restarting now." }),
+        };
+      }
       const body = [
         [row(id)],
         [row("newer")],
@@ -343,6 +349,16 @@ describe("running a signed action", () => {
         id = String(call.body!.id);
         return { status: 201, body: row(id) };
       }
+      if (call.url === `/api/actions/${id}`) {
+        return {
+          status: 200,
+          body: row(id, {
+            status: "done",
+            message: "Restarting now.",
+            output: "rebooted\n",
+          }),
+        };
+      }
       return {
         status: 200,
         body: [
@@ -356,7 +372,13 @@ describe("running a signed action", () => {
     const done = runAction(
       client,
       node,
-      { kind: "host", action: "restart", title: "Restart Server" },
+      {
+        kind: "stack",
+        action: "logs",
+        name: "web",
+        title: "Logs",
+        args: { lines: "200" },
+      },
       (line) => lines.push(line),
     );
     while (!id) await settle();
@@ -373,6 +395,72 @@ describe("running a signed action", () => {
     expect(result).toMatchObject({
       status: "done",
       message: "Restarting now.",
+      output: "rebooted\n",
     });
+  });
+
+  it("a finished action stays finished when its output cannot be read", async () => {
+    authenticator();
+    let id = "";
+    let finished = false;
+    const calls = api((call) => {
+      if (call.method === "POST") {
+        id = String(call.body!.id);
+        return { status: 201, body: row(id) };
+      }
+      if (call.url === `/api/actions/${id}`) {
+        return { status: 500, body: { message: "broken" } };
+      }
+      return {
+        status: 200,
+        body: [
+          finished ? row(id, { status: "done", message: "Read." }) : row(id),
+        ],
+      };
+    });
+    const client = new QueryClient();
+    const waiting = runAction(client, node, {
+      kind: "stack",
+      action: "read",
+      name: "web",
+      title: "Read Compose",
+    });
+    while (!id || !client.getQueryData(["actions", node.id])) await settle();
+    finished = true;
+    await client.invalidateQueries();
+    await expect(waiting).resolves.toMatchObject({
+      status: "done",
+      message: "Read.",
+    });
+    expect(calls.some((call) => call.url === `/api/actions/${id}`)).toBe(true);
+  });
+
+  it("reads the full row only for actions that carry output", async () => {
+    authenticator();
+    let id = "";
+    let finished = false;
+    const calls = api((call) => {
+      if (call.method === "POST") {
+        id = String(call.body!.id);
+        return { status: 201, body: row(id) };
+      }
+      return {
+        status: 200,
+        body: [finished ? row(id, { status: "done" }) : row(id)],
+      };
+    });
+    const client = new QueryClient();
+    const waiting = runAction(client, node, {
+      kind: "stack",
+      action: "restart",
+      name: "web",
+      title: "Restart Stack",
+    });
+    while (!id || !client.getQueryData(["actions", node.id])) await settle();
+    finished = true;
+    await client.invalidateQueries();
+    await expect(waiting).resolves.toMatchObject({ status: "done" });
+    expect(calls.some((call) => call.url === `/api/actions/${id}`)).toBe(false);
+    expect(calls[0]!.body).toMatchObject({ kind: "stack", name: "web" });
   });
 });

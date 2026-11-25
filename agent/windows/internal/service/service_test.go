@@ -133,8 +133,8 @@ func TestALaptopIgnoresRulesButKeepsRefusingInbound(t *testing.T) {
 	if record := f.record(); record.Applied.Version != 2 || len(record.Document.Allow) != 4 {
 		t.Fatalf("the rules were not kept as signed: %+v", record.Document)
 	}
-	if len(f.applied) != tunnels || !reflect.DeepEqual(f.service.wanted(), open) {
-		t.Fatalf("rules changed the tunnel: %+v", f.service.wanted())
+	if wanted, _ := f.service.wanted(); len(f.applied) != tunnels || !reflect.DeepEqual(wanted, open) {
+		t.Fatalf("rules changed the tunnel: %+v", wanted)
 	}
 	for _, peer := range open.Peers {
 		if !slices.Equal(peer.AllowedIPs, []string{map[string]string{server1: "10.88.0.1/32", server2: "10.88.0.2/32"}[peer.Node]}) {

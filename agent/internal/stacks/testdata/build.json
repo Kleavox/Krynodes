@@ -1,0 +1,22 @@
+{
+  "name": "web",
+  "networks": {
+    "default": {
+      "name": "web_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "build": {
+        "context": "@DIR@",
+        "dockerfile": "Dockerfile"
+      },
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

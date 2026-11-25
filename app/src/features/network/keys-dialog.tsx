@@ -28,6 +28,7 @@ export function KeysBody({
   name,
   loaded,
   state,
+  checking,
   onMake,
   onUse,
   onClose,
@@ -36,6 +37,7 @@ export function KeysBody({
   name: string;
   loaded: boolean;
   state: KeysState;
+  checking: boolean;
   onMake: () => void;
   onUse: () => void;
   onClose: () => void;
@@ -49,7 +51,7 @@ export function KeysBody({
           <Busy>Reading the network document</Busy>
         </p>
       )}
-      {phase === "making" && (
+      {phase === "making" && !checking && (
         <p role="status" className="text-sm text-muted-foreground">
           <Busy>{`Waiting for ${name}`}</Busy>
         </p>
@@ -81,7 +83,7 @@ export function KeysBody({
         </Button>
         {(phase === "confirm" || phase === "making") && (
           <Button disabled={!loaded || phase === "making"} onClick={onMake}>
-            {phase === "making" ? <Waiting /> : "Make New Keys"}
+            {phase === "making" && !checking ? <Waiting /> : "Make New Keys"}
           </Button>
         )}
         {(phase === "made" || phase === "signing") && (
@@ -105,7 +107,7 @@ export function KeysDialog({
 }) {
   const current = useCurrentDocument();
   const refresh = useRefreshNetwork();
-  const { check, panel } = useOneTimeCheck();
+  const { check, panel, checking } = useOneTimeCheck();
   const [state, setState] = useState<KeysState>({ phase: "confirm" });
   const decide = useRef<((use: boolean) => void) | null>(null);
   const busy = state.phase === "making" || state.phase === "signing";
@@ -172,6 +174,7 @@ export function KeysDialog({
                 }
               : state
           }
+          checking={checking}
           onMake={make}
           onUse={() => {
             setState((now) => ({ ...now, phase: "signing" }));

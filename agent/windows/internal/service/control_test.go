@@ -30,7 +30,7 @@ func TestDisconnectLastsUntilTheServiceRestarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var restarted []Wanted
-	again := &Service{Dir: f.service.Dir, Secrets: f.secrets, Now: f.service.Now, Apply: func(wanted Wanted) { restarted = append(restarted, wanted) }}
+	again := &Service{Dir: f.service.Dir, Secrets: f.secrets, Now: f.service.Now, Apply: func(wanted Wanted) error { restarted = append(restarted, wanted); return nil }}
 	again.mu.Lock()
 	again.refresh()
 	again.mu.Unlock()
@@ -185,9 +185,10 @@ func TestStatusDoesNotWaitForTheTunnel(t *testing.T) {
 	f := newFixture(t)
 	f.joined()
 	entered, release := make(chan struct{}), make(chan struct{})
-	f.service.Apply = func(Wanted) {
+	f.service.Apply = func(Wanted) error {
 		close(entered)
 		<-release
+		return nil
 	}
 	done := make(chan error, 1)
 	go func() { done <- f.service.Exit(server1) }()

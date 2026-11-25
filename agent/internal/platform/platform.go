@@ -16,6 +16,7 @@ type Runner func(ctx context.Context, name string, args ...string) ([]byte, int,
 type Env struct {
 	Root  string
 	Run   Runner
+	Fetch func(ctx context.Context, url string) ([]byte, error)
 	sleep func(time.Duration)
 }
 
@@ -190,6 +191,36 @@ func Install(ctx context.Context, env Env, packages ...string) ([]string, error)
 		return installed, err
 	}
 	return fresh, nil
+}
+
+func removesOnly(output, pkg string) bool {
+	found := false
+	for line := range strings.SplitSeq(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || (fields[0] != "Remv" && fields[0] != "Purg") {
+			continue
+		}
+		if name, _, _ := strings.Cut(fields[1], ":"); name != pkg {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func Alone(ctx context.Context, env Env, pkg string) bool {
+	ctx, cancel := context.WithTimeout(ctx, stepTimeout)
+	defer cancel()
+	switch manager := Detect(env).Manager; manager {
+	case "apt":
+		output, _, err := env.Run(ctx, "apt-get", "-s", "purge", pkg)
+		return err == nil && removesOnly(string(output), pkg)
+	case "dnf", "yum":
+		output, _, _ := env.Run(ctx, "env", "LC_ALL=C", manager, "remove", "--assumeno", pkg)
+		text := string(output)
+		return strings.Contains(text, "Removing:") && !strings.Contains(text, "dependent packages") && !strings.Contains(text, "for dependencies")
+	}
+	return false
 }
 
 func Purge(ctx context.Context, env Env, packages ...string) error {

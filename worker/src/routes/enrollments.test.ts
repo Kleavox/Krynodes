@@ -68,6 +68,13 @@ describe("creating an enrollment", () => {
     const refused = async (body: unknown) =>
       (await send("POST", "/api/enrollments", body)).status;
     expect(await refused({ name: "", trust: ["d1"] })).toBe(400);
+    for (const name of [
+      "web\r\nBcc: x@example.test",
+      "web\u0007",
+      "a\u0085b",
+    ]) {
+      expect(await refused({ name, trust: ["d1"] })).toBe(400);
+    }
     expect(await refused({ name: "server-1", trust: [] })).toBe(400);
     expect(await refused({ name: "server-1" })).toBe(400);
     expect(await refused({ name: "server-1", trust: ["d1", "d1"] })).toBe(400);

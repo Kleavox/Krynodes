@@ -1,0 +1,6 @@
+x-shared: &shared
+  ipc: host
+services:
+  app:
+    <<: *shared
+    image: nginx:1.27

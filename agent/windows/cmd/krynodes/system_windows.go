@@ -12,8 +12,6 @@ import (
 	"github.com/Kleavox/krynodes/agent/windows/internal/tray"
 )
 
-const uninstalled = "Krynodes is removed from this laptop. It stays a member of the private network until you choose Remove from Network on the Network page."
-
 var attachConsole = windows.NewLazySystemDLL("kernel32.dll").NewProc("AttachConsole")
 
 var terminal bool
@@ -63,7 +61,6 @@ func usable(file *os.File) bool {
 
 func system(command string, args []string, stdout, stderr io.Writer) int {
 	var err error
-	done := ""
 	switch command {
 	case "install":
 		err = service.InstallCommand(args, version, stdout)
@@ -71,8 +68,7 @@ func system(command string, args []string, stdout, stderr io.Writer) int {
 		if len(args) > 0 {
 			err = errors.New("use uninstall with no arguments")
 		} else {
-			err = service.UninstallCommand()
-			done = uninstalled
+			err = service.UninstallCommand(stdout)
 		}
 	case "service":
 		err = service.RunService(version)
@@ -88,9 +84,6 @@ func system(command string, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintf(stderr, "krynodes %s: %v\n", command, err)
 		return 1
-	}
-	if done != "" {
-		fmt.Fprintln(stdout, done)
 	}
 	return 0
 }

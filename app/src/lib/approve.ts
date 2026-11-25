@@ -429,6 +429,7 @@ export async function approve(
         { node: request.node, port: keys.port, public: found },
         heard,
       );
+      await open();
       const [own] = await Promise.allSettled(
         plan.map((entry) =>
           command(

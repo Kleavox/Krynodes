@@ -73,5 +73,5 @@ export function useOneTimeCheck() {
   const panel = asked && (
     <OneTimeCheck members={asked.members} onAnswer={asked.answer} />
   );
-  return { check, panel };
+  return { check, panel, checking: asked !== null };
 }

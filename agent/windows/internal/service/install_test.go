@@ -28,7 +28,6 @@ import (
 type fakeSystem struct {
 	calls    []string
 	fail     error
-	nowFail  error
 	stopFail error
 	source   string
 	program  string
@@ -82,11 +81,6 @@ func (f *fakeSystem) Register(executable string) error {
 func (f *fakeSystem) Tray(executable string) error {
 	f.calls = append(f.calls, "tray "+filepath.Base(executable))
 	return nil
-}
-
-func (f *fakeSystem) StartTray(executable string) error {
-	f.calls = append(f.calls, "tray now "+filepath.Base(executable))
-	return f.nowFail
 }
 
 type enrollServer struct {
@@ -147,7 +141,7 @@ func TestInstallEnrollsAsALaptopAndStartsTheService(t *testing.T) {
 	if record, err := service.read(); err != nil || record.NodeID != laptop1 || record.Endpoint != server.URL {
 		t.Fatalf("state %+v, %v", record, err)
 	}
-	want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}
+	want := []string{"stop", "unpack", "tray krynodes.exe", "register krynodes.exe"}
 	if !slices.Equal(system.calls, want) {
 		t.Fatalf("calls %v", system.calls)
 	}
@@ -201,7 +195,7 @@ func TestAFailedInstallFinishesOnTheNextRun(t *testing.T) {
 	if err := server.install(dir, secrets, system, io.Discard); err == nil || !strings.Contains(err.Error(), "run install again") {
 		t.Fatalf("first run: %v", err)
 	}
-	if want := []string{"stop", "unpack", "register krynodes.exe", "start"}; !slices.Equal(system.calls, want) {
+	if want := []string{"stop", "unpack", "tray krynodes.exe", "register krynodes.exe", "start"}; !slices.Equal(system.calls, want) {
 		t.Fatalf("first run calls %v, want %v", system.calls, want)
 	}
 	system.fail, system.calls = nil, nil
@@ -211,7 +205,7 @@ func TestAFailedInstallFinishesOnTheNextRun(t *testing.T) {
 	if server.calls != 1 || string(secrets[tokenSecret]) != "agent-token" {
 		t.Fatalf("enrolled %d times, token %q", server.calls, secrets[tokenSecret])
 	}
-	if want := []string{"unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}; !slices.Equal(system.calls, want) {
+	if want := []string{"unpack", "tray krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
 		t.Fatalf("calls %v, want %v", system.calls, want)
 	}
 }
@@ -286,7 +280,7 @@ func TestReinstallSwapsInBesideARunningTray(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(system.program), oldName)); err != nil {
 		t.Errorf("the running program was not set aside: %v", err)
 	}
-	if want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}; !slices.Equal(system.calls, want) {
+	if want := []string{"stop", "unpack", "tray krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
 		t.Errorf("calls %v, want %v", system.calls, want)
 	}
 }
@@ -344,86 +338,59 @@ func TestAStopThatTimesOutStartsTheServiceAgain(t *testing.T) {
 	}
 }
 
-func TestTrayStartUsesTheShellToken(t *testing.T) {
-	var events []string
-	elevated := map[uintptr]bool{}
-	shell := shellUser{
-		Session: func() (uint32, error) { return 1, nil },
-		Processes: func() ([]shellProcess, error) {
-			return []shellProcess{{ID: 40, Session: 2, Name: "explorer.exe"}, {ID: 41, Session: 1, Name: "krynodes.exe"}, {ID: 42, Session: 1, Name: "Explorer.EXE"}, {ID: 43, Session: 1, Name: "explorer.exe"}}, nil
-		},
-		Token: func(id uint32) (uintptr, error) {
-			events = append(events, fmt.Sprintf("token %d", id))
-			return uintptr(id) + 100, nil
-		},
-		Elevated: func(token uintptr) bool { return elevated[token] },
-		Start: func(token uintptr, command string) error {
-			events = append(events, fmt.Sprintf("start %d %s", token, command))
-			return nil
-		},
-		Close: func(token uintptr) { events = append(events, fmt.Sprintf("close %d", token)) },
-	}
+func TestTrayErrorsNameTheirStep(t *testing.T) {
 	executable := `C:\Program Files\Krynodes\krynodes.exe`
-	if err := shell.startTray(executable); err != nil {
+	var events []string
+	user := func() userSession {
+		return userSession{
+			Processes: func() ([]process, error) {
+				return []process{{Session: 0, Name: "krynodes.exe"}, {Session: 2, Name: "Krynodes.EXE"}, {Session: 1, Name: "explorer.exe"}}, nil
+			},
+			Token: func(session uint32) (uintptr, error) {
+				events = append(events, fmt.Sprintf("token %d", session))
+				return uintptr(session) + 100, nil
+			},
+			Elevated: func(uintptr) bool { return false },
+			Start: func(token uintptr, command string) error {
+				events = append(events, fmt.Sprintf("start %d %s", token, command))
+				return nil
+			},
+			Close: func(token uintptr) { events = append(events, fmt.Sprintf("close %d", token)) },
+		}
+	}
+	if err := user().startTray(executable, 1); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"token 42", `start 142 "C:\Program Files\Krynodes\krynodes.exe" tray`, "close 142"}; !slices.Equal(events, want) {
+	if want := []string{"token 1", `start 101 "C:\Program Files\Krynodes\krynodes.exe" tray`, "close 101"}; !slices.Equal(events, want) {
 		t.Fatalf("events %q, want %q", events, want)
 	}
 
 	events = nil
-	elevated[142] = true
-	if err := shell.startTray(executable); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"token 42", "close 142", "token 43", `start 143 "C:\Program Files\Krynodes\krynodes.exe" tray`, "close 143"}; !slices.Equal(events, want) {
-		t.Fatalf("an elevated shell is used: events %q, want %q", events, want)
+	if err := user().startTray(executable, 2); err != nil || len(events) != 0 {
+		t.Fatalf("a session that already runs a tray got another: %v, events %q", err, events)
 	}
 
-	events = nil
-	elevated[143] = true
-	if err := shell.startTray(executable); !errors.Is(err, errElevatedShell) || !slices.Equal(events, []string{"token 42", "close 142", "token 43", "close 143"}) {
-		t.Fatalf("with only elevated shells: %v, events %q", err, events)
-	}
-	elevated = map[uintptr]bool{}
-
-	events = nil
-	shell.Session = func() (uint32, error) { return 3, nil }
-	if err := shell.startTray(executable); !errors.Is(err, errNoShell) || len(events) != 0 {
-		t.Fatalf("with no Explorer in this session: %v, events %q", err, events)
-	}
-
-	events = nil
-	shell.Session = func() (uint32, error) { return 0, errors.New("access denied") }
-	if err := shell.startTray(executable); err == nil || len(events) != 0 {
-		t.Fatalf("an unknown session: %v, events %q", err, events)
-	}
-
-	events = nil
-	shell.Session = func() (uint32, error) { return 1, nil }
-	shell.Start = func(uintptr, string) error { return errors.New("access denied") }
-	if err := shell.startTray(executable); err == nil || !slices.Equal(events, []string{"token 42", "close 142"}) {
-		t.Fatalf("a refused start: %v, events %q", err, events)
-	}
-
-	events = nil
-	shell.Token = func(uint32) (uintptr, error) { return 0, errors.New("access denied") }
-	if err := shell.startTray(executable); err == nil || len(events) != 0 {
-		t.Fatalf("a refused token: %v, events %q", err, events)
-	}
-
-	f := newFixture(t)
-	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
-	system := newSystem(t)
-	system.nowFail = errElevatedShell
-	var out strings.Builder
-	if err := server.install(t.TempDir(), memory{}, system, &out); err != nil {
-		t.Fatalf("a tray that cannot start now fails the install: %v", err)
-	}
-	if want := []string{"stop", "unpack", "register krynodes.exe", "tray krynodes.exe", "tray now krynodes.exe"}; !slices.Equal(system.calls, want) {
-		t.Fatalf("calls %v, want %v", system.calls, want)
-	}
-	if !strings.HasPrefix(out.String(), "Krynodes is installed.\n") || !strings.HasSuffix(out.String(), "laptop-1 on the Network page of your dashboard.\nThe tray could not start now (Explorer runs elevated in this session, and the tray is never started elevated); it starts the next time you sign in.\n") {
-		t.Fatalf("printed %q", out.String())
+	denied := errors.New("Access is denied.")
+	for _, test := range []struct {
+		name    string
+		session uint32
+		change  func(*userSession)
+		want    string
+		cause   error
+		events  []string
+	}{
+		{"no console session", noSession, func(*userSession) {}, "start the tray: find the signed-in user: ", errNoUser, nil},
+		{"the process list", 1, func(s *userSession) { s.Processes = func() ([]process, error) { return nil, denied } }, "start the tray: find the signed-in user: ", denied, nil},
+		{"the token", 1, func(s *userSession) { s.Token = func(uint32) (uintptr, error) { return 0, denied } }, "start the tray: take the user's token: ", denied, nil},
+		{"an elevated token", 1, func(s *userSession) { s.Elevated = func(uintptr) bool { return true } }, "start the tray: take the user's token: ", errElevated, []string{"token 1", "close 101"}},
+		{"the program", 1, func(s *userSession) { s.Start = func(uintptr, string) error { return denied } }, "start the tray: start the program: ", denied, []string{"token 1", "close 101"}},
+	} {
+		events = nil
+		started := user()
+		test.change(&started)
+		err := started.startTray(executable, test.session)
+		if err == nil || !errors.Is(err, test.cause) || err.Error() != test.want+test.cause.Error() || !slices.Equal(events, test.events) {
+			t.Errorf("%s: %v, events %q", test.name, err, events)
+		}
 	}
 }

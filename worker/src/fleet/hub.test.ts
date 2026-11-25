@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { freshDb } from "../test/db";
-import { hubHarness } from "../test/hub";
+import { type FakeSocket, hubHarness } from "../test/hub";
 
 const SEAL =
   "BKjpRA_slHw4x3NdGJcyQ75R9_DQQtbaWv1M8JLZI1Y0jhyDrnX9kl3a9IjqweVG1-weFpLFHMr0nXfvK_uB2Iw";
@@ -9,7 +9,7 @@ const SEAL =
 const hello = {
   type: "hello",
   v: 1,
-  version: "0.7.92",
+  version: "0.7.93",
   hostname: "server-1",
   os: "linux",
   arch: "amd64",
@@ -25,7 +25,7 @@ const command = {
   id: "a1",
   kind: "host",
   name: "server-1",
-  action: "reboot",
+  action: "restart",
   signed: "c2lnbmVk",
 };
 
@@ -38,7 +38,7 @@ async function setup() {
     .run();
   await db
     .prepare(
-      "INSERT INTO actions (id, node_id, kind, name, action, title, status, created_at) VALUES ('a1', 'n1', 'host', 'server-1', 'reboot', 'Reboot server-1', 'sent', '2026-11-22T00:00:00.000Z')",
+      "INSERT INTO actions (id, node_id, kind, name, action, title, status, created_at) VALUES ('a1', 'n1', 'host', 'server-1', 'restart', 'Restart server-1', 'sent', '2026-11-22T00:00:00.000Z')",
     )
     .run();
   const writes: string[] = [];
@@ -82,7 +82,7 @@ describe("FleetHub", () => {
       os: "linux",
       arch: "amd64",
       kernel: "6.8.0-45-generic",
-      version: "0.7.92",
+      version: "0.7.93",
       seal_key: SEAL,
       seen: 1,
     });
@@ -270,6 +270,46 @@ describe("FleetHub", () => {
     expect(writes.filter((sql) => sql.includes("actions"))).toHaveLength(2);
     expect(dashboard.replies()).toEqual([
       { type: "changed", topics: ["fleet"] },
+    ]);
+  });
+
+  it("a result with output clears output older than a day", async () => {
+    const { db, connect, say } = await setup();
+    const old = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+    await db
+      .prepare(
+        "INSERT INTO actions (id, node_id, kind, name, action, title, status, output, created_at) VALUES ('a0', 'n1', 'stack', 'web', 'logs', 'Logs of web', 'done', 'TOKEN=old', ?)",
+      )
+      .bind(old)
+      .run();
+    await db
+      .prepare("UPDATE actions SET created_at = ? WHERE id = 'a1'")
+      .bind(new Date().toISOString())
+      .run();
+    const ws = connect("n1");
+    await say(ws, { type: "result", id: "a1", ok: true, message: "Done" });
+    expect(
+      await db.prepare("SELECT output FROM actions WHERE id = 'a0'").first(),
+    ).toEqual({ output: "TOKEN=old" });
+    await db
+      .prepare("UPDATE actions SET status = 'sent' WHERE id = 'a1'")
+      .run();
+    await say(ws, {
+      type: "result",
+      id: "a1",
+      ok: true,
+      message: "Done",
+      output: "ready",
+    });
+    expect(
+      (
+        await db
+          .prepare("SELECT id, output FROM actions ORDER BY id")
+          .all<{ id: string; output: string | null }>()
+      ).results,
+    ).toEqual([
+      { id: "a0", output: null },
+      { id: "a1", output: "ready" },
     ]);
   });
 
@@ -622,6 +662,9 @@ const helloFrom = (id: string, network: object | null) => ({
   network,
 });
 
+const meshReplies = (ws: FakeSocket) =>
+  ws.replies().filter((message) => message.type !== "checks");
+
 const noHints = {
   type: "hints",
   endpoints: [],
@@ -723,7 +766,7 @@ describe("FleetHub private network", () => {
     await member(S2, "in", 1);
     const ws = connect(S2);
     await say(ws, helloFrom(S2, joining(S2, 1)));
-    expect(ws.replies()).toEqual([
+    expect(meshReplies(ws)).toEqual([
       { type: "document", version: 2, signed: envelope(v2) },
       { type: "document", version: 3, signed: envelope(v3) },
       {
@@ -748,7 +791,7 @@ describe("FleetHub private network", () => {
     harness.forget();
     const again = harness.connect(S2);
     await harness.say(again, helloFrom(S2, joining(S2, 1)));
-    expect(again.replies()[0]).toEqual(pushed);
+    expect(meshReplies(again)[0]).toEqual(pushed);
     const sent = again.sent.length;
     harness.forget();
     await harness.say(again, {
@@ -805,7 +848,7 @@ describe("FleetHub private network", () => {
     expect(
       await db.prepare("SELECT COUNT(*) AS n FROM network_members").first(),
     ).toEqual({ n: 1 });
-    expect(ws.sent).toEqual([]);
+    expect(meshReplies(ws)).toEqual([]);
   });
 
   it("links that did not flip write nothing", async () => {
@@ -1079,7 +1122,7 @@ describe("FleetHub private network", () => {
     await member(S2, "leaving", 1);
     const ws = connect(S2);
     await say(ws, helloFrom(S2, joining(S2, 1)));
-    expect(ws.replies()).toEqual([
+    expect(meshReplies(ws)).toEqual([
       { type: "document", version: 2, signed: envelope(v2) },
     ]);
     await say(ws, {
@@ -1110,13 +1153,13 @@ describe("FleetHub private network", () => {
     const ws = connect(S2);
     await say(ws, helloFrom(S2, joining(S2, 1)));
     expect(await memberRow(S2)).toMatchObject({ state: "requested" });
-    expect(ws.replies()).toEqual([
+    expect(meshReplies(ws)).toEqual([
       { type: "document", version: 2, signed: envelope(v2) },
       { type: "document", version: 3, signed: envelope(v3) },
     ]);
     const fresh = connect(S3);
     await say(fresh, helloFrom(S3, joining(S3)));
-    expect(fresh.sent).toEqual([]);
+    expect(meshReplies(fresh)).toEqual([]);
   });
 });
 
@@ -1247,7 +1290,7 @@ describe("FleetHub private network, fix round 1", () => {
     const writes = memberWrites();
     await say(ws, helloFrom(S2, fresh));
     expect(memberWrites()).toBe(writes);
-    expect(ws.sent).toEqual([]);
+    expect(meshReplies(ws)).toEqual([]);
   });
 
   it("laptops hear who behind NAT is connected in every hints and whenever it changes", async () => {

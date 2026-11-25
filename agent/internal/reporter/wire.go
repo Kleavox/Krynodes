@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 )
 
 type TrustReport struct {
@@ -45,6 +46,7 @@ type Result struct {
 	ID      string       `json:"id"`
 	OK      bool         `json:"ok"`
 	Message string       `json:"message"`
+	Output  string       `json:"output,omitempty"`
 	Trust   *TrustReport `json:"trust,omitempty"`
 }
 
@@ -78,6 +80,70 @@ type Announce struct {
 type Meet struct {
 	Type string `json:"type"`
 	Via  string `json:"via"`
+}
+
+type StackService struct {
+	Service   string `json:"service"`
+	Container string `json:"container"`
+}
+
+type StackEntry struct {
+	Project   string         `json:"project"`
+	Title     *string        `json:"title"`
+	Directory string         `json:"directory"`
+	Own       bool           `json:"own"`
+	Access    *string        `json:"access"`
+	Running   int            `json:"running"`
+	Total     int            `json:"total"`
+	Rollback  bool           `json:"rollback"`
+	Network   []int          `json:"network"`
+	Services  []StackService `json:"services"`
+}
+
+type ContainerEntry struct {
+	Name    string   `json:"name"`
+	Project *string  `json:"project"`
+	Service *string  `json:"service"`
+	Image   string   `json:"image"`
+	State   string   `json:"state"`
+	Health  *string  `json:"health"`
+	Ports   []string `json:"ports"`
+}
+
+type UnitEntry struct {
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	Protected bool   `json:"protected"`
+}
+
+type RemovedEntry struct {
+	Project   string `json:"project"`
+	RemovedAt string `json:"removedAt"`
+}
+
+type Inventory struct {
+	Type       string           `json:"type"`
+	Hash       string           `json:"hash"`
+	Docker     string           `json:"docker"`
+	Compose    *string          `json:"compose"`
+	Stacks     []StackEntry     `json:"stacks"`
+	Containers []ContainerEntry `json:"containers"`
+	Units      []UnitEntry      `json:"units"`
+	Removed    []RemovedEntry   `json:"removed"`
+}
+
+type Check struct {
+	Type   string  `json:"type"`
+	Name   string  `json:"name"`
+	State  string  `json:"state"`
+	Cause  *string `json:"cause"`
+	At     string  `json:"at"`
+	Detail string  `json:"detail"`
+}
+
+type Checks struct {
+	Type  string   `json:"type"`
+	Names []string `json:"names"`
 }
 
 type Command struct {
@@ -132,7 +198,10 @@ type Refresh struct {
 const (
 	maxHints  = 32
 	maxSigned = 524288
+	maxChecks = 64
 )
+
+var containerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{1,127}$`)
 
 var hubFields = map[string][]string{
 	"command":  {"type", "id", "kind", "name", "action", "signed"},
@@ -140,6 +209,7 @@ var hubFields = map[string][]string{
 	"document": {"type", "version", "signed"},
 	"hints":    {"type", "endpoints", "announced", "meetings", "held", "connected"},
 	"refresh":  {"type"},
+	"checks":   {"type", "names"},
 }
 
 func exact(fields map[string]json.RawMessage, names []string) error {
@@ -195,6 +265,19 @@ func ids(raw json.RawMessage) ([]string, error) {
 	return list, nil
 }
 
+func decodeChecks(raw json.RawMessage) (Checks, error) {
+	var names []string
+	if err := json.Unmarshal(raw, &names); err != nil || names == nil || len(names) > maxChecks {
+		return Checks{}, errors.New("a list of 0 to 64 container names")
+	}
+	for _, name := range names {
+		if !containerName.MatchString(name) {
+			return Checks{}, fmt.Errorf("%q is not a container name", name)
+		}
+	}
+	return Checks{Type: "checks", Names: names}, nil
+}
+
 func decodeHints(fields map[string]json.RawMessage) (Hints, error) {
 	hints := Hints{Type: "hints"}
 	var err error
@@ -235,6 +318,12 @@ func DecodeHub(raw []byte) (any, error) {
 	switch kind {
 	case "refresh":
 		return Refresh{Type: kind}, nil
+	case "checks":
+		checks, err := decodeChecks(fields["names"])
+		if err != nil {
+			return nil, err
+		}
+		return checks, nil
 	case "hints":
 		hints, err := decodeHints(fields)
 		if err != nil {

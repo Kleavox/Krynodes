@@ -217,6 +217,20 @@ describe("PATCH /api/nodes/:id", () => {
     ).toBe(200);
   });
 
+  it("refuses a name with control characters", async () => {
+    const { db, send } = await fleet();
+    for (const name of [
+      "web\r\nBcc: x@example.test",
+      "web\u0007",
+      "a\u0085b",
+    ]) {
+      expect((await send("PATCH", "/api/nodes/n1", { name })).status).toBe(400);
+    }
+    expect(
+      await db.prepare("SELECT name FROM nodes WHERE id = 'n1'").first(),
+    ).toEqual({ name: "server-1" });
+  });
+
   it("refuses a taken name, an empty name and an unknown server", async () => {
     const { send } = await fleet();
     expect(

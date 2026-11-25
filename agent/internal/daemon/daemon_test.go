@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -313,5 +314,33 @@ func TestProgressAndLongMessagesFitTheWire(t *testing.T) {
 	result := h.wire.sent[1].(reporter.Result)
 	if len(result.Message) != 2047 {
 		t.Fatalf("message is %d bytes", len(result.Message))
+	}
+}
+
+func TestAnOutputTravelsWithItsResultUntilItIsAcknowledged(t *testing.T) {
+	h := newHarness(t, true)
+	h.daemon.Handlers["host/restart"] = func(ctx context.Context, _ trust.Command, _ func(string)) (string, error) {
+		Output(ctx, "line 1\nline 2\n")
+		return "Two lines.", nil
+	}
+	h.daemon.Handle(context.Background(), h.fixture.Command)
+	results := h.wire.results()
+	if len(results) != 1 || results[0].Output != "line 1\nline 2\n" || results[0].Message != "Two lines." {
+		t.Fatalf("results %+v", results)
+	}
+	h.daemon.Ack(h.fixture.Command.ID)
+	stored, _, err := h.daemon.read(h.fixture.Command.ID)
+	if err != nil || stored.Result == nil || stored.Result.Output != "" || !stored.Acked {
+		t.Fatalf("the ledger kept %+v %v", stored.Result, err)
+	}
+	h.daemon.Handlers["host/restart"] = func(ctx context.Context, _ trust.Command, _ func(string)) (string, error) {
+		Output(ctx, "half")
+		return "", errors.New("it failed")
+	}
+	again := newHarness(t, true)
+	again.daemon.Handlers = h.daemon.Handlers
+	again.daemon.Handle(context.Background(), again.fixture.Command)
+	if failed := again.wire.results(); len(failed) != 1 || failed[0].OK || failed[0].Output != "" {
+		t.Fatalf("a failure carried output: %+v", failed)
 	}
 }

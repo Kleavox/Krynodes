@@ -3,11 +3,12 @@ import {
   networkDocumentSchema,
   type NetworkDocument,
 } from "@krynodes/protocol";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
   ActionKind,
   ActionRow,
+  CheckView,
   Device,
   FleetNode,
   LaptopCode,
@@ -16,6 +17,7 @@ import type {
   NetworkNext,
   NetworkView,
   SessionResponse,
+  StackNode,
 } from "../types";
 import { ApiError, apiFetch } from "./http";
 import { fromB64url } from "./passkeys";
@@ -36,6 +38,49 @@ export function useDevices() {
     queryFn: () => apiFetch<Device[]>("/api/devices"),
   });
 }
+
+export function useStacks() {
+  return useQuery({
+    queryKey: queryKeys.stacks,
+    queryFn: () => apiFetch<{ nodes: StackNode[] }>("/api/stacks"),
+    select: (data) => data.nodes,
+  });
+}
+
+export function useChecks() {
+  return useQuery({
+    queryKey: queryKeys.checks,
+    queryFn: () =>
+      apiFetch<{ checks: CheckView[]; statusPage: string | null }>(
+        "/api/checks",
+      ),
+  });
+}
+
+export function useRefreshStacks() {
+  const client = useQueryClient();
+  return () => {
+    void client.invalidateQueries({ queryKey: queryKeys.stacks });
+    void client.invalidateQueries({ queryKey: queryKeys.checks });
+  };
+}
+
+export const checksApi = {
+  add: (body: { nodeId: string; container: string; name: string }) =>
+    post<CheckView>("/api/checks", body),
+  change: (
+    id: string,
+    body: { name?: string; public?: boolean; note?: string | null },
+  ) =>
+    apiFetch<CheckView>(`/api/checks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  remove: (id: string) =>
+    apiFetch<void>(`/api/checks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+};
 
 export interface ActionBody {
   nodeId: string;

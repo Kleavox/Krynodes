@@ -1,5 +1,5 @@
 import type { NetworkDocument, NetworkRule } from "@krynodes/protocol";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { Waiting } from "@/components/busy";
 import { Button } from "@/components/ui/button";
@@ -190,6 +190,80 @@ type Phase =
       before: Record<string, string | null>;
     };
 
+export function RuleBody({
+  document,
+  form,
+  touched,
+  state,
+  failed,
+  lines,
+  saveable,
+  checking,
+  onTouch,
+  onChange,
+  onSave,
+  onClose,
+  children,
+}: {
+  document: NetworkDocument;
+  form: RuleForm;
+  touched: boolean;
+  state: Phase;
+  failed: string | null;
+  lines: string[];
+  saveable: boolean;
+  checking: boolean;
+  onTouch: () => void;
+  onChange: (form: RuleForm) => void;
+  onSave: () => void;
+  onClose: () => void;
+  children?: ReactNode;
+}) {
+  const running = state.phase === "running";
+  return (
+    <>
+      {state.phase === "sent" ? (
+        <div className="space-y-2 text-sm">
+          <p role="status">{`Signed and sent as version ${state.version}.`}</p>
+          <ul aria-label="Applying" className="space-y-1">
+            {lines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <p className="text-xs text-muted-foreground">
+            You can close this. Each server shows its state in Members.
+          </p>
+        </div>
+      ) : (
+        <RuleFields
+          document={document}
+          form={form}
+          touched={touched}
+          disabled={running}
+          onTouch={onTouch}
+          onChange={onChange}
+        />
+      )}
+      {failed && (
+        <p role="alert" className="text-sm text-destructive">
+          {failed}
+        </p>
+      )}
+      {children}
+      <DialogFooter>
+        <Button variant="ghost" disabled={running} onClick={onClose}>
+          {state.phase === "sent" ? "Done" : "Cancel"}
+        </Button>
+        {state.phase !== "sent" && (
+          <Button disabled={running || !saveable} onClick={onSave}>
+            {running && !checking ? <Waiting /> : "Save"}
+          </Button>
+        )}
+      </DialogFooter>
+    </>
+  );
+}
+
 export function RuleDialog({
   document,
   editing,
@@ -200,7 +274,7 @@ export function RuleDialog({
   onClose: () => void;
 }) {
   const refresh = useRefreshNetwork();
-  const { check, panel } = useOneTimeCheck();
+  const { check, panel, checking } = useOneTimeCheck();
   const view = useNetworkView();
   const [form, setForm] = useState(() =>
     editing ? formOf(editing.rule) : blankForm(document),
@@ -241,52 +315,31 @@ export function RuleDialog({
             Everything else stays blocked. Saving takes your passkey.
           </DialogDescription>
         </DialogHeader>
-        {state.phase === "sent" ? (
-          <div className="space-y-2 text-sm">
-            <p role="status">{`Signed and sent as version ${state.version}.`}</p>
-            <ul aria-label="Applying" className="space-y-1">
-              {applyLines(
-                view.data ?? { members: [] },
-                state.nodes,
-                state.version,
-                state.before,
-              ).map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-            <p className="text-xs text-muted-foreground">
-              You can close this. Each server shows its state in Members.
-            </p>
-          </div>
-        ) : (
-          <RuleFields
-            document={document}
-            form={form}
-            touched={touched}
-            disabled={running}
-            onTouch={() => setTouched(true)}
-            onChange={setForm}
-          />
-        )}
-        {failed && (
-          <p role="alert" className="text-sm text-destructive">
-            {failed}
-          </p>
-        )}
-        {panel}
-        <DialogFooter>
-          <Button variant="ghost" disabled={running} onClick={onClose}>
-            {state.phase === "sent" ? "Done" : "Cancel"}
-          </Button>
-          {state.phase !== "sent" && (
-            <Button
-              disabled={running || !canSave(form, editing)}
-              onClick={save}
-            >
-              {running ? <Waiting /> : "Save"}
-            </Button>
-          )}
-        </DialogFooter>
+        <RuleBody
+          document={document}
+          form={form}
+          touched={touched}
+          state={state}
+          failed={failed}
+          lines={
+            state.phase === "sent"
+              ? applyLines(
+                  view.data ?? { members: [] },
+                  state.nodes,
+                  state.version,
+                  state.before,
+                )
+              : []
+          }
+          saveable={canSave(form, editing)}
+          checking={checking}
+          onTouch={() => setTouched(true)}
+          onChange={setForm}
+          onSave={save}
+          onClose={onClose}
+        >
+          {panel}
+        </RuleBody>
       </DialogContent>
     </Dialog>
   );

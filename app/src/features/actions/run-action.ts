@@ -14,11 +14,16 @@ export interface ActionRequest {
   kind: ActionKind;
   action: string;
   title: string;
+  name?: string;
   args?: Record<string, string>;
 }
 
-const commandName = (kind: ActionKind, node: FleetNode) =>
-  kind === "network" ? NETWORK.interface : node.name;
+const commandName = (request: ActionRequest, node: FleetNode) =>
+  request.name ?? (request.kind === "network" ? NETWORK.interface : node.name);
+
+const carriesOutput = (request: ActionRequest) =>
+  request.action === "logs" ||
+  (request.kind === "stack" && request.action === "read");
 
 const finished = (row: ActionRow | undefined): row is ActionRow =>
   row?.status === "done" || row?.status === "failed";
@@ -83,13 +88,19 @@ export async function deliver(
         nodeId: node.id,
         id: body.id,
         kind: body.kind,
-        name: commandName(body.kind, node),
+        name: commandName(body, node),
         action: body.action,
         title: body.title,
         signed: body.signed,
       }),
     });
-    return finished(row) ? row : await settled(client, node, body.id, signal);
+    if (finished(row)) return row;
+    const polled = await settled(client, node, body.id, signal);
+    if (!carriesOutput(body)) return polled;
+    return await apiFetch<ActionRow>(
+      `/api/actions/${encodeURIComponent(body.id)}`,
+      { signal },
+    ).catch(() => polled);
   } finally {
     stop();
   }
@@ -118,7 +129,7 @@ export async function runAction(
       id,
       nodeId: node.id,
       kind: request.kind,
-      name: commandName(request.kind, node),
+      name: commandName(request, node),
       action: request.action,
       args: request.args,
     }),

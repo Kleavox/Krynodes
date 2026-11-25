@@ -1,0 +1,11 @@
+{
+  "name": "web",
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "image": "nginx:1.27",
+      "network_mode": "host"
+    }
+  }
+}

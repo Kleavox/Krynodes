@@ -53,6 +53,7 @@
         "ENVIRONMENT": "production",
         "PUBLIC_ORIGIN": "https://kry.kleavox.xyz",
         "FROM_EMAIL": "kry@kleavox.xyz",
+        "STATUS_PAGE_URL": "https://stats.kleavox.xyz",
         "AGENT_ORIGIN": "https://kry.deau.workers.dev",
       },
       "d1_databases": [

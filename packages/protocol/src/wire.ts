@@ -3,11 +3,17 @@ import { z } from "zod";
 import {
   b64url,
   endpoint,
-  isNetworkVerb,
+  NETWORK_VERBS,
   networkLinkSchema,
   sealKeySchema,
   wireguardKey,
 } from "./network";
+import {
+  checkSchema,
+  checksSchema,
+  inventorySchema,
+  STACK_ACTIONS,
+} from "./stacks";
 
 export const WIRE_VERSION = 1;
 
@@ -29,6 +35,27 @@ export const networkHelloSchema = z.strictObject({
   ready: z.boolean(),
   reason: z.string().max(300).nullable(),
 });
+
+export const COMMAND_KINDS = [
+  "trust",
+  "agent",
+  "host",
+  "network",
+  "stack",
+  "container",
+  "unit",
+  "docker",
+] as const;
+
+export type CommandKind = (typeof COMMAND_KINDS)[number];
+
+export const COMMAND_ACTIONS: Record<CommandKind, readonly string[]> = {
+  trust: ["apply"],
+  agent: ["update", "remove"],
+  host: ["restart"],
+  network: NETWORK_VERBS,
+  ...STACK_ACTIONS,
+};
 
 const nodeId = z.string().uuid();
 const upTo32 = <T extends z.ZodType>(item: T) => z.array(item).max(32);
@@ -57,6 +84,7 @@ export const agentMessageSchema = z.discriminatedUnion("type", [
     id,
     ok: z.boolean(),
     message: z.string().max(2048),
+    output: z.string().max(65536).optional(),
     trust: trustReportSchema.optional(),
   }),
   z.strictObject({
@@ -75,6 +103,8 @@ export const agentMessageSchema = z.discriminatedUnion("type", [
     signature: b64url,
   }),
   z.strictObject({ type: z.literal("meet"), via: nodeId }),
+  inventorySchema,
+  checkSchema,
 ]);
 
 export const hubMessageSchema = z.discriminatedUnion("type", [
@@ -82,13 +112,13 @@ export const hubMessageSchema = z.discriminatedUnion("type", [
     .strictObject({
       type: z.literal("command"),
       id,
-      kind: z.enum(["trust", "agent", "host", "network"]),
+      kind: z.enum(COMMAND_KINDS),
       name: z.string().min(1).max(128),
       action: z.string().min(1).max(64),
       signed: z.string().min(1),
     })
-    .refine(
-      (command) => command.kind !== "network" || isNetworkVerb(command.action),
+    .refine((command) =>
+      COMMAND_ACTIONS[command.kind].includes(command.action),
     ),
   z.strictObject({ type: z.literal("ack"), id }),
   z.strictObject({
@@ -107,6 +137,7 @@ export const hubMessageSchema = z.discriminatedUnion("type", [
     connected: upTo32(nodeId),
   }),
   z.strictObject({ type: z.literal("refresh") }),
+  checksSchema,
 ]);
 
 export type TrustReport = z.infer<typeof trustReportSchema>;
