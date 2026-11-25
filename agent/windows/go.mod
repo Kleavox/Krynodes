@@ -1,6 +1,6 @@
 module github.com/Kleavox/krynodes/agent/windows
 
-go 1.26
+go 1.26.0
 
 require (
 	fyne.io/systray v1.12.2
