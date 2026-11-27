@@ -80,7 +80,7 @@ func TestCollectReadsStacksFromComposeLabels(t *testing.T) {
 			return StackMeta{Own: true, Access: text("contained"), Title: text("Web"), Network: []int{8080, 0, 70000}, Rollback: true}
 		},
 		Removed: func() []reporter.RemovedEntry {
-			return []reporter.RemovedEntry{{Project: "old", RemovedAt: "2026-11-20T08:30:00Z"}, {Project: "Bad", RemovedAt: "2026-11-21T08:30:00Z"}, {Project: "newer", RemovedAt: "2026-11-22T08:30:00Z"}}
+			return []reporter.RemovedEntry{{Project: "old", RemovedAt: "2026-11-20T08:30:00Z", Names: []string{"old-app-1", "-bad", "cache-main"}}, {Project: "Bad", RemovedAt: "2026-11-21T08:30:00Z"}, {Project: "newer", RemovedAt: "2026-11-22T08:30:00Z"}}
 		},
 	}
 	inventory, err := collectInventory(context.Background(), f.run, meta)
@@ -115,7 +115,7 @@ func TestCollectReadsStacksFromComposeLabels(t *testing.T) {
 	if tools := inventory.Containers[4]; tools.State != "restarting" || tools.Project != nil || tools.Ports == nil {
 		t.Fatalf("tools %+v", tools)
 	}
-	if !reflect.DeepEqual(inventory.Removed, []reporter.RemovedEntry{{Project: "newer", RemovedAt: "2026-11-22T08:30:00Z"}, {Project: "old", RemovedAt: "2026-11-20T08:30:00Z"}}) {
+	if !reflect.DeepEqual(inventory.Removed, []reporter.RemovedEntry{{Project: "newer", RemovedAt: "2026-11-22T08:30:00Z"}, {Project: "old", RemovedAt: "2026-11-20T08:30:00Z", Names: []string{"cache-main", "old-app-1"}}}) {
 		t.Fatalf("removed %+v", inventory.Removed)
 	}
 	if len(inventory.Hash) != 64 || inventory.Type != "inventory" {
@@ -355,5 +355,16 @@ func TestManagedStacksKeepTheStackCap(t *testing.T) {
 	}
 	if len(inventory.Stacks) != 64 || inventory.Stacks[0].Project != "s00" || inventory.Stacks[63].Project != "s63" || inventory.Stacks[0].Total != 0 {
 		t.Fatalf("stacks %d %+v", len(inventory.Stacks), inventory.Stacks[0])
+	}
+}
+
+func TestARemovedStackReportsAtMost64NamesItsOwnFirst(t *testing.T) {
+	names := []string{}
+	for n := range 70 {
+		names = append(names, fmt.Sprintf("old-app-%d", n))
+	}
+	kept := named("old", append(names, "cache-main"))
+	if len(kept) != maxNamed || kept[0] != "cache-main" || kept[1] != "old-app-0" {
+		t.Fatalf("names %q", kept)
 	}
 }

@@ -326,7 +326,7 @@ func runDaemon(args []string) error {
 	maps.Copy(d.Handlers, network.Handlers())
 	stacks.ClearTemp(os.TempDir())
 	checks := docker.NewChecks()
-	apps := stacks.Env{Run: runCommand, State: stateDir, Server: currentFacts().Hostname, Own: network.Own, Checks: checks, Now: time.Now,
+	apps := stacks.Env{Run: runCommand, State: stateDir, Server: currentFacts().Hostname, Name: network.OwnName, Own: network.Own, Checks: checks, Now: time.Now,
 		Unseal:   func(sealed string) ([]byte, error) { return seal.Open(key, sealed) },
 		Sealing:  key,
 		Platform: platform.Env{Run: platform.Runner(runCommand), Executable: executable, Prove: proveGuard(runCommand)}}

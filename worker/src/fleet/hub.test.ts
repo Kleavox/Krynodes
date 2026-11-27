@@ -42,14 +42,18 @@ async function setup() {
     )
     .run();
   const writes: string[] = [];
+  const failing = { batch: false };
   const counted = {
     prepare: (sql: string) => {
       if (/^\s*(INSERT|UPDATE|DELETE)/iu.test(sql)) writes.push(sql);
       return db.prepare(sql);
     },
-    batch: db.batch.bind(db),
+    batch: (statements: Parameters<D1Database["batch"]>[0]) =>
+      failing.batch
+        ? Promise.reject(new Error("D1 is away"))
+        : db.batch(statements),
   } as unknown as D1Database;
-  return { db, writes, ...hubHarness(counted) };
+  return { db, writes, failing, ...hubHarness(counted) };
 }
 
 const post = (path: string, body: unknown) =>
@@ -356,6 +360,360 @@ describe("FleetHub", () => {
     ).toEqual({ status: "failed" });
     expect(await db.prepare("SELECT version FROM node_trust").first()).toEqual({
       version: 4,
+    });
+  });
+
+  describe("Delete Permanently", () => {
+    const sendPurge = async (
+      inventory: object = { stacks: [], removed: [] },
+    ) => {
+      const harness = await setup();
+      const { db } = harness;
+      await db
+        .prepare(
+          "INSERT INTO nodes (id, name, agent_token_hash, enrolled_at) VALUES ('n2', 'server-2', 'h2', '2026-11-22T00:00:00.000Z')",
+        )
+        .run();
+      await db
+        .prepare(
+          "UPDATE actions SET kind = 'stack', name = 'web', action = 'purge', title = 'Delete Permanently web' WHERE id = 'a1'",
+        )
+        .run();
+      await db
+        .prepare(
+          "INSERT INTO node_inventory (node_id, hash, body, updated_at) VALUES ('n1', 'h', ?, '2026-11-22T00:00:00.000Z')",
+        )
+        .bind(JSON.stringify(inventory))
+        .run();
+      const containers = [
+        ["n1", "web-web-1"],
+        ["n1", "web-db-1"],
+        ["n1", "web-app-1"],
+        ["n1", "roll-app-1"],
+        ["n1", "webapp-app-1"],
+        ["n1", "web-api-app-1"],
+        ["n1", "cache"],
+        ["n2", "web-web-1"],
+      ] as const;
+      await db.batch(
+        containers.flatMap(([node, container]) => [
+          db
+            .prepare(
+              "INSERT INTO checks (id, node_id, container, name, created_at) VALUES (?1, ?2, ?3, ?3, '2026-11-22T00:00:00.000Z')",
+            )
+            .bind(`${node}-${container}`, node, container),
+          db
+            .prepare(
+              "INSERT INTO check_transitions (check_id, state, at) VALUES (?1, 'up', '2026-11-22T00:00:00.000Z')",
+            )
+            .bind(`${node}-${container}`),
+        ]),
+      );
+      const left = async () =>
+        (
+          await db
+            .prepare("SELECT id FROM checks ORDER BY id")
+            .all<{ id: string }>()
+        ).results.map((row) => row.id);
+      const transitions = async () =>
+        (
+          await db
+            .prepare("SELECT COUNT(*) AS n FROM check_transitions")
+            .first<{ n: number }>()
+        )?.n;
+      return { ...harness, left, transitions };
+    };
+
+    it("a done purge takes the stack's checks and their history and no others", async () => {
+      const { connect, watch, say, left, transitions } = await sendPurge({
+        stacks: [{ project: "roll" }, { project: "web-api" }],
+        removed: [{ project: "web" }],
+        containers: [],
+      });
+      const ws = connect("n1");
+      const dashboard = watch();
+      await say(ws, { type: "result", id: "a1", ok: true, message: "Deleted" });
+      expect(await left()).toEqual([
+        "n1-cache",
+        "n1-roll-app-1",
+        "n1-web-api-app-1",
+        "n1-webapp-app-1",
+        "n2-web-web-1",
+      ]);
+      expect(await transitions()).toBe(5);
+      expect(ws.replies()).toEqual([
+        {
+          type: "checks",
+          names: ["cache", "roll-app-1", "web-api-app-1", "webapp-app-1"],
+        },
+        { type: "ack", id: "a1" },
+      ]);
+      expect(dashboard.replies()).toEqual([
+        { type: "changed", topics: ["checks"] },
+        { type: "changed", topics: ["fleet"] },
+      ]);
+    });
+
+    it("takes a check on a container the inventory labels with the stack", async () => {
+      const { connect, say, left } = await sendPurge({
+        stacks: [{ project: "web" }],
+        removed: [],
+        containers: [{ name: "cache", project: "web" }],
+      });
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Deleted",
+      });
+      expect(await left()).not.toContain("n1-cache");
+      expect(await left()).toContain("n1-roll-app-1");
+    });
+
+    it("a failed purge takes no checks", async () => {
+      const { db, connect, say, left, transitions } = await sendPurge();
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: false,
+        message: "No",
+      });
+      expect(await left()).toHaveLength(8);
+      expect(await transitions()).toBe(8);
+      expect(
+        await db.prepare("SELECT status FROM actions WHERE id = 'a1'").first(),
+      ).toEqual({ status: "failed" });
+    });
+
+    it("a result sent again takes nothing more and is acked again", async () => {
+      const { db, connect, say, left } = await sendPurge();
+      const ws = connect("n1");
+      const result = { type: "result", id: "a1", ok: true, message: "Deleted" };
+      await say(ws, result);
+      await db
+        .prepare(
+          "INSERT INTO checks (id, node_id, container, name, created_at) VALUES ('later', 'n1', 'web-web-1', 'web-web-1', '2026-11-22T00:00:00.000Z')",
+        )
+        .run();
+      await say(ws, result);
+      expect(await left()).toContain("later");
+      expect(ws.replies().filter((one) => one.type === "ack")).toHaveLength(2);
+      expect(
+        await db.prepare("SELECT status FROM actions WHERE id = 'a1'").first(),
+      ).toEqual({ status: "done" });
+    });
+
+    it("keeps the checks of a longer stack that waits in Removed", async () => {
+      const { connect, say, left } = await sendPurge({
+        stacks: [],
+        removed: [{ project: "web" }, { project: "web-api" }],
+      });
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Deleted",
+      });
+      expect(await left()).toEqual([
+        "n1-cache",
+        "n1-roll-app-1",
+        "n1-web-api-app-1",
+        "n1-webapp-app-1",
+        "n2-web-web-1",
+      ]);
+    });
+
+    it("takes web-app-1 and web-api-app-1 when no web-api exists anywhere", async () => {
+      const { connect, say, left } = await sendPurge({
+        stacks: [{ project: "roll" }],
+        removed: [{ project: "web" }],
+      });
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Deleted",
+      });
+      expect(await left()).toEqual([
+        "n1-cache",
+        "n1-roll-app-1",
+        "n1-webapp-app-1",
+        "n2-web-web-1",
+      ]);
+    });
+
+    const addCheck = (db: D1Database, node: string, container: string) =>
+      db
+        .prepare(
+          "INSERT INTO checks (id, node_id, container, name, created_at) VALUES (?1, ?2, ?3, ?3, '2026-11-22T00:00:00.000Z')",
+        )
+        .bind(`${node}-${container}`, node, container)
+        .run();
+
+    it("keeps the check of a live container the inventory lists with no stack or another stack, and takes one that is gone", async () => {
+      const { db, connect, say, left } = await sendPurge({
+        stacks: [{ project: "cache" }],
+        removed: [{ project: "web" }],
+        containers: [
+          { name: "web-proxy", project: null },
+          { name: "web-cache", project: "cache" },
+        ],
+      });
+      await addCheck(db, "n1", "web-proxy");
+      await addCheck(db, "n1", "web-cache");
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Deleted",
+      });
+      expect(await left()).toEqual([
+        "n1-cache",
+        "n1-roll-app-1",
+        "n1-web-cache",
+        "n1-web-proxy",
+        "n1-webapp-app-1",
+        "n2-web-web-1",
+      ]);
+    });
+
+    it("a stack named a_b does not take the check of axb-app-1", async () => {
+      const { db, connect, say, left } = await sendPurge({
+        stacks: [],
+        removed: [{ project: "a_b" }],
+      });
+      await db.prepare("UPDATE actions SET name = 'a_b' WHERE id = 'a1'").run();
+      await addCheck(db, "n1", "axb-app-1");
+      await addCheck(db, "n1", "a_b-app-1");
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Deleted",
+      });
+      expect(await left()).toContain("n1-axb-app-1");
+      expect(await left()).not.toContain("n1-a_b-app-1");
+      expect(await left()).toHaveLength(9);
+    });
+
+    const purgeNamed = async (
+      n1: { project: string; names?: string[] }[],
+      n2: { project: string; names?: string[] }[] = [],
+    ) => {
+      const harness = await sendPurge({ stacks: [], removed: n1 });
+      const { db, connect, say } = harness;
+      await db
+        .prepare(
+          "INSERT INTO node_inventory (node_id, hash, body, updated_at) VALUES ('n2', 'h', ?, '2026-11-22T00:00:00.000Z')",
+        )
+        .bind(JSON.stringify({ stacks: [], removed: n2 }))
+        .run();
+      await addCheck(db, "n1", "cache-main");
+      await addCheck(db, "n2", "cache-main");
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Deleted",
+      });
+      return harness;
+    };
+
+    it("takes the check of a container the Removed stack names as its own", async () => {
+      const { left } = await purgeNamed([
+        { project: "web", names: ["cache-main", "web-app-1"] },
+      ]);
+      expect(await left()).toEqual([
+        "n1-cache",
+        "n1-roll-app-1",
+        "n1-webapp-app-1",
+        "n2-cache-main",
+        "n2-web-web-1",
+      ]);
+    });
+
+    it("falls back to the stack's prefix when the agent reports no names", async () => {
+      const { left } = await purgeNamed([{ project: "web" }]);
+      expect(await left()).toEqual([
+        "n1-cache",
+        "n1-cache-main",
+        "n1-roll-app-1",
+        "n1-webapp-app-1",
+        "n2-cache-main",
+        "n2-web-web-1",
+      ]);
+    });
+
+    it("names another node reports take no check on the node that purged", async () => {
+      const { left } = await purgeNamed(
+        [{ project: "web" }],
+        [{ project: "web", names: ["cache-main", "cache"] }],
+      );
+      expect(await left()).toContain("n1-cache-main");
+      expect(await left()).toContain("n1-cache");
+      expect(await left()).toContain("n2-cache-main");
+    });
+
+    it("a named container another stack now runs keeps its check", async () => {
+      const { connect, say, left } = await sendPurge({
+        stacks: [{ project: "cache" }],
+        removed: [{ project: "web", names: ["cache"] }],
+        containers: [{ name: "cache", project: "cache" }],
+      });
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Deleted",
+      });
+      expect(await left()).toContain("n1-cache");
+    });
+
+    it("a result from another node finishes nothing and takes no checks on either node", async () => {
+      const { db, connect, say, left, transitions } = await sendPurge();
+      const ws = connect("n2");
+      await say(ws, { type: "result", id: "a1", ok: true, message: "Deleted" });
+      expect(
+        await db.prepare("SELECT status FROM actions WHERE id = 'a1'").first(),
+      ).toEqual({ status: "sent" });
+      expect(await left()).toHaveLength(8);
+      expect(await transitions()).toBe(8);
+    });
+
+    it("the status and the deletes land together, and a result sent again after a failed write is taken", async () => {
+      const { db, failing, connect, say, left, transitions } =
+        await sendPurge();
+      const ws = connect("n1");
+      const result = { type: "result", id: "a1", ok: true, message: "Deleted" };
+      failing.batch = true;
+      await expect(say(ws, result)).rejects.toThrow("D1 is away");
+      expect(
+        await db.prepare("SELECT status FROM actions WHERE id = 'a1'").first(),
+      ).toEqual({ status: "sent" });
+      expect(await left()).toHaveLength(8);
+      expect(ws.replies()).toEqual([]);
+      failing.batch = false;
+      await say(ws, result);
+      expect(
+        await db.prepare("SELECT status FROM actions WHERE id = 'a1'").first(),
+      ).toEqual({ status: "done" });
+      expect(await left()).toHaveLength(4);
+      expect(await transitions()).toBe(4);
+      expect(ws.replies().filter((one) => one.type === "ack")).toHaveLength(1);
+    });
+
+    it("a done remove takes no checks", async () => {
+      const { db, connect, say, left } = await sendPurge();
+      await db
+        .prepare("UPDATE actions SET action = 'remove' WHERE id = 'a1'")
+        .run();
+      await say(connect("n1"), {
+        type: "result",
+        id: "a1",
+        ok: true,
+        message: "Removed",
+      });
+      expect(await left()).toHaveLength(8);
     });
   });
 

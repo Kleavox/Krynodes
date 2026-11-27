@@ -834,13 +834,45 @@ func foreignStack(t *testing.T, f *fake) string {
 	return from
 }
 
-func TestAFailedAdoptNeverRunsTheFoundFile(t *testing.T) {
+func TestSentencesUseTheNetworkName(t *testing.T) {
 	for _, case_ := range []struct {
-		left, ends string
-		starts     int
+		name func() string
+		host string
 	}{
-		{"id-1\tweb-app-1\n", "; its containers run again as they were, from %s.", 1},
-		{"", "; Start it again from %s.", 0},
+		{func() string { return "server-1" }, "server-1"},
+		{func() string { return "" }, "host-1"},
+		{nil, "host-1"},
+	} {
+		f := newFake()
+		e := testEnv(t, f)
+		e.Server, e.Name = "host-1", case_.name
+		managed(t, e, saving("full", ""))
+		f.on(namesOf, "web-app-1\n")
+		if err := store(e.recordPath("web"), record{Previous: []pinned{{Service: "app", Reference: "nginx:1.27", ID: "sha256:old"}}}); err != nil {
+			t.Fatal(err)
+		}
+		message, err := e.do(t, command("stack", "web", "rollback", nil))
+		if want := case_.host + " runs web: 1 of 1 containers healthy."; err != nil || message != want {
+			t.Fatalf("message %q err %v, want %q", message, err, want)
+		}
+		if _, err := e.do(t, command("stack", "other", "start", nil)); err == nil || !strings.Contains(err.Error(), "does not manage other on "+case_.host+";") {
+			t.Fatalf("an error names the server the same way: %v", err)
+		}
+	}
+}
+
+func TestAdoptFailureSaysWhatStillRuns(t *testing.T) {
+	for _, case_ := range []struct {
+		name, left, ask, running, ends string
+		unanswered                     bool
+		starts                         int
+	}{
+		{"the originals are still there", "id-1\tweb-app-1\n", "status=running", "", "; its containers run again as they were, from %s.", false, 1},
+		{"others of the project run", "id-2\tweb-app-1\n", "status=running", "web-app-1\n", "; the containers Krynodes started still run, unmanaged; run docker compose up -d in %s to go back to your own.", false, 0},
+		{"others of the project restart in a loop", "id-2\tweb-app-1\n", "status=restarting", "web-app-1\n", "; the containers Krynodes started still run, unmanaged; run docker compose up -d in %s to go back to your own.", false, 0},
+		{"nothing of the project is left", "", "status=running", "", "; Start it again from %s.", false, 0},
+		{"a new container exists but does not run", "id-2\tweb-app-1\n", "status=running", "", "; Start it again from %s.", false, 0},
+		{"Docker does not say what runs", "id-2\tweb-app-1\n", "status=running", "web-app-1\n", "; Start it again from %s.", true, 0},
 	} {
 		f := newFake()
 		e := testEnv(t, f)
@@ -851,16 +883,25 @@ func TestAFailedAdoptNeverRunsTheFoundFile(t *testing.T) {
 			}
 			return "id-1\tweb-app-1\n", nil
 		})
+		f.when(case_.ask, func() (string, error) {
+			switch {
+			case f.called(" up -d") == 0:
+				return "", nil
+			case case_.unanswered:
+				return "", errors.New("exit status 1")
+			}
+			return case_.running, nil
+		})
 		f.fail(" up -d", "Error response from daemon: port is already allocated")
 		_, err := e.do(t, command("stack", "web", "adopt", map[string]string{"access": "contained"}))
 		if err == nil || !strings.HasSuffix(err.Error(), fmt.Sprintf(case_.ends, from)) {
-			t.Fatalf("err %v", err)
+			t.Fatalf("%s: err %v", case_.name, err)
 		}
 		if f.called(filepath.Join(from, "docker-compose.yml")) != 0 || f.called(" up ") != 1 || f.called("docker start -- id-1") != case_.starts {
-			t.Fatalf("calls %q", f.calls)
+			t.Fatalf("%s: calls %q", case_.name, f.calls)
 		}
 		if _, err := os.Stat(e.folder("web")); err == nil {
-			t.Fatal("a failed adopt kept the stack")
+			t.Fatalf("%s: a failed adopt kept the stack", case_.name)
 		}
 	}
 }

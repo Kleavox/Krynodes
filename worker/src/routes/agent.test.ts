@@ -150,12 +150,51 @@ describe("agent stream", () => {
     });
   });
 
-  it("wants an upgrade", async () => {
+  it("wants an upgrade from a known token", async () => {
     const { call } = await setup();
     const response = await call("/api/agent/stream", {
       authorization: agent.authorization,
     });
     expect(response.status).toBe(426);
+    expect(await response.json()).toEqual({ code: "UPGRADE_REQUIRED" });
+  });
+
+  it("refuses an unknown or missing token without an upgrade", async () => {
+    const { db, hub, call } = await setup();
+    const writes: string[] = [];
+    const prepare = db.prepare.bind(db);
+    db.prepare = (sql: string) => {
+      if (/^\s*UPDATE/iu.test(sql)) writes.push(sql);
+      return prepare(sql);
+    };
+    const unknown: Record<string, string>[] = [
+      { authorization: "Bearer nope" },
+      { authorization: "Basic x" },
+      { authorization: "Bearer" },
+      {},
+    ];
+    for (const headers of unknown) {
+      const response = await call("/api/agent/stream", headers);
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ code: "UNAUTHORIZED" });
+    }
+    expect(hub).toEqual([]);
+    expect(writes).toEqual([]);
+  });
+
+  it("writes nothing for a known token without an upgrade", async () => {
+    const { db, call } = await setup();
+    const writes: string[] = [];
+    const prepare = db.prepare.bind(db);
+    db.prepare = (sql: string) => {
+      if (/^\s*UPDATE/iu.test(sql)) writes.push(sql);
+      return prepare(sql);
+    };
+    await call("/api/agent/stream", {
+      authorization: agent.authorization,
+      "cf-connecting-ip": "203.0.113.9",
+    });
+    expect(writes).toEqual([]);
   });
 });
 

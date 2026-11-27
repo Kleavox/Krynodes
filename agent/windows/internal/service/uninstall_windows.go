@@ -145,6 +145,21 @@ func (remover) RemoveRunEntry() error {
 	return startWithWindows("", false)
 }
 
+func (remover) RemoveShortcut() error {
+	link, err := shortcutPath()
+	if err != nil {
+		return err
+	}
+	return removeShortcut(link)
+}
+
+func removeShortcut(link string) error {
+	if err := os.Remove(link); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func (remover) RemoveData() error {
 	dir, err := store.Dir()
 	if err != nil {

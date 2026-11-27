@@ -129,34 +129,58 @@ func (s *Service) keep(name string, value any) error {
 	return s.Secrets.Write(filepath.Join(s.Dir, name), encoded)
 }
 
-func newKeys(secrets Secrets) (network.Keys, *ecdh.PrivateKey, error) {
-	sealing, err := ecdh.P256().GenerateKey(rand.Reader)
-	if err != nil {
-		return network.Keys{}, nil, err
-	}
-	if err := secrets.Put(sealSecret, sealing.Bytes()); err != nil {
-		return network.Keys{}, nil, err
-	}
-	keys, err := networkKeys(secrets)
-	return keys, sealing, err
+type keyset struct {
+	sealing   *ecdh.PrivateKey
+	wireguard *ecdh.PrivateKey
+	signer    ed25519.PrivateKey
+	keys      network.Keys
 }
 
-func networkKeys(secrets Secrets) (network.Keys, error) {
+func generateNetworkKeys() (keyset, error) {
 	private, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
-		return network.Keys{}, err
+		return keyset{}, err
 	}
 	_, signer, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
+		return keyset{}, err
+	}
+	keys, err := network.KeysOf(private.Bytes(), signer.Seed())
+	return keyset{wireguard: private, signer: signer, keys: keys}, err
+}
+
+func generateKeys() (keyset, error) {
+	fresh, err := generateNetworkKeys()
+	if err != nil {
+		return keyset{}, err
+	}
+	fresh.sealing, err = ecdh.P256().GenerateKey(rand.Reader)
+	return fresh, err
+}
+
+func (k keyset) storeNetwork(secrets Secrets) error {
+	if err := secrets.Put(signerSecret, k.signer.Seed()); err != nil {
+		return err
+	}
+	return secrets.Put(wireguardSecret, k.wireguard.Bytes())
+}
+
+func (k keyset) store(secrets Secrets) error {
+	if err := secrets.Put(sealSecret, k.sealing.Bytes()); err != nil {
+		return err
+	}
+	return k.storeNetwork(secrets)
+}
+
+func networkKeys(secrets Secrets) (network.Keys, error) {
+	fresh, err := generateNetworkKeys()
+	if err != nil {
 		return network.Keys{}, err
 	}
-	if err := secrets.Put(signerSecret, signer.Seed()); err != nil {
+	if err := fresh.storeNetwork(secrets); err != nil {
 		return network.Keys{}, err
 	}
-	if err := secrets.Put(wireguardSecret, private.Bytes()); err != nil {
-		return network.Keys{}, err
-	}
-	return network.KeysOf(private.Bytes(), signer.Seed())
+	return fresh.keys, nil
 }
 
 func (s *Service) keys() (network.Keys, error) {

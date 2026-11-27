@@ -2,6 +2,7 @@ package stacks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -1034,5 +1035,87 @@ func TestUnguardRemovesTheResolverRules(t *testing.T) {
 		if got := s.rules(tool, "DOCKER-USER"); !slices.Equal(got, []string{dockersOwnReturn}) {
 			t.Fatalf("%s DOCKER-USER keeps only Docker's own rule: %q", tool, got)
 		}
+	}
+}
+
+func composeSaying(t *testing.T, change func(dir string, app map[string]any)) func(context.Context, string, ...string) ([]byte, int, error) {
+	t.Helper()
+	plain, err := os.ReadFile(filepath.Join("testdata", "plain.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return func(_ context.Context, _ string, args ...string) ([]byte, int, error) {
+		dir := args[slices.Index(args, "--project-directory")+1]
+		var config map[string]any
+		if err := json.Unmarshal(plain, &config); err != nil {
+			t.Fatal(err)
+		}
+		change(dir, appOf(config))
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return nil, 0, os.WriteFile(filepath.Join(dir, "out.json"), encoded, 0o600)
+	}
+}
+
+func TestEnvFileRefusalNamesTheProjectPath(t *testing.T) {
+	useOwner(t)
+	outside := filepath.Join(t.TempDir(), "app.env")
+	for _, case_ := range []struct {
+		field string
+		path  func(dir string) string
+		want  string
+	}{
+		{"env_file", func(dir string) string { return filepath.Join(dir, "app.env") }, "service app reads ./app.env from the server"},
+		{"label_file", func(dir string) string { return filepath.Join(dir, "app.env") }, "service app reads ./app.env from the server"},
+		{"env_file", func(string) string { return outside }, "service app reads " + outside + " from the server"},
+	} {
+		var sandbox string
+		run := composeSaying(t, func(dir string, app map[string]any) {
+			sandbox = dir
+			if case_.field == "env_file" {
+				app[case_.field] = []any{map[string]any{"path": case_.path(dir), "required": true}}
+				return
+			}
+			app[case_.field] = []any{case_.path(dir)}
+		})
+		config, err := Normalise(context.Background(), run, "web", []byte("x"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Vet(config, t.TempDir(), "contained"); err == nil || err.Error() != case_.want || strings.Contains(err.Error(), sandbox) {
+			t.Fatalf("%s: got %v, want %q", case_.field, err, case_.want)
+		}
+	}
+}
+
+func TestARelativeBindIsStillRefusedAfterTheRewrite(t *testing.T) {
+	useOwner(t)
+	run := composeSaying(t, func(dir string, app map[string]any) {
+		app["volumes"] = []any{map[string]any{"type": "bind", "source": filepath.Join(dir, "data"), "target": "/data", "bind": map[string]any{}}}
+	})
+	config, err := Normalise(context.Background(), run, "web", []byte("x"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Vet(config, t.TempDir(), "contained"); err == nil || err.Error() != "service app mounts ./data from the server"+keepsData {
+		t.Fatalf("a relative bind: %v", err)
+	}
+}
+
+func TestOnlyThePathsUnderTheSandboxAreRewritten(t *testing.T) {
+	sandbox := filepath.Join(os.TempDir(), "kry-compose-12")
+	elsewhere := filepath.Join(os.TempDir(), "kry-compose-123", "app.env")
+	config := map[string]any{
+		"list": []any{filepath.Join(sandbox, "app.env"), elsewhere, sandbox + "-other", sandbox, "nginx:1.27"},
+		"deep": map[string]any{"path": filepath.Join(sandbox, "a", "b.env"), "required": true},
+	}
+	got := inFolder(config, sandbox).(map[string]any)
+	if list := got["list"].([]any); !slices.Equal(list, []any{"./app.env", elsewhere, sandbox + "-other", ".", "nginx:1.27"}) {
+		t.Fatalf("list %q", list)
+	}
+	if deep := got["deep"].(map[string]any); deep["path"] != "./a/b.env" || deep["required"] != true {
+		t.Fatalf("deep %v", deep)
 	}
 }

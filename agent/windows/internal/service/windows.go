@@ -167,6 +167,47 @@ func (system) Tray(executable string) error {
 	return startWithWindows(executable, true)
 }
 
+func (system) Shortcut(executable string) error {
+	link, err := shortcutPath()
+	if err != nil {
+		return err
+	}
+	return makeShortcut(link, executable)
+}
+
+func shortcutPath() (string, error) {
+	programs, err := windows.KnownFolderPath(windows.FOLDERID_CommonPrograms, windows.KF_FLAG_DEFAULT)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(programs, serviceName+".lnk"), nil
+}
+
+const shortcutScript = `$ErrorActionPreference = 'Stop'
+$PSModuleAutoLoadingPreference = 'None'
+$entry = [Activator]::CreateInstance([Type]::GetTypeFromProgID('WScript.Shell')).CreateShortcut($env:KRY_LINK)
+$entry.TargetPath = $env:KRY_TARGET
+$entry.Arguments = 'tray'
+$entry.WorkingDirectory = $env:KRY_FOLDER
+$entry.Description = 'Krynodes'
+$entry.Save()`
+
+func makeShortcut(link, target string) error {
+	system, err := windows.GetSystemDirectory()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoProfile", "-NonInteractive", "-Command", shortcutScript)
+	command.Env = append(os.Environ(), "KRY_LINK="+link, "KRY_TARGET="+target, "KRY_FOLDER="+filepath.Dir(target))
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("powershell.exe: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 func (c control) startTray(session uint32) error {
 	return userSession{
 		Processes: processes,

@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -15,11 +16,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -633,10 +636,20 @@ func (events) Close() error { return nil }
 
 func causesAfter(t *testing.T, cmd trust.Command) map[string]*string {
 	t.Helper()
+	return causesWith(t, cmd, func(f *fake) {
+		f.on(namesOf, "web-app-1\n")
+		if cmd.Action == "deploy" {
+			f.on(runningOf, "web-app-1\n")
+		}
+	})
+}
+
+func causesWith(t *testing.T, cmd trust.Command, prepare func(f *fake)) map[string]*string {
+	t.Helper()
 	f := newFake()
 	e := testEnv(t, f)
 	managed(t, e, saving("full", ""))
-	f.on(namesOf, "web-app-1\n")
+	prepare(f)
 	if _, err := e.do(t, cmd); err != nil {
 		t.Fatal(err)
 	}
@@ -679,6 +692,125 @@ func TestStopMarksTheCheckOwner(t *testing.T) {
 		if causes := causesAfter(t, cmd); causes["web-app-1"] == nil || *causes["web-app-1"] != "owner" {
 			t.Fatalf("%s %s: causes %v", cmd.Kind, cmd.Action, causes)
 		}
+	}
+}
+
+func TestDeployThatStaysStoppedMarksItsChecksAsTheOwners(t *testing.T) {
+	deploy := command("stack", "web", "deploy", nil)
+	for name, prepare := range map[string]func(f *fake){
+		"its containers stopped": func(f *fake) { f.on(namesOf, "web-app-1\n") },
+		"its containers gone": func(f *fake) {
+			f.when(namesOf, func() (string, error) {
+				if f.called(" up --no-start") == 0 {
+					return "", nil
+				}
+				return "web-app-1\n", nil
+			})
+		},
+	} {
+		if causes := causesWith(t, deploy, prepare); causes["web-app-1"] == nil || *causes["web-app-1"] != "owner" {
+			t.Fatalf("%s: causes %v", name, causes)
+		}
+	}
+}
+
+func TestDeployMarksTheContainersItCreatesBeforeTheyAppear(t *testing.T) {
+	f := newFake()
+	e := testEnv(t, f)
+	managed(t, e, saving("full", ""))
+	var created atomic.Bool
+	f.when("docker ps -a --no-trunc --format", func() (string, error) {
+		if created.Load() {
+			return "web-app-1\texited\tExited (0) 1 second ago\tnginx:1.27\t\tweb\t/srv/web\tapp\n", nil
+		}
+		return "", nil
+	})
+	checks := make(chan reporter.Check, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, _ := io.Pipe()
+	watcher := &docker.Watcher{Run: f.run, Checks: e.Checks, Now: e.Now,
+		Send: func(message any) error {
+			if check, ok := message.(reporter.Check); ok {
+				checks <- check
+			}
+			return nil
+		},
+		Follow: func(context.Context) (io.ReadCloser, error) { return events{stream}, nil }}
+	go watcher.Watch(ctx)
+	var seen reporter.Check
+	f.when(" up --no-start", func() (string, error) {
+		created.Store(true)
+		e.Checks.Choose([]string{"web-app-1"})
+		select {
+		case seen = <-checks:
+		case <-time.After(5 * time.Second):
+			t.Error("the watcher saw nothing while up ran")
+		}
+		return "", nil
+	})
+	if _, err := e.do(t, command("stack", "web", "deploy", nil)); err != nil {
+		t.Fatal(err)
+	}
+	if seen.Name != "web-app-1" || seen.State != "down" || seen.Cause == nil || *seen.Cause != "owner" {
+		t.Fatalf("a container seen while Deploy created it was reported %+v", seen)
+	}
+}
+
+func TestPlannedNamesFollowComposesNaming(t *testing.T) {
+	f := newFake()
+	e := testEnv(t, f)
+	if err := os.MkdirAll(e.folder("web"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := `{"services":{"app":{"deploy":{"replicas":2}},"cache":{"scale":3},"db":{"container_name":"web-db"},"job":{},"swarm":{"scale":1000000000}}}`
+	if err := os.WriteFile(filepath.Join(e.folder("web"), runFile), []byte(run), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	names := e.planned("web")
+	want := []string{"web-app-1", "web-app-2", "web-cache-1", "web-cache-2", "web-cache-3", "web-db", "web-job-1"}
+	if len(names) != len(want)+maxCopies || !slices.Equal(names[:len(want)], want) || names[len(names)-1] != fmt.Sprintf("web-swarm-%d", maxCopies) {
+		t.Fatalf("names %q", names)
+	}
+	if none := e.planned("other"); len(none) != 0 {
+		t.Fatalf("a stack with no run file plans %q", none)
+	}
+}
+
+func TestAnUnreadableRunFileIsLogged(t *testing.T) {
+	f := newFake()
+	e := testEnv(t, f)
+	if err := os.MkdirAll(e.folder("web"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(e.folder("web"), runFile)
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	if names := e.planned("web"); len(names) != 0 || !strings.Contains(logged.String(), path) {
+		t.Fatalf("names %q logged %q", names, logged.String())
+	}
+}
+
+func TestARemovedStackReportsTheNamesOfItsContainers(t *testing.T) {
+	f := newFake()
+	e := testEnv(t, f)
+	if err := os.MkdirAll(e.folder("web"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := `{"services":{"app":{"scale":2},"cache":{"container_name":"cache-main"}}}`
+	if err := os.WriteFile(filepath.Join(e.folder("web"), runFile), []byte(run), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.changeBin(func(bin map[string]removal) { bin["web"] = removal{RemovedAt: e.Now().UTC()} }); err != nil {
+		t.Fatal(err)
+	}
+	listed := e.Meta(context.Background()).Removed()
+	if len(listed) != 1 || !slices.Equal(listed[0].Names, []string{"web-app-1", "web-app-2", "cache-main"}) {
+		t.Fatalf("removed %+v", listed)
 	}
 }
 

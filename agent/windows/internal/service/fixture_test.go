@@ -117,11 +117,14 @@ const otherSealKey = "BAoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dzj6vH4_wYNFBsiKT
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{t: t, secrets: memory{}, hub: &fakeHub{}}
-	keys, sealing, err := newKeys(f.secrets)
+	fresh, err := generateKeys()
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.keys, f.seal = keys, seal.Public(sealing)
+	if err := fresh.store(f.secrets); err != nil {
+		t.Fatal(err)
+	}
+	f.keys, f.seal = fresh.keys, seal.Public(fresh.sealing)
 	f.server = serverKeys(t, 1)
 	if f.passkey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
 		t.Fatal(err)

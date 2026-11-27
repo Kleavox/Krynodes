@@ -95,7 +95,7 @@ export function stackItems(entry: StackNode, stack: StackEntry): MenuItem[] {
     run(
       "remove",
       "Remove",
-      `${name} stops and waits in Removed for 7 days. Restore brings it back; Delete Permanently deletes it and its volumes.`,
+      `${name} stops and waits in Removed for 7 days. Restore brings it back; Delete Permanently deletes it, its folder, its volumes and its checks.`,
       true,
     ),
   ];
@@ -116,7 +116,7 @@ export function removedItems(entry: StackNode, project: string): MenuItem[] {
       project,
       "purge",
       "Delete Permanently",
-      `${project}, its folder and its volumes are deleted from ${entry.name}. This cannot be undone.`,
+      `${project}, its folder, its volumes and its checks are deleted from ${entry.name}. This cannot be undone.`,
       true,
     ),
   ];

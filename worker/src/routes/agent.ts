@@ -165,9 +165,6 @@ export function registerAgentRoutes(app: KrynodesApp): void {
   });
 
   app.get("/api/agent/stream", async (context) => {
-    if (context.req.header("upgrade")?.toLowerCase() !== "websocket") {
-      return context.json({ code: "UPGRADE_REQUIRED" }, 426);
-    }
     const token = readBearerToken(context.req.header("authorization"));
     const node = token
       ? await context.env.DB.prepare(
@@ -177,6 +174,9 @@ export function registerAgentRoutes(app: KrynodesApp): void {
           .first<{ id: string; seen_ip: string | null }>()
       : null;
     if (!node) return context.json({ code: "UNAUTHORIZED" }, 401);
+    if (context.req.header("upgrade")?.toLowerCase() !== "websocket") {
+      return context.json({ code: "UPGRADE_REQUIRED" }, 426);
+    }
     const seen = publicIpv4(context.req.header("cf-connecting-ip"));
     if (seen !== node.seen_ip) {
       await context.env.DB.prepare("UPDATE nodes SET seen_ip = ? WHERE id = ?")

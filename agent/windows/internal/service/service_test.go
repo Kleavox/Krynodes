@@ -259,8 +259,14 @@ func TestInstallPrintsTheFingerprint(t *testing.T) {
 		t.Fatalf("the tray shows %q, want %q", shown, fingerprint)
 	}
 	out.Reset()
-	if err := server.install(dir, secrets, newSystem(t), &out); err != nil || out.String() != "Krynodes is installed.\nThe network fingerprint is in the tray menu.\n" {
-		t.Fatalf("again: %q, %v", out.String(), err)
+	server.known = "agent-token"
+	if err := server.install(dir, secrets, newSystem(t), &out); err != nil || !strings.HasPrefix(out.String(), "Krynodes is installed.\nThis laptop is already enrolled, so a new code is not needed.") || strings.Contains(out.String(), "Network fingerprint:") {
+		t.Fatalf("again with a code: %q, %v", out.String(), err)
+	}
+	out.Reset()
+	again := Enrollment{Origin: testOrigin, Endpoint: server.URL, Version: "0.7.24", Kernel: "10.0.19045"}
+	if err := Install(context.Background(), server.Client(), dir, secrets, newSystem(t), again, &out); err != nil || out.String() != "Krynodes is installed.\nThe network fingerprint is in the tray menu.\n" {
+		t.Fatalf("again without a code: %q, %v", out.String(), err)
 	}
 }
 

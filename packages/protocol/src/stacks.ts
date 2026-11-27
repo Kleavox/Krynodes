@@ -176,6 +176,7 @@ export const unitEntrySchema = z.strictObject({
 export const removedEntrySchema = z.strictObject({
   project: named(PROJECT_NAME),
   removedAt: iso,
+  names: z.array(named(CONTAINER_NAME)).max(64).optional(),
 });
 
 export const inventorySchema = z.strictObject({

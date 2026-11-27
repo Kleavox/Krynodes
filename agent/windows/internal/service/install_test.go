@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/ecdsa"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,11 +28,12 @@ import (
 )
 
 type fakeSystem struct {
-	calls    []string
-	fail     error
-	stopFail error
-	source   string
-	program  string
+	calls        []string
+	fail         error
+	shortcutFail error
+	stopFail     error
+	source       string
+	program      string
 }
 
 func newSystem(t *testing.T) *fakeSystem {
@@ -83,18 +86,42 @@ func (f *fakeSystem) Tray(executable string) error {
 	return nil
 }
 
+func (f *fakeSystem) Shortcut(executable string) error {
+	f.calls = append(f.calls, "shortcut "+filepath.Base(executable))
+	return f.shortcutFail
+}
+
 type enrollServer struct {
 	*httptest.Server
 	trust []string
 	name  string
 	body  map[string]json.RawMessage
 	calls int
+
+	known        string
+	streamStatus int
+	redirect     bool
+	probes       []*http.Request
 }
 
 func newEnrollServer(t *testing.T, tokens ...string) *enrollServer {
 	t.Helper()
 	server := &enrollServer{trust: tokens, name: "laptop-1"}
 	server.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/agent/stream" {
+			server.probes = append(server.probes, r)
+			switch {
+			case server.redirect:
+				http.Redirect(w, r, "/elsewhere", http.StatusFound)
+			case server.streamStatus != 0:
+				w.WriteHeader(server.streamStatus)
+			case server.known != "" && r.Header.Get("Authorization") == "Bearer "+server.known:
+				w.WriteHeader(http.StatusUpgradeRequired)
+			default:
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+			return
+		}
 		server.calls++
 		if r.URL.Path != "/api/agent/enroll" || r.Header.Get("Authorization") != "Bearer one-time-code" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -141,7 +168,7 @@ func TestInstallEnrollsAsALaptopAndStartsTheService(t *testing.T) {
 	if record, err := service.read(); err != nil || record.NodeID != laptop1 || record.Endpoint != server.URL {
 		t.Fatalf("state %+v, %v", record, err)
 	}
-	want := []string{"stop", "unpack", "tray krynodes.exe", "register krynodes.exe"}
+	want := []string{"stop", "unpack", "tray krynodes.exe", "shortcut krynodes.exe", "register krynodes.exe"}
 	if !slices.Equal(system.calls, want) {
 		t.Fatalf("calls %v", system.calls)
 	}
@@ -185,6 +212,20 @@ func TestEveryEnrolledPasskeyCanSignForANewLaptop(t *testing.T) {
 	}
 }
 
+func TestAFailedStartMenuEntryFailsTheInstallBeforeTheServiceAndStartsItAgain(t *testing.T) {
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	system := newSystem(t)
+	system.shortcutFail = errors.New("access is denied")
+	err := server.install(t.TempDir(), memory{}, system, io.Discard)
+	if err == nil || !strings.HasPrefix(err.Error(), "make the Start menu entry: access is denied; run install again to finish") {
+		t.Fatalf("install = %v", err)
+	}
+	if want := []string{"stop", "unpack", "tray krynodes.exe", "shortcut krynodes.exe", "start"}; !slices.Equal(system.calls, want) {
+		t.Fatalf("calls %v, want %v", system.calls, want)
+	}
+}
+
 func TestAFailedInstallFinishesOnTheNextRun(t *testing.T) {
 	f := newFixture(t)
 	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
@@ -195,18 +236,240 @@ func TestAFailedInstallFinishesOnTheNextRun(t *testing.T) {
 	if err := server.install(dir, secrets, system, io.Discard); err == nil || !strings.Contains(err.Error(), "run install again") {
 		t.Fatalf("first run: %v", err)
 	}
-	if want := []string{"stop", "unpack", "tray krynodes.exe", "register krynodes.exe", "start"}; !slices.Equal(system.calls, want) {
+	if want := []string{"stop", "unpack", "tray krynodes.exe", "shortcut krynodes.exe", "register krynodes.exe", "start"}; !slices.Equal(system.calls, want) {
 		t.Fatalf("first run calls %v, want %v", system.calls, want)
 	}
 	system.fail, system.calls = nil, nil
-	if err := server.install(dir, secrets, system, io.Discard); err != nil {
+	server.known = "agent-token"
+	sealed := string(secrets[sealSecret])
+	var out strings.Builder
+	if err := server.install(dir, secrets, system, &out); err != nil {
 		t.Fatal(err)
 	}
-	if server.calls != 1 || string(secrets[tokenSecret]) != "agent-token" {
-		t.Fatalf("enrolled %d times, token %q", server.calls, secrets[tokenSecret])
+	if want := "Krynodes is installed.\nThis laptop is already enrolled, so a new code is not needed. Run uninstall first to enroll it again with a new code.\nThe network fingerprint is in the tray menu.\n"; out.String() != want {
+		t.Errorf("printed %q, want %q", out.String(), want)
 	}
-	if want := []string{"unpack", "tray krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
+	if len(server.probes) != 1 || server.calls != 1 || string(secrets[tokenSecret]) != "agent-token" || string(secrets[sealSecret]) != sealed {
+		t.Fatalf("asked %d times, enrolled %d times, token %q", len(server.probes), server.calls, secrets[tokenSecret])
+	}
+	if want := []string{"unpack", "tray krynodes.exe", "shortcut krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
 		t.Fatalf("calls %v, want %v", system.calls, want)
+	}
+}
+
+func storedLaptop(t *testing.T, dir string, secrets memory, token, endpoint string) {
+	t.Helper()
+	secrets[tokenSecret] = []byte(token)
+	secrets[sealSecret] = []byte("old-seal")
+	secrets[signerSecret] = []byte("old-signer")
+	secrets[wireguardSecret] = []byte("old-wireguard")
+	service := Service{Dir: dir, Secrets: secrets}
+	if err := service.save(state{Endpoint: endpoint, NodeID: "old-laptop", Joined: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnInstallWithACodeEnrollsAgainWhenKrynodesForgotTheStoredToken(t *testing.T) {
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	dir := t.TempDir()
+	secrets := memory{}
+	storedLaptop(t, dir, secrets, "dead-token", server.URL)
+	system := newSystem(t)
+	if err := os.MkdirAll(filepath.Dir(system.program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(system.program, []byte("agent 0.7.24"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := server.install(dir, secrets, system, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.probes) != 1 {
+		t.Fatalf("asked %d times", len(server.probes))
+	}
+	probe := server.probes[0]
+	if probe.Method != http.MethodGet || probe.Header.Get("Authorization") != "Bearer dead-token" || probe.Header.Get("Upgrade") != "" || probe.UserAgent() != "kry-agent/0.7.24" {
+		t.Errorf("probe %s %v", probe.Method, probe.Header)
+	}
+	for _, want := range []string{"Krynodes is installed.", "Network fingerprint: ", "Approve laptop-1 on the Network page of your dashboard."} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output %q lacks %q", out.String(), want)
+		}
+	}
+	if strings.Contains(out.String(), "in the tray menu") {
+		t.Errorf("output %q still sends the reader to the tray", out.String())
+	}
+	if server.calls != 1 || string(secrets[tokenSecret]) != "agent-token" {
+		t.Errorf("enrolled %d times, token %q", server.calls, secrets[tokenSecret])
+	}
+	for _, name := range []string{sealSecret, signerSecret, wireguardSecret} {
+		if strings.HasPrefix(string(secrets[name]), "old-") {
+			t.Errorf("%s is still the old laptop's", name)
+		}
+	}
+	service := Service{Dir: dir, Secrets: secrets}
+	if record, err := service.read(); err != nil || record.NodeID != laptop1 || record.Endpoint != server.URL || record.Joined {
+		t.Errorf("state %+v, %v", record, err)
+	}
+	if current, err := trust.Load(dir); err != nil || current.NodeID != laptop1 {
+		t.Errorf("trust %+v, %v", current, err)
+	}
+	if want := []string{"unpack", "stop", "tray krynodes.exe", "shortcut krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
+		t.Errorf("calls %v, want %v", system.calls, want)
+	}
+}
+
+func TestAnInstallWithACodeFinishesWithoutUsingItWhenThisLaptopIsStillEnrolled(t *testing.T) {
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	server.known = "agent-token"
+	dir := t.TempDir()
+	secrets := memory{}
+	storedLaptop(t, dir, secrets, "agent-token", server.URL)
+	system := newSystem(t)
+	var out strings.Builder
+	if err := server.install(dir, secrets, system, &out); err != nil {
+		t.Fatal(err)
+	}
+	if want := "Krynodes is installed.\nThis laptop is already enrolled, so a new code is not needed. Run uninstall first to enroll it again with a new code.\nThe network fingerprint is in the tray menu.\n"; out.String() != want {
+		t.Errorf("printed %q, want %q", out.String(), want)
+	}
+	if server.calls != 0 || len(server.probes) != 1 {
+		t.Errorf("enrolled %d times, asked %d times", server.calls, len(server.probes))
+	}
+	if want := []string{"stop", "unpack", "tray krynodes.exe", "shortcut krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
+		t.Errorf("calls %v, want %v", system.calls, want)
+	}
+	for name, want := range map[string]string{tokenSecret: "agent-token", sealSecret: "old-seal", signerSecret: "old-signer", wireguardSecret: "old-wireguard"} {
+		if string(secrets[name]) != want {
+			t.Errorf("%s became %q", name, secrets[name])
+		}
+	}
+	service := Service{Dir: dir, Secrets: secrets}
+	if record, err := service.read(); err != nil || record.NodeID != "old-laptop" || record.Endpoint != server.URL || !record.Joined {
+		t.Errorf("state %+v, %v", record, err)
+	}
+	if current, err := trust.Load(dir); err != nil || current.NodeID != "" {
+		t.Errorf("trust %+v, %v", current, err)
+	}
+}
+
+func TestTheProbeAsksTheKrynodesThatIssuedTheStoredToken(t *testing.T) {
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	issuer := newEnrollServer(t)
+	dir := t.TempDir()
+	secrets := memory{}
+	storedLaptop(t, dir, secrets, "dead-token", issuer.URL)
+	if err := server.install(dir, secrets, newSystem(t), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(issuer.probes) != 1 || issuer.probes[0].Header.Get("Authorization") != "Bearer dead-token" || issuer.calls != 0 {
+		t.Errorf("the issuer was asked %d times and got %d other requests", len(issuer.probes), issuer.calls)
+	}
+	if len(server.probes) != 0 || server.calls != 1 {
+		t.Errorf("the command line's Krynodes was asked %d times and enrolled %d times", len(server.probes), server.calls)
+	}
+}
+
+func TestAnInstallWithACodeRefusesWhenTheStoredSettingsCannotBeRead(t *testing.T) {
+	server := newEnrollServer(t)
+	dir := t.TempDir()
+	secrets := memory{}
+	storedLaptop(t, dir, secrets, "agent-token", server.URL)
+	if err := os.Remove(filepath.Join(dir, stateFile)); err != nil {
+		t.Fatal(err)
+	}
+	system := newSystem(t)
+	err := server.install(dir, secrets, system, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "run uninstall first") {
+		t.Fatalf("install = %v", err)
+	}
+	if len(server.probes) != 0 || server.calls != 0 || len(system.calls) != 0 {
+		t.Errorf("asked %d times, %d other requests, calls %v", len(server.probes), server.calls, system.calls)
+	}
+}
+
+func TestAnInstallWithACodeKeepsTheStoredLaptopWhenKrynodesCannotAnswer(t *testing.T) {
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	server.streamStatus = http.StatusInternalServerError
+	dir := t.TempDir()
+	secrets := memory{}
+	storedLaptop(t, dir, secrets, "agent-token", server.URL)
+	system := newSystem(t)
+	err := server.install(dir, secrets, system, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("install = %v", err)
+	}
+	server.Close()
+	if err := server.install(dir, secrets, system, io.Discard); err == nil || !strings.Contains(err.Error(), "reach Krynodes") {
+		t.Fatalf("install = %v", err)
+	}
+	if server.calls != 0 || len(system.calls) != 0 {
+		t.Errorf("enrolled %d times, calls %v", server.calls, system.calls)
+	}
+	if string(secrets[tokenSecret]) != "agent-token" || string(secrets[sealSecret]) != "old-seal" {
+		t.Errorf("the stored laptop changed: token %q, seal %q", secrets[tokenSecret], secrets[sealSecret])
+	}
+}
+
+func TestAnInstallWithACodeKeepsTheStoredLaptopWhenTheProbeIsRedirected(t *testing.T) {
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	server.redirect = true
+	dir := t.TempDir()
+	secrets := memory{}
+	storedLaptop(t, dir, secrets, "agent-token", server.URL)
+	system := newSystem(t)
+	err := server.install(dir, secrets, system, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 302") {
+		t.Fatalf("install = %v", err)
+	}
+	if len(server.probes) != 1 || server.calls != 0 || len(system.calls) != 0 {
+		t.Errorf("asked %d times, %d other requests, calls %v", len(server.probes), server.calls, system.calls)
+	}
+	if string(secrets[tokenSecret]) != "agent-token" || string(secrets[sealSecret]) != "old-seal" {
+		t.Errorf("the stored laptop changed: token %q, seal %q", secrets[tokenSecret], secrets[sealSecret])
+	}
+}
+
+func TestARenewTheServerRefusesLeavesTheStoredLaptopAsItWas(t *testing.T) {
+	f := newFixture(t)
+	server := newEnrollServer(t, "cred-1.-7."+f.device.PublicKey)
+	dir := t.TempDir()
+	secrets := memory{}
+	storedLaptop(t, dir, secrets, "dead-token", server.URL)
+	system := newSystem(t)
+	if err := os.MkdirAll(filepath.Dir(system.program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(system.program, []byte("agent 0.7.24"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before := maps.Clone(secrets)
+	stateBefore, err := os.ReadFile(filepath.Join(dir, stateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spent := Enrollment{Code: "spent-code", Origin: testOrigin, Endpoint: server.URL, Version: "0.7.24", Kernel: "10.0.19045"}
+	err = Install(context.Background(), server.Client(), dir, secrets, system, spent, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "the code is not valid") {
+		t.Fatalf("install = %v", err)
+	}
+	if want := []string{"unpack", "stop", "start"}; !slices.Equal(system.calls, want) {
+		t.Errorf("calls %v, want %v", system.calls, want)
+	}
+	if !maps.EqualFunc(secrets, before, bytes.Equal) {
+		t.Errorf("the stored secrets changed: %v, before %v", secrets, before)
+	}
+	if stateAfter, err := os.ReadFile(filepath.Join(dir, stateFile)); err != nil || !bytes.Equal(stateAfter, stateBefore) {
+		t.Errorf("state %q, %v, before %q", stateAfter, err, stateBefore)
+	}
+	if _, err := os.Stat(filepath.Join(dir, trustFile)); err == nil {
+		t.Error("a trust file was written")
 	}
 }
 
@@ -217,6 +480,9 @@ func TestAnInstallWithoutTrustOrOverPlainHTTPIsRefused(t *testing.T) {
 	system := newSystem(t)
 	if err := server.install(dir, secrets, system, io.Discard); err == nil || !strings.Contains(err.Error(), "no trusted passkeys") {
 		t.Fatalf("no trust: %v", err)
+	}
+	if len(secrets) != 0 {
+		t.Errorf("a refused first install stored %d secrets", len(secrets))
 	}
 	if want := []string{"stop", "unpack", "start"}; !slices.Equal(system.calls, want) {
 		t.Fatalf("calls %v, want %v", system.calls, want)
@@ -280,7 +546,7 @@ func TestReinstallSwapsInBesideARunningTray(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(system.program), oldName)); err != nil {
 		t.Errorf("the running program was not set aside: %v", err)
 	}
-	if want := []string{"stop", "unpack", "tray krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
+	if want := []string{"stop", "unpack", "tray krynodes.exe", "shortcut krynodes.exe", "register krynodes.exe"}; !slices.Equal(system.calls, want) {
 		t.Errorf("calls %v, want %v", system.calls, want)
 	}
 }

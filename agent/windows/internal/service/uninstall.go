@@ -19,6 +19,7 @@ type Remover interface {
 	RemoveFirewall() error
 	RemoveNRPT() error
 	RemoveRunEntry() error
+	RemoveShortcut() error
 	RemoveData() error
 	RemoveProgram() (bool, error)
 }
@@ -37,6 +38,7 @@ func Uninstall(remover Remover, out io.Writer) error {
 		{"remove the firewall rule", remover.RemoveFirewall},
 		{"remove the exit's DNS rule", remover.RemoveNRPT},
 		{"stop the tray starting with Windows", remover.RemoveRunEntry},
+		{"remove the Start menu entry", remover.RemoveShortcut},
 		{"remove the keys and the trust store", remover.RemoveData},
 		{"remove the program", func() (err error) {
 			later, err = remover.RemoveProgram()

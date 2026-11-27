@@ -117,8 +117,9 @@ type UnitEntry struct {
 }
 
 type RemovedEntry struct {
-	Project   string `json:"project"`
-	RemovedAt string `json:"removedAt"`
+	Project   string   `json:"project"`
+	RemovedAt string   `json:"removedAt"`
+	Names     []string `json:"names,omitempty"`
 }
 
 type Inventory struct {

@@ -1,6 +1,5 @@
 {
   "name": "web",
-  "x-mounts": ["/etc:/host-etc"],
   "networks": {
     "default": {
       "name": "web_default",
@@ -12,19 +11,18 @@
       "command": null,
       "entrypoint": null,
       "image": "nginx:1.27",
+      "networks": {
+        "default": null
+      },
       "volumes": [
         {
           "type": "bind",
           "source": "/etc",
           "target": "/host-etc",
-          "bind": {
-            "create_host_path": true
-          }
+          "bind": {}
         }
-      ],
-      "networks": {
-        "default": null
-      }
+      ]
     }
-  }
+  },
+  "x-mounts": ["/etc:/host-etc"]
 }

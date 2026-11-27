@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/Kleavox/krynodes/agent/internal/network"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
@@ -33,6 +34,7 @@ type System interface {
 	Write(path string, data []byte) error
 	Register(executable string) error
 	Tray(executable string) error
+	Shortcut(executable string) error
 }
 
 type process struct {
@@ -96,6 +98,21 @@ func Install(ctx context.Context, client *http.Client, dir string, secrets Secre
 			return err
 		}
 	}
+	token, err := secrets.Get(tokenSecret)
+	enrolled := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read the stored agent token: %w", err)
+	}
+	renew := false
+	if enrolled && enrollment.Code != "" {
+		stored, err := (&Service{Dir: dir}).read()
+		if err != nil || checkOrigin(stored.Endpoint) != nil {
+			return errors.New("this laptop is already enrolled, but its saved settings could not be read; run uninstall first to enroll it again with a new code")
+		}
+		if renew, err = tokenIsDead(ctx, client, stored.Endpoint, enrollment.Version, string(token)); err != nil {
+			return err
+		}
+	}
 	executable, stopped, err := place(system)
 	fail := func(err error) error {
 		if !stopped {
@@ -110,21 +127,59 @@ func Install(ctx context.Context, client *http.Client, dir string, secrets Secre
 		return fail(fmt.Errorf("copy the agent: %w", err))
 	}
 	approve := "The network fingerprint is in the tray menu.\n"
-	if _, err := secrets.Get(tokenSecret); errors.Is(err, os.ErrNotExist) {
+	if enrolled && enrollment.Code != "" && !renew {
+		approve = "This laptop is already enrolled, so a new code is not needed. Run uninstall first to enroll it again with a new code.\n" + approve
+	}
+	if !enrolled || renew {
+		if renew && !stopped {
+			stopped = true
+			if err := system.StopService(); err != nil {
+				return fail(err)
+			}
+		}
 		if approve, err = enroll(ctx, client, dir, secrets, enrollment); err != nil {
 			return fail(err)
 		}
-	} else if err != nil {
-		return fail(fmt.Errorf("read the stored agent token: %w", err))
 	}
 	if err := system.Tray(executable); err != nil {
 		return fail(fmt.Errorf("start the tray with Windows: %w; run install again to finish", err))
+	}
+	if err := system.Shortcut(executable); err != nil {
+		return fail(fmt.Errorf("make the Start menu entry: %w; run install again to finish", err))
 	}
 	if err := system.Register(executable); err != nil {
 		return fail(fmt.Errorf("start the Krynodes service: %w; run install again to finish", err))
 	}
 	_, err = fmt.Fprint(out, "Krynodes is installed.\n"+approve)
 	return err
+}
+
+func tokenIsDead(ctx context.Context, client *http.Client, endpoint, version, token string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(endpoint, "/")+"/api/agent/stream", nil)
+	if err != nil {
+		return false, err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("User-Agent", "kry-agent/"+version)
+	asking := *client
+	asking.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := asking.Do(request)
+	if err != nil {
+		return false, fmt.Errorf("reach Krynodes: %w", err)
+	}
+	defer response.Body.Close()
+	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20)); err != nil {
+		return false, fmt.Errorf("reach Krynodes: %w", err)
+	}
+	switch response.StatusCode {
+	case http.StatusUnauthorized:
+		return true, nil
+	case http.StatusUpgradeRequired:
+		return false, nil
+	}
+	return false, fmt.Errorf("Krynodes answered HTTP %d when this laptop's token was checked", response.StatusCode)
 }
 
 func place(system System) (string, bool, error) {
@@ -176,15 +231,16 @@ func checkOrigin(origin string) error {
 }
 
 func enroll(ctx context.Context, client *http.Client, dir string, secrets Secrets, enrollment Enrollment) (string, error) {
-	keys, sealing, err := newKeys(secrets)
+	fresh, err := generateKeys()
 	if err != nil {
 		return "", fmt.Errorf("make the laptop's keys: %w", err)
 	}
+	keys := fresh.keys
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "", err
 	}
-	sealKey := seal.Public(sealing)
+	sealKey := seal.Public(fresh.sealing)
 	body, err := json.Marshal(map[string]any{
 		"hostname": known(hostname), "os": runtime.GOOS, "arch": runtime.GOARCH, "kernel": known(enrollment.Kernel), "version": enrollment.Version,
 		"kind": "laptop", "key": keys.Public, "signer": keys.Signer, "port": network.FirstPort, "sealKey": sealKey,
@@ -229,6 +285,9 @@ func enroll(ctx context.Context, client *http.Client, dir string, secrets Secret
 	first, err := trust.FirstTrust(answer.NodeID, enrollment.Origin, answer.Trust)
 	if err != nil {
 		return "", err
+	}
+	if err := fresh.store(secrets); err != nil {
+		return "", fmt.Errorf("keep the laptop's keys: %w", err)
 	}
 	service := Service{Dir: dir, Secrets: secrets}
 	if err := service.keep(trustFile, first); err != nil {

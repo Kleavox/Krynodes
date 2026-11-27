@@ -229,13 +229,21 @@ func (m *Mesh) jumps(ctx context.Context, tool string, exit bool) (int, error) {
 	return inserted, nil
 }
 
-func (m *Mesh) Own() string {
+func (m *Mesh) own() network.Member {
 	current, err := m.load()
 	if err != nil || !current.Joined || current.Document == nil {
-		return ""
+		return network.Member{}
 	}
 	me, _ := member(*current.Document, m.Trust().NodeID)
-	return me.Address
+	return me
+}
+
+func (m *Mesh) Own() string {
+	return m.own().Address
+}
+
+func (m *Mesh) OwnName() string {
+	return m.own().Name
 }
 
 func member(document network.Document, node string) (network.Member, bool) {

@@ -191,3 +191,14 @@ func TestOwnIsThisServersAddressInTheAppliedDocument(t *testing.T) {
 		t.Fatalf("own %q", own)
 	}
 }
+
+func TestOwnNameIsThisServersNameInTheAppliedDocument(t *testing.T) {
+	n := newNet(t)
+	if name := n.m.OwnName(); name != "" {
+		t.Fatalf("a server that never joined is called %q", name)
+	}
+	n.apply(t, pair)
+	if name := n.m.OwnName(); name != "server-1" {
+		t.Fatalf("name %q", name)
+	}
+}

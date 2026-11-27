@@ -315,7 +315,8 @@
         "removed": [
           {
             "project": "old",
-            "removedAt": "2026-11-20T08:30:00Z"
+            "removedAt": "2026-11-20T08:30:00Z",
+            "names": ["old-app-1", "cache-main"]
           }
         ]
       },

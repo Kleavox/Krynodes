@@ -61,7 +61,29 @@ func Normalise(ctx context.Context, run docker.Runner, name string, compose, env
 	if err != nil {
 		return nil, fmt.Errorf("compose could not read the file: %s", clip(redact(strings.ReplaceAll(string(output), dir, "."), env), maxComposeError))
 	}
-	return readNormalised(filepath.Join(dir, normalisedFile))
+	config, err := readNormalised(filepath.Join(dir, normalisedFile))
+	if err != nil {
+		return nil, err
+	}
+	return inFolder(config, dir).(map[string]any), nil
+}
+
+func inFolder(value any, dir string) any {
+	switch value := value.(type) {
+	case string:
+		if rest, under := strings.CutPrefix(value, dir); under && (rest == "" || rest[0] == '/' || rest[0] == filepath.Separator) {
+			return "." + filepath.ToSlash(rest)
+		}
+	case map[string]any:
+		for key, item := range value {
+			value[key] = inFolder(item, dir)
+		}
+	case []any:
+		for index, item := range value {
+			value[index] = inFolder(item, dir)
+		}
+	}
+	return value
 }
 
 func redact(text string, env []byte) string {

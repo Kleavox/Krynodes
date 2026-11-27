@@ -11,19 +11,17 @@
       "command": null,
       "entrypoint": null,
       "image": "nginx:1.27",
+      "networks": {
+        "default": null
+      },
       "volumes": [
         {
           "type": "bind",
           "source": "/",
           "target": "/host",
-          "bind": {
-            "create_host_path": true
-          }
+          "bind": {}
         }
-      ],
-      "networks": {
-        "default": null
-      }
+      ]
     }
   }
 }

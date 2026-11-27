@@ -184,6 +184,25 @@ describe("the stacks page", () => {
     }
   });
 
+  it("Delete Permanently says it deletes the folder, the volumes and the checks", () => {
+    const purge = removedItems(entry(), "old").find(
+      (one) => one.label === "Delete Permanently",
+    );
+    expect(purge?.ask).toMatchObject({
+      action: "purge",
+      body: "old, its folder, its volumes and its checks are deleted from server-1. This cannot be undone.",
+    });
+  });
+
+  it("Remove says what Delete Permanently will later delete", () => {
+    const remove = stackItems(entry(), stack()).find(
+      (one) => one.label === "Remove",
+    );
+    expect(remove?.ask?.body).toBe(
+      "web stops and waits in Removed for 7 days. Restore brings it back; Delete Permanently deletes it, its folder, its volumes and its checks.",
+    );
+  });
+
   it("an offline server's menu refuses at once", () => {
     const away = entry({ online: false });
     const refusal = [{ label: "server-1 is offline." }];

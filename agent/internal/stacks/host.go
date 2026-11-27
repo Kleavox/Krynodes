@@ -46,7 +46,7 @@ func (e Env) container(ctx context.Context, cmd trust.Command, _ func(string)) (
 	if output, err := e.docker(ctx, upTimeout, action, "--", name); err != nil {
 		return "", failed(action, []byte(redact(sanitize(output), e.stackEnv(ctx, name))), err)
 	}
-	return fmt.Sprintf("%s %s %s.", e.Server, pastTense[cmd.Action], name), nil
+	return fmt.Sprintf("%s %s %s.", e.server(), pastTense[cmd.Action], name), nil
 }
 
 func (e Env) stackEnv(ctx context.Context, container string) []byte {
@@ -73,7 +73,7 @@ func (e Env) unit(ctx context.Context, cmd trust.Command, _ func(string)) (strin
 	if output, _, err := e.Run(ctx, "systemctl", cmd.Action, "--", cmd.Name); err != nil {
 		return "", failed(cmd.Action, output, err)
 	}
-	return fmt.Sprintf("%s %s %s.", e.Server, pastTense[cmd.Action], cmd.Name), nil
+	return fmt.Sprintf("%s %s %s.", e.server(), pastTense[cmd.Action], cmd.Name), nil
 }
 
 func (e Env) installDocker(ctx context.Context, _ trust.Command, progress func(string)) (string, error) {
@@ -83,11 +83,11 @@ func (e Env) installDocker(ctx context.Context, _ trust.Command, progress func(s
 	case err != nil:
 		return "", err
 	case !installed:
-		return fmt.Sprintf("Docker with Compose is already on %s.", e.Server), nil
+		return fmt.Sprintf("Docker with Compose is already on %s.", e.server()), nil
 	case version == "":
-		return fmt.Sprintf("%s runs Docker with Compose now.", e.Server), nil
+		return fmt.Sprintf("%s runs Docker with Compose now.", e.server()), nil
 	}
-	return fmt.Sprintf("%s runs Docker %s with Compose now.", e.Server, version), nil
+	return fmt.Sprintf("%s runs Docker %s with Compose now.", e.server(), version), nil
 }
 
 func (e Env) Meta(ctx context.Context) docker.Meta {
@@ -145,7 +145,7 @@ func (e Env) removedList() []reporter.RemovedEntry {
 	bin := e.bin()
 	listed := []reporter.RemovedEntry{}
 	for _, name := range slices.Sorted(maps.Keys(bin)) {
-		listed = append(listed, reporter.RemovedEntry{Project: name, RemovedAt: bin[name].RemovedAt.UTC().Format(time.RFC3339)})
+		listed = append(listed, reporter.RemovedEntry{Project: name, RemovedAt: bin[name].RemovedAt.UTC().Format(time.RFC3339), Names: e.planned(name)})
 	}
 	return listed
 }

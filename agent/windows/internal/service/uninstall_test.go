@@ -28,12 +28,13 @@ func (f *removerFake) RemoveAdapter() error  { return f.step("adapter") }
 func (f *removerFake) RemoveFirewall() error { return f.step("firewall") }
 func (f *removerFake) RemoveNRPT() error     { return f.step("nrpt") }
 func (f *removerFake) RemoveRunEntry() error { return f.step("run entry") }
+func (f *removerFake) RemoveShortcut() error { return f.step("shortcut") }
 func (f *removerFake) RemoveData() error     { return f.step("program data") }
 func (f *removerFake) RemoveProgram() (bool, error) {
 	return f.later, f.step("program files")
 }
 
-var everything = []string{"stop service", "delete service", "close trays", "adapter", "firewall", "nrpt", "run entry", "program data", "program files"}
+var everything = []string{"stop service", "delete service", "close trays", "adapter", "firewall", "nrpt", "run entry", "shortcut", "program data", "program files"}
 
 func TestUninstallRemovesEverythingAndKeepsTheMembership(t *testing.T) {
 	fake := &removerFake{}

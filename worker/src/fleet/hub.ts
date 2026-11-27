@@ -657,6 +657,43 @@ export class FleetHub implements DurableObject {
     return { type: "checks", names: results.map((row) => row.container) };
   }
 
+  private async stackChecks(nodeId: string, stack: string) {
+    const db = this.env.DB;
+    const [checks, stored] = await Promise.all([
+      db
+        .prepare("SELECT container FROM checks WHERE node_id = ?")
+        .bind(nodeId)
+        .all<{ container: string }>(),
+      db
+        .prepare("SELECT body FROM node_inventory WHERE node_id = ?")
+        .bind(nodeId)
+        .first<{ body: string }>(),
+    ]);
+    const listed = (stored ? JSON.parse(stored.body) : {}) as {
+      stacks?: { project: string }[];
+      removed?: { project: string; names?: string[] }[];
+      containers?: { name: string; project: string | null }[];
+    };
+    const labelled = new Map(
+      (listed.containers ?? []).map((one) => [one.name, one.project]),
+    );
+    const named = new Set(
+      (listed.removed ?? []).find((one) => one.project === stack)?.names ?? [],
+    );
+    const longer = [...(listed.stacks ?? []), ...(listed.removed ?? [])]
+      .map((one) => one.project)
+      .filter((one) => one.startsWith(`${stack}-`));
+    return checks.results
+      .map((row) => row.container)
+      .filter(
+        (container) =>
+          (labelled.has(container)
+            ? labelled.get(container) === stack
+            : container.startsWith(`${stack}-`) || named.has(container)) &&
+          !longer.some((one) => container.startsWith(`${one}-`)),
+      );
+  }
+
   private async check(nodeId: string, check: Check) {
     const db = this.env.DB;
     const stored = await db
@@ -722,9 +759,21 @@ export class FleetHub implements DurableObject {
       ws.close(4401, "Unknown server");
       return;
     }
-    const finished = await this.env.DB.prepare(
-      "UPDATE actions SET status = ?, message = ?, output = ?, finished_at = ? WHERE id = ? AND node_id = ? AND status IN ('sent', 'running') RETURNING kind, action",
-    )
+    const db = this.env.DB;
+    const pending = await db
+      .prepare(
+        "SELECT kind, action, name FROM actions WHERE id = ? AND node_id = ? AND status IN ('sent', 'running')",
+      )
+      .bind(result.id, nodeId)
+      .first<{ kind: string; action: string; name: string }>();
+    const dropped =
+      result.ok && pending?.kind === "stack" && pending.action === "purge"
+        ? await this.stackChecks(nodeId, pending.name)
+        : [];
+    const write = db
+      .prepare(
+        "UPDATE actions SET status = ?, message = ?, output = ?, finished_at = ? WHERE id = ? AND node_id = ? AND status IN ('sent', 'running')",
+      )
       .bind(
         result.ok ? "done" : "failed",
         result.message,
@@ -732,10 +781,27 @@ export class FleetHub implements DurableObject {
         new Date().toISOString(),
         result.id,
         nodeId,
-      )
-      .first<{ kind: string; action: string }>();
+      );
+    const written =
+      dropped.length > 0
+        ? (
+            await db.batch([
+              db
+                .prepare(
+                  "DELETE FROM checks WHERE node_id = ?1 AND container IN (SELECT value FROM json_each(?2)) AND EXISTS (SELECT 1 FROM actions WHERE id = ?3 AND node_id = ?1 AND status IN ('sent', 'running'))",
+                )
+                .bind(nodeId, JSON.stringify(dropped), result.id),
+              write,
+            ])
+          )[1]!
+        : await write.run();
+    const finished = written.meta.changes > 0 ? pending : null;
     if (finished && result.output !== undefined) {
-      await clearOldOutput(this.env.DB);
+      await clearOldOutput(db);
+    }
+    if (finished && dropped.length > 0) {
+      this.sendTo(nodeId, await this.checksFor(nodeId));
+      this.announce(["checks"]);
     }
     if (finished?.kind === "network" && result.ok) {
       await this.network.result(nodeId, finished.action, result.message);

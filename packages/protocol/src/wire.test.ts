@@ -362,6 +362,15 @@ describe("the stack messages", () => {
         inventory({ removed: [{ project: "old", removedAt: "yesterday" }] }),
       ),
     ).toBe(false);
+    const removed = (names: string[]) =>
+      inventory({
+        removed: [{ project: "old", removedAt: "2026-11-20T08:30:00Z", names }],
+      });
+    const named = (size: number) => many(size, (n) => `old-app-${n}`);
+    expect(fromAgent(removed(named(64)))).toBe(true);
+    expect(fromAgent(removed(named(65)))).toBe(false);
+    expect(fromAgent(removed(["-x"]))).toBe(false);
+    expect(fromAgent(removed(["a b"]))).toBe(false);
   });
 
   it("takes 64 checks, each a container name", () => {

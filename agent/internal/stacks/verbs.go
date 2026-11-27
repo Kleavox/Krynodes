@@ -42,6 +42,7 @@ const (
 	maxNetwork       = 32
 	maxLines         = 500
 	maxNames         = 64
+	maxCopies        = 64
 	runFile          = "compose.run.json"
 	stateFormat      = "{{.Service}}\t{{.State}}\t{{.Health}}\t{{.ExitCode}}"
 	startsFormat     = "{{.Id}} {{.RestartCount}} {{.State.StartedAt}}"
@@ -87,12 +88,22 @@ type Env struct {
 	Run      docker.Runner
 	State    string
 	Server   string
+	Name     func() string
 	Own      func() string
 	Unseal   func(string) ([]byte, error)
 	Sealing  *ecdh.PrivateKey
 	Checks   *docker.Checks
 	Now      func() time.Time
 	Platform platform.Env
+}
+
+func (e Env) server() string {
+	if e.Name != nil {
+		if name := e.Name(); name != "" {
+			return name
+		}
+	}
+	return e.Server
 }
 
 type pinned struct {
@@ -365,7 +376,7 @@ func (e Env) list(ctx context.Context, name string, filters ...string) ([]string
 	args := append([]string{"ps", "-a", "--no-trunc", "--filter", projectLabel + name}, filters...)
 	output, err := e.docker(ctx, stepTimeout, append(args, "--format", "{{.Names}}")...)
 	if err != nil {
-		return nil, fmt.Errorf("Docker did not answer on %s: %w", e.Server, failed("ps", output, err))
+		return nil, fmt.Errorf("Docker did not answer on %s: %w", e.server(), failed("ps", output, err))
 	}
 	return strings.Fields(string(output)), nil
 }
@@ -409,8 +420,36 @@ func (e Env) mark(containers []string, until time.Time) {
 	}
 }
 
-func (e Env) owned(ctx context.Context, name string, limit time.Duration) func() {
+func (e Env) planned(name string) []string {
+	path := filepath.Join(e.folder(name), runFile)
+	config, err := load[map[string]any](path)
+	if err != nil {
+		log.Printf("read %s: %v", path, err)
+	}
+	services := asMap(config["services"])
+	var names []string
+	for _, service := range sortedKeys(services) {
+		settings := asMap(services[service])
+		if container := asText(settings["container_name"]); container != "" {
+			names = append(names, container)
+			continue
+		}
+		copies := 1
+		for _, field := range []any{settings["scale"], asMap(settings["deploy"])["replicas"]} {
+			if count, ok := number(field); ok {
+				copies = max(copies, int(min(count, maxCopies)))
+			}
+		}
+		for index := 1; index <= copies; index++ {
+			names = append(names, fmt.Sprintf("%s-%s-%d", name, service, index))
+		}
+	}
+	return names
+}
+
+func (e Env) owned(ctx context.Context, name string, limit time.Duration, expected ...string) func() {
 	before, _ := e.list(ctx, name)
+	before = append(before, expected...)
 	e.mark(before, e.Now().Add(limit+ownerGrace))
 	return func() {
 		after, _ := e.list(ctx, name)
@@ -420,10 +459,10 @@ func (e Env) owned(ctx context.Context, name string, limit time.Duration) func()
 
 func (e Env) managed(name string) error {
 	if e.removed(name) {
-		return fmt.Errorf("%s is in Removed on %s; restore it first", name, e.Server)
+		return fmt.Errorf("%s is in Removed on %s; restore it first", name, e.server())
 	}
 	if _, err := ReadMeta(e.folder(name)); err != nil {
-		return fmt.Errorf("Krynodes does not manage %s on %s; adopt it first", name, e.Server)
+		return fmt.Errorf("Krynodes does not manage %s on %s; adopt it first", name, e.server())
 	}
 	return nil
 }
@@ -455,7 +494,7 @@ func (e Env) fit(ctx context.Context, name string) error {
 	dir := e.folder(name)
 	meta, err := ReadMeta(dir)
 	if err != nil {
-		return fmt.Errorf("%s has no settings on %s: %w", name, e.Server, err)
+		return fmt.Errorf("%s has no settings on %s: %w", name, e.server(), err)
 	}
 	text, _, err := Read(dir)
 	if err != nil {
@@ -497,7 +536,7 @@ func (e Env) fit(ctx context.Context, name string) error {
 	own := ""
 	if len(meta.Network) > 0 {
 		if own = e.Own(); own == "" {
-			return fmt.Errorf("%s is not in the private network, so no port can be served to it", e.Server)
+			return fmt.Errorf("%s is not in the private network, so no port can be served to it", e.server())
 		}
 	}
 	if err := Bind(config, own, meta.Network); err != nil {
@@ -544,7 +583,7 @@ func (e Env) up(ctx context.Context, name string, progress func(string), pull ..
 	if err != nil {
 		return "", fmt.Errorf("the health check failed: %w", err)
 	}
-	return fmt.Sprintf("%s runs %s: %d of %d containers healthy.", e.Server, name, good, total), nil
+	return fmt.Sprintf("%s runs %s: %d of %d containers healthy.", e.server(), name, good, total), nil
 }
 
 func judge(output []byte) (string, int, int) {
@@ -622,16 +661,16 @@ func (e Env) vacant(ctx context.Context, name string) error {
 	case err != nil:
 		return err
 	case len(containers) > 0:
-		return fmt.Errorf("a stack named %s already runs on %s", name, e.Server)
+		return fmt.Errorf("a stack named %s already runs on %s", name, e.server())
 	case e.removed(name):
-		return fmt.Errorf("a stack named %s waits in Removed on %s; restore it or delete it permanently first", name, e.Server)
+		return fmt.Errorf("a stack named %s waits in Removed on %s; restore it or delete it permanently first", name, e.server())
 	}
 	volumes, err := e.volumes(ctx, name)
 	if err != nil {
 		return err
 	}
 	if _, err := os.Lstat(e.folder(name)); err == nil || len(volumes) > 0 {
-		return fmt.Errorf("files left from an earlier %s are still on %s; delete them permanently first", name, e.Server)
+		return fmt.Errorf("files left from an earlier %s are still on %s; delete them permanently first", name, e.server())
 	}
 	return nil
 }
@@ -660,7 +699,7 @@ func (e Env) namesFree(ctx context.Context, name, text string) error {
 	}
 	for _, service := range slices.Sorted(maps.Keys(names)) {
 		if project, used := taken[names[service]]; used && project != name {
-			return fmt.Errorf("the container name %s is taken on %s", names[service], e.Server)
+			return fmt.Errorf("the container name %s is taken on %s", names[service], e.server())
 		}
 	}
 	return nil
@@ -809,9 +848,12 @@ func (e Env) deploy(ctx context.Context, cmd trust.Command, progress func(string
 	if original.Failed {
 		previous = original.Previous
 	}
-	message := fmt.Sprintf("%s has the new images of %s; it stays stopped.", e.Server, name)
+	message := fmt.Sprintf("%s has the new images of %s; it stays stopped.", e.server(), name)
 	if len(running) == 0 {
-		if output, err := e.compose(ctx, upTimeout, name, "up", "--no-start", "--remove-orphans"); err != nil {
+		release := e.owned(ctx, name, upTimeout, e.planned(name)...)
+		output, err := e.compose(ctx, upTimeout, name, "up", "--no-start", "--remove-orphans")
+		release()
+		if err != nil {
 			return "", e.composeFailed(name, "up", output, err)
 		}
 	} else {
@@ -850,9 +892,9 @@ func (e Env) back(ctx context.Context, name string, previous []pinned, failure e
 		return fmt.Errorf("%w; going back to the previous images failed too: %w", failure, err)
 	}
 	if err := store(e.recordPath(name), record{Previous: previous}); err != nil {
-		return fmt.Errorf("%w; %s went back to the previous images of %s but could not note it: %w", failure, e.Server, name, err)
+		return fmt.Errorf("%w; %s went back to the previous images of %s but could not note it: %w", failure, e.server(), name, err)
 	}
-	return fmt.Errorf("%w; %s went back to the previous images of %s, and Rollback is still there", failure, e.Server, name)
+	return fmt.Errorf("%w; %s went back to the previous images of %s, and Rollback is still there", failure, e.server(), name)
 }
 
 func (e Env) rollback(ctx context.Context, cmd trust.Command, progress func(string)) (string, error) {
@@ -904,7 +946,7 @@ func (e Env) lifecycle(ctx context.Context, cmd trust.Command, _ func(string)) (
 	if output, err := e.compose(ctx, upTimeout, name, cmd.Action); err != nil {
 		return "", e.composeFailed(name, cmd.Action, output, err)
 	}
-	return fmt.Sprintf("%s %s %s.", e.Server, pastTense[cmd.Action], name), nil
+	return fmt.Sprintf("%s %s %s.", e.server(), pastTense[cmd.Action], name), nil
 }
 
 func (e Env) remove(ctx context.Context, cmd trust.Command, _ func(string)) (string, error) {
@@ -924,13 +966,13 @@ func (e Env) remove(ctx context.Context, cmd trust.Command, _ func(string)) (str
 	if err := e.changeBin(func(bin map[string]removal) { bin[name] = removal{RemovedAt: e.Now().UTC()} }); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s moved %s to Removed; it is deleted for good after 7 days.", e.Server, name), nil
+	return fmt.Sprintf("%s moved %s to Removed; it is deleted for good after 7 days.", e.server(), name), nil
 }
 
 func (e Env) restore(ctx context.Context, cmd trust.Command, progress func(string)) (string, error) {
 	name := cmd.Name
 	if !e.removed(name) {
-		return "", fmt.Errorf("%s is not in Removed on %s", name, e.Server)
+		return "", fmt.Errorf("%s is not in Removed on %s", name, e.server())
 	}
 	message, err := e.launch(ctx, name, progress)
 	if err != nil {
@@ -955,9 +997,9 @@ func (e Env) purge(ctx context.Context, cmd trust.Command, _ func(string)) (stri
 	_, missing := os.Lstat(e.folder(name))
 	switch {
 	case missing != nil && len(containers) > 0:
-		return "", fmt.Errorf("Krynodes does not manage %s on %s; adopt it first", name, e.Server)
+		return "", fmt.Errorf("Krynodes does not manage %s on %s; adopt it first", name, e.server())
 	case missing != nil && !e.removed(name) && len(volumes) == 0:
-		return "", fmt.Errorf("%s is not on %s", name, e.Server)
+		return "", fmt.Errorf("%s is not on %s", name, e.server())
 	}
 	if len(containers) > 0 {
 		release := e.owned(ctx, name, upTimeout)
@@ -970,7 +1012,7 @@ func (e Env) purge(ctx context.Context, cmd trust.Command, _ func(string)) (stri
 	if err := e.wipe(ctx, name); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s deleted %s and its data for good.", e.Server, name), nil
+	return fmt.Sprintf("%s deleted %s and its data for good.", e.server(), name), nil
 }
 
 func (e Env) wipe(ctx context.Context, name string) error {
@@ -1005,7 +1047,7 @@ func (e Env) foreign(ctx context.Context, name string) (string, string, error) {
 	}
 	switch {
 	case len(homes) == 0:
-		return "", "", fmt.Errorf("%s is not on %s", name, e.Server)
+		return "", "", fmt.Errorf("%s is not on %s", name, e.server())
 	case len(homes) > 1:
 		return "", "", fmt.Errorf("the containers of %s do not share one folder", name)
 	case !filepath.IsAbs(homes[0]) || filepath.Clean(homes[0]) != homes[0]:
@@ -1022,7 +1064,7 @@ func (e Env) foreign(ctx context.Context, name string) (string, string, error) {
 func (e Env) adopt(ctx context.Context, cmd trust.Command, progress func(string)) (string, error) {
 	name, dir := cmd.Name, e.folder(cmd.Name)
 	if _, err := os.Lstat(dir); err == nil || e.removed(name) {
-		return "", fmt.Errorf("Krynodes already has a stack named %s on %s", name, e.Server)
+		return "", fmt.Errorf("Krynodes already has a stack named %s on %s", name, e.server())
 	}
 	from, file, err := e.foreign(ctx, name)
 	if err != nil {
@@ -1079,6 +1121,9 @@ func (e Env) startAgain(ctx context.Context, name, from string, before map[strin
 		}
 	}
 	if len(ids) == 0 {
+		if running, err := e.list(ctx, name, "--filter", "status=restarting", "--filter", "status=running"); err == nil && len(running) > 0 {
+			return fmt.Sprintf("the containers Krynodes started still run, unmanaged; run docker compose up -d in %s to go back to your own.", from)
+		}
 		return fmt.Sprintf("Start it again from %s.", from)
 	}
 	if output, err := e.docker(ctx, upTimeout, append([]string{"start", "--"}, ids...)...); err != nil {

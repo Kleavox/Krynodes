@@ -42,6 +42,7 @@ const (
 	maxContainers = 256
 	maxUnits      = 256
 	maxRemoved    = 64
+	maxNamed      = 64
 	maxServices   = 64
 	maxPorts      = 32
 	maxImage      = 512
@@ -380,6 +381,7 @@ func removed(meta Meta) []reporter.RemovedEntry {
 	}
 	for _, entry := range meta.Removed() {
 		if _, err := time.Parse(time.RFC3339, entry.RemovedAt); err == nil && strings.HasSuffix(entry.RemovedAt, "Z") && projectName.MatchString(entry.Project) {
+			entry.Names = named(entry.Project, entry.Names)
 			listed = append(listed, entry)
 		}
 	}
@@ -387,4 +389,16 @@ func removed(meta Meta) []reporter.RemovedEntry {
 		return cmp.Or(cmp.Compare(b.RemovedAt, a.RemovedAt), cmp.Compare(a.Project, b.Project))
 	})
 	return listed[:min(len(listed), maxRemoved)]
+}
+
+func named(project string, names []string) []string {
+	kept := slices.DeleteFunc(slices.Clone(names), func(name string) bool { return !ContainerName.MatchString(name) })
+	prefixed := func(name string) int {
+		if strings.HasPrefix(name, project+"-") {
+			return 1
+		}
+		return 0
+	}
+	slices.SortStableFunc(kept, func(a, b string) int { return cmp.Compare(prefixed(a), prefixed(b)) })
+	return kept[:min(len(kept), maxNamed)]
 }

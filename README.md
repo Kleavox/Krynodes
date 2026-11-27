@@ -164,8 +164,10 @@ names answer as `<name>.kry` through a block in `/etc/hosts`.
 **Laptops.** On the Network page, **Add Laptop** gives a download link pinned
 to the Worker's release and a PowerShell command with a code that works once
 for 10 minutes. Run it as Administrator. It prints the fingerprint and starts
-the tray at once; the tray also starts at every sign-in. The laptop then waits
-for Approve like a server. Laptops refuse every connection that comes in over
+the tray at once; the tray also starts at every sign-in, and the Start menu
+entry **Krynodes** opens it again after Quit. The laptop then waits for Approve
+like a server. Installing again with a new code enrolls the laptop afresh only
+when the dashboard no longer knows it; otherwise it keeps its enrollment. Laptops refuse every connection that comes in over
 the tunnel. Started with no command, `krynodes-windows-amd64.exe` only says
 that it is installed from the dashboard. `krynodes uninstall`, run as
 Administrator, takes it off the laptop; remove it from the network on the
@@ -220,10 +222,10 @@ Compose** changes the file and deploys it, and puts the previous file back when
 the new one fails. **Rollback** goes back one step, to the images that ran
 before the last deploy. **Remove** stops a stack and keeps it under Removed for
 7 days, where **Restore** brings it back and **Delete Permanently** deletes it
-with its volumes. A stack started by hand with Compose shows as Not Managed;
-**Adopt** lets Krynodes manage it. Containers and units have Start, Stop and
-Restart, and containers have Logs; protected ones, such as ssh, Docker and
-Krynodes itself, are left alone.
+with its folder, its volumes and its checks. A stack started by hand with
+Compose shows as Not Managed; **Adopt** lets Krynodes manage it. Containers and
+units have Start, Stop and Restart, and containers have Logs; protected ones,
+such as ssh, Docker and Krynodes itself, are left alone.
 
 **Access.** A **Contained** stack, the default, keeps to its own named volumes
 and its own networks: host paths, privileged mode, extra capabilities, devices,
