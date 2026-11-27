@@ -22,7 +22,7 @@ const (
 	maxMessage = 2048
 	maxLine    = 512
 	maxRefused = 256
-	maxOutput  = 64 << 10
+	maxOutput  = 128 << 10
 )
 
 var commandID = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
@@ -86,19 +86,22 @@ func (d *Daemon) Handle(ctx context.Context, msg reporter.Command) {
 	progress := func(line string) {
 		_ = d.Send(reporter.Progress{Type: "progress", ID: msg.ID, Line: clip(line, maxLine)})
 	}
-	var output string
-	message, err := d.Handlers[msg.Kind+"/"+msg.Action](context.WithValue(ctx, outputKey{}, &output), cmd, progress)
+	ctx, output := WithOutput(ctx)
+	message, err := d.Handlers[msg.Kind+"/"+msg.Action](ctx, cmd, progress)
 	if ctx.Err() != nil {
 		return
 	}
 	result := outcome(msg.ID, message, err)
-	if err == nil {
-		result.Output = output
-	}
+	result.Output = output()
 	d.finish(msg.ID, result)
 }
 
 type outputKey struct{}
+
+func WithOutput(ctx context.Context) (context.Context, func() string) {
+	var output string
+	return context.WithValue(ctx, outputKey{}, &output), func() string { return output }
+}
 
 func Output(ctx context.Context, text string) {
 	if slot, ok := ctx.Value(outputKey{}).(*string); ok {

@@ -84,7 +84,7 @@ export const agentMessageSchema = z.discriminatedUnion("type", [
     id,
     ok: z.boolean(),
     message: z.string().max(2048),
-    output: z.string().max(65536).optional(),
+    output: z.string().max(131072).optional(),
     trust: trustReportSchema.optional(),
   }),
   z.strictObject({

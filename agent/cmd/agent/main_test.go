@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,8 +19,10 @@ import (
 
 	"github.com/Kleavox/krynodes/agent/internal/config"
 	"github.com/Kleavox/krynodes/agent/internal/network"
+	"github.com/Kleavox/krynodes/agent/internal/platform"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
 	"github.com/Kleavox/krynodes/agent/internal/seal"
+	"github.com/Kleavox/krynodes/agent/internal/stacks"
 	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
@@ -40,7 +43,7 @@ func TestVersionPrintsTheBuildVersion(t *testing.T) {
 }
 
 func TestAnythingElseIsRefusedWithExitTwo(t *testing.T) {
-	for _, args := range [][]string{nil, {"bogus"}, {"version", "extra"}, {"--version"}, {"install-service", "--config", "x"}, {"self-update", "now"}, {"network"}, {"network", "bogus"}, {"network", "rules", "now"}} {
+	for _, args := range [][]string{nil, {"bogus"}, {"version", "extra"}, {"--version"}, {"install-service", "--config", "x"}, {"self-update", "now"}, {"network"}, {"network", "bogus"}, {"network", "rules", "now"}, {"guard", "now"}, {"guard", "--force"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 {
 			t.Errorf("run(%q) exited %d, want 2", args, code)
@@ -444,5 +447,117 @@ func TestTheDocumentQueueKeepsTheLowestVersions(t *testing.T) {
 	}
 	if versions[0] != 1 || versions[1] != 2 || versions[64] != 65 || !slices.IsSorted(versions) {
 		t.Fatalf("versions %v", versions)
+	}
+}
+
+func lockedAway(t *testing.T) {
+	t.Helper()
+	was := stacks.GuardLock
+	t.Cleanup(func() { stacks.GuardLock = was })
+	stacks.GuardLock = filepath.Join(t.TempDir(), "guard.lock")
+}
+
+func TestGuardCommandFailsWhenTheGuardFails(t *testing.T) {
+	lockedAway(t)
+	refused := func(context.Context, string, ...string) ([]byte, int, error) {
+		return []byte("iptables: Permission denied (you must be root)."), 4, errors.New("exit status 4")
+	}
+	err := guardWith(refused)
+	if err == nil || !strings.HasPrefix(err.Error(), "the guard of Contained stacks: ") || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("a guard that fails says why: %v", err)
+	}
+	if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		t.Skip("as root this would change this machine's firewall")
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"guard"}, &stdout, &stderr); code != 1 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "kry guard must run as root on Linux") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestInstallServiceProvesTheGuardBeforeItWritesTheDropIn(t *testing.T) {
+	lockedAway(t)
+	const asked = "systemctl show -p LoadState docker.service"
+	for name, test := range map[string]struct {
+		state   string
+		refuse  bool
+		written bool
+		failure string
+	}{
+		"the guard holds":           {"loaded", false, true, ""},
+		"the guard cannot hold":     {"loaded", true, false, "Permission denied"},
+		"this server has no Docker": {"not-found", false, false, ""},
+	} {
+		root := t.TempDir()
+		dropIn := filepath.Join(root, "etc", "systemd", "system", "docker.service.d", "krynodes-guard.conf")
+		var calls []string
+		firewall := 0
+		chains := map[string][]string{}
+		run := func(_ context.Context, command string, args ...string) ([]byte, int, error) {
+			call := command + " " + strings.Join(args, " ")
+			calls = append(calls, call)
+			switch {
+			case call == asked:
+				return []byte("LoadState=" + test.state + "\n"), 0, nil
+			case command == "iptables" || command == "ip6tables":
+				firewall++
+				if _, err := os.Stat(dropIn); err == nil {
+					t.Errorf("%s: the drop-in was there before the guard held", name)
+				}
+				if test.refuse {
+					return []byte("iptables: Permission denied (you must be root)."), 4, errors.New("exit status 4")
+				}
+				key, rest := command+" "+args[2], strings.Join(args[3:], " ")
+				switch args[1] {
+				case "-C":
+					if !slices.Contains(chains[key], rest) {
+						return nil, 1, errors.New("exit status 1")
+					}
+				case "-I":
+					chains[key] = slices.Insert(chains[key], 0, strings.TrimPrefix(rest, "1 "))
+				case "-D":
+					if at := slices.Index(chains[key], rest); at >= 0 {
+						chains[key] = slices.Delete(chains[key], at, at+1)
+					}
+				case "-S":
+					listed := "-N DOCKER-USER\n"
+					for _, rule := range chains[key] {
+						listed += "-A DOCKER-USER " + rule + "\n"
+					}
+					return []byte(listed), 0, nil
+				}
+			}
+			return nil, 0, nil
+		}
+		err := guardDocker(context.Background(), platform.Env{Root: root, Run: platform.Runner(run), Executable: "/usr/local/bin/kry", Prove: proveGuard(run)})
+		_, missing := os.Stat(dropIn)
+		reloaded := slices.Contains(calls, "systemctl daemon-reload")
+		switch {
+		case test.failure != "" && (err == nil || !strings.HasPrefix(err.Error(), "the guard of Contained stacks: ") || !strings.Contains(err.Error(), test.failure)):
+			t.Errorf("%s: install-service fails with the guard's error: %v", name, err)
+		case test.failure == "" && err != nil:
+			t.Errorf("%s: %v", name, err)
+		case (missing == nil) != test.written || reloaded != test.written || (firewall > 0) != (test.state == "loaded"):
+			t.Errorf("%s: drop-in %v, reloaded %v, firewall calls %d, calls %q", name, missing == nil, reloaded, firewall, calls)
+		}
+	}
+}
+
+func TestUninstallKeepsTheBinaryWhileDockerStillWaitsForIt(t *testing.T) {
+	dir := t.TempDir()
+	parts := []string{filepath.Join(dir, "kry"), filepath.Join(dir, "kry.previous"), filepath.Join(dir, "state")}
+	for _, part := range parts {
+		if err := os.WriteFile(part, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	problems := removeParts(parts, map[string]string{parts[0]: "Docker waits for it until the drop-in is removed", parts[2]: ""})
+	if len(problems) != 1 || problems[0] != parts[0]+" stays: Docker waits for it until the drop-in is removed" {
+		t.Fatalf("problems %q", problems)
+	}
+	for part, want := range map[string]bool{parts[0]: true, parts[1]: false, parts[2]: true} {
+		if _, err := os.Stat(part); (err == nil) != want {
+			t.Errorf("%s exists %v, want %v", part, err == nil, want)
+		}
 	}
 }

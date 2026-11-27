@@ -56,6 +56,11 @@ var (
 	}
 )
 
+var (
+	errComposeEmpty = errors.New("the compose file is empty")
+	errComposeLarge = errors.New("the compose file is larger than 32 KB")
+)
+
 var containedTop = []string{"name", "services", "networks", "volumes", "secrets", "configs"}
 
 var containedKeys = []string{
@@ -96,9 +101,9 @@ var units = []struct {
 func CheckText(text, access string) error {
 	switch {
 	case strings.TrimSpace(text) == "":
-		return errors.New("the compose file is empty")
+		return errComposeEmpty
 	case len(text) > maxComposeBytes:
-		return errors.New("the compose file is larger than 32 KB")
+		return errComposeLarge
 	case access != "contained":
 		return nil
 	}

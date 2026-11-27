@@ -9,7 +9,7 @@ const SEAL =
 const hello = {
   type: "hello",
   v: 1,
-  version: "0.7.93",
+  version: "0.7.94",
   hostname: "server-1",
   os: "linux",
   arch: "amd64",
@@ -82,7 +82,7 @@ describe("FleetHub", () => {
       os: "linux",
       arch: "amd64",
       kernel: "6.8.0-45-generic",
-      version: "0.7.93",
+      version: "0.7.94",
       seal_key: SEAL,
       seen: 1,
     });
@@ -129,6 +129,35 @@ describe("FleetHub", () => {
     expect(response.status).toBe(200);
     expect(ws.replies()).toEqual([command]);
     expect(other.sent).toEqual([]);
+  });
+
+  it("a command that carries the largest save reaches the node's socket whole", async () => {
+    const { connect, hub } = await setup();
+    const ws = connect("n1");
+    const part = "A".repeat(4096);
+    const signed = JSON.stringify({
+      grant: {
+        grant: part,
+        credentialId: part,
+        authenticatorData: part,
+        clientDataJSON: part,
+        signature: part,
+      },
+      command: "A".repeat(147456),
+      signature: part,
+    });
+    const large = {
+      ...command,
+      kind: "stack",
+      name: "web",
+      action: "create",
+      signed,
+    };
+    const response = await hub.fetch(
+      post("/command", { nodeId: "n1", command: large }),
+    );
+    expect(response.status).toBe(200);
+    expect(ws.replies()).toEqual([large]);
   });
 
   it("a command for a node with no socket is OFFLINE", async () => {

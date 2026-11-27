@@ -255,6 +255,35 @@ func TestCommandsAndAcksArriveDecodedAndAnythingElseIsDropped(t *testing.T) {
 	}
 }
 
+func TestACommandCarryingTheLargestSaveArrivesWhole(t *testing.T) {
+	part := strings.Repeat("A", 4096)
+	signed, err := json.Marshal(map[string]any{
+		"grant":     map[string]string{"grant": part, "credentialId": part, "authenticatorData": part, "clientDataJSON": part, "signature": part},
+		"command":   strings.Repeat("A", 147456),
+		"signature": part,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, err := json.Marshal(reporter.Command{Type: "command", ID: "c-1", Kind: "stack", Name: "web", Action: "create", Signed: string(signed)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, _ := server(t, func(p *peer) {
+		p.write(opText, message, true)
+		drain(p)
+	})
+	_, events := client(t, srv.URL)
+	select {
+	case command := <-events.commands:
+		if command.Signed != string(signed) || command.Name != "web" {
+			t.Fatalf("a command of %d bytes arrived as %d", len(signed), len(command.Signed))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("a command of %d bytes did not arrive", len(message))
+	}
+}
+
 func TestFramesThatBreakTheProtocolDeliverNothing(t *testing.T) {
 	const ack = `{"type":"ack","id":"a-1"}`
 	for name, send := range map[string]func(p *peer){

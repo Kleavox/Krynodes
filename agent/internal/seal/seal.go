@@ -17,9 +17,15 @@ import (
 	"slices"
 )
 
-const info = "krynodes-seal-v1"
+const (
+	info         = "krynodes-seal-v1"
+	fromNodeInfo = "krynodes-seal-from-node-v1"
+)
 
-var encoding = base64.RawURLEncoding
+var (
+	encoding            = base64.RawURLEncoding
+	errInvalidRecipient = errors.New("the recipient key is not valid")
+)
 
 type envelope struct {
 	V   int    `json:"v"`
@@ -87,6 +93,73 @@ func Public(key *ecdh.PrivateKey) string {
 	return encoding.EncodeToString(key.PublicKey().Bytes())
 }
 
+func recipientKey(recipient string) (*ecdh.PublicKey, []byte, error) {
+	raw, err := encoding.DecodeString(recipient)
+	if err != nil {
+		return nil, nil, errInvalidRecipient
+	}
+	public, err := ecdh.P256().NewPublicKey(raw)
+	if err != nil || encoding.EncodeToString(raw) != recipient {
+		return nil, nil, errInvalidRecipient
+	}
+	return public, raw, nil
+}
+
+func ValidRecipient(recipient string) bool {
+	_, _, err := recipientKey(recipient)
+	return err == nil
+}
+
+func derive(ikm, salt []byte, label string) (cipher.AEAD, error) {
+	secret, err := hkdf.Key(sha256.New, ikm, salt, label, 32)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(secret)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func SealFrom(node *ecdh.PrivateKey, recipient string, plaintext []byte) (string, error) {
+	public, raw, err := recipientKey(recipient)
+	if err != nil {
+		return "", err
+	}
+	ephemeral, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	toEphemeral, err := ephemeral.ECDH(public)
+	if err != nil {
+		return "", err
+	}
+	toNode, err := node.ECDH(public)
+	if err != nil {
+		return "", err
+	}
+	epk := ephemeral.PublicKey().Bytes()
+	aead, err := derive(slices.Concat(toEphemeral, toNode), slices.Concat(epk, node.PublicKey().Bytes(), raw), fromNodeInfo)
+	if err != nil {
+		return "", err
+	}
+	iv := make([]byte, aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return "", err
+	}
+	body, err := json.Marshal(envelope{
+		V:   2,
+		EPK: encoding.EncodeToString(epk),
+		IV:  encoding.EncodeToString(iv),
+		CT:  encoding.EncodeToString(aead.Seal(nil, iv, plaintext, nil)),
+	})
+	if err != nil {
+		return "", err
+	}
+	return encoding.EncodeToString(body), nil
+}
+
 func Open(key *ecdh.PrivateKey, sealed string) ([]byte, error) {
 	invalid := errors.New("the sealed message is not valid")
 	body, err := encoding.DecodeString(sealed)
@@ -114,15 +187,7 @@ func Open(key *ecdh.PrivateKey, sealed string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	secret, err := hkdf.Key(sha256.New, shared, append(slices.Clone(epk), key.PublicKey().Bytes()...), info, 32)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(secret)
-	if err != nil {
-		return nil, err
-	}
-	aead, err := cipher.NewGCM(block)
+	aead, err := derive(shared, slices.Concat(epk, key.PublicKey().Bytes()), info)
 	if err != nil {
 		return nil, err
 	}

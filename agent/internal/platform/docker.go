@@ -16,6 +16,8 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/safefile"
 )
 
+const DockerGuardDropInPath = "/etc/systemd/system/docker.service.d/krynodes-guard.conf"
+
 const (
 	dockerKey    = "/etc/apt/keyrings/docker.asc"
 	dockerList   = "/etc/apt/sources.list.d/docker.list"
@@ -24,6 +26,10 @@ const (
 	dockerLogs   = "{\"log-driver\": \"local\"}\n"
 	maxDownload  = 1 << 20
 )
+
+var ErrNoDockerUnit = errors.New("this server's Docker has no docker.service")
+
+var errNoExecutable = errors.New("the agent does not know where it is installed, so Docker cannot be made to wait for the guard of Contained stacks")
 
 var dockerPackages = []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"}
 
@@ -99,6 +105,9 @@ func InstallDocker(ctx context.Context, env Env) (string, bool, error) {
 	if missing == nil && noCompose == nil {
 		return "", false, nil
 	}
+	if !strings.HasPrefix(env.Executable, "/") {
+		return "", false, errNoExecutable
+	}
 	platform := Detect(env)
 	if platform.Family != Debian && platform.Family != RHEL {
 		return "", false, errors.New("Install Docker knows Debian, Ubuntu and the RHEL family; install Docker by hand on this server")
@@ -125,8 +134,116 @@ func InstallDocker(ctx context.Context, env Env) (string, bool, error) {
 			return "", false, err
 		}
 	}
+	if err := env.GuardDocker(ctx); err != nil {
+		return "", false, fmt.Errorf("Docker is installed, but its guard drop-in was not written: %w", err)
+	}
 	version, _ := env.output(ctx, "docker", "version", "--format", "{{.Client.Version}}")
 	return version, true, nil
+}
+
+func DockerGuardDropIn(executable string) string {
+	return "[Service]\nExecStartPre=" + executable + " guard\n"
+}
+
+func (e Env) GuardDocker(ctx context.Context) error {
+	if !strings.HasPrefix(e.Executable, "/") {
+		return errNoExecutable
+	}
+	if e.Prove != nil {
+		if err := e.Prove(ctx); err != nil {
+			return err
+		}
+	}
+	if err := e.write(DockerGuardDropInPath, []byte(DockerGuardDropIn(e.Executable))); err != nil {
+		return err
+	}
+	if err := e.run(ctx, "systemctl", "daemon-reload"); err != nil {
+		os.Remove(e.path(DockerGuardDropInPath))
+		return err
+	}
+	return nil
+}
+
+func (e Env) dockerUnit(ctx context.Context) (bool, error) {
+	state, err := e.output(ctx, "systemctl", "show", "-p", "LoadState", "docker.service")
+	return state == "LoadState=loaded", err
+}
+
+func (e Env) DockerLoaded(ctx context.Context) bool {
+	loaded, err := e.dockerUnit(ctx)
+	return err == nil && loaded
+}
+
+func (e Env) GuardInstalledDocker(ctx context.Context) error {
+	loaded, err := e.dockerUnit(ctx)
+	if err != nil {
+		return fmt.Errorf("systemd does not say whether Docker has a unit: %w", err)
+	}
+	if !loaded {
+		return ErrNoDockerUnit
+	}
+	if body, err := os.ReadFile(e.path(DockerGuardDropInPath)); err != nil || string(body) != DockerGuardDropIn(e.Executable) {
+		if err := e.GuardDocker(ctx); err != nil {
+			return err
+		}
+	}
+	return e.dockerRunsGuard(ctx)
+}
+
+func (e Env) runsGuard(ctx context.Context) (bool, error) {
+	shown, err := e.output(ctx, "systemctl", "show", "-p", "ExecStartPre", "docker.service")
+	if err != nil {
+		return false, fmt.Errorf("systemd does not say what runs before Docker: %w", err)
+	}
+	for entry := range strings.SplitSeq(shown, "}") {
+		if strings.Contains(entry, "argv[]="+e.Executable+" guard ;") && strings.Contains(entry, "ignore_errors=no") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (e Env) dockerRunsGuard(ctx context.Context) error {
+	runs, err := e.runsGuard(ctx)
+	if runs || err != nil {
+		return err
+	}
+	ours := filepath.Base(DockerGuardDropInPath)
+	listed, _ := e.output(ctx, "systemctl", "show", "-p", "DropInPaths", "docker.service")
+	var others []string
+	for _, path := range strings.Fields(strings.TrimPrefix(listed, "DropInPaths=")) {
+		if filepath.Base(path) > ours {
+			others = append(others, path)
+		}
+	}
+	if len(others) > 0 {
+		return fmt.Errorf("systemd does not run %s guard before Docker: %s comes after the guard's drop-in and can reset ExecStartPre", e.Executable, strings.Join(others, ", "))
+	}
+	needed, err := e.output(ctx, "systemctl", "show", "-p", "NeedDaemonReload", "docker.service")
+	if err != nil {
+		return fmt.Errorf("systemd does not say whether it must reload: %w", err)
+	}
+	if needed == "NeedDaemonReload=yes" {
+		if err := e.run(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+		if runs, err = e.runsGuard(ctx); runs || err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("systemd does not run %s guard before Docker with ignore_errors=no, though %s is in place", e.Executable, DockerGuardDropInPath)
+}
+
+func (e Env) UnguardDocker(ctx context.Context) error {
+	path := e.path(DockerGuardDropInPath)
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	os.Remove(filepath.Dir(path))
+	return e.run(ctx, "systemctl", "daemon-reload")
 }
 
 func dockerRepository(ctx context.Context, env Env, platform Platform) error {

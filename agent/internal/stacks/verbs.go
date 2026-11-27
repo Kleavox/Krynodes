@@ -2,6 +2,7 @@ package stacks
 
 import (
 	"context"
+	"crypto/ecdh"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,30 +23,39 @@ import (
 	"github.com/Kleavox/krynodes/agent/internal/docker"
 	"github.com/Kleavox/krynodes/agent/internal/platform"
 	"github.com/Kleavox/krynodes/agent/internal/safefile"
+	"github.com/Kleavox/krynodes/agent/internal/seal"
 	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
 const (
-	pullTimeout  = 10 * time.Minute
-	upTimeout    = 5 * time.Minute
-	stepTimeout  = time.Minute
-	ownerGrace   = 30 * time.Second
-	keepRemoved  = 7 * 24 * time.Hour
-	maxOutput    = 64 << 10
-	maxFailure   = 1500
-	maxState     = 1 << 20
-	maxSealedEnv = 24576
-	maxNetwork   = 32
-	maxLines     = 500
-	maxNames     = 64
-	runFile      = "compose.run.json"
-	stateFormat  = "{{.Service}}\t{{.State}}\t{{.Health}}\t{{.ExitCode}}"
-	startsFormat = "{{.Id}} {{.RestartCount}} {{.State.StartedAt}}"
-	imageFormat  = "{{index .Config.Labels \"com.docker.compose.service\"}}\t{{.Config.Image}}\t{{.Image}}"
-	homeFormat   = "{{.Label \"com.docker.compose.project.working_dir\"}}"
-	stackLabels  = "{{index .Config.Labels \"com.docker.compose.project\"}}\t{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}"
-	projectLabel = "label=com.docker.compose.project="
-	cutLine      = "… earlier lines cut\n"
+	pullTimeout      = 10 * time.Minute
+	upTimeout        = 5 * time.Minute
+	stepTimeout      = time.Minute
+	ownerGrace       = 30 * time.Second
+	keepRemoved      = 7 * 24 * time.Hour
+	maxOutput        = 64 << 10
+	maxFailure       = 1500
+	maxDetail        = 8 << 10
+	maxState         = 1 << 20
+	maxSealedEnv     = 29337
+	maxSealedCompose = 58464
+	maxNetwork       = 32
+	maxLines         = 500
+	maxNames         = 64
+	runFile          = "compose.run.json"
+	stateFormat      = "{{.Service}}\t{{.State}}\t{{.Health}}\t{{.ExitCode}}"
+	startsFormat     = "{{.Id}} {{.RestartCount}} {{.State.StartedAt}}"
+	imageFormat      = "{{index .Config.Labels \"com.docker.compose.service\"}}\t{{.Config.Image}}\t{{.Image}}"
+	homeFormat       = "{{.Label \"com.docker.compose.project.working_dir\"}}"
+	stackLabels      = "{{index .Config.Labels \"com.docker.compose.project\"}}\t{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}"
+	projectLabel     = "label=com.docker.compose.project="
+	cutLine          = "… earlier lines cut\n"
+	stepChecking     = "Checking the compose file"
+	stepPulling      = "Pulling the images"
+	stepStarting     = "Starting the containers"
+	stepWaiting      = "Waiting until the containers are healthy"
+	stepBack         = "Going back to the previous images"
+	stepDocker       = "Installing Docker"
 )
 
 var (
@@ -54,10 +64,16 @@ var (
 	healthSettle  = 20 * time.Second
 	locks         sync.Map
 	binMu         sync.Mutex
-	sealedEnv     = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	sealedText    = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 	portText      = regexp.MustCompile(`^[1-9]\d{0,4}$`)
 	linesText     = regexp.MustCompile(`^[1-9]\d{0,2}$`)
 	pastTense     = map[string]string{"start": "started", "stop": "stopped", "restart": "restarted"}
+	steps         = []string{stepChecking, stepPulling, stepStarting, stepWaiting, stepBack, stepDocker}
+	labels        = map[string]string{
+		"create": "Create", "deploy": "Deploy", "edit": "Edit", "read": "Read", "rollback": "Rollback",
+		"start": "Start", "stop": "Stop", "restart": "Restart", "remove": "Remove", "restore": "Restore",
+		"purge": "Delete", "adopt": "Adopt", "logs": "Logs",
+	}
 	standardFiles = []string{"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
 	verbs         = map[string][]string{
 		"stack":     {"create", "deploy", "edit", "read", "rollback", "start", "stop", "restart", "remove", "restore", "purge", "adopt", "logs"},
@@ -73,6 +89,7 @@ type Env struct {
 	Server   string
 	Own      func() string
 	Unseal   func(string) ([]byte, error)
+	Sealing  *ecdh.PrivateKey
 	Checks   *docker.Checks
 	Now      func() time.Time
 	Platform platform.Env
@@ -115,7 +132,7 @@ func Handlers(env Env) map[string]daemon.Handler {
 }
 
 func (e Env) guarded(handle daemon.Handler) daemon.Handler {
-	return func(ctx context.Context, cmd trust.Command, progress func(string)) (string, error) {
+	return func(ctx context.Context, cmd trust.Command, progress func(string)) (message string, err error) {
 		switch {
 		case !docker.ValidTarget(cmd.Kind, cmd.Name):
 			return "", fmt.Errorf("%q is not a %s name Krynodes can use", cmd.Name, cmd.Kind)
@@ -124,14 +141,47 @@ func (e Env) guarded(handle daemon.Handler) daemon.Handler {
 		case !ArgsValid(cmd.Kind, cmd.Action, cmd.Args):
 			return "", fmt.Errorf("%s %s came with arguments this server does not take", cmd.Kind, cmd.Action)
 		}
+		if cmd.Kind == "stack" || cmd.Kind == "container" {
+			defer func() {
+				if err != nil {
+					message, err = "", e.sealFailure(ctx, cmd, err)
+				}
+			}()
+		}
+		if cmd.Kind == "stack" && (cmd.Action == "create" || cmd.Action == "edit") {
+			plain, err := e.Unseal(cmd.Args["compose"])
+			if err != nil {
+				return "", fmt.Errorf("the compose file: %w", err)
+			}
+			if len(plain) > maxComposeBytes {
+				return "", errComposeLarge
+			}
+			if strings.TrimSpace(string(plain)) == "" {
+				return "", errComposeEmpty
+			}
+			cmd.Args = maps.Clone(cmd.Args)
+			cmd.Args["compose"] = string(plain)
+		}
 		if cmd.Kind == "stack" && cmd.Action != "logs" && cmd.Action != "read" {
 			defer lock(cmd.Name)()
 		}
 		if e.Checks != nil {
 			defer e.Checks.Changed()
 		}
-		return handle(ctx, cmd, progress)
+		return handle(ctx, cmd, func(line string) {
+			if slices.Contains(steps, line) {
+				progress(line)
+			}
+		})
 	}
+}
+
+func (e Env) sealFailure(ctx context.Context, cmd trust.Command, failure error) error {
+	message := fmt.Sprintf("%s of %s failed.", labels[cmd.Action], cmd.Name)
+	if e.deliver(ctx, cmd.Args["to"], tail([]byte(failure.Error()), maxDetail)) != nil {
+		message += " Its details could not be sealed."
+	}
+	return errors.New(message)
 }
 
 func lock(name string) func() {
@@ -170,26 +220,32 @@ func ArgsValid(kind, action string, args map[string]string) bool {
 }
 
 func shape(kind, action string) (map[string]rule, map[string]rule) {
-	lines := map[string]rule{"lines": linesValid}
+	need, may := map[string]rule{}, map[string]rule(nil)
 	switch {
 	case kind == "stack" && (action == "create" || action == "edit"):
-		return map[string]rule{"compose": composeValid, "access": accessValid, "network": networkValid},
-			map[string]rule{"env": envValid, "title": docker.TitleValid, "names": namesValid}
+		need = map[string]rule{"compose": composeValid, "access": accessValid, "network": networkValid}
+		may = map[string]rule{"env": envValid, "title": docker.TitleValid, "names": namesValid}
 	case kind == "stack" && action == "adopt":
-		return map[string]rule{"access": accessValid}, nil
-	case kind == "stack" && action == "logs":
-		return lines, map[string]rule{"service": docker.ServiceName.MatchString}
+		need = map[string]rule{"access": accessValid}
 	case action == "logs":
-		return lines, nil
+		need = map[string]rule{"lines": linesValid}
+		if kind == "stack" {
+			may = map[string]rule{"service": docker.ServiceName.MatchString}
+		}
 	}
-	return nil, nil
+	if kind == "stack" || kind == "container" {
+		need["to"] = seal.ValidRecipient
+	}
+	return need, may
 }
 
-func composeValid(text string) bool { return len(text) >= 1 && len(text) <= maxComposeBytes }
+func composeValid(text string) bool {
+	return len(text) <= maxSealedCompose && sealedText.MatchString(text)
+}
 
 func accessValid(text string) bool { return text == "contained" || text == "full" }
 
-func envValid(text string) bool { return len(text) <= maxSealedEnv && sealedEnv.MatchString(text) }
+func envValid(text string) bool { return len(text) <= maxSealedEnv && sealedText.MatchString(text) }
 
 func linesValid(text string) bool {
 	count, err := strconv.Atoi(text)
@@ -451,6 +507,13 @@ func (e Env) fit(ctx context.Context, name string) error {
 		if err := Guard(ctx, e.Run); err != nil {
 			return fmt.Errorf("the guard of Contained stacks: %w", err)
 		}
+		host := e.Platform
+		host.Prove = nil
+		if err := host.GuardInstalledDocker(ctx); errors.Is(err, platform.ErrNoDockerUnit) {
+			return errors.New("Contained stacks need Docker's boot guard, and this server's Docker has no docker.service.")
+		} else if err != nil {
+			return fmt.Errorf("Contained stacks need Docker's boot guard, and the guard drop-in is missing or overridden: %w", err)
+		}
 	}
 	encoded, err := json.Marshal(config)
 	if err != nil {
@@ -460,11 +523,11 @@ func (e Env) fit(ctx context.Context, name string) error {
 }
 
 func (e Env) launch(ctx context.Context, name string, progress func(string)) (string, error) {
-	progress("Checking the compose file")
+	progress(stepChecking)
 	if err := e.prepare(ctx, name); err != nil {
 		return "", err
 	}
-	progress("Pulling the images")
+	progress(stepPulling)
 	if output, err := e.compose(ctx, pullTimeout, name, "pull"); err != nil {
 		return "", e.composeFailed(name, "pull", output, err)
 	}
@@ -472,11 +535,11 @@ func (e Env) launch(ctx context.Context, name string, progress func(string)) (st
 }
 
 func (e Env) up(ctx context.Context, name string, progress func(string), pull ...string) (string, error) {
-	progress("Starting the containers")
+	progress(stepStarting)
 	if output, err := e.compose(ctx, upTimeout, name, append([]string{"up", "-d", "--remove-orphans"}, pull...)...); err != nil {
 		return "", e.composeFailed(name, "up", output, err)
 	}
-	progress("Waiting until the containers are healthy")
+	progress(stepWaiting)
 	good, total, err := e.healthy(ctx, name)
 	if err != nil {
 		return "", fmt.Errorf("the health check failed: %w", err)
@@ -722,7 +785,7 @@ func (e Env) deploy(ctx context.Context, cmd trust.Command, progress func(string
 	if err := e.managed(name); err != nil {
 		return "", err
 	}
-	progress("Checking the compose file")
+	progress(stepChecking)
 	if err := e.prepare(ctx, name); err != nil {
 		return "", err
 	}
@@ -738,7 +801,7 @@ func (e Env) deploy(ctx context.Context, cmd trust.Command, progress func(string
 	if err != nil {
 		return "", err
 	}
-	progress("Pulling the images")
+	progress(stepPulling)
 	if output, err := e.compose(ctx, pullTimeout, name, "pull"); err != nil {
 		return "", e.composeFailed(name, "pull", output, err)
 	}
@@ -780,7 +843,7 @@ func (e Env) back(ctx context.Context, name string, previous []pinned, failure e
 		err = errors.New("there are no earlier images to go back to")
 	}
 	if err == nil {
-		progress("Going back to the previous images")
+		progress(stepBack)
 		_, err = e.up(ctx, name, progress, "--pull", "never")
 	}
 	if err != nil {
@@ -804,7 +867,7 @@ func (e Env) rollback(ctx context.Context, cmd trust.Command, progress func(stri
 	if len(original.Previous) == 0 {
 		return "", fmt.Errorf("%s has nothing to roll back to", name)
 	}
-	progress("Checking the compose file")
+	progress(stepChecking)
 	if err := e.prepare(ctx, name); err != nil {
 		return "", err
 	}
@@ -1054,10 +1117,24 @@ func (e Env) logs(ctx context.Context, cmd trust.Command, _ func(string)) (strin
 	}
 	output, err := e.compose(ctx, stepTimeout, name, args...)
 	if err != nil {
-		return "", e.composeFailed(name, "logs", output, err)
+		return "", failed("logs", nil, err)
 	}
-	daemon.Output(ctx, cut(output))
+	if err := e.deliver(ctx, cmd.Args["to"], cut(output)); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("The last %s lines of %s.", cmd.Args["lines"], name), nil
+}
+
+func (e Env) deliver(ctx context.Context, to, text string) error {
+	if e.Sealing == nil {
+		return errors.New("this server's seal key is not loaded, so it cannot prove its answer")
+	}
+	sealed, err := seal.SealFrom(e.Sealing, to, []byte(text))
+	if err != nil {
+		return err
+	}
+	daemon.Output(ctx, sealed)
+	return nil
 }
 
 func (e Env) read(ctx context.Context, cmd trust.Command, _ func(string)) (string, error) {
@@ -1090,7 +1167,9 @@ func (e Env) read(ctx context.Context, cmd trust.Command, _ func(string)) (strin
 	if len(encoded) > maxOutput {
 		return "", fmt.Errorf("the compose file of %s does not fit in one answer", name)
 	}
-	daemon.Output(ctx, string(encoded))
+	if err := e.deliver(ctx, cmd.Args["to"], string(encoded)); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("The compose file of %s.", name), nil
 }
 

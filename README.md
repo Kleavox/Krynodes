@@ -115,10 +115,10 @@ kry version
 sudo kry network fingerprint
 ```
 
-Remove Server in the dashboard takes the unit, `/etc/kry`, `/var/lib/kry` and
-the binary off the server; the server itself keeps running. A member of the
-private network must be removed from it first. `sudo kry uninstall-service`
-does the same by hand.
+Remove Server in the dashboard takes the unit, `/etc/kry`, `/var/lib/kry`, the
+binary and the Docker guard drop-in off the server; the server itself keeps
+running. A member of the private network must be removed from it first.
+`sudo kry uninstall-service` does the same by hand.
 
 ## The private network
 
@@ -229,9 +229,29 @@ Krynodes itself, are left alone.
 and its own networks: host paths, privileged mode, extra capabilities, devices,
 host namespaces, the Docker socket, building from source and images from the
 server itself are refused, and the refusal names the setting. Its containers
-cannot reach the server's own services or other members of the private
-network. **Full** access lets a stack reach the server itself, its folders,
-devices and network; the owner chooses it in the dialog.
+reach the internet only: not the server's own services, not the members of the
+private network and not any private or special address (`10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `169.254.0.0/16`,
+`198.18.0.0/15`, the cloud metadata addresses and their IPv6 counterparts).
+The containers of one stack still talk to each other, replies to what the
+server allowed come back, and DNS keeps working through the nameserver Docker
+uses, even when it sits in a private range. The exceptions are a nameserver that
+is this server itself or a member of the private network. An app that must reach
+a VPC or LAN address is a **Full** stack. **Full** access lets a stack reach the
+server itself, its folders, devices and network; the owner chooses it in the
+dialog.
+
+**The guard.** The firewall rules that keep Contained stacks off the server
+and the private network are in place before Docker starts. `kry guard` runs as
+`ExecStartPre` of `docker.service`, from the drop-in
+`/etc/systemd/system/docker.service.d/krynodes-guard.conf`, without a `-`
+prefix: when the guard fails, Docker does not start, and the server's checks
+and mails say so. `kry install-service` and **Install Docker** prove the guard
+first and then write the drop-in. The daemon puts it back when it goes missing
+and writes it without the proof once a Contained stack exists. One lock,
+`/run/krynodes-guard.lock`, keeps two passes from working at once. Remove
+Server and `kry uninstall-service` remove the drop-in, so Docker can start
+again.
 
 **Ports.** At every access level each published port is bound to
 `127.0.0.1`, so a published port never listens on the internet; a Full stack
@@ -242,9 +262,17 @@ the dialog says "Nothing reaches this port until a rule in Connections allows
 it."
 
 **.env.** The browser seals the `.env` to the server's own key before it is
-signed, so the Worker never reads it. The server writes it with mode `0600` and
-never sends it back; Edit Compose shows only the names of its variables. A
-compose file is at most 32 KB and an `.env` at most 16 KB.
+signed, so the Worker never reads it. The compose file is sealed to the server
+the same way, so the signed command carries no compose text. A failed stack or
+container command says only one fixed sentence the Worker keeps, such as
+"Deploy of web failed."; what Compose or Docker said is sealed to the browser
+and shown under that sentence, so the Worker and History never hold it. The
+Worker never sees a compose file, an `.env`, logs or the output of a stack or container command. The
+server's inventory still reports each stack's title and service names, each
+container's name, image and ports, and the host folder of an adopted stack. The
+server writes the `.env` with mode `0600` and never sends it back; Edit Compose
+shows only the names of its variables. A compose file is at most 32 KB and an `.env` at most
+16 KB.
 
 ## Checks
 
@@ -294,10 +322,25 @@ than 90 days is deleted. The Checks page links to the page when the Worker's
 - **Unsigned hints cost availability only.** The Worker suggests endpoints and
   meeting points, which can change where packets go but never who is a peer or
   what is allowed.
-- **Every stack command is signed.** The compose file, the access level, the
+- **Every stack command is signed.** The sealed compose file, the access level, the
   served ports, the title and the sealed `.env` are part of the signed
   command, and the server runs nothing it did not receive inside one. Logs and
   reading a compose file are signed too, since both can hold secrets.
+- **Logs, a compose file and every failure come back sealed.** For each stack or
+  container command the browser makes a one-time key and signs its public half
+  into the command. The server seals the text to that key and to its own seal
+  key (`v:2`), so the Worker and D1 hold ciphertext only: they cannot open it
+  and cannot forge an answer the browser accepts. A failed command carries one
+  fixed sentence and, sealed the same way, what the server saw; progress lines
+  are fixed phrases too. A success carries no text except Logs and Edit
+  Compose. The first stack or container command on a server in a browser asks
+  for the one-time fingerprint check, and a server outside the private network
+  is refused before anything is signed, so its stacks cannot be changed from the
+  dashboard.
+- **The guard comes before Docker.** Contained stacks reach the internet only,
+  and the rules that say so exist before the first container starts. When the
+  guard cannot be installed, Docker stays down on that server: the cost is the
+  server's apps, not an open firewall.
 - **A Contained stack is vetted on the server.** The server checks the
   pasted text, then runs `docker compose config` as a user with no privileges
   and vets that output too, so anchors, `extends`, `include` and `${…}` cannot
@@ -314,8 +357,8 @@ than 90 days is deleted. The Checks page links to the page when the Worker's
   for a server whose fingerprint this browser has checked.
 - **Reports cost availability only.** Container states and inventories are
   unsigned reports: a Worker that has been taken over can hide a failure or
-  invent one, but cannot start, stop or read anything. Logs and compose text
-  a server sends back are kept for 24 hours and left out of the action list.
+  invent one, but cannot start, stop or read anything. A sealed Logs, compose or
+  failure answer is kept for 24 hours and left out of the action list.
 - **Stated limits.** At enroll a machine takes its first passkey trust from the
   Worker once; the fingerprint check is how the owner closes that gap for the
   network. A fresh browser must check every member's fingerprint once before it
@@ -344,7 +387,7 @@ is never seen by a production Worker, which follows `releases/latest`. Test buil
 overhaul branch are `0.7.90` and up; the first release of the new line is
 `0.8.0`, made from `main`.
 
-Agents older than `0.7.93` are refused by the Worker.
+Agents older than `0.7.94` are refused by the Worker.
 
 ## Test deployment
 

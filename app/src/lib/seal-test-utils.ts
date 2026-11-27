@@ -1,4 +1,9 @@
+import { joinFingerprint } from "@krynodes/protocol";
+
 import { b64url, fromB64url } from "./passkeys";
+import { memoryStore, remember } from "./pins";
+import { network } from "./rules-test-utils";
+import type { SealDeps } from "./stacks";
 
 const CURVE = { name: "ECDH", namedCurve: "P-256" } as const;
 
@@ -58,4 +63,87 @@ export async function open(to: Recipient, sealed: string) {
       ),
     ),
   };
+}
+
+export async function sealFromNode(
+  node: Recipient,
+  to: string,
+  text: string,
+): Promise<string> {
+  const toRaw = fromB64url(to);
+  const target = await crypto.subtle.importKey("raw", toRaw, CURVE, false, []);
+  const ephemeral = (await crypto.subtle.generateKey(CURVE, true, [
+    "deriveBits",
+  ])) as CryptoKeyPair;
+  const epk = new Uint8Array(
+    await crypto.subtle.exportKey("raw", ephemeral.publicKey),
+  );
+  const toEphemeral = await crypto.subtle.deriveBits(
+    { name: "ECDH", public: target },
+    ephemeral.privateKey,
+    256,
+  );
+  const toNode = await crypto.subtle.deriveBits(
+    { name: "ECDH", public: target },
+    node.privateKey,
+    256,
+  );
+  const base = await crypto.subtle.importKey(
+    "raw",
+    new Uint8Array([...new Uint8Array(toEphemeral), ...new Uint8Array(toNode)]),
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new Uint8Array([...epk, ...node.raw, ...toRaw]),
+      info: new TextEncoder().encode("krynodes-seal-from-node-v1"),
+    },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"],
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(text),
+  );
+  return b64url(
+    new TextEncoder().encode(
+      JSON.stringify({
+        v: 2,
+        epk: b64url(epk),
+        iv: b64url(iv),
+        ct: b64url(ct),
+      }),
+    ),
+  );
+}
+
+export async function pinnedNode() {
+  const key = await recipient();
+  const document = network([]);
+  const member = document.members[0]!;
+  member.sealKey = key.public;
+  const store = memoryStore();
+  remember(store, [
+    {
+      node: member.node,
+      fingerprint: await joinFingerprint(
+        member.key,
+        member.signer,
+        member.sealKey,
+      ),
+    },
+  ]);
+  const deps: SealDeps = {
+    current: async () => ({ document, hash: "q".repeat(43) }),
+    store,
+  };
+  return { key, deps };
 }

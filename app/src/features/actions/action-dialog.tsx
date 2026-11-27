@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useDeleteNode } from "@/features/fleet/use-fleet";
+import { useOneTimeCheck } from "@/features/network/one-time-check";
 import { errorMessage } from "@/lib/http";
 import { failure } from "@/lib/passkeys";
 import { cn } from "@/lib/utils";
@@ -117,6 +118,7 @@ export function ActionDialog({
 }) {
   const Part = ask.destructive ? ALERT : PLAIN;
   const client = useQueryClient();
+  const { check, panel, checking } = useOneTimeCheck();
   const [state, setState] = useState<RunState>({ phase: "confirm", lines: [] });
   const quit = useRef<AbortController | null>(null);
   useEffect(() => () => quit.current?.abort(), []);
@@ -130,6 +132,7 @@ export function ActionDialog({
       ask,
       (line) => setState((now) => ({ ...now, lines: [...now.lines, line] })),
       quit.current.signal,
+      { check },
     ).then(
       (row) => {
         setState((now) => ({ ...now, phase: "result", row }));
@@ -156,7 +159,11 @@ export function ActionDialog({
           </Part.Description>
         </Part.Header>
         {state.phase === "confirm" && children}
-        <ActionBody state={state} name={node.name} />
+        {panel}
+        <ActionBody
+          state={checking ? { ...state, phase: "confirm" } : state}
+          name={node.name}
+        />
         {drop.error && (
           <p role="alert" className="text-sm text-destructive">
             {errorMessage(drop.error)}

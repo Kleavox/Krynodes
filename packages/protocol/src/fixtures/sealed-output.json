@@ -1,0 +1,13 @@
+{
+  "jwk": {
+    "crv": "P-256",
+    "d": "Ha3OL1dti1njLKg9Q2D-JOeR8AmA8v43NMPUY-DFvbY",
+    "kty": "EC",
+    "x": "NR7Ywu9QDBF9DpaHKhmq2KQKQCj4N7yHpeEyo28-4ro",
+    "y": "7RgByrxru8NaYiQQoEG-KoLZSIqpzeJfp2dcBEIGRG0"
+  },
+  "to": "BDUe2MLvUAwRfQ6WhyoZqtikCkAo-De8h6XhMqNvPuK67RgByrxru8NaYiQQoEG-KoLZSIqpzeJfp2dcBEIGRG0",
+  "node": "BDrThhqVYhOSUWu1k-8FWD7S5YZvXLYmCjAXI3_Ym5Cv0JYcfjcHWmeRo5xh9WKVsCttJlZ7YV5gqkHuHI6DOI0",
+  "plaintext": "2026-11-25T10:00:00Z app-1 ready\n2026-11-25T10:00:01Z app-1 listening on 203.0.113.7: 8080 ünïcode ✓\n",
+  "sealed": "eyJ2IjoyLCJlcGsiOiJCUEgwZnFLQ09pMjNjVmdycC1nVVRYUGVXS1ZKX2pEU1hjbXFGcDdReE0wWTJMdHdSUkJpS1N1YVJCSEpYdmJZWXZiaVpzenVCd2lzQWVxU21OelF4SkkiLCJpdiI6ImN1aWpXLWlobXVybHNNNWciLCJjdCI6InIzVTVLaEp6UkdZdDRXS2xvUTVpblB3LW1zRmhaLVBZQjNtV21ONnFDcHhDQlRsallSZlhEd1dDdEliaEJZNWlGLW8xZDdFcDdSTjc3S2J4VjV0UW1fR2tka1RUcEpfRlVjN3RtR3BzazdzdjNHX3ExbWlfZkhIV0dmUkxvUkw3Ujk0aXhmQURUbEdfenZYUC10T2xYVkhDeW42bUNqMzRydyJ9"
+}

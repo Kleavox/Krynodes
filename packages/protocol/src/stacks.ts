@@ -30,8 +30,8 @@ export const STACK_ACTIONS = {
   docker: ["install"],
 } as const;
 
-const MAX_COMPOSE_BYTES = 32768;
-const SEALED_ENV = /^[A-Za-z0-9_-]{1,24576}$/u;
+const SEALED_COMPOSE = /^[A-Za-z0-9_-]{1,58464}$/u;
+const SEALED_ENV = /^[A-Za-z0-9_-]{1,29337}$/u;
 const MAX_PORTS = 32;
 const MAX_LINES = 500;
 
@@ -41,11 +41,6 @@ interface Shape {
   need: Record<string, Check>;
   may: Record<string, Check>;
 }
-
-const compose: Check = (text) => {
-  const size = new TextEncoder().encode(text).length;
-  return size >= 1 && size <= MAX_COMPOSE_BYTES;
-};
 
 const ports: Check = (text) => {
   if (text === "") return true;
@@ -59,11 +54,16 @@ const ports: Check = (text) => {
 
 const access: Check = (text) => text === "contained" || text === "full";
 
+const RECIPIENT = /^[A-Za-z0-9_-]{87}$/u;
+
+const to: Check = (text) => RECIPIENT.test(text);
+
 const SAVE: Shape = {
   need: {
-    compose,
+    compose: (text) => SEALED_COMPOSE.test(text),
     access,
     network: ports,
+    to,
   },
   may: {
     env: (text) => SEALED_ENV.test(text),
@@ -76,13 +76,15 @@ const lines: Check = (text) =>
   /^[1-9]\d{0,2}$/u.test(text) && Number(text) <= MAX_LINES;
 
 const STACK_LOGS: Shape = {
-  need: { lines },
+  need: { lines, to },
   may: { service: (text) => SERVICE_NAME.test(text) },
 };
 
-const CONTAINER_LOGS: Shape = { need: { lines }, may: {} };
+const CONTAINER_LOGS: Shape = { need: { lines, to }, may: {} };
 
-const ADOPT: Shape = { need: { access }, may: {} };
+const SEALED: Shape = { need: { to }, may: {} };
+
+const ADOPT: Shape = { need: { access, to }, may: {} };
 
 const NONE: Shape = { need: {}, may: {} };
 
@@ -94,7 +96,7 @@ function shapeOf(kind: StackKind, action: string): Shape {
   }
   if (kind === "stack" && action === "adopt") return ADOPT;
   if (action === "logs") return kind === "stack" ? STACK_LOGS : CONTAINER_LOGS;
-  return NONE;
+  return kind === "stack" || kind === "container" ? SEALED : NONE;
 }
 
 const isPlain = (value: unknown): value is Record<string, unknown> => {

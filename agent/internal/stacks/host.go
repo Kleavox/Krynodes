@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Kleavox/krynodes/agent/internal/daemon"
 	"github.com/Kleavox/krynodes/agent/internal/docker"
 	"github.com/Kleavox/krynodes/agent/internal/platform"
 	"github.com/Kleavox/krynodes/agent/internal/reporter"
@@ -26,9 +25,11 @@ func (e Env) container(ctx context.Context, cmd trust.Command, _ func(string)) (
 	if cmd.Action == "logs" {
 		output, err := e.docker(ctx, stepTimeout, "logs", "--tail", cmd.Args["lines"], "--timestamps", "--", name)
 		if err != nil {
-			return "", failed("logs", output, err)
+			return "", failed("logs", nil, err)
 		}
-		daemon.Output(ctx, cut(output))
+		if err := e.deliver(ctx, cmd.Args["to"], cut(output)); err != nil {
+			return "", err
+		}
 		return fmt.Sprintf("The last %s lines of %s.", cmd.Args["lines"], name), nil
 	}
 	action := cmd.Action
@@ -76,7 +77,7 @@ func (e Env) unit(ctx context.Context, cmd trust.Command, _ func(string)) (strin
 }
 
 func (e Env) installDocker(ctx context.Context, _ trust.Command, progress func(string)) (string, error) {
-	progress("Installing Docker")
+	progress(stepDocker)
 	version, installed, err := platform.InstallDocker(ctx, e.Platform)
 	switch {
 	case err != nil:
@@ -188,16 +189,29 @@ func (e Env) contained() bool {
 	})
 }
 
+func (e Env) keepGuard(ctx context.Context) error {
+	var problems []error
+	host := e.Platform
+	if e.contained() {
+		host.Prove = nil
+		if err := Guard(ctx, e.Run); err != nil {
+			problems = append(problems, fmt.Errorf("the guard of Contained stacks: %w", err))
+		}
+	}
+	if err := host.GuardInstalledDocker(ctx); err != nil && !errors.Is(err, platform.ErrNoDockerUnit) {
+		problems = append(problems, fmt.Errorf("Docker's guard drop-in: %w", err))
+	}
+	return errors.Join(problems...)
+}
+
 func (e Env) GuardContained(ctx context.Context, every time.Duration) {
 	said := ""
 	for {
-		if e.contained() {
-			err := Guard(ctx, e.Run)
-			if text := fmt.Sprint(err); err != nil && text != said {
-				log.Printf("the guard of Contained stacks: %v", err)
-			}
-			said = fmt.Sprint(err)
+		err := e.keepGuard(ctx)
+		if text := fmt.Sprint(err); err != nil && text != said {
+			log.Print(text)
 		}
+		said = fmt.Sprint(err)
 		select {
 		case <-ctx.Done():
 			return
@@ -206,10 +220,14 @@ func (e Env) GuardContained(ctx context.Context, every time.Duration) {
 	}
 }
 
-func Uninstall(ctx context.Context, run docker.Runner, state string, deleteApps bool) ([]string, []string, bool) {
+func Uninstall(ctx context.Context, host platform.Env, state string, deleteApps bool) ([]string, []string, bool) {
+	run := docker.Runner(host.Run)
 	e := Env{Run: run, State: state, Server: "this server", Now: time.Now}
-	Unguard(ctx, run)
 	var said, problems []string
+	if err := host.UnguardDocker(ctx); err != nil {
+		problems = append(problems, fmt.Sprintf("the guard drop-in %s: %v; Docker does not start until it is gone and systemd is reloaded", platform.DockerGuardDropInPath, err))
+	}
+	Unguard(ctx, run)
 	stayed := false
 	keepIn := filepath.Join(filepath.Dir(state), "krynodes-stacks")
 	entries, _ := os.ReadDir(filepath.Join(state, "compose"))

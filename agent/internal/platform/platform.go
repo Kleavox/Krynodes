@@ -14,10 +14,12 @@ import (
 type Runner func(ctx context.Context, name string, args ...string) ([]byte, int, error)
 
 type Env struct {
-	Root  string
-	Run   Runner
-	Fetch func(ctx context.Context, url string) ([]byte, error)
-	sleep func(time.Duration)
+	Root       string
+	Run        Runner
+	Fetch      func(ctx context.Context, url string) ([]byte, error)
+	Executable string
+	Prove      func(ctx context.Context) error
+	sleep      func(time.Duration)
 }
 
 type Family string

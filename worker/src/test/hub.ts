@@ -93,7 +93,7 @@ export function hubHarness(db: D1Database, extra: Partial<Env> = {}) {
   const env = { DB: db, ...extra } as unknown as Env;
   const fresh = () => new FleetHub(ctx as unknown as DurableObjectState, env);
   let hub = fresh();
-  const connect = (nodeId: string, version: string | null = "0.7.93") => {
+  const connect = (nodeId: string, version: string | null = "0.7.94") => {
     const ws = new FakeSocket();
     joins.push(hub.join(ws as unknown as WebSocket, nodeId, version));
     return ws;

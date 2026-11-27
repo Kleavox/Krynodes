@@ -50,6 +50,7 @@ type Options struct {
 	Client         *http.Client
 	Run            func(name string, args ...string) error
 	Output         func(name string, args ...string) (string, error)
+	Combined       func(name string, args ...string) (string, error)
 	Stall          time.Duration
 	Attempts       int
 	Budget         time.Duration
@@ -409,8 +410,8 @@ func (o Options) install(target string, binary []byte) error {
 	}
 	syncDirectory(filepath.Dir(current))
 	failure := ""
-	if err := o.Run(current, "install-service"); err != nil {
-		failure = fmt.Sprintf("refresh service units: %v", err)
+	if said, err := o.Combined(current, "install-service"); err != nil {
+		failure = fmt.Sprintf("refresh service units: %v%s", err, tailOf(said))
 	} else if err := o.Run("systemctl", "restart", serviceUnit); err != nil {
 		failure = fmt.Sprintf("restart the agent: %v", err)
 	} else if !o.stayedUp() {
@@ -425,6 +426,17 @@ func (o Options) install(target string, binary []byte) error {
 	_ = o.Run(current, "install-service")
 	_ = o.Run("systemctl", "restart", serviceUnit)
 	return fmt.Errorf("%s; rolled back to %s", failure, o.CurrentVersion)
+}
+
+func tailOf(output string) string {
+	text := strings.Join(strings.Fields(output), " ")
+	if text == "" {
+		return ""
+	}
+	if len(text) > 400 {
+		text = "..." + strings.ToValidUTF8(text[len(text)-400:], "")
+	}
+	return ": " + text
 }
 
 func (o Options) stayedUp() bool {

@@ -14,7 +14,7 @@ const iso = (minutes: number) =>
 const hello = {
   type: "hello",
   v: 1,
-  version: "0.7.93",
+  version: "0.7.94",
   hostname: "server-1",
   os: "linux",
   arch: "amd64",

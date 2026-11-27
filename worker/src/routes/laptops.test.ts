@@ -18,7 +18,7 @@ const host = {
   os: "windows",
   arch: "amd64",
   kernel: "10.0.26100",
-  version: "0.7.93",
+  version: "0.7.94",
 };
 
 const keys = {
@@ -34,7 +34,7 @@ async function ready() {
   await addDevice(harness.db, "d1", "pk1");
   await harness.db
     .prepare(
-      "INSERT INTO agent_release (id, version, checked_at) VALUES (1, '0.7.93', '2026-11-22T00:00:00.000Z')",
+      "INSERT INTO agent_release (id, version, checked_at) VALUES (1, '0.7.94', '2026-11-22T00:00:00.000Z')",
     )
     .run();
   const enroll = (token: string, body: unknown) =>
@@ -70,7 +70,7 @@ describe("POST /api/laptops", () => {
       origin: ORIGIN,
       endpoint: AGENT,
       download:
-        "https://github.com/Kleavox/Krynodes/releases/download/agent-v0.7.93/krynodes-windows-amd64.exe",
+        "https://github.com/Kleavox/Krynodes/releases/download/agent-v0.7.94/krynodes-windows-amd64.exe",
     });
     expect(Date.parse(body.expiresAt!) - before).toBeGreaterThan(599_000);
     expect(Date.parse(body.expiresAt!) - before).toBeLessThan(601_000);

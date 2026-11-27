@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -87,6 +88,8 @@ type harness struct {
 	serve    func(w http.ResponseWriter, r *http.Request, name string) bool
 	health   string
 	reported string
+	refresh  error
+	said     string
 }
 
 const asset = "/agent-v0.5.2/krynodes-linux-amd64"
@@ -144,6 +147,12 @@ func newHarness(t *testing.T, public ed25519.PublicKey, published release) *harn
 			defer h.mu.Unlock()
 			h.runs = append(h.runs, strings.Join(append([]string{filepath.Base(name)}, args...), " "))
 			return nil
+		},
+		Combined: func(name string, args ...string) (string, error) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.runs = append(h.runs, strings.Join(append([]string{filepath.Base(name)}, args...), " "))
+			return h.said, h.refresh
 		},
 		Output: func(name string, args ...string) (string, error) {
 			if filepath.Base(name) == "systemctl" {
@@ -334,6 +343,37 @@ func TestApplyRollsBackWhenTheNewAgentDoesNotStayUp(t *testing.T) {
 	}
 	if status := statusOf(t, h); !strings.Contains(status.Message, "rolled back") {
 		t.Fatalf("status %+v", status)
+	}
+}
+
+func TestApplySaysWhyTheServiceUnitsCouldNotBeRefreshed(t *testing.T) {
+	public, private := keys(t)
+	h := newHarness(t, public, signedRelease(t, private, []byte("new agent")))
+	h.refresh = errors.New("exit status 1")
+	h.said = "the guard of Contained stacks: iptables DOCKER-USER: iptables: Permission denied" + strings.Repeat("\n", 3)
+
+	err := Apply(h.options)
+	if err == nil || !strings.Contains(err.Error(), "refresh service units: exit status 1: the guard of Contained stacks: iptables DOCKER-USER: iptables: Permission denied") || !strings.Contains(err.Error(), "rolled back to 0.5.1") {
+		t.Fatalf("the reason of the failure comes with it: %v", err)
+	}
+	if got := contentOf(t, h.options.BinaryPath); got != "old agent" {
+		t.Fatalf("binary is %q", got)
+	}
+	if status := statusOf(t, h); !strings.Contains(status.Message, "Permission denied") || strings.Contains(status.Message, "\n\n") {
+		t.Fatalf("status %+v", status)
+	}
+
+	h = newHarness(t, public, signedRelease(t, private, []byte("new agent")))
+	h.refresh = errors.New("exit status 1")
+	h.said = strings.Repeat("x", 1000) + " END"
+	if err := Apply(h.options); err == nil || strings.Contains(err.Error(), strings.Repeat("x", 500)) || !strings.Contains(err.Error(), "END") {
+		t.Fatalf("only the tail of a long output is kept: %v", err)
+	}
+
+	h = newHarness(t, public, signedRelease(t, private, []byte("new agent")))
+	h.refresh = errors.New("exit status 1")
+	if err := Apply(h.options); err == nil || !strings.Contains(err.Error(), "refresh service units: exit status 1; rolled back") {
+		t.Fatalf("with no output there is nothing to add: %v", err)
 	}
 }
 

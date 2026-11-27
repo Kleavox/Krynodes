@@ -35,8 +35,7 @@ export interface SealDeps {
 }
 
 export const ACCESS_LINES: Record<Access, string> = {
-  contained:
-    "The stack keeps to its own folder and network. Host paths, privileged mode and host namespaces are refused.",
+  contained: "Reaches the internet only; no host paths.",
   full: "The stack can reach the server itself: host folders, devices and its network.",
 };
 
@@ -46,17 +45,22 @@ export const CONNECTIONS_LINE =
 const MAX_PORTS = 32;
 const MAX_COMPOSE = 32768;
 const MAX_ENV = 16384;
+const STAND_IN_KEY = "A".repeat(87);
 
 const bytes = (text: string) => new TextEncoder().encode(text).length;
 
 export const stackNameValid = (name: string) => isValidTarget("stack", name);
 
-async function sealKeyFor(node: FleetNode, deps: SealDeps): Promise<string> {
+export async function sealKeyFor(
+  node: FleetNode,
+  deps: SealDeps,
+  refusal = "its compose file cannot be sealed",
+): Promise<string> {
   const current = await (deps.current ?? currentDocument)();
   const member = current?.document.members.find((one) => one.node === node.id);
   if (!current || !member) {
     throw new Error(
-      `${node.name} is not in the private network, so its .env cannot be sealed.`,
+      `${node.name} is not in the private network, so ${refusal}.`,
     );
   }
   const store = deps.store === undefined ? browserStore() : deps.store;
@@ -87,25 +91,20 @@ export async function buildStackArgs(
   if (bytes(form.env) > MAX_ENV) {
     throw new Error("The .env must be at most 16 KB.");
   }
-  const args: Record<string, string> = {
-    compose: form.compose,
-    access: form.access,
-    network: [...new Set(form.network)].join(","),
-  };
   const title = form.title.trim();
-  if (title !== "") args.title = title;
-  if (form.env.trim() !== "") {
-    args.env = await seal(await sealKeyFor(node, deps), form.env);
-  }
   if (title !== "" && !stackTitleValid(title)) {
     throw new Error("A title is at most 64 characters on one line.");
   }
-  if (!stackArgsValid("stack", "create", args)) {
-    throw new Error(
-      args.env
-        ? "The .env is too long once sealed. Shorten it."
-        : "The server would refuse these settings.",
-    );
+  const key = await sealKeyFor(node, deps);
+  const args: Record<string, string> = {
+    compose: await seal(key, form.compose),
+    access: form.access,
+    network: [...new Set(form.network)].join(","),
+  };
+  if (title !== "") args.title = title;
+  if (form.env.trim() !== "") args.env = await seal(key, form.env);
+  if (!stackArgsValid("stack", "create", { ...args, to: STAND_IN_KEY })) {
+    throw new Error("The server would refuse these settings.");
   }
   return args;
 }

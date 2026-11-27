@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import sealed from "../../../packages/protocol/src/fixtures/sealed-output.json";
 import { toB64url } from "../lib/b64url";
 import { addNode, testEnv } from "../test/env";
 
@@ -121,6 +122,7 @@ describe("POST /api/actions", () => {
       name: string,
       act: string,
       id: string,
+      keyed = true,
     ) =>
       (
         await send("POST", "/api/actions", {
@@ -138,7 +140,14 @@ describe("POST /api/actions", () => {
             action: act,
             issuedAt: "2026-11-22T00:00:00.000Z",
             expiresAt: "2026-11-22T01:00:00.000Z",
-            ...(act === "logs" ? { args: { lines: "10" } } : {}),
+            ...((kind === "stack" || kind === "container") && keyed
+              ? {
+                  args: {
+                    ...(act === "logs" ? { lines: "10" } : {}),
+                    to: sealed.to,
+                  },
+                }
+              : {}),
           }),
         })
       ).status;
@@ -158,6 +167,15 @@ describe("POST /api/actions", () => {
     expect(await status("unit", "nginx.service", "remove", "t14")).toBe(400);
     expect(await status("container", "web-app-1", "deploy", "t15")).toBe(400);
     expect(await status("pod", "web", "start", "t16")).toBe(400);
+    expect(await status("stack", "web", "deploy", "t17", false)).toBe(400);
+    expect(await status("stack", "web", "stop", "t18", false)).toBe(400);
+    expect(
+      await status("container", "web-app-1", "restart", "t19", false),
+    ).toBe(400);
+    expect(await status("container", "web-app-1", "restart", "t20")).toBe(201);
+    expect(await status("unit", "nginx.service", "restart", "t21", false)).toBe(
+      201,
+    );
   });
 
   it("refuses a malformed action before it touches anything", async () => {

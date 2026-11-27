@@ -158,6 +158,7 @@ export function readForEdit(
   node: FleetNode,
   project: string,
   signal?: AbortSignal,
+  deps?: SealDeps,
 ): Promise<ReadStack> {
   return runAction(
     client,
@@ -170,9 +171,14 @@ export function readForEdit(
     },
     undefined,
     signal,
+    deps,
   ).then((row) => {
     if (row.status === "failed") {
-      throw new Error(row.message ?? "The compose file could not be read.");
+      throw new Error(
+        [row.message ?? "The compose file could not be read.", row.output]
+          .filter(Boolean)
+          .join(" "),
+      );
     }
     return readStack(row.output);
   });
@@ -204,6 +210,7 @@ export function saveStack(
       },
       onLine,
       signal,
+      deps,
     ),
   );
 }
@@ -268,7 +275,7 @@ export function NewStackDialog({
     plan.current.started = key;
     const controller = new AbortController();
     const live = () => !controller.signal.aborted;
-    void readForEdit(client, from, asked.project, controller.signal)
+    void readForEdit(client, from, asked.project, controller.signal, { check })
       .then((read) => {
         if (!live()) return;
         plan.current.done = true;
@@ -291,7 +298,7 @@ export function NewStackDialog({
       controller.abort();
       if (!plan.current.done) plan.current.started = null;
     };
-  }, [client, key]);
+  }, [client, key, check]);
 
   const busy = state.phase === "sending";
   const save = () => {

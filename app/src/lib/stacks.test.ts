@@ -16,6 +16,7 @@ import {
   publishedPorts,
   readStack,
   stackLine,
+  type SealDeps,
   type StackForm,
 } from "./stacks";
 
@@ -97,13 +98,71 @@ const decode = (text: string) =>
     ),
   ) as Record<string, unknown>;
 
+interface Signed {
+  kind: string;
+  name: string;
+  action: string;
+  args: Record<string, string>;
+}
+
+async function signed(
+  args: Record<string, string>,
+  deps: SealDeps,
+  action = "create",
+) {
+  authenticator();
+  vi.stubGlobal("location", { hostname: "kry.example.test" });
+  const posted: Record<string, unknown>[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init: RequestInit = {}) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      posted.push(body);
+      return new Response(
+        JSON.stringify({
+          id: body.id,
+          nodeId: S1,
+          kind: "stack",
+          name: "web",
+          action,
+          title: "New Stack",
+          status: "done",
+          message: "web runs.",
+          createdAt: "2026-11-22T10:00:00.000Z",
+          finishedAt: "2026-11-22T10:00:01.000Z",
+        }),
+        { status: 201 },
+      );
+    }),
+  );
+  await runAction(
+    new QueryClient(),
+    node,
+    {
+      kind: "stack",
+      action,
+      name: "web",
+      title: "New Stack",
+      args,
+    },
+    undefined,
+    undefined,
+    deps,
+  );
+  const body = String(posted[0]!.signed);
+  const command = decode(
+    (JSON.parse(body) as { command: string }).command,
+  ) as unknown as Signed;
+  return { posted: posted[0]!, body, command };
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   endSession();
 });
 
 describe("a stack's signed settings", () => {
-  it("new stack signs the compose and the sealed env inside the command", async () => {
+  it("new stack signs the sealed compose and the sealed env inside the command", async () => {
     const { to, fingerprint, current } = await sealedTo();
     const store = memoryStore();
     remember(store, [{ node: S1, fingerprint }]);
@@ -112,59 +171,40 @@ describe("a stack's signed settings", () => {
       node,
       { current, store },
     );
-    authenticator();
-    vi.stubGlobal("location", { hostname: "kry.example.test" });
-    const posted: Record<string, unknown>[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init: RequestInit = {}) => {
-        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        posted.push(body);
-        return new Response(
-          JSON.stringify({
-            id: body.id,
-            nodeId: S1,
-            kind: "stack",
-            name: "web",
-            action: "create",
-            title: "New Stack",
-            status: "done",
-            message: "web runs.",
-            createdAt: "2026-11-22T10:00:00.000Z",
-            finishedAt: "2026-11-22T10:00:01.000Z",
-          }),
-          { status: 201 },
-        );
-      }),
-    );
-    await runAction(new QueryClient(), node, {
-      kind: "stack",
-      action: "create",
-      name: "web",
-      title: "New Stack",
-      args,
-    });
-    expect(posted[0]).toMatchObject({ kind: "stack", name: "web" });
-    const signed = JSON.parse(String(posted[0]!.signed)) as {
-      command: string;
-    };
-    const command = decode(signed.command) as {
-      kind: string;
-      name: string;
-      action: string;
-      args: Record<string, string>;
-    };
+    const { posted, command } = await signed(args, { current, store });
+    expect(posted).toMatchObject({ kind: "stack", name: "web" });
     expect(command).toMatchObject({
       kind: "stack",
       name: "web",
       action: "create",
     });
-    expect(command.args.compose).toBe(COMPOSE);
     expect(command.args.access).toBe("contained");
     expect(command.args.network).toBe("8080");
     expect(command.args.title).toBe("Web");
+    expect(command.args.to).toMatch(/^[A-Za-z0-9_-]{87}$/u);
+    expect(command.args.compose).not.toContain("nginx");
     expect(command.args.env).not.toContain("TOKEN");
+    expect((await open(to, command.args.compose!)).text).toBe(COMPOSE);
     expect((await open(to, command.args.env!)).text).toBe("TOKEN=abc\n");
+  });
+
+  it("the signed save carries no compose text", async () => {
+    const { to, fingerprint, current } = await sealedTo();
+    const store = memoryStore();
+    remember(store, [{ node: S1, fingerprint }]);
+    const secret = "    image: registry.example.test/private-app:9.9.9";
+    const compose = `services:\n  app:\n${secret}\n`;
+    const args = await buildStackArgs(form({ compose }), node, {
+      current,
+      store,
+    });
+    const { body, command } = await signed(args, { current, store }, "edit");
+    for (const text of [body, JSON.stringify(command)]) {
+      expect(text).not.toContain("private-app");
+      expect(text).not.toContain("registry.example.test");
+    }
+    expect(command.action).toBe("edit");
+    expect((await open(to, command.args.compose!)).text).toBe(compose);
   });
 
   it("an unanchored server shows the fingerprint check before sealing", async () => {
@@ -204,25 +244,83 @@ describe("a stack's signed settings", () => {
     expect(again).not.toHaveBeenCalled();
   });
 
-  it("a stack without an .env asks for no fingerprint and seals nothing", async () => {
+  it("a stack without an .env still seals its compose and sends no env", async () => {
+    const { to, fingerprint, current } = await sealedTo();
+    const store = memoryStore();
+    remember(store, [{ node: S1, fingerprint }]);
     const check = vi.fn(async () => false);
-    const current = vi.fn(async () => null);
-    expect(
-      await buildStackArgs(form({ access: "full" }), node, { current, check }),
-    ).toEqual({ compose: COMPOSE, access: "full", network: "" });
-    expect(current).not.toHaveBeenCalled();
+    const args = await buildStackArgs(form({ access: "full" }), node, {
+      current,
+      store,
+      check,
+    });
+    expect(Object.keys(args).sort()).toEqual(["access", "compose", "network"]);
+    expect((await open(to, args.compose!)).text).toBe(COMPOSE);
     expect(check).not.toHaveBeenCalled();
   });
 
-  it("refuses an .env for a server outside the private network", async () => {
+  it("an unanchored server asks for the fingerprint once for a compose and an .env", async () => {
+    const { to, current } = await sealedTo();
+    const check = vi.fn(async () => true);
+    const args = await buildStackArgs(form({ env: "A=1" }), node, {
+      current,
+      store: memoryStore(),
+      check,
+    });
+    expect(check).toHaveBeenCalledTimes(1);
+    expect((await open(to, args.compose!)).text).toBe(COMPOSE);
+    expect((await open(to, args.env!)).text).toBe("A=1");
+  });
+
+  it("refuses a save for a server outside the private network", async () => {
+    for (const env of ["", "A=1"]) {
+      await expect(
+        buildStackArgs(form({ env }), node, {
+          current: async () => null,
+          store: memoryStore(),
+        }),
+      ).rejects.toThrow(
+        "server-1 is not in the private network, so its compose file cannot be sealed.",
+      );
+    }
+  });
+
+  it("seals a compose of 32768 bytes into what the server accepts, and a longer one never", async () => {
+    const { to, fingerprint, current } = await sealedTo();
+    const store = memoryStore();
+    remember(store, [{ node: S1, fingerprint }]);
+    const text = "a".repeat(32768);
+    const args = await buildStackArgs(form({ compose: text }), node, {
+      current,
+      store,
+    });
+    expect(args.compose).toHaveLength(58463);
+    expect((await open(to, args.compose!)).text).toBe(text);
     await expect(
-      buildStackArgs(form({ env: "A=1" }), node, {
-        current: async () => null,
-        store: memoryStore(),
+      buildStackArgs(form({ compose: "€".repeat(10923) }), node, {
+        current,
+        store,
       }),
-    ).rejects.toThrow(
-      "server-1 is not in the private network, so its .env cannot be sealed.",
+    ).rejects.toThrow("The compose file must be at most 32 KB.");
+  });
+
+  it("seals a 16384-byte .env into what the server accepts, and a longer one never", async () => {
+    const { to, fingerprint, current } = await sealedTo();
+    const store = memoryStore();
+    remember(store, [{ node: S1, fingerprint }]);
+    const env = "K=" + "é".repeat(8191);
+    expect(new TextEncoder().encode(env)).toHaveLength(16384);
+    const args = await buildStackArgs(
+      form({ compose: "a".repeat(32768), env }),
+      node,
+      { current, store },
     );
+    expect(args.compose).toHaveLength(58463);
+    expect(args.env).toHaveLength(29336);
+    expect((await open(to, args.env!)).text).toBe(env);
+    await expect(
+      buildStackArgs(form({ env: env + "a" }), node, { current, store }),
+    ).rejects.toThrow("The .env must be at most 16 KB.");
   });
 
   it("refuses an empty or oversized compose before anything is signed", async () => {

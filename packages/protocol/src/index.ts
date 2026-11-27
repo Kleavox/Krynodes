@@ -101,7 +101,7 @@ export const signedCommandSchema = z.strictObject({
   command: z
     .string()
     .min(1)
-    .max(65536)
+    .max(147456)
     .regex(/^[A-Za-z0-9_-]+$/u),
   signature: b64url,
 });

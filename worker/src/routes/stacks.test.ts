@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import sealed from "../../../packages/protocol/src/fixtures/sealed-output.json";
 import fixture from "../../../packages/protocol/src/fixtures/stack-args.json";
 import worker from "../index";
 import { toB64url } from "../lib/b64url";
@@ -65,6 +66,8 @@ const signedCommand = (command: Record<string, unknown>) =>
     command: toB64url(new TextEncoder().encode(JSON.stringify(command))),
     signature: "c2ln",
   });
+
+const keyed = { to: sealed.to };
 
 let next = 0;
 const action = (
@@ -316,6 +319,83 @@ describe("action output", () => {
   });
 });
 
+describe("sealed output", () => {
+  const result = (output: string) => ({
+    type: "result",
+    id: "l1",
+    ok: true,
+    message: "server-1 sent 200 lines.",
+    output,
+  });
+
+  async function waiting() {
+    const { db, call } = await fleet();
+    await db
+      .prepare(
+        "INSERT INTO actions (id, node_id, kind, name, action, title, status, created_at) VALUES ('l1', 'n1', 'stack', 'web', 'logs', 'Logs', 'sent', ?)",
+      )
+      .bind(new Date().toISOString())
+      .run();
+    const harness = hubHarness(db);
+    const ws = harness.connect("n1");
+    await harness.settled();
+    return { db, call, harness, ws };
+  }
+
+  it("a sealed output of 131072 characters is stored and returned", async () => {
+    const { db, call, harness, ws } = await waiting();
+    const output = "A".repeat(131072);
+    await harness.say(ws, result(output));
+    expect(ws.replies()).toEqual([{ type: "ack", id: "l1" }]);
+    expect(
+      (await db
+        .prepare("SELECT length(output) AS size FROM actions WHERE id = 'l1'")
+        .first<{ size: number }>())!.size,
+    ).toBe(131072);
+    const one = await call("/api/actions/l1");
+    expect(one.status).toBe(200);
+    expect(await one.json()).toMatchObject({ status: "done", output });
+  });
+
+  it("a failure keeps its sealed details beside the fixed message, out of the list", async () => {
+    const { call, harness, ws } = await waiting();
+    const output = "B".repeat(900);
+    await harness.say(ws, {
+      type: "result",
+      id: "l1",
+      ok: false,
+      message: "Deploy of web failed.",
+      output,
+    });
+    expect(ws.replies()).toEqual([{ type: "ack", id: "l1" }]);
+    expect(await (await call("/api/actions/l1")).json()).toMatchObject({
+      status: "failed",
+      message: "Deploy of web failed.",
+      output,
+    });
+    const listed = (await (await call("/api/actions")).json()) as Record<
+      string,
+      unknown
+    >[];
+    expect(listed[0]).toMatchObject({
+      status: "failed",
+      message: "Deploy of web failed.",
+    });
+    expect(listed[0]).not.toHaveProperty("output");
+  });
+
+  it("one of 131073 is refused and the action stays open", async () => {
+    const { db, harness, ws } = await waiting();
+    await harness.say(ws, result("A".repeat(131073)));
+    expect(ws.replies()).toEqual([{ type: "error", code: "INVALID_MESSAGE" }]);
+    expect(
+      await db
+        .prepare("SELECT status, output FROM actions WHERE id = 'l1'")
+        .first(),
+    ).toEqual({ status: "sent", output: null });
+  });
+});
+
 describe("GET /api/stacks", () => {
   it("lists every server with its stacks", async () => {
     const { db, call } = await fleet();
@@ -380,7 +460,12 @@ describe("stack actions", () => {
       ["unit", "systemd-resolved.service"],
       ["container", "krynodes-tunnel"],
     ] as const) {
-      expect(await status(send, action(kind, name, "stop"))).toEqual({
+      expect(
+        await status(
+          send,
+          action(kind, name, "stop", kind === "unit" ? undefined : keyed),
+        ),
+      ).toEqual({
         status: 400,
         body: {
           code: "REFUSED",
@@ -432,6 +517,90 @@ describe("stack actions", () => {
       expect(result.status, entry.why).toBe(400);
     }
     expect(hub.calls).toHaveLength(sent);
+  });
+
+  it("takes the largest save any protocol-valid stack action can make, with a full grant", async () => {
+    const { db, send, hub } = await fleet();
+    const nodeId = "n".repeat(64);
+    await addNode(db, nodeId, "server-2");
+    hub.online.push(nodeId);
+    await report(db, nodeId);
+    const text = (value: string) => toB64url(new TextEncoder().encode(value));
+    const sealedOf = (size: number) =>
+      text(
+        JSON.stringify({
+          v: 1,
+          epk: text("e".repeat(65)),
+          iv: text("i".repeat(12)),
+          ct: text("c".repeat(size + 16)),
+        }),
+      );
+    const save = {
+      compose: sealedOf(32768),
+      access: "contained",
+      network: Array.from({ length: 32 }, (_, n) => String(65535 - n)).join(
+        ",",
+      ),
+      env: sealedOf(16384),
+      title: "�".repeat(64),
+      names: Array.from(
+        { length: 64 },
+        (_, n) =>
+          `s${String(n).padStart(3, "0")}`.padEnd(128, "x") +
+          "=" +
+          `c${String(n).padStart(3, "0")}`.padEnd(128, "y"),
+      ).join(","),
+      to: sealed.to,
+    };
+    const id = "i".repeat(64);
+    const name = "a".repeat(63);
+    const { command } = JSON.parse(
+      signedCommand({
+        v: 1,
+        id,
+        nodeId,
+        kind: "stack",
+        name,
+        action: "create",
+        issuedAt: "2026-11-22T00:00:00.000Z",
+        expiresAt: "2026-11-22T01:15:00.000Z",
+        args: save,
+      }),
+    ) as { command: string };
+    const part = "A".repeat(4096);
+    const signed = JSON.stringify({
+      grant: {
+        grant: part,
+        credentialId: part,
+        authenticatorData: part,
+        clientDataJSON: part,
+        signature: part,
+      },
+      command,
+      signature: part,
+    });
+    expect(command.length).toBeGreaterThan(131072);
+    expect(command.length).toBeLessThanOrEqual(147456);
+    expect(signed.length).toBeLessThan(262144);
+    const result = await status(send, {
+      nodeId,
+      id,
+      kind: "stack",
+      name,
+      action: "create",
+      title: `New Stack ${name}`,
+      signed,
+    });
+    expect(result.status).toBe(201);
+    expect(hub.calls.find((call) => call.path === "/command")).toMatchObject({
+      body: { command: { signed } },
+    });
+    expect(
+      await db
+        .prepare("SELECT status FROM actions WHERE id = ?")
+        .bind(id)
+        .first(),
+    ).toEqual({ status: "sent" });
   });
 
   it("refuses a command that is not the one named, naming the server", async () => {
@@ -489,11 +658,12 @@ describe("stack actions", () => {
   it("refuses a stack name the inventory contradicts, naming the server", async () => {
     const { db, send } = await fleet();
     const save = {
-      compose: "services:\n  app:\n    image: nginx:1.27\n",
+      compose: "c2VhbGVkLWNvbXBvc2U",
       access: "contained",
       network: "",
+      ...keyed,
     };
-    expect(await status(send, action("stack", "web", "start"))).toEqual({
+    expect(await status(send, action("stack", "web", "start", keyed))).toEqual({
       status: 400,
       body: {
         code: "REFUSED",
@@ -520,19 +690,19 @@ describe("stack actions", () => {
       message: "A stack named old waits in Removed on server-1.",
     });
     expect(
-      (await status(send, action("stack", "ghost", "deploy"))).body,
+      (await status(send, action("stack", "ghost", "deploy", keyed))).body,
     ).toEqual({
       code: "REFUSED",
       message: "server-1 has no stack named ghost.",
     });
     expect(
-      (await status(send, action("stack", "ghost", "restore"))).status,
+      (await status(send, action("stack", "ghost", "restore", keyed))).status,
     ).toBe(201);
     expect(
       (await status(send, action("stack", "fresh", "create", save))).status,
     ).toBe(201);
-    expect((await status(send, action("stack", "web", "deploy"))).status).toBe(
-      201,
-    );
+    expect(
+      (await status(send, action("stack", "web", "deploy", keyed))).status,
+    ).toBe(201);
   });
 });

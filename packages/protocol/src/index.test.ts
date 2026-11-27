@@ -10,6 +10,7 @@ import {
   SESSION_MS,
   signedCommandSchema,
   signedTrustSchema,
+  stackArgsValid,
   stackTitleValid,
   TRUST_CHANGE_MS,
 } from "./index";
@@ -144,6 +145,80 @@ describe("signed messages", () => {
     expect(
       signedCommandSchema.safeParse({ ...signedCommand, extra: 1 }).success,
     ).toBe(false);
+  });
+
+  it("carries the largest save any protocol-valid stack action can make", () => {
+    const text = (value: string) =>
+      btoa(
+        Array.from(new TextEncoder().encode(value), (byte) =>
+          String.fromCharCode(byte),
+        ).join(""),
+      )
+        .replaceAll("+", "-")
+        .replaceAll("/", "_")
+        .replace(/=+$/u, "");
+    const sealedOf = (size: number) =>
+      text(
+        JSON.stringify({
+          v: 1,
+          epk: text("e".repeat(65)),
+          iv: text("i".repeat(12)),
+          ct: text("c".repeat(size + 16)),
+        }),
+      );
+    const names = Array.from(
+      { length: 64 },
+      (_, n) =>
+        `s${String(n).padStart(3, "0")}`.padEnd(128, "x") +
+        "=" +
+        `c${String(n).padStart(3, "0")}`.padEnd(128, "y"),
+    ).join(",");
+    const args = {
+      compose: sealedOf(32768),
+      access: "contained",
+      network: Array.from({ length: 32 }, (_, n) => String(65535 - n)).join(
+        ",",
+      ),
+      env: sealedOf(16384),
+      title: "�".repeat(64),
+      names,
+      to: "A".repeat(87),
+    };
+    expect(args.compose).toHaveLength(58463);
+    expect(args.env).toHaveLength(29336);
+    expect(names).toHaveLength(16511);
+    expect(stackArgsValid("stack", "create", args)).toBe(true);
+    expect(stackArgsValid("stack", "edit", args)).toBe(true);
+    expect(
+      stackArgsValid("stack", "create", { ...args, env: sealedOf(16385) }),
+    ).toBe(false);
+    const command = text(
+      JSON.stringify({
+        v: 1,
+        id: "i".repeat(64),
+        nodeId: "n".repeat(64),
+        kind: "stack",
+        name: "a".repeat(63),
+        action: "create",
+        issuedAt: "2026-11-22T10:00:00.000Z",
+        expiresAt: "2026-11-22T11:15:00.000Z",
+        args,
+      }),
+    );
+    expect(command.length).toBeGreaterThan(131072);
+    expect(command.length).toBeLessThanOrEqual(147456);
+    expect(
+      signedCommandSchema.safeParse({ ...signedCommand, command }).success,
+    ).toBe(true);
+  });
+
+  it("takes a command of 147456 characters and no more", () => {
+    const sized = (size: number) => ({
+      ...signedCommand,
+      command: "A".repeat(size),
+    });
+    expect(signedCommandSchema.safeParse(sized(147456)).success).toBe(true);
+    expect(signedCommandSchema.safeParse(sized(147457)).success).toBe(false);
   });
 
   it("reads a signed trust change with approvals, or none for a first trust", () => {

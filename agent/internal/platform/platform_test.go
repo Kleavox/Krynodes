@@ -285,3 +285,297 @@ func TestAnInstalledPackageIsAloneOnlyWhenNothingElseWouldGoWithIt(t *testing.T)
 		}
 	}
 }
+
+func TestTheDockerDropInRunsTheGuardFirst(t *testing.T) {
+	if DockerGuardDropInPath != "/etc/systemd/system/docker.service.d/krynodes-guard.conf" {
+		t.Fatalf("path %q", DockerGuardDropInPath)
+	}
+	if got := DockerGuardDropIn("/usr/local/bin/kry"); got != "[Service]\nExecStartPre=/usr/local/bin/kry guard\n" {
+		t.Fatalf("a guard that cannot be skipped: %q", got)
+	}
+}
+
+func TestDockerWaitsForTheGuardOnlyOnceTheDropInIsLoaded(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env.Executable = "/usr/local/bin/kry"
+	if err := env.GuardDocker(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(env.Root, filepath.FromSlash(DockerGuardDropInPath)))
+	if err != nil || string(body) != "[Service]\nExecStartPre=/usr/local/bin/kry guard\n" {
+		t.Fatalf("drop-in %q %v", body, err)
+	}
+	if !slices.Equal(run.calls, []string{"systemctl daemon-reload"}) {
+		t.Fatalf("calls %q", run.calls)
+	}
+
+	for _, executable := range []string{"", "kry", "./kry"} {
+		bare, bareRun := onRelease(t, "debian 13")
+		bare.Executable = executable
+		if err := bare.GuardDocker(context.Background()); err == nil {
+			t.Errorf("%q: a drop-in that names no absolute path would keep Docker down", executable)
+		}
+		if _, err := os.Stat(filepath.Join(bare.Root, filepath.FromSlash(DockerGuardDropInPath))); err == nil || len(bareRun.calls) > 0 {
+			t.Errorf("%q: nothing is written or reloaded: %q", executable, bareRun.calls)
+		}
+	}
+
+	broken, brokenRun := onRelease(t, "debian 13")
+	broken.Executable = "/usr/local/bin/kry"
+	brokenRun.failing["systemctl daemon-reload"] = true
+	if err := broken.GuardDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "daemon-reload") {
+		t.Fatalf("a reload that failed is said: %v", err)
+	}
+}
+
+const (
+	loadState    = "systemctl show -p LoadState docker.service"
+	execStartPre = "systemctl show -p ExecStartPre docker.service"
+	dropInPaths  = "systemctl show -p DropInPaths docker.service"
+	needsReload  = "systemctl show -p NeedDaemonReload docker.service"
+	guardRuns    = "ExecStartPre={ path=/usr/local/bin/kry ; argv[]=/usr/local/bin/kry guard ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n"
+)
+
+func TestTheLoopGuardsDockerOnlyWhereItsServiceIsLoaded(t *testing.T) {
+	for name, test := range map[string]struct {
+		answer  string
+		fail    bool
+		written bool
+	}{
+		"loaded":                 {"LoadState=loaded\n", false, true},
+		"not found":              {"LoadState=not-found\n", false, false},
+		"systemd did not answer": {"", true, false},
+	} {
+		env, run := onRelease(t, "debian 13")
+		env.Executable = "/usr/local/bin/kry"
+		run.respond[loadState] = test.answer
+		run.failing[loadState] = test.fail
+		run.respond[execStartPre] = guardRuns
+		err := env.GuardInstalledDocker(context.Background())
+		switch {
+		case test.written && err != nil:
+			t.Fatalf("%s: %v", name, err)
+		case name == "not found" && !errors.Is(err, ErrNoDockerUnit):
+			t.Fatalf("%s: %v", name, err)
+		case test.fail && (err == nil || errors.Is(err, ErrNoDockerUnit) || !strings.Contains(err.Error(), "does not say whether Docker has a unit")):
+			t.Fatalf("%s: a question systemd cannot answer is not 'no docker.service': %v", name, err)
+		}
+		_, statErr := os.Stat(filepath.Join(env.Root, filepath.FromSlash(DockerGuardDropInPath)))
+		if (statErr == nil) != test.written || (run.count("systemctl daemon-reload") == 1) != test.written {
+			t.Fatalf("%s: written %v, calls %q", name, statErr == nil, run.calls)
+		}
+	}
+}
+
+func TestUnguardDockerTakesTheDropInAwayAndReloads(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env.Executable = "/usr/local/bin/kry"
+	other := filepath.Join(env.Root, "etc", "systemd", "system", "docker.service.d", "other.conf")
+	write(t, env, "/etc/systemd/system/docker.service.d/other.conf", "[Service]\n")
+	if err := env.GuardDocker(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	run.calls = nil
+	if err := env.UnguardDocker(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(env.Root, filepath.FromSlash(DockerGuardDropInPath))); err == nil {
+		t.Fatal("Docker would still wait for a binary that is going away")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("another drop-in of the owner's stays: %v", err)
+	}
+	if !slices.Equal(run.calls, []string{"systemctl daemon-reload"}) {
+		t.Fatalf("calls %q", run.calls)
+	}
+
+	os.Remove(other)
+	run.calls = nil
+	if err := env.UnguardDocker(context.Background()); err != nil || len(run.calls) > 0 {
+		t.Fatalf("nothing to take away: %v %q", err, run.calls)
+	}
+}
+
+func TestTheDropInIsKeptWithoutReloadingSystemdAgain(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env.Executable = "/usr/local/bin/kry"
+	run.respond[loadState] = "LoadState=loaded\n"
+	run.respond[execStartPre] = guardRuns
+	path := filepath.Join(env.Root, filepath.FromSlash(DockerGuardDropInPath))
+	if err := env.GuardInstalledDocker(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(run.calls, []string{loadState, "systemctl daemon-reload", execStartPre}) {
+		t.Fatalf("calls %q", run.calls)
+	}
+
+	run.calls = nil
+	if err := env.GuardInstalledDocker(context.Background()); err != nil || !slices.Equal(run.calls, []string{loadState, execStartPre}) {
+		t.Fatalf("a drop-in that is right is only checked, never written or reloaded: %v %q", err, run.calls)
+	}
+
+	write(t, env, DockerGuardDropInPath, "[Service]\nExecStartPre=/old/kry guard\n")
+	if err := env.GuardInstalledDocker(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if body, _ := os.ReadFile(path); string(body) != DockerGuardDropIn("/usr/local/bin/kry") || run.count("systemctl daemon-reload") != 1 {
+		t.Fatalf("a drop-in that differs is written again: %q %q", body, run.calls)
+	}
+
+	os.Remove(path)
+	run.calls = nil
+	run.failing["systemctl daemon-reload"] = true
+	if err := env.GuardInstalledDocker(context.Background()); err == nil {
+		t.Fatal("a reload that failed is said")
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("a drop-in that systemd did not load is not left to look finished")
+	}
+	delete(run.failing, "systemctl daemon-reload")
+	if err := env.GuardInstalledDocker(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("the next pass tries again: %v", err)
+	}
+}
+
+func TestAnOverridingDropInIsNamedWhenSystemdDoesNotRunTheGuard(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env.Executable = "/usr/local/bin/kry"
+	run.respond[loadState] = "LoadState=loaded\n"
+	run.respond[execStartPre] = "ExecStartPre=\n"
+	run.respond[dropInPaths] = "DropInPaths=/etc/systemd/system/docker.service.d/krynodes-guard.conf /etc/systemd/system/docker.service.d/override.conf\n"
+	err := env.GuardInstalledDocker(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "/etc/systemd/system/docker.service.d/override.conf") || strings.Contains(err.Error(), "krynodes-guard.conf,") {
+		t.Fatalf("the drop-in that resets ExecStartPre is named: %v", err)
+	}
+
+	run.respond[dropInPaths] = "DropInPaths=/etc/systemd/system/docker.service.d/krynodes-guard.conf\n"
+	if err := env.GuardInstalledDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "does not run /usr/local/bin/kry guard") {
+		t.Fatalf("with nothing to name it still says that the guard does not run: %v", err)
+	}
+
+	run.respond[execStartPre] = "ExecStartPre={ path=/usr/local/bin/kry ; argv[]=/usr/local/bin/kry guard-other ; ignore_errors=no }\n"
+	if err := env.GuardInstalledDocker(context.Background()); err == nil {
+		t.Fatal("another command is not the guard")
+	}
+
+	run.respond[execStartPre] = "ExecStartPre={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no } ; { path=/usr/local/bin/kry ; argv[]=/usr/local/bin/kry guard ; ignore_errors=no }\n"
+	if err := env.GuardInstalledDocker(context.Background()); err != nil {
+		t.Fatalf("the guard among other commands is enough: %v", err)
+	}
+
+	run.failing[execStartPre] = true
+	if err := env.GuardInstalledDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "does not say what runs before Docker") {
+		t.Fatalf("a question systemd cannot answer is said: %v", err)
+	}
+}
+
+func TestAGuardThatSystemdMayIgnoreIsNotTheGuard(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env.Executable = "/usr/local/bin/kry"
+	run.respond[loadState] = "LoadState=loaded\n"
+	run.respond[dropInPaths] = "DropInPaths=/etc/systemd/system/docker.service.d/krynodes-guard.conf /etc/systemd/system/docker.service.d/override.conf\n"
+	run.respond[execStartPre] = "ExecStartPre={ path=/usr/local/bin/kry ; argv[]=/usr/local/bin/kry guard ; ignore_errors=yes ; start_time=[n/a] }\n"
+	err := env.GuardInstalledDocker(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "override.conf") {
+		t.Fatalf("ExecStartPre=- lets Docker start when the guard fails, and the override is named: %v", err)
+	}
+
+	run.respond[execStartPre] = "ExecStartPre={ path=/usr/local/bin/kry ; argv[]=/usr/local/bin/kry guard ; ignore_errors=yes }\n{ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no }\n"
+	if err := env.GuardInstalledDocker(context.Background()); err == nil {
+		t.Fatal("ignore_errors=no belonging to another entry does not count")
+	}
+
+	run.respond[execStartPre] = "ExecStartPre={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=yes } ; { path=/usr/local/bin/kry ; argv[]=/usr/local/bin/kry guard ; ignore_errors=no }\n"
+	if err := env.GuardInstalledDocker(context.Background()); err != nil {
+		t.Fatalf("the guard entry with ignore_errors=no is enough: %v", err)
+	}
+}
+
+func TestADropInThatSystemdHasNotLoadedIsReloadedOnce(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env.Executable = "/usr/local/bin/kry"
+	write(t, env, DockerGuardDropInPath, DockerGuardDropIn("/usr/local/bin/kry"))
+	run.respond[loadState] = "LoadState=loaded\n"
+	run.respond[execStartPre] = "ExecStartPre=\n"
+	run.respond[dropInPaths] = "DropInPaths=\n"
+	run.respond[needsReload] = "NeedDaemonReload=yes\n"
+	run.effects["systemctl daemon-reload"] = func() { run.respond[execStartPre] = guardRuns }
+	if err := env.GuardInstalledDocker(context.Background()); err != nil {
+		t.Fatalf("a file that is right and a reload that fixes it: %v", err)
+	}
+	if run.count("systemctl daemon-reload") != 1 {
+		t.Fatalf("one reload: %q", run.calls)
+	}
+
+	run.calls = nil
+	if err := env.GuardInstalledDocker(context.Background()); err != nil || run.count("systemctl daemon-reload") != 0 {
+		t.Fatalf("once loaded it is only checked: %v %q", err, run.calls)
+	}
+
+	run.respond[execStartPre] = "ExecStartPre=\n"
+	delete(run.effects, "systemctl daemon-reload")
+	run.calls = nil
+	err := env.GuardInstalledDocker(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "does not run /usr/local/bin/kry guard") || run.count("systemctl daemon-reload") != 1 {
+		t.Fatalf("a reload that does not help is tried once and then said: %v %q", err, run.calls)
+	}
+
+	run.failing["systemctl daemon-reload"] = true
+	run.calls = nil
+	if err := env.GuardInstalledDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "daemon-reload") {
+		t.Fatalf("a reload that failed is said: %v", err)
+	}
+	delete(run.failing, "systemctl daemon-reload")
+
+	run.respond[needsReload] = "NeedDaemonReload=no\n"
+	for pass := range 3 {
+		run.calls = nil
+		if err := env.GuardInstalledDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "does not run /usr/local/bin/kry guard") || run.count("systemctl daemon-reload") != 0 {
+			t.Fatalf("pass %d: systemd says no reload is needed, so none is run and the error stays: %v %q", pass, err, run.calls)
+		}
+	}
+
+	run.failing[needsReload] = true
+	if err := env.GuardInstalledDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "does not say whether it must reload") || run.count("systemctl daemon-reload") != 0 {
+		t.Fatalf("a question systemd cannot answer is said and nothing is reloaded: %v", err)
+	}
+	delete(run.failing, needsReload)
+	run.respond[needsReload] = "NeedDaemonReload=yes\n"
+
+	delete(run.failing, "systemctl daemon-reload")
+	run.respond[dropInPaths] = "DropInPaths=/etc/systemd/system/docker.service.d/krynodes-guard.conf /etc/systemd/system/docker.service.d/override.conf\n"
+	run.calls = nil
+	if err := env.GuardInstalledDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "override.conf") || run.count("systemctl daemon-reload") != 0 {
+		t.Fatalf("an override is named and no reload is tried for it: %v %q", err, run.calls)
+	}
+}
+
+func TestTheDropInIsWrittenOnlyOnceTheGuardHolds(t *testing.T) {
+	env, run := onRelease(t, "debian 13")
+	env.Executable = "/usr/local/bin/kry"
+	path := filepath.Join(env.Root, filepath.FromSlash(DockerGuardDropInPath))
+	proved := 0
+	env.Prove = func(context.Context) error {
+		proved++
+		if _, err := os.Stat(path); err == nil {
+			t.Error("the drop-in was there before the guard held")
+		}
+		return errors.New("the guard of Contained stacks: iptables: Permission denied")
+	}
+	if err := env.GuardDocker(context.Background()); err == nil || !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("a guard that fails is the error: %v", err)
+	}
+	if _, err := os.Stat(path); err == nil || proved != 1 || run.count("systemctl daemon-reload") > 0 {
+		t.Fatalf("nothing is written or reloaded: proved %d, calls %q", proved, run.calls)
+	}
+	env.Prove = func(context.Context) error { proved++; return nil }
+	if err := env.GuardDocker(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil || proved != 2 || run.count("systemctl daemon-reload") != 1 {
+		t.Fatalf("a guard that holds lets the drop-in go in: %v, proved %d, calls %q", err, proved, run.calls)
+	}
+}

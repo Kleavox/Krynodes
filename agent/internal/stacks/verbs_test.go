@@ -3,9 +3,18 @@ package stacks
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/hkdf"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,7 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kleavox/krynodes/agent/internal/daemon"
 	"github.com/Kleavox/krynodes/agent/internal/docker"
+	"github.com/Kleavox/krynodes/agent/internal/platform"
+	"github.com/Kleavox/krynodes/agent/internal/seal"
 	"github.com/Kleavox/krynodes/agent/internal/trust"
 )
 
@@ -28,6 +40,14 @@ const (
 )
 
 var testNow = time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+
+const (
+	loadedDocker  = "systemctl show -p LoadState docker.service"
+	guardedDocker = "systemctl show -p ExecStartPre docker.service"
+	guardRuns     = "ExecStartPre={ path=/usr/local/bin/kry ; argv[]=/usr/local/bin/kry guard ; ignore_errors=no ; status=0/0 }\n"
+)
+
+const guardedChain = "-N DOCKER-USER\n-A DOCKER-USER -i krc+ -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN\n-A DOCKER-USER -i krc+ -o krc+ -j RETURN\n"
 
 type reply struct {
 	has    string
@@ -46,6 +66,7 @@ func newFake() *fake {
 	f := &fake{config: plainConfig}
 	f.on(healthOf, "app\trunning\t\t0\n")
 	f.on("{{.Id}} {{.RestartCount}}", "id-1 0 2026-11-24T10:00:00Z\n")
+	f.on("tables -w -S DOCKER-USER", guardedChain)
 	return f
 }
 
@@ -125,15 +146,68 @@ func quick(t *testing.T) {
 
 var sealed = map[string]string{"sealed-1": "TOKEN=first\n", "sealed-2": "PASS=pa$$word\nKEY=a$b\n"}
 
+func sealedCompose(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	token := "sealed-compose-" + hex.EncodeToString(sum[:6])
+	sealed[token] = text
+	return token
+}
+
+func sealTo(t *testing.T, node *ecdh.PublicKey, text string) string {
+	t.Helper()
+	ephemeral, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := ephemeral.ECDH(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epk := ephemeral.PublicKey().Bytes()
+	secret, err := hkdf.Key(sha256.New, shared, slices.Concat(epk, node.Bytes()), "krynodes-seal-v1", 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := aes.NewCipher(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iv := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(iv); err != nil {
+		t.Fatal(err)
+	}
+	encoding := base64.RawURLEncoding
+	body, err := json.Marshal(struct {
+		V   int    `json:"v"`
+		EPK string `json:"epk"`
+		IV  string `json:"iv"`
+		CT  string `json:"ct"`
+	}{1, encoding.EncodeToString(epk), encoding.EncodeToString(iv), encoding.EncodeToString(aead.Seal(nil, iv, []byte(text), nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoding.EncodeToString(body)
+}
+
 func testEnv(t *testing.T, f *fake) Env {
 	t.Helper()
 	quick(t)
+	useResolvers(t, "", "")
 	useOwner(t)
+	sealing, _ := browserKey(t)
+	f.on(loadedDocker, "LoadState=loaded\n")
+	f.on(guardedDocker, guardRuns)
 	return Env{
-		Run:    f.run,
-		State:  t.TempDir(),
-		Server: "server-1",
-		Own:    func() string { return "10.88.37.2" },
+		Run:      f.run,
+		Platform: platform.Env{Root: t.TempDir(), Run: platform.Runner(f.run), Executable: "/usr/local/bin/kry"},
+		State:    t.TempDir(),
+		Server:   "server-1",
+		Own:      func() string { return "10.88.37.2" },
+		Sealing:  sealing,
 		Unseal: func(text string) ([]byte, error) {
 			if plain, ok := sealed[text]; ok {
 				return []byte(plain), nil
@@ -145,12 +219,32 @@ func testEnv(t *testing.T, f *fake) Env {
 	}
 }
 
-func command(kind, name, action string, args map[string]string) trust.Command {
+var testBrowser = sync.OnceValues(func() (*ecdh.PrivateKey, string) {
+	key, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		panic(err)
+	}
+	return key, seal.Public(key)
+})
+
+func bare(kind, name, action string, args map[string]string) trust.Command {
 	return trust.Command{V: 1, ID: "c-1", Kind: kind, Name: name, Action: action, Args: args}
 }
 
+func command(kind, name, action string, args map[string]string) trust.Command {
+	if _, given := args["to"]; !given && (kind == "stack" || kind == "container") {
+		_, to := testBrowser()
+		args = maps.Clone(args)
+		if args == nil {
+			args = map[string]string{}
+		}
+		args["to"] = to
+	}
+	return bare(kind, name, action, args)
+}
+
 func saving(access, network string) map[string]string {
-	return map[string]string{"compose": plainCompose, "access": access, "network": network}
+	return map[string]string{"compose": sealedCompose(plainCompose), "access": access, "network": network}
 }
 
 func (e Env) do(t *testing.T, cmd trust.Command) (string, error) {
@@ -159,12 +253,31 @@ func (e Env) do(t *testing.T, cmd trust.Command) (string, error) {
 	if handle == nil {
 		t.Fatalf("no handler for %s/%s", cmd.Kind, cmd.Action)
 	}
-	return handle(context.Background(), cmd, func(string) {})
+	ctx, output := daemon.WithOutput(context.Background())
+	message, err := handle(ctx, cmd, func(string) {})
+	if detail := output(); err != nil && detail != "" {
+		key, to := testBrowser()
+		if cmd.Args["to"] != to {
+			t.Fatalf("a failure was sealed to a key the test does not hold: %v", err)
+		}
+		plain, opening := openFrom(key, e.Sealing.PublicKey(), detail)
+		if opening != nil {
+			t.Fatalf("the failure of %s %s does not open: %v", cmd.Kind, cmd.Action, opening)
+		}
+		return message, errors.New(string(plain))
+	}
+	return message, err
 }
 
 func managed(t *testing.T, e Env, args map[string]string) string {
 	t.Helper()
 	dir := e.folder("web")
+	plain, err := e.Unseal(args["compose"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	args = maps.Clone(args)
+	args["compose"] = string(plain)
 	if err := Write(dir, command("stack", "web", "create", args), e.Unseal); err != nil {
 		t.Fatal(err)
 	}
@@ -183,37 +296,87 @@ func readText(t *testing.T, path string) string {
 	return string(raw)
 }
 
-func TestArgsMatchTheSharedFixture(t *testing.T) {
+type argsEntry struct {
+	Kind   string          `json:"kind"`
+	Action string          `json:"action"`
+	Args   json.RawMessage `json:"args"`
+	Why    string          `json:"why"`
+}
+
+func (one argsEntry) read() (map[string]string, bool) {
+	var args map[string]string
+	if !bytes.HasPrefix(bytes.TrimSpace(one.Args), []byte("{")) || json.Unmarshal(one.Args, &args) != nil {
+		return nil, false
+	}
+	return args, true
+}
+
+func argsFixture(t *testing.T) (valid, invalid []argsEntry) {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "protocol", "src", "fixtures", "stack-args.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	type entry struct {
-		Kind   string          `json:"kind"`
-		Action string          `json:"action"`
-		Args   json.RawMessage `json:"args"`
-		Why    string          `json:"why"`
-	}
-	var fixture struct{ Valid, Invalid []entry }
+	var fixture struct{ Valid, Invalid []argsEntry }
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	read := func(one entry) (map[string]string, bool) {
-		var args map[string]string
-		if !bytes.HasPrefix(bytes.TrimSpace(one.Args), []byte("{")) || json.Unmarshal(one.Args, &args) != nil {
-			return nil, false
-		}
-		return args, true
-	}
-	for _, one := range fixture.Valid {
-		args, ok := read(one)
+	return fixture.Valid, fixture.Invalid
+}
+
+func TestArgsMatchTheSharedFixture(t *testing.T) {
+	valid, invalid := argsFixture(t)
+	for _, one := range valid {
+		args, ok := one.read()
 		if !ok || !ArgsValid(one.Kind, one.Action, args) {
 			t.Errorf("refused the valid %s/%s %s", one.Kind, one.Action, one.Args)
 		}
 	}
-	for _, one := range fixture.Invalid {
-		if args, ok := read(one); ok && ArgsValid(one.Kind, one.Action, args) {
+	for _, one := range invalid {
+		if args, ok := one.read(); ok && ArgsValid(one.Kind, one.Action, args) {
 			t.Errorf("accepted %s", one.Why)
+		}
+	}
+}
+
+func TestEveryStackVerbNeedsTo(t *testing.T) {
+	valid, _ := argsFixture(t)
+	covered := map[string]bool{}
+	to := ""
+	for _, one := range valid {
+		if args, ok := one.read(); ok && args["to"] != "" {
+			to = args["to"]
+		}
+	}
+	if to == "" {
+		t.Fatal("the fixture holds no key")
+	}
+	for _, one := range valid {
+		args, ok := one.read()
+		if !ok {
+			continue
+		}
+		if one.Kind == "stack" || one.Kind == "container" {
+			if args["to"] == "" {
+				t.Errorf("the valid %s/%s %s carries no key", one.Kind, one.Action, one.Args)
+			}
+			delete(args, "to")
+			if ArgsValid(one.Kind, one.Action, args) {
+				t.Errorf("%s/%s ran without a key: %s", one.Kind, one.Action, one.Args)
+			}
+			covered[one.Kind+"/"+one.Action] = true
+			continue
+		}
+		args["to"] = to
+		if ArgsValid(one.Kind, one.Action, args) {
+			t.Errorf("%s/%s took a key it has no use for: %s", one.Kind, one.Action, one.Args)
+		}
+	}
+	for _, kind := range []string{"stack", "container"} {
+		for _, action := range verbs[kind] {
+			if !covered[kind+"/"+action] {
+				t.Errorf("the fixture holds no valid %s/%s", kind, action)
+			}
 		}
 	}
 }
@@ -441,7 +604,7 @@ func TestEditKeepsTheEnvWhenNoneIsSent(t *testing.T) {
 	dir := managed(t, e, args)
 	edited := strings.Replace(plainCompose, "nginx:1.27", "nginx:1.28", 1)
 	changed := saving("full", "")
-	changed["compose"] = edited
+	changed["compose"] = sealedCompose(edited)
 	if _, err := e.do(t, command("stack", "web", "edit", changed)); err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +615,7 @@ func TestEditKeepsTheEnvWhenNoneIsSent(t *testing.T) {
 		t.Fatal("compose did not read the kept .env")
 	}
 	broken := saving("full", "")
-	broken["compose"], broken["env"] = "services: [\n", "sealed-2"
+	broken["compose"], broken["env"] = sealedCompose("services: [\n"), "sealed-2"
 	for _, case_ := range []struct {
 		running string
 		broken  int
@@ -739,5 +902,175 @@ func TestEveryManagedFolderIsOfferedToTheInventory(t *testing.T) {
 	}
 	if !e.Meta(context.Background()).Stack("web", listed["web"]).Own {
 		t.Fatal("a folder with no containers lost its meta")
+	}
+}
+
+func nodeKeyOpens(e *Env) {
+	key := e.Sealing
+	e.Unseal = func(sealed string) ([]byte, error) { return seal.Open(key, sealed) }
+}
+
+func TestASavedComposeIsOpenedWithTheNodesKey(t *testing.T) {
+	for _, action := range []string{"create", "edit"} {
+		f := newFake()
+		e := testEnv(t, f)
+		nodeKeyOpens(&e)
+		args := saving("contained", "")
+		args["compose"] = sealTo(t, e.Sealing.PublicKey(), plainCompose)
+		if action == "edit" {
+			managed(t, e, args)
+		}
+		edited := strings.Replace(plainCompose, "nginx:1.27", "nginx:1.28", 1)
+		args["compose"] = sealTo(t, e.Sealing.PublicKey(), edited)
+		if _, err := e.do(t, command("stack", "web", action, args)); err != nil {
+			t.Fatalf("%s: %v", action, err)
+		}
+		if got := readText(t, filepath.Join(e.folder("web"), "compose.yaml")); got != edited {
+			t.Fatalf("%s: the file holds %q", action, got)
+		}
+		if f.called(args["compose"]) != 0 || f.first("setpriv") < 0 || f.called(" up -d") != 1 {
+			t.Fatalf("%s: the opened file did not run alone: %q", action, f.calls)
+		}
+	}
+}
+
+func TestAComposeSealedToAnotherKeyIsRefused(t *testing.T) {
+	other, _ := browserKey(t)
+	for _, action := range []string{"create", "edit"} {
+		f := newFake()
+		e := testEnv(t, f)
+		nodeKeyOpens(&e)
+		args := saving("contained", "")
+		args["compose"] = sealTo(t, e.Sealing.PublicKey(), plainCompose)
+		if action == "edit" {
+			managed(t, e, args)
+		}
+		args["compose"] = sealTo(t, other.PublicKey(), plainCompose)
+		_, err := e.do(t, command("stack", "web", action, args))
+		if err == nil || err.Error() != "the compose file: the sealed message is not for this server" {
+			t.Fatalf("%s: %v", action, err)
+		}
+		if len(f.calls) != 0 {
+			t.Fatalf("%s: docker ran: %q", action, f.calls)
+		}
+		if _, err := os.Lstat(e.folder("web")); (action == "create") != errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s: the folder is %v", action, err)
+		}
+	}
+}
+
+func TestAPlainComposeIsRefused(t *testing.T) {
+	for _, action := range []string{"create", "edit"} {
+		f := newFake()
+		e := testEnv(t, f)
+		args := saving("contained", "")
+		args["compose"] = plainCompose
+		_, err := e.do(t, command("stack", "web", action, args))
+		if want := "stack " + action + " came with arguments this server does not take"; err == nil || err.Error() != want {
+			t.Fatalf("%s: %v", action, err)
+		}
+		if len(f.calls) != 0 {
+			t.Fatalf("%s: docker ran: %q", action, f.calls)
+		}
+		if _, err := os.Lstat(e.folder("web")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s: a folder was made: %v", action, err)
+		}
+	}
+}
+
+func TestAnOpenedComposeOverTheLimitIsRefused(t *testing.T) {
+	sealed["sealed-big"] = strings.Repeat("a", maxComposeBytes+1)
+	t.Cleanup(func() { delete(sealed, "sealed-big") })
+	for _, action := range []string{"create", "edit"} {
+		f := newFake()
+		e := testEnv(t, f)
+		args := saving("contained", "")
+		args["compose"] = "sealed-big"
+		_, err := e.do(t, command("stack", "web", action, args))
+		if err == nil || err.Error() != "the compose file is larger than 32 KB" {
+			t.Fatalf("%s: %v", action, err)
+		}
+		if len(f.calls) != 0 {
+			t.Fatalf("%s: docker ran: %q", action, f.calls)
+		}
+	}
+}
+
+func TestAnOpenedEmptyComposeIsRefusedBeforeDocker(t *testing.T) {
+	sealed["sealed-blank"] = " \n\t\n"
+	t.Cleanup(func() { delete(sealed, "sealed-blank") })
+	for _, action := range []string{"create", "edit"} {
+		f := newFake()
+		e := testEnv(t, f)
+		args := saving("contained", "")
+		args["compose"] = "sealed-blank"
+		_, err := e.do(t, command("stack", "web", action, args))
+		if err == nil || err.Error() != "the compose file is empty" {
+			t.Fatalf("%s: %v", action, err)
+		}
+		if len(f.calls) != 0 {
+			t.Fatalf("%s: docker ran: %q", action, f.calls)
+		}
+	}
+}
+
+func TestTheLargestSealedComposeFitsItsShape(t *testing.T) {
+	key, _ := browserKey(t)
+	whole := sealTo(t, key.PublicKey(), strings.Repeat("a", maxComposeBytes))
+	if len(whole) != 58463 || !composeValid(whole) {
+		t.Fatalf("a compose of %d bytes seals to %d characters, valid %v", maxComposeBytes, len(whole), composeValid(whole))
+	}
+	if plain, err := seal.Open(key, whole); err != nil || len(plain) != maxComposeBytes {
+		t.Fatalf("opened %d bytes: %v", len(plain), err)
+	}
+	if over := sealTo(t, key.PublicKey(), strings.Repeat("a", maxComposeBytes+1)); composeValid(over) {
+		t.Fatalf("a sealed compose of %d characters was accepted", len(over))
+	}
+	if composeValid("") || composeValid(plainCompose) || composeValid(strings.Repeat("A", maxSealedCompose+1)) {
+		t.Fatal("an empty, plain or oversized compose was accepted")
+	}
+}
+
+func TestTheLargestSealedEnvFitsItsShape(t *testing.T) {
+	key, _ := browserKey(t)
+	whole := sealTo(t, key.PublicKey(), strings.Repeat("a", maxEnvBytes))
+	if len(whole) != 29336 || !envValid(whole) {
+		t.Fatalf("an .env of %d bytes seals to %d characters, valid %v", maxEnvBytes, len(whole), envValid(whole))
+	}
+	if over := sealTo(t, key.PublicKey(), strings.Repeat("a", maxEnvBytes+1)); envValid(over) {
+		t.Fatalf("a sealed .env of %d characters was accepted", len(over))
+	}
+	if envValid(strings.Repeat("A", maxSealedEnv+1)) || envValid("é") {
+		t.Fatal("an oversized or non-ASCII .env was accepted")
+	}
+}
+
+func TestTheLargestSaveIsTakenAndBothPartsOpenWithTheNodesKey(t *testing.T) {
+	key, to := browserKey(t)
+	compose, env := strings.Repeat("a", maxComposeBytes), strings.Repeat("b", maxEnvBytes)
+	var names []string
+	for n := range maxNames {
+		names = append(names, fmt.Sprintf("s%03d", n)+strings.Repeat("x", 124)+"="+fmt.Sprintf("c%03d", n)+strings.Repeat("y", 124))
+	}
+	args := map[string]string{
+		"compose": sealTo(t, key.PublicKey(), compose),
+		"access":  "contained",
+		"network": "65535,65534,65533,65532,65531,65530,65529,65528,65527,65526,65525,65524,65523,65522,65521,65520,65519,65518,65517,65516,65515,65514,65513,65512,65511,65510,65509,65508,65507,65506,65505,65504",
+		"env":     sealTo(t, key.PublicKey(), env),
+		"title":   strings.Repeat("x", 64),
+		"names":   strings.Join(names, ","),
+		"to":      to,
+	}
+	if !ArgsValid("stack", "create", args) || !ArgsValid("stack", "edit", args) {
+		t.Fatalf("the largest save was refused: compose %d, env %d, names %d", len(args["compose"]), len(args["env"]), len(args["names"]))
+	}
+	if len(args["names"]) != 16511 {
+		t.Fatalf("the names are %d characters, not the largest", len(args["names"]))
+	}
+	for field, want := range map[string]string{"compose": compose, "env": env} {
+		plain, err := seal.Open(key, args[field])
+		if err != nil || string(plain) != want {
+			t.Fatalf("%s did not open to what was sealed: %v", field, err)
+		}
 	}
 }

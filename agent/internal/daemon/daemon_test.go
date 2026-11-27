@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -317,6 +318,18 @@ func TestProgressAndLongMessagesFitTheWire(t *testing.T) {
 	}
 }
 
+func TestAnOutputIsCutAt128KiB(t *testing.T) {
+	h := newHarness(t, true)
+	h.daemon.Handlers["host/restart"] = func(ctx context.Context, _ trust.Command, _ func(string)) (string, error) {
+		Output(ctx, strings.Repeat("a", 128<<10+1))
+		return "Sealed.", nil
+	}
+	h.daemon.Handle(context.Background(), h.fixture.Command)
+	if results := h.wire.results(); len(results) != 1 || len(results[0].Output) != 128<<10 {
+		t.Fatalf("results %d", len(results))
+	}
+}
+
 func TestAnOutputTravelsWithItsResultUntilItIsAcknowledged(t *testing.T) {
 	h := newHarness(t, true)
 	h.daemon.Handlers["host/restart"] = func(ctx context.Context, _ trust.Command, _ func(string)) (string, error) {
@@ -333,14 +346,32 @@ func TestAnOutputTravelsWithItsResultUntilItIsAcknowledged(t *testing.T) {
 	if err != nil || stored.Result == nil || stored.Result.Output != "" || !stored.Acked {
 		t.Fatalf("the ledger kept %+v %v", stored.Result, err)
 	}
+}
+
+func TestAFailureCarriesTheOutputItsHandlerSet(t *testing.T) {
+	h := newHarness(t, true)
 	h.daemon.Handlers["host/restart"] = func(ctx context.Context, _ trust.Command, _ func(string)) (string, error) {
-		Output(ctx, "half")
-		return "", errors.New("it failed")
+		Output(ctx, "sealed details")
+		return "", errors.New("It failed.")
 	}
-	again := newHarness(t, true)
-	again.daemon.Handlers = h.daemon.Handlers
-	again.daemon.Handle(context.Background(), again.fixture.Command)
-	if failed := again.wire.results(); len(failed) != 1 || failed[0].OK || failed[0].Output != "" {
-		t.Fatalf("a failure carried output: %+v", failed)
+	h.daemon.Handle(context.Background(), h.fixture.Command)
+	if failed := h.wire.results(); len(failed) != 1 || failed[0].OK || failed[0].Message != "It failed." || failed[0].Output != "sealed details" {
+		t.Fatalf("a failure lost its output: %+v", failed)
+	}
+	h.daemon.Ack(h.fixture.Command.ID)
+	stored, _, err := h.daemon.read(h.fixture.Command.ID)
+	if err != nil || stored.Result == nil || stored.Result.Output != "" {
+		t.Fatalf("the ledger kept %+v %v", stored.Result, err)
+	}
+}
+
+func TestAFailureWithoutOutputCarriesNone(t *testing.T) {
+	h := newHarness(t, true)
+	h.daemon.Handlers["host/restart"] = func(context.Context, trust.Command, func(string)) (string, error) {
+		return "", errors.New("It failed.")
+	}
+	h.daemon.Handle(context.Background(), h.fixture.Command)
+	if failed := h.wire.results(); len(failed) != 1 || failed[0].OK || failed[0].Output != "" {
+		t.Fatalf("a failure invented output: %+v", failed)
 	}
 }

@@ -1,11 +1,15 @@
 import { QueryClient } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { fromB64url } from "@/lib/passkeys";
 import { S1 } from "@/lib/rules-test-utils";
+import { open, pinnedNode, sealFromNode } from "@/lib/seal-test-utils";
 import { endSession } from "@/lib/sign";
 import type { FleetNode } from "@/types";
 
 import {
+  AccessChoice,
   readForEdit,
   readKey,
   saveStack,
@@ -35,7 +39,20 @@ const node: FleetNode = {
   request: null,
 };
 
-function server(output: string | null) {
+let pinned: Awaited<ReturnType<typeof pinnedNode>>;
+
+beforeEach(async () => {
+  pinned = await pinnedNode();
+});
+
+function server(
+  output: string | null,
+  sealIt = true,
+  outcome: { status: string; message: string } = {
+    status: "done",
+    message: "Done.",
+  },
+) {
   vi.stubGlobal("location", { hostname: "kry.example.test" });
   vi.stubGlobal("navigator", {
     credentials: {
@@ -60,16 +77,14 @@ function server(output: string | null) {
     vi.fn(async (_url: string, init: RequestInit = {}) => {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       const signed = JSON.parse(String(body.signed)) as { command: string };
-      commands.push(
-        JSON.parse(
-          new TextDecoder().decode(
-            Uint8Array.from(
-              atob(signed.command.replaceAll("-", "+").replaceAll("_", "/")),
-              (char) => char.charCodeAt(0),
-            ),
-          ),
-        ) as Record<string, unknown>,
-      );
+      const command = JSON.parse(
+        new TextDecoder().decode(fromB64url(signed.command)),
+      ) as { args?: { to?: string } } & Record<string, unknown>;
+      commands.push(command);
+      const sealedOutput =
+        sealIt && output !== null && command.args?.to
+          ? await sealFromNode(pinned.key, command.args.to, output)
+          : output;
       return new Response(
         JSON.stringify({
           id: body.id,
@@ -78,9 +93,8 @@ function server(output: string | null) {
           name: body.name,
           action: body.action,
           title: body.title,
-          status: "done",
-          message: "Done.",
-          output,
+          ...outcome,
+          output: sealedOutput,
           createdAt: "2026-11-22T10:00:00.000Z",
           finishedAt: "2026-11-22T10:00:01.000Z",
         }),
@@ -97,7 +111,7 @@ afterEach(() => {
 });
 
 describe("Edit Compose", () => {
-  it("prefills from stack/read and a blank .env sends no env", async () => {
+  it("edit compose prefills from the opened read and a blank .env sends no env", async () => {
     const commands = server(
       JSON.stringify({
         compose: COMPOSE,
@@ -109,11 +123,12 @@ describe("Edit Compose", () => {
       }),
     );
     const client = new QueryClient();
-    const read = await readForEdit(client, node, "web");
+    const read = await readForEdit(client, node, "web", undefined, pinned.deps);
     expect(commands[0]).toMatchObject({
       kind: "stack",
       name: "web",
       action: "read",
+      args: { to: expect.stringMatching(/^[A-Za-z0-9_-]{87}$/u) },
     });
     expect(read).toEqual({
       compose: COMPOSE,
@@ -126,9 +141,7 @@ describe("Edit Compose", () => {
       name: "web",
       editing: true,
       form: { ...read, env: "" },
-      deps: {
-        current: () => Promise.reject(new Error("no seal key was asked for")),
-      },
+      deps: pinned.deps,
     });
     const edit = commands[1] as {
       action: string;
@@ -136,19 +149,83 @@ describe("Edit Compose", () => {
     };
     expect(edit.action).toBe("edit");
     expect(edit.args).toEqual({
-      compose: COMPOSE,
+      compose: expect.stringMatching(/^[A-Za-z0-9_-]+$/u),
       access: "full",
       network: "8080",
       title: "Web",
+      to: expect.stringMatching(/^[A-Za-z0-9_-]{87}$/u),
     });
+    expect((await open(pinned.key, edit.args.compose!)).text).toBe(COMPOSE);
     expect("env" in edit.args).toBe(false);
   });
 
-  it("a stack/read without the compose shows a plain failure", async () => {
-    server(null);
-    await expect(readForEdit(new QueryClient(), node, "web")).rejects.toThrow(
-      "The server's answer did not hold the compose file.",
+  it("a failed save shows its opened detail, and signs the key it opens with", async () => {
+    const commands = server(
+      "service app mounts /srv/example-data from the server",
+      true,
+      { status: "failed", message: "Edit of web failed." },
     );
+    const row = await saveStack(new QueryClient(), node, {
+      name: "web",
+      editing: true,
+      form: {
+        compose: COMPOSE,
+        access: "contained",
+        network: [],
+        title: "",
+        env: "",
+      },
+      deps: pinned.deps,
+    });
+    expect(row).toMatchObject({
+      status: "failed",
+      message: "Edit of web failed.",
+      output: "service app mounts /srv/example-data from the server",
+    });
+    expect(commands).toHaveLength(1);
+  });
+
+  it("a failed read says what failed and why", async () => {
+    server("the compose file of web does not fit in one answer", true, {
+      status: "failed",
+      message: "Read of web failed.",
+    });
+    await expect(
+      readForEdit(new QueryClient(), node, "web", undefined, pinned.deps),
+    ).rejects.toThrow(
+      "Read of web failed. the compose file of web does not fit in one answer",
+    );
+  });
+
+  it("a failed read whose detail does not open still says what failed", async () => {
+    server("the compose file of web does not fit in one answer", false, {
+      status: "failed",
+      message: "Read of web failed.",
+    });
+    await expect(
+      readForEdit(new QueryClient(), node, "web", undefined, pinned.deps),
+    ).rejects.toThrow("Read of web failed. The details could not be opened.");
+  });
+
+  it("a read that does not open is a failure, not an empty form", async () => {
+    server(JSON.stringify({ compose: COMPOSE }), false);
+    await expect(
+      readForEdit(new QueryClient(), node, "web", undefined, pinned.deps),
+    ).rejects.toThrow("The server's answer could not be opened.");
+  });
+
+  it("a stack/read without the compose shows a plain failure", async () => {
+    server(JSON.stringify({ access: "full" }));
+    await expect(
+      readForEdit(new QueryClient(), node, "web", undefined, pinned.deps),
+    ).rejects.toThrow("The server's answer did not hold the compose file.");
+  });
+
+  it("a stack/read with no output at all is a failure, not an empty form", async () => {
+    server(null);
+    await expect(
+      readForEdit(new QueryClient(), node, "web", undefined, pinned.deps),
+    ).rejects.toThrow("The server's answer did not arrive.");
   });
 
   it("a re-render with an equal-valued new editing object starts no second read and keeps edits", () => {
@@ -178,5 +255,16 @@ describe("Edit Compose", () => {
     expect(shouldPrefill({ started: key, done: true, edited: false })).toBe(
       true,
     );
+  });
+});
+
+describe("Access", () => {
+  it("the Contained line says internet only", () => {
+    const html = renderToStaticMarkup(
+      <AccessChoice value="contained" onChange={() => undefined} />,
+    );
+    expect(html).toContain("Reaches the internet only; no host paths.");
+    expect(html).not.toContain("Contained: ");
+    expect(html).not.toContain("own folder and network");
   });
 });

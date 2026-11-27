@@ -65,4 +65,84 @@ describe("the action dialog", () => {
       text({ phase: "result", lines: [], error: "server-1 is offline." }),
     ).toContain("server-1 is offline.");
   });
+
+  it("shows the opened logs as text", () => {
+    const shown = renderToStaticMarkup(
+      <ActionBody
+        state={{
+          phase: "result",
+          lines: [],
+          row: row({
+            action: "logs",
+            message: "The last 200 lines of web.",
+            output: "web-1  ready\n",
+          }),
+        }}
+        name="server-1"
+      />,
+    );
+    expect(shown).toContain("<pre");
+    expect(shown).toContain("web-1  ready");
+  });
+
+  it("shows a failure's opened detail under its fixed message", () => {
+    const shown = renderToStaticMarkup(
+      <ActionBody
+        state={{
+          phase: "result",
+          lines: [],
+          row: row({
+            kind: "stack",
+            action: "deploy",
+            status: "failed",
+            message: "Deploy of web failed.",
+            output: "pull failed: denied",
+          }),
+        }}
+        name="server-1"
+      />,
+    );
+    expect(shown).toMatch(
+      /role="alert"[^>]*>Deploy of web failed\.<\/p><pre[^>]*>pull failed: denied<\/pre>/u,
+    );
+  });
+
+  it("shows a failure whose detail did not open as its message alone", () => {
+    const shown = renderToStaticMarkup(
+      <ActionBody
+        state={{
+          phase: "result",
+          lines: [],
+          row: row({
+            kind: "stack",
+            action: "deploy",
+            status: "failed",
+            message: "Deploy of web failed. The details could not be opened.",
+            output: null,
+          }),
+        }}
+        name="server-1"
+      />,
+    );
+    expect(shown).toContain(
+      "Deploy of web failed. The details could not be opened.",
+    );
+    expect(shown).not.toContain("<pre");
+  });
+
+  it("shows an answer that could not be opened as an error with no text", () => {
+    const shown = renderToStaticMarkup(
+      <ActionBody
+        state={{
+          phase: "result",
+          lines: [],
+          error: "The server's answer could not be opened.",
+        }}
+        name="server-1"
+      />,
+    );
+    expect(shown).toContain('role="alert"');
+    expect(shown).toContain("could not be opened");
+    expect(shown).not.toContain("<pre");
+  });
 });

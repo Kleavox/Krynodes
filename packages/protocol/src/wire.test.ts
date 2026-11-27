@@ -26,6 +26,19 @@ describe("the wire between the agent and the hub", () => {
     expect(parseAgentMessage(raw(message))).toBeNull();
   });
 
+  it("takes a result output of 131072 characters and refuses 131073", () => {
+    const result = (output: string) =>
+      raw({
+        type: "result",
+        id: "0b4f4f53-7d1c-4b55-9a39-2f0a0d6c1a01",
+        ok: true,
+        message: "The last 500 lines of web.",
+        output,
+      });
+    expect(parseAgentMessage(result("y".repeat(131072)))).not.toBeNull();
+    expect(parseAgentMessage(result("y".repeat(131073)))).toBeNull();
+  });
+
   it.each(fixture.hub.valid)("reads the hub message %#", (message) => {
     expect(parseHubMessage(raw(message))).toEqual(message);
   });

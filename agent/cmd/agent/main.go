@@ -52,7 +52,7 @@ const (
 	unitName    = "krynodes.service"
 	ackWait     = 10 * time.Second
 	updateGrace = 10 * time.Second
-	usage       = "usage: kry run | enroll --endpoint <url> --token <code> --origin <dashboard> --trust <id.alg.key,...> | install-service | uninstall-service [--delete-apps] | self-update | trust --reset --origin <dashboard> --trust <id.alg.key,...> | network fingerprint | network rules | version"
+	usage       = "usage: kry run | enroll --endpoint <url> --token <code> --origin <dashboard> --trust <id.alg.key,...> | install-service | uninstall-service [--delete-apps] | self-update | trust --reset --origin <dashboard> --trust <id.alg.key,...> | network fingerprint | network rules | guard | version"
 )
 
 const unit = `[Unit]
@@ -113,6 +113,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = selfUpdate()
 	case args[0] == "trust":
 		err = resetTrust(args[1:], stdout)
+	case args[0] == "guard" && bare:
+		err = guardCommand()
 	case args[0] == "network" && len(args) == 2 && (args[1] == "fingerprint" || args[1] == "rules"):
 		err = networkCommand(args[1], stdout)
 	default:
@@ -326,7 +328,8 @@ func runDaemon(args []string) error {
 	checks := docker.NewChecks()
 	apps := stacks.Env{Run: runCommand, State: stateDir, Server: currentFacts().Hostname, Own: network.Own, Checks: checks, Now: time.Now,
 		Unseal:   func(sealed string) ([]byte, error) { return seal.Open(key, sealed) },
-		Platform: platform.Env{Run: platform.Runner(runCommand)}}
+		Sealing:  key,
+		Platform: platform.Env{Run: platform.Runner(runCommand), Executable: executable, Prove: proveGuard(runCommand)}}
 	maps.Copy(d.Handlers, stacks.Handlers(apps))
 	client.Hello = func() any { return hello(currentFacts(), sealKey, d.Trust(), network.Hello(ctx)) }
 	client.Connected = func() {
@@ -457,6 +460,35 @@ func localMesh(state string) *mesh.Mesh {
 	}
 }
 
+func guardCommand() error {
+	if err := asRoot("guard"); err != nil {
+		return err
+	}
+	return guardWith(runCommand)
+}
+
+func proveGuard(run docker.Runner) func(context.Context) error {
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		if err := stacks.Guard(ctx, run); err != nil {
+			return fmt.Errorf("the guard of Contained stacks: %w", err)
+		}
+		return nil
+	}
+}
+
+func guardWith(run docker.Runner) error {
+	return proveGuard(run)(context.Background())
+}
+
+func guardDocker(ctx context.Context, host platform.Env) error {
+	if !host.DockerLoaded(ctx) {
+		return nil
+	}
+	return host.GuardDocker(ctx)
+}
+
 func networkCommand(what string, stdout io.Writer) error {
 	if err := asRoot("network " + what); err != nil {
 		return err
@@ -533,8 +565,14 @@ func installService(stdout io.Writer) error {
 		return err
 	}
 	installed, _ := filepath.EvalSymlinks(binPath)
-	if executable, err := self(); err != nil || executable != installed {
+	executable, err := self()
+	if err != nil || executable != installed {
 		return fmt.Errorf("install-service runs the agent from %s; install it there first", binPath)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := guardDocker(ctx, platform.Env{Run: platform.Runner(runCommand), Executable: executable, Prove: proveGuard(runCommand)}); err != nil {
+		return err
 	}
 	if err := safefile.Write(unitPath, []byte(unit), 0o644); err != nil {
 		return err
@@ -565,7 +603,7 @@ func uninstallService(deleteApps bool, stdout io.Writer) error {
 	if err := localMesh(stateDir).Leave(ctx); err != nil {
 		problems = append(problems, err.Error())
 	}
-	said, kept, stayed := stacks.Uninstall(ctx, runCommand, stateDir, deleteApps)
+	said, kept, stayed := stacks.Uninstall(ctx, platform.Env{Run: platform.Runner(runCommand)}, stateDir, deleteApps)
 	problems = append(problems, kept...)
 	for _, line := range said {
 		fmt.Fprintln(stdout, "  "+line)
@@ -573,20 +611,36 @@ func uninstallService(deleteApps bool, stdout io.Writer) error {
 	if target, err := os.Readlink(sudoLink); err == nil && target == binPath {
 		_ = os.Remove(sudoLink)
 	}
-	for _, path := range removed {
-		if path == stateDir && stayed {
-			continue
-		}
-		if err := os.RemoveAll(path); err != nil {
-			problems = append(problems, fmt.Sprintf("remove %s: %v", path, err))
-		}
+	keep := map[string]string{}
+	if stayed {
+		keep[stateDir] = ""
 	}
+	if _, err := os.Stat(platform.DockerGuardDropInPath); err == nil {
+		keep[binPath] = fmt.Sprintf("Docker waits for it until %s is removed", platform.DockerGuardDropInPath)
+	}
+	problems = append(problems, removeParts(removed, keep)...)
 	_ = exec.Command("systemctl", "daemon-reload").Run()
 	if len(problems) > 0 {
 		return fmt.Errorf("some parts need a look:\n  %s", strings.Join(problems, "\n  "))
 	}
 	fmt.Fprintln(stdout, "Krynodes is removed from this server. If it is still in the dashboard, delete it there too.")
 	return nil
+}
+
+func removeParts(parts []string, keep map[string]string) []string {
+	var problems []string
+	for _, path := range parts {
+		if why, kept := keep[path]; kept {
+			if why != "" {
+				problems = append(problems, fmt.Sprintf("%s stays: %s", path, why))
+			}
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			problems = append(problems, fmt.Sprintf("remove %s: %v", path, err))
+		}
+	}
+	return problems
 }
 
 func selfUpdate() error {
@@ -617,6 +671,12 @@ func selfUpdate() error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			output, err := exec.CommandContext(ctx, name, args...).Output()
+			return string(output), err
+		},
+		Combined: func(name string, args ...string) (string, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 			return string(output), err
 		},
 	})
